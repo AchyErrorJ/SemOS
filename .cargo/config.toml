@@ -1,0 +1,10 @@
+[build]
+target = "aarch64-unknown-none"
+
+[target.aarch64-unknown-none]
+rustflags = [
+  "-C", "link-arg=-Tkernel-bare/linker.ld",
+]
+
+[env]
+QEMU_SYSTEM_AARCH64 = "qemu-system-aarch64"

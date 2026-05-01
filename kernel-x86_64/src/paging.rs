@@ -1,0 +1,632 @@
+//! x86_64 Page Table Management
+//!
+//! Implements 4-level paging (PML4 → PDPT → PD → PT) with per-process
+//! address spaces. Security tiers are enforced by only mapping pool
+//! regions the process is authorized to access.
+//!
+//! # x86_64 Page Table Structure
+//!
+//! | Level | Name | Entry covers | Index bits     |
+//! |-------|------|-------------|----------------|
+//! | 4     | PML4 | 512 GB      | VA[47:39]      |
+//! | 3     | PDPT | 1 GB        | VA[38:30]      |
+//! | 2     | PD   | 2 MB        | VA[29:21]      |
+//! | 1     | PT   | 4 KB        | VA[20:12]      |
+//!
+//! # Memory Layout
+//!
+//! | Virtual Address Range              | Use                         |
+//! |------------------------------------|-----------------------------|
+//! | 0x0000_0000_0040_0000 - ...        | User code                   |
+//! | 0x0000_0000_0080_0000 - ...        | User data                   |
+//! | 0x0000_0000_00C0_0000 - ...        | User heap                   |
+//! | 0x0000_007F_FFFF_0000              | User stack top (grows down) |
+//! | 0xFFFF_8000_0000_0000 + phys       | Kernel physical map         |
+//! | Kernel text/data                   | Bootloader mapped           |
+//!
+//! # Page Table Entry Format (64-bit)
+//!
+//! | Bit(s) | Name    | Description                          |
+//! |--------|---------|--------------------------------------|
+//! | 0      | P       | Present                              |
+//! | 1      | R/W     | Read/Write (0 = read-only)           |
+//! | 2      | U/S     | User/Supervisor (1 = user accessible)|
+//! | 3      | PWT     | Page Write-Through                   |
+//! | 4      | PCD     | Page Cache Disable                   |
+//! | 5      | A       | Accessed                             |
+//! | 6      | D       | Dirty (PT level only)                |
+//! | 7      | PS/PAT  | Page Size (1=huge page) / PAT        |
+//! | 8      | G       | Global                               |
+//! | 12-51  | ADDR    | Physical address of next table/frame |
+//! | 63     | NX      | No Execute                           |
+
+use spin::Mutex;
+use crate::println;
+
+/// Page sizes
+pub const PAGE_SIZE_4K: u64 = 4096;
+pub const PAGE_SIZE_2M: u64 = 2 * 1024 * 1024;
+
+/// Number of entries per page table
+const ENTRIES: usize = 512;
+
+/// Page table entry flags
+mod flags {
+    pub const PRESENT: u64      = 1 << 0;
+    pub const WRITABLE: u64     = 1 << 1;
+    pub const USER: u64         = 1 << 2;
+    pub const WRITE_THROUGH: u64 = 1 << 3;
+    pub const NO_CACHE: u64     = 1 << 4;
+    pub const ACCESSED: u64     = 1 << 5;
+    pub const DIRTY: u64        = 1 << 6;
+    pub const HUGE_PAGE: u64    = 1 << 7;  // 2MB at PD level, 1GB at PDPT level
+    pub const GLOBAL: u64       = 1 << 8;
+    pub const NO_EXECUTE: u64   = 1 << 63;
+
+    /// Address mask for 4KB-aligned physical addresses in PTE
+    pub const ADDR_MASK: u64    = 0x000F_FFFF_FFFF_F000;
+}
+
+/// A single page table entry
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PageTableEntry(u64);
+
+impl PageTableEntry {
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    /// Create an entry pointing to the next-level table
+    pub fn table(phys_addr: u64, user: bool) -> Self {
+        let mut entry = (phys_addr & flags::ADDR_MASK)
+            | flags::PRESENT
+            | flags::WRITABLE;
+        if user {
+            entry |= flags::USER;
+        }
+        Self(entry)
+    }
+
+    /// Create a 4KB page entry
+    pub fn page_4k(phys_addr: u64, writable: bool, user: bool, no_execute: bool) -> Self {
+        let mut entry = (phys_addr & flags::ADDR_MASK) | flags::PRESENT;
+        if writable { entry |= flags::WRITABLE; }
+        if user { entry |= flags::USER; }
+        if no_execute { entry |= flags::NO_EXECUTE; }
+        Self(entry)
+    }
+
+    /// Create a 2MB huge page entry (set at PD level)
+    pub fn page_2m(phys_addr: u64, writable: bool, user: bool, no_execute: bool) -> Self {
+        let mut entry = (phys_addr & !0x1F_FFFF) // 2MB aligned
+            | flags::PRESENT
+            | flags::HUGE_PAGE;
+        if writable { entry |= flags::WRITABLE; }
+        if user { entry |= flags::USER; }
+        if no_execute { entry |= flags::NO_EXECUTE; }
+        Self(entry)
+    }
+
+    pub fn is_present(&self) -> bool { self.0 & flags::PRESENT != 0 }
+    pub fn is_huge(&self) -> bool { self.0 & flags::HUGE_PAGE != 0 }
+    pub fn phys_addr(&self) -> u64 { self.0 & flags::ADDR_MASK }
+    pub fn raw(&self) -> u64 { self.0 }
+}
+
+/// A page table — 512 entries, 4KB aligned
+#[repr(C, align(4096))]
+pub struct PageTable {
+    entries: [PageTableEntry; ENTRIES],
+}
+
+impl PageTable {
+    pub const fn empty() -> Self {
+        Self {
+            entries: [PageTableEntry::empty(); ENTRIES],
+        }
+    }
+
+    pub fn entry(&self, index: usize) -> &PageTableEntry {
+        &self.entries[index]
+    }
+
+    pub fn entry_mut(&mut self, index: usize) -> &mut PageTableEntry {
+        &mut self.entries[index]
+    }
+
+    /// Clear all entries
+    pub fn clear(&mut self) {
+        for e in self.entries.iter_mut() {
+            *e = PageTableEntry::empty();
+        }
+    }
+}
+
+// ============================================================================
+// Page Table Frame Allocator
+// ============================================================================
+
+/// Maximum page table frames we can allocate (for page table structures themselves)
+const MAX_PT_FRAMES: usize = 128;
+
+/// Pool of pre-allocated 4KB frames for page table structures.
+/// These come from the kernel's usable memory, separate from the security pools.
+struct PageTableFramePool {
+    /// Physical addresses of available frames
+    frames: [u64; MAX_PT_FRAMES],
+    /// Number of available frames
+    count: usize,
+}
+
+impl PageTableFramePool {
+    const fn new() -> Self {
+        Self {
+            frames: [0; MAX_PT_FRAMES],
+            count: 0,
+        }
+    }
+
+    /// Add a frame to the pool
+    fn push(&mut self, phys: u64) -> bool {
+        if self.count >= MAX_PT_FRAMES {
+            return false;
+        }
+        self.frames[self.count] = phys;
+        self.count += 1;
+        true
+    }
+
+    /// Allocate a frame (returns physical address of a zeroed 4KB page)
+    fn alloc(&mut self) -> Option<u64> {
+        if self.count == 0 {
+            return None;
+        }
+        self.count -= 1;
+        let phys = self.frames[self.count];
+        // Zero the frame
+        unsafe {
+            let virt = phys_to_virt(phys);
+            core::ptr::write_bytes(virt as *mut u8, 0, 4096);
+        }
+        Some(phys)
+    }
+
+    /// Return a frame to the pool
+    fn free(&mut self, phys: u64) {
+        if self.count < MAX_PT_FRAMES {
+            self.frames[self.count] = phys;
+            self.count += 1;
+        }
+    }
+}
+
+static PT_POOL: Mutex<PageTableFramePool> = Mutex::new(PageTableFramePool::new());
+
+/// Allocate a page table frame
+pub fn alloc_pt_frame() -> Option<u64> {
+    PT_POOL.lock().alloc()
+}
+
+/// Free a page table frame
+pub fn free_pt_frame(phys: u64) {
+    PT_POOL.lock().free(phys);
+}
+
+// ============================================================================
+// Physical-to-Virtual Address Translation
+// ============================================================================
+
+/// The offset at which physical memory is mapped into virtual space.
+/// Set by the bootloader and stored during init.
+static mut PHYS_MEM_OFFSET: u64 = 0;
+
+/// CR3 value of the bootloader's page tables. Captured during paging::init()
+/// so kernel tasks (which advertise cr3 = 0) can switch back to a known-good
+/// PML4 instead of inheriting whatever isolated address space the previous
+/// task was using.
+static mut BOOT_CR3: u64 = 0;
+
+/// Get the bootloader's PML4 physical address.
+#[inline]
+pub fn boot_cr3() -> u64 {
+    unsafe { BOOT_CR3 }
+}
+
+/// Convert a physical address to a virtual address using the bootloader's mapping
+#[inline]
+pub fn phys_to_virt(phys: u64) -> u64 {
+    unsafe { phys + PHYS_MEM_OFFSET }
+}
+
+/// Convert a virtual address (in the physical map region) back to physical
+#[inline]
+pub fn virt_to_phys(virt: u64) -> u64 {
+    unsafe { virt - PHYS_MEM_OFFSET }
+}
+
+/// Get a mutable reference to a page table at a physical address
+unsafe fn table_at_phys(phys: u64) -> &'static mut PageTable {
+    let virt = phys_to_virt(phys);
+    &mut *(virt as *mut PageTable)
+}
+
+// ============================================================================
+// Per-Process Address Space
+// ============================================================================
+
+/// User-space memory layout
+pub mod user_layout {
+    pub const USER_CODE_BASE: u64   = 0x0000_0000_0040_0000;  // 4MB
+    pub const USER_DATA_BASE: u64   = 0x0000_0000_0080_0000;  // 8MB
+    pub const USER_HEAP_BASE: u64   = 0x0000_0000_00C0_0000;  // 12MB
+    pub const USER_STACK_TOP: u64   = 0x0000_007F_FFFF_0000;  // ~512GB - 64KB
+    pub const USER_STACK_SIZE: u64  = 64 * 1024;              // 64KB
+}
+
+/// Page permissions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PagePermission {
+    /// Read + Execute (code)
+    ReadExecute,
+    /// Read + Write (data, stack, heap)
+    ReadWrite,
+    /// Read only
+    ReadOnly,
+    /// Read + Write + Execute
+    ReadWriteExecute,
+    /// Kernel only, read + write
+    KernelReadWrite,
+}
+
+/// Maximum page tables tracked per process (for cleanup)
+const MAX_SUBTABLES: usize = 32;
+
+/// Per-process address space.
+///
+/// Each process gets its own PML4 (top-level page table).
+/// CR3 is switched to this PML4 on context switch.
+/// Security tier enforcement: only memory pool regions at or below
+/// the process's max_tier are mapped.
+pub struct AddressSpace {
+    /// Physical address of PML4 (loaded into CR3)
+    pub cr3: u64,
+    /// Allocated sub-table physical addresses (for cleanup)
+    subtables: [u64; MAX_SUBTABLES],
+    subtable_count: usize,
+    /// Maximum security tier this address space can access
+    pub max_tier: u8,
+}
+
+impl AddressSpace {
+    /// Create a new address space.
+    ///
+    /// Allocates a PML4 and shares the kernel's mappings with the new space.
+    /// The bootloader_api crate places the kernel and the physical-memory
+    /// map at *low* virtual addresses (e.g. 0x10000000000 ≈ PML4 index 2),
+    /// not in the classical higher half — so we copy *every* populated
+    /// PML4 entry from the active page tables. No user-space mappings exist
+    /// at this point, so this only inherits kernel mappings.
+    pub fn new(max_tier: u8) -> Option<Self> {
+        let pml4_phys = alloc_pt_frame()?;
+        let current_cr3 = read_cr3();
+
+        // Raw memcpy the entire bootloader PML4 (4KB) into the new PML4
+        // frame. Going through the typed entry/entry_mut accessors creates
+        // overlapping `&'static mut` references to two PageTables and is UB
+        // even though we read from one and write to the other; LTO has been
+        // observed to elide the writes. A byte-level copy through raw
+        // pointers sidesteps the aliasing issue.
+        unsafe {
+            let src = phys_to_virt(current_cr3) as *const u8;
+            let dst = phys_to_virt(pml4_phys) as *mut u8;
+            core::ptr::copy_nonoverlapping(src, dst, PAGE_SIZE_4K as usize);
+        }
+
+        Some(Self {
+            cr3: pml4_phys,
+            subtables: [0; MAX_SUBTABLES],
+            subtable_count: 0,
+            max_tier,
+        })
+    }
+
+    /// Map a 4KB page in this address space.
+    ///
+    /// Allocates intermediate tables (PDPT, PD, PT) as needed.
+    pub fn map_4k(&mut self, virt: u64, phys: u64, perm: PagePermission) -> bool {
+        // Only map user-space addresses (lower half)
+        if virt >= 0x0000_8000_0000_0000 {
+            return false;
+        }
+
+        let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+        let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+        let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+        let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
+
+        let is_user = match perm {
+            PagePermission::KernelReadWrite => false,
+            _ => true,
+        };
+        let writable = match perm {
+            PagePermission::ReadExecute | PagePermission::ReadOnly => false,
+            _ => true,
+        };
+        let no_exec = match perm {
+            PagePermission::ReadWrite | PagePermission::ReadOnly
+            | PagePermission::KernelReadWrite => true,
+            _ => false,
+        };
+
+        unsafe {
+            let pml4 = table_at_phys(self.cr3);
+
+            let pdpt_phys = match self.ensure_table(pml4, pml4_idx, is_user) {
+                Some(p) => p, None => return false,
+            };
+            let pdpt = table_at_phys(pdpt_phys);
+
+            let pd_phys = match self.ensure_table(pdpt, pdpt_idx, is_user) {
+                Some(p) => p, None => return false,
+            };
+            let pd = table_at_phys(pd_phys);
+
+            let pt_phys = match self.ensure_table(pd, pd_idx, is_user) {
+                Some(p) => p, None => return false,
+            };
+            let pt = table_at_phys(pt_phys);
+
+            *pt.entry_mut(pt_idx) = PageTableEntry::page_4k(phys, writable, is_user, no_exec);
+        }
+
+        true
+    }
+
+    /// Map a 2MB huge page in this address space.
+    pub fn map_2m(&mut self, virt: u64, phys: u64, perm: PagePermission) -> bool {
+        if virt >= 0x0000_8000_0000_0000 {
+            return false;
+        }
+        if virt & 0x1F_FFFF != 0 || phys & 0x1F_FFFF != 0 {
+            return false; // Must be 2MB aligned
+        }
+
+        let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+        let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+        let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+
+        let is_user = !matches!(perm, PagePermission::KernelReadWrite);
+        let writable = !matches!(perm, PagePermission::ReadExecute | PagePermission::ReadOnly);
+        let no_exec = matches!(
+            perm,
+            PagePermission::ReadWrite | PagePermission::ReadOnly | PagePermission::KernelReadWrite
+        );
+
+        unsafe {
+            let pml4 = table_at_phys(self.cr3);
+
+            let pdpt_phys = match self.ensure_table(pml4, pml4_idx, is_user) {
+                Some(p) => p, None => return false,
+            };
+            let pdpt = table_at_phys(pdpt_phys);
+
+            let pd_phys = match self.ensure_table(pdpt, pdpt_idx, is_user) {
+                Some(p) => p, None => return false,
+            };
+            let pd = table_at_phys(pd_phys);
+
+            *pd.entry_mut(pd_idx) = PageTableEntry::page_2m(phys, writable, is_user, no_exec);
+        }
+
+        true
+    }
+
+    /// Map an entire security tier's memory pool into this address space.
+    ///
+    /// Uses 2MB pages for efficiency. The virtual address is chosen
+    /// to mirror the physical address (identity-like mapping in user space).
+    pub fn map_security_pool(&mut self, base: u64, size: usize, perm: PagePermission) -> bool {
+        let mut offset = 0u64;
+        while (offset as usize) < size {
+            let phys = base + offset;
+            let virt = phys; // Identity map for simplicity
+            if !self.map_2m(virt, phys, perm) {
+                return false;
+            }
+            offset += PAGE_SIZE_2M;
+        }
+        true
+    }
+
+    /// Ensure a table entry points to a sub-table, allocating if needed.
+    /// Returns the physical address of the sub-table.
+    unsafe fn ensure_table(
+        &mut self,
+        table: &mut PageTable,
+        index: usize,
+        user: bool,
+    ) -> Option<u64> {
+        if table.entry(index).is_present() {
+            Some(table.entry(index).phys_addr())
+        } else {
+            let new_frame = alloc_pt_frame()?;
+            *table.entry_mut(index) = PageTableEntry::table(new_frame, user);
+            self.track_subtable(new_frame);
+            Some(new_frame)
+        }
+    }
+
+    /// Track a subtable for cleanup
+    fn track_subtable(&mut self, phys: u64) {
+        if self.subtable_count < MAX_SUBTABLES {
+            self.subtables[self.subtable_count] = phys;
+            self.subtable_count += 1;
+        }
+    }
+
+    /// Free all page table frames owned by this address space.
+    pub fn destroy(&mut self) {
+        // Free all subtables
+        for i in 0..self.subtable_count {
+            free_pt_frame(self.subtables[i]);
+        }
+        // Free the PML4
+        free_pt_frame(self.cr3);
+        self.cr3 = 0;
+        self.subtable_count = 0;
+    }
+}
+
+// ============================================================================
+// CR3 / TLB Management
+// ============================================================================
+
+/// Read the current CR3 (PML4 physical address)
+#[inline]
+pub fn read_cr3() -> u64 {
+    let value: u64;
+    unsafe {
+        core::arch::asm!("mov {}, cr3", out(reg) value, options(nostack, preserves_flags));
+    }
+    value & flags::ADDR_MASK
+}
+
+/// Write CR3 (switch page tables). This flushes the TLB.
+///
+/// # Safety
+/// The new CR3 must point to a valid PML4 with kernel mappings intact.
+#[inline]
+pub unsafe fn write_cr3(pml4_phys: u64) {
+    core::arch::asm!("mov cr3, {}", in(reg) pml4_phys, options(nostack, preserves_flags));
+}
+
+/// Flush a single TLB entry for a virtual address
+#[inline]
+pub fn invlpg(virt: u64) {
+    unsafe {
+        core::arch::asm!("invlpg [{}]", in(reg) virt, options(nostack, preserves_flags));
+    }
+}
+
+/// Flush entire TLB (by reloading CR3)
+#[inline]
+pub fn flush_tlb() {
+    unsafe {
+        let cr3 = read_cr3();
+        write_cr3(cr3);
+    }
+}
+
+// ============================================================================
+// Initialization
+// ============================================================================
+
+/// Initialize the paging subsystem.
+///
+/// - Records the physical memory offset from the bootloader
+/// - Seeds the page table frame pool from usable memory
+/// - Verifies the current page table setup
+pub fn init(boot_info: &bootloader_api::BootInfo) {
+    // Get the physical memory offset from the bootloader
+    let phys_offset = boot_info.physical_memory_offset
+        .into_option()
+        .expect("Bootloader must provide physical memory offset");
+
+    unsafe {
+        PHYS_MEM_OFFSET = phys_offset;
+    }
+
+    println!("    Physical memory offset: 0x{:016X}", phys_offset);
+
+    // Read current CR3 (bootloader's PML4) and stash it for later — kernel
+    // tasks default to this CR3 instead of leaving the previous task's
+    // isolated address space active.
+    let cr3 = read_cr3();
+    unsafe { BOOT_CR3 = cr3; }
+    println!("    Active CR3 (PML4):      0x{:016X}", cr3);
+
+    // Seed the page table frame pool from usable memory
+    // We take frames from the end of usable memory to avoid conflicts
+    // with the security pools (which use the start of the largest region)
+    use bootloader_api::info::MemoryRegionKind;
+    let mut frames_added = 0;
+
+    for region in boot_info.memory_regions.iter() {
+        if region.kind != MemoryRegionKind::Usable {
+            continue;
+        }
+        // Skip the legacy BIOS conventional memory (under 1 MiB) — it's
+        // technically "usable" but contains the IVT, BDA, EBDA, video
+        // buffer, etc. We don't want to put page tables there. Also, its
+        // boundaries are typically not page-aligned (e.g. 0..0x9FC00),
+        // which would yield misaligned frames.
+        if region.end <= 0x100_000 {
+            continue;
+        }
+        // Round endpoints to page boundaries: start UP, end DOWN. This
+        // guarantees every produced frame address is page-aligned, even if
+        // the BIOS reports oddly-shaped regions.
+        let start_aligned = (region.start + PAGE_SIZE_4K - 1) & !(PAGE_SIZE_4K - 1);
+        let end_aligned = region.end & !(PAGE_SIZE_4K - 1);
+        if end_aligned <= start_aligned {
+            continue;
+        }
+        let size = end_aligned - start_aligned;
+        if size < (MAX_PT_FRAMES as u64 * PAGE_SIZE_4K) {
+            continue; // Too small
+        }
+
+        // Take frames from the end of this region (now guaranteed aligned).
+        let mut pool = PT_POOL.lock();
+        let start = end_aligned - (MAX_PT_FRAMES as u64 * PAGE_SIZE_4K);
+        for i in 0..MAX_PT_FRAMES {
+            let addr = start + (i as u64 * PAGE_SIZE_4K);
+            if pool.push(addr) {
+                frames_added += 1;
+            }
+        }
+        break; // Only need frames from one region
+    }
+
+    println!("    Page table frame pool:  {} frames ({} KB)",
+        frames_added, frames_added * 4);
+
+    // Verify we can read the current page tables
+    unsafe {
+        let pml4 = table_at_phys(cr3);
+        let mut mapped_regions = 0;
+        for i in 0..512 {
+            if pml4.entry(i).is_present() {
+                mapped_regions += 1;
+            }
+        }
+        println!("    Active PML4 entries:     {}/512", mapped_regions);
+    }
+}
+
+/// Create an address space for a process, mapping only allowed security tiers.
+///
+/// The process gets:
+/// - Kernel higher-half mappings (inherited from boot PML4)
+/// - Security pool memory for tiers 0..=max_tier (as 2MB pages)
+pub fn create_process_address_space(max_tier: u8) -> Option<AddressSpace> {
+    let mut space = AddressSpace::new(max_tier)?;
+
+    // Map security pools based on tier access
+    let pools = crate::memory::pool_info();
+    for (tier_val, base, size) in pools.iter() {
+        if *tier_val <= max_tier {
+            let perm = if *tier_val <= 1 {
+                // Public and Internal: read+write (data access)
+                PagePermission::ReadWrite
+            } else {
+                // Sensitive and Secret: read+write but no execute
+                PagePermission::ReadWrite
+            };
+            space.map_security_pool(*base, *size as usize, perm);
+        }
+    }
+
+    Some(space)
+}

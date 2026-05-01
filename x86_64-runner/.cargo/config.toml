@@ -1,0 +1,4 @@
+# Override the workspace-level aarch64 default — this binary is a host tool
+# that runs on Windows to package the kernel into a bootable disk image.
+[build]
+target = "x86_64-pc-windows-msvc"

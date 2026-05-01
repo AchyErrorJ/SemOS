@@ -1,0 +1,10 @@
+[package]
+name = "x86_64-runner"
+version = "0.1.0"
+edition = "2021"
+
+# Keep this out of the parent workspace
+[workspace]
+
+[dependencies]
+bootloader = "0.11"

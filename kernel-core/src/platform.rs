@@ -1,0 +1,161 @@
+//! Platform Abstraction Layer
+//!
+//! Defines the trait that platform crates (kernel-arm64, kernel-x86_64, etc.)
+//! must implement. Provides global accessors so kernel-core code can do I/O
+//! and get timestamps without knowing which hardware it's running on.
+
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Platform trait — implemented once per architecture.
+///
+/// Registered at boot via [`set_platform`]. All methods are safe because
+/// the platform crate is responsible for ensuring hardware access is valid.
+pub trait Platform: Send + Sync + 'static {
+    /// Write a string to the debug serial console.
+    fn serial_write(&self, s: &str);
+
+    /// Get monotonic tick count (platform-defined resolution).
+    fn ticks(&self) -> u64;
+
+    /// Halt the CPU (wait for interrupt / low-power idle).
+    fn halt(&self);
+
+    /// Allocate a 4KB physical frame from the given security tier's pool.
+    /// Returns the physical address, or None if the pool is exhausted.
+    fn alloc_frame(&self, _tier: u8) -> Option<u64> { None }
+
+    /// Free a 4KB physical frame back to its pool.
+    /// Returns true if the frame was successfully freed.
+    fn free_frame(&self, _addr: u64) -> bool { false }
+
+    // --- Process address space management ---
+
+    /// Create a new user address space restricted to the given security tier.
+    /// Returns an opaque handle (CR3 on x86_64, TTBR0 on ARM64).
+    /// The address space inherits kernel higher-half mappings.
+    fn create_address_space(&self, _max_tier: u8) -> Option<u64> { None }
+
+    /// Map a segment of an ELF binary into a user address space.
+    ///
+    /// - `space`: the address space handle from `create_address_space`
+    /// - `virt_addr`: virtual address to map at (page-aligned)
+    /// - `data`: segment content to copy
+    /// - `memsz`: total memory size (may be > data.len() for BSS)
+    /// - `executable`: whether the segment should be executable
+    /// - `writable`: whether the segment should be writable
+    ///
+    /// Returns true on success.
+    fn map_elf_segment(
+        &self,
+        _space: u64,
+        _virt_addr: u64,
+        _data: &[u8],
+        _memsz: usize,
+        _executable: bool,
+        _writable: bool,
+    ) -> bool { false }
+
+    /// Map a user stack in the given address space.
+    /// Returns the stack top (highest address), or None on failure.
+    /// The stack is mapped as read-write, no-execute.
+    fn map_user_stack(&self, _space: u64, _stack_top: u64, _stack_size: u64) -> Option<u64> { None }
+
+    /// Spawn a Ring 3 user-mode task with the given address space.
+    /// - `name`: task name for scheduler
+    /// - `user_rip`: user-mode entry point (virtual address)
+    /// - `user_rsp`: user-mode stack pointer
+    /// - `cr3`: address space handle
+    /// - `max_tier`: security tier
+    ///
+    /// Returns the scheduler task slot index.
+    fn spawn_user_task(
+        &self,
+        _name: &'static str,
+        _user_rip: u64,
+        _user_rsp: u64,
+        _cr3: u64,
+        _max_tier: u8,
+    ) -> Option<usize> { None }
+
+    /// Destroy an address space, freeing all page table frames.
+    fn destroy_address_space(&self, _space: u64) {}
+}
+
+/// Null platform used before a real one is registered.
+struct NullPlatform;
+
+impl Platform for NullPlatform {
+    fn serial_write(&self, _s: &str) {}
+    fn ticks(&self) -> u64 { 0 }
+    fn halt(&self) {}
+}
+
+static NULL_PLATFORM: NullPlatform = NullPlatform;
+
+/// Global platform reference. Points to NullPlatform until set_platform() is called.
+static mut PLATFORM: &dyn Platform = &NULL_PLATFORM;
+static PLATFORM_SET: AtomicBool = AtomicBool::new(false);
+
+/// Register the platform implementation. Call once at boot.
+///
+/// # Safety
+/// Must be called before any other kernel-core code runs, and only once.
+/// The reference must be valid for the lifetime of the kernel ('static).
+pub unsafe fn set_platform(p: &'static dyn Platform) {
+    PLATFORM = p;
+    PLATFORM_SET.store(true, Ordering::Release);
+}
+
+/// Get a reference to the current platform.
+#[inline]
+pub fn get() -> &'static dyn Platform {
+    // Safety: PLATFORM is set once at boot and never changes after.
+    unsafe { PLATFORM }
+}
+
+/// Write a log message to the platform's serial console.
+#[inline]
+pub fn log(s: &str) {
+    get().serial_write(s);
+}
+
+/// Get the current tick count from the platform timer.
+#[inline]
+pub fn ticks() -> u64 {
+    get().ticks()
+}
+
+/// Log a number in decimal.
+pub fn log_num(n: u64) {
+    if n == 0 {
+        log("0");
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut i = 0;
+    let mut val = n;
+    while val > 0 {
+        buf[i] = b'0' + (val % 10) as u8;
+        val /= 10;
+        i += 1;
+    }
+    // Reverse
+    let mut j = 0;
+    while j < i / 2 {
+        buf.swap(j, i - 1 - j);
+        j += 1;
+    }
+    // Safety: buf contains only ASCII digits
+    if let Ok(s) = core::str::from_utf8(&buf[..i]) {
+        log(s);
+    }
+}
+
+/// Log a byte as two hex characters.
+pub fn log_hex_byte(b: u8) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let chars = [HEX[(b >> 4) as usize], HEX[(b & 0xF) as usize]];
+    if let Ok(s) = core::str::from_utf8(&chars) {
+        log(s);
+    }
+}
