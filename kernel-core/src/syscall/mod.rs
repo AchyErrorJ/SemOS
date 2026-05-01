@@ -233,7 +233,19 @@ fn handle_yield() {
 }
 
 fn handle_getpid() -> u64 {
-    crate::scheduler::current_task_index() as u64
+    let idx = crate::scheduler::current_task_index();
+    // Heartbeat: log every 100,000 GETPID calls so we can prove the Ring 3
+    // user task is alive without it needing to dereference any pointers.
+    static COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+    let n = COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    if n.is_multiple_of(100_000) {
+        crate::platform::log("[ring3] SYS_GETPID call #");
+        crate::platform::log_num(n);
+        crate::platform::log(" from task ");
+        crate::platform::log_num(idx as u64);
+        crate::platform::log("\n");
+    }
+    idx as u64
 }
 
 fn handle_info() -> u64 {

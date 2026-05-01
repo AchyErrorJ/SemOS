@@ -263,65 +263,23 @@ fn task_isolated() {
 
 /// User-mode task entry point — runs in Ring 3 (unprivileged).
 ///
-/// This function cannot use println! or access I/O ports directly.
-/// All interaction with the kernel must go through SYSCALL.
-/// The function is mapped into the user's address space at USER_CODE_BASE.
+/// **Constraint:** until we have a real ELF loader path for arbitrary user
+/// programs, this function is mapped into the user's address space at
+/// USER_CODE_BASE as a single 4KB code page. That means it MUST NOT
+/// reference any data outside its own code page — no string literals
+/// (in .rodata), no statics (in .data/.bss), no extern functions. Every
+/// access has to go through registers passed via SYSCALL.
+///
+/// This stub validates the full Ring 3 → SYSCALL → kernel → SYSRET → Ring 3
+/// round-trip with syscalls that take only register arguments and no
+/// pointers: SYS_GETPID (4) and SYS_YIELD (3).
 fn user_task_entry() {
-    let hello = b"[user_task] Hello from Ring 3!\n";
-    user_syscall(0, hello.as_ptr() as u64, hello.len() as u64, 0, 0);
-
-    // --- Exercise file I/O syscalls ---
-
-    // SYS_OPEN("welcome.txt")
-    let filename = b"welcome.txt";
-    let fd = user_syscall(10, filename.as_ptr() as u64, filename.len() as u64, 0, 0);
-    if fd != u64::MAX {
-        let msg = b"[user_task] Opened welcome.txt, fd=";
-        user_syscall(0, msg.as_ptr() as u64, msg.len() as u64, 0, 0);
-        // Print fd number
-        let fd_digit = b'0' as u64 + fd;
-        user_syscall(0, &fd_digit as *const u64 as u64, 1, 0, 0);
-        let nl = b"\n";
-        user_syscall(0, nl.as_ptr() as u64, 1, 0, 0);
-
-        // SYS_FREAD(fd, buf, 128) — read first 128 bytes
-        let mut buf = [0u8; 128];
-        let n = user_syscall(12, fd, buf.as_mut_ptr() as u64, 128, 0);
-        if n > 0 && n != u64::MAX {
-            let msg2 = b"[user_task] Read from file:\n";
-            user_syscall(0, msg2.as_ptr() as u64, msg2.len() as u64, 0, 0);
-            user_syscall(0, buf.as_ptr() as u64, n, 0, 0);
-        }
-
-        // SYS_CLOSE(fd)
-        user_syscall(11, fd, 0, 0, 0);
-    }
-
-    // --- Exercise memory allocation ---
-
-    // SYS_ALLOC(tier=0) — allocate a Public-tier frame
-    let frame = user_syscall(30, 0, 4096, 0, 0);
-    if frame != 0 {
-        let msg = b"[user_task] Allocated frame from tier 0\n";
-        user_syscall(0, msg.as_ptr() as u64, msg.len() as u64, 0, 0);
-
-        // SYS_FREE — return the frame
-        user_syscall(31, frame, 4096, 0, 0);
-        let msg2 = b"[user_task] Freed frame\n";
-        user_syscall(0, msg2.as_ptr() as u64, msg2.len() as u64, 0, 0);
-    }
-
-    // --- Periodic heartbeat loop ---
-    let mut counter: u64 = 0;
     loop {
-        counter += 1;
-        if counter % 1_000_000 == 0 {
-            let msg = b"[user_task] tick from Ring 3\n";
-            user_syscall(0, msg.as_ptr() as u64, msg.len() as u64, 0, 0);
-            // SYS_YIELD
-            user_syscall(3, 0, 0, 0, 0);
-        }
-        core::hint::spin_loop();
+        // SYS_GETPID — no arguments, returns the current task index.
+        let _pid = user_syscall(4, 0, 0, 0, 0);
+        // SYS_YIELD — give other tasks a turn so the scheduler can prove
+        // it round-robins from Ring 3 too.
+        user_syscall(3, 0, 0, 0, 0);
     }
 }
 

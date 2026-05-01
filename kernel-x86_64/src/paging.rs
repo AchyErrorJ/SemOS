@@ -239,10 +239,64 @@ pub fn phys_to_virt(phys: u64) -> u64 {
     unsafe { phys + PHYS_MEM_OFFSET }
 }
 
-/// Convert a virtual address (in the physical map region) back to physical
+/// Convert a virtual address (in the physical map region) back to physical.
+///
+/// **Only valid for addresses in the bootloader's physical-memory map region.**
+/// For arbitrary kernel virtual addresses (e.g. function pointers in the
+/// kernel image), use [`walk_active_pml4`] instead — the kernel image is at
+/// a different virtual offset than the physical-memory map and this helper
+/// will produce garbage (often a wrap-around).
 #[inline]
 pub fn virt_to_phys(virt: u64) -> u64 {
     unsafe { virt - PHYS_MEM_OFFSET }
+}
+
+/// Walk the currently active page tables (CR3) to translate any kernel
+/// virtual address to its physical address.
+///
+/// Returns `None` if any level along the path is not present, or if a
+/// huge page is encountered (we conservatively reject those for now —
+/// add 2MiB / 1GiB handling when we actually use huge pages).
+pub fn walk_active_pml4(virt: u64) -> Option<u64> {
+    let cr3 = read_cr3() & 0x000F_FFFF_FFFF_F000;
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+    let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
+    let page_off = virt & 0xFFF;
+
+    unsafe {
+        let pml4 = &*(phys_to_virt(cr3) as *const PageTable);
+        let pml4e = pml4.entry(pml4_idx);
+        if !pml4e.is_present() { return None; }
+
+        let pdpt_phys = pml4e.0 & flags::ADDR_MASK;
+        let pdpt = &*(phys_to_virt(pdpt_phys) as *const PageTable);
+        let pdpte = pdpt.entry(pdpt_idx);
+        if !pdpte.is_present() { return None; }
+        // 1 GiB huge page (PS bit set in PDPTE) — not currently expected.
+        if pdpte.0 & flags::HUGE_PAGE != 0 { return None; }
+
+        let pd_phys = pdpte.0 & flags::ADDR_MASK;
+        let pd = &*(phys_to_virt(pd_phys) as *const PageTable);
+        let pde = pd.entry(pd_idx);
+        if !pde.is_present() { return None; }
+        // 2 MiB huge page — common for kernel image. Compute physical from
+        // the 2 MiB-aligned base plus the offset within the 2 MiB page.
+        if pde.0 & flags::HUGE_PAGE != 0 {
+            let base_2m = pde.0 & 0x000F_FFFF_FFE0_0000;
+            let off_2m = virt & 0x1F_FFFF;
+            return Some(base_2m + off_2m);
+        }
+
+        let pt_phys = pde.0 & flags::ADDR_MASK;
+        let pt = &*(phys_to_virt(pt_phys) as *const PageTable);
+        let pte = pt.entry(pt_idx);
+        if !pte.is_present() { return None; }
+
+        let page_phys = pte.0 & flags::ADDR_MASK;
+        Some(page_phys + page_off)
+    }
 }
 
 /// Get a mutable reference to a page table at a physical address
@@ -447,14 +501,29 @@ impl AddressSpace {
         index: usize,
         user: bool,
     ) -> Option<u64> {
-        if table.entry(index).is_present() {
-            Some(table.entry(index).phys_addr())
-        } else {
-            let new_frame = alloc_pt_frame()?;
-            *table.entry_mut(index) = PageTableEntry::table(new_frame, user);
-            self.track_subtable(new_frame);
-            Some(new_frame)
+        let existing = table.entry(index);
+        if existing.is_present() {
+            let existing_user = (existing.0 & flags::USER) != 0;
+            // If we want user access but the inherited sub-table is
+            // kernel-only, we MUST allocate a fresh sub-table rather than
+            // OR'ing the USER bit onto the shared inherited entry — the
+            // sub-table is shared with the boot address space (and any other
+            // process), so mutating its entries would cross-contaminate.
+            // Allocating fresh costs us whatever mappings were inherited
+            // through this slot, but since this only triggers for user-half
+            // addresses, those were bootloader scratch we don't need.
+            if user && !existing_user {
+                let new_frame = alloc_pt_frame()?;
+                *table.entry_mut(index) = PageTableEntry::table(new_frame, user);
+                self.track_subtable(new_frame);
+                return Some(new_frame);
+            }
+            return Some(existing.phys_addr());
         }
+        let new_frame = alloc_pt_frame()?;
+        *table.entry_mut(index) = PageTableEntry::table(new_frame, user);
+        self.track_subtable(new_frame);
+        Some(new_frame)
     }
 
     /// Track a subtable for cleanup

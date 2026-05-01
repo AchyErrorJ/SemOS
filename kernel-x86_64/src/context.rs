@@ -563,17 +563,27 @@ pub fn spawn_user_task(
     let user_stack_virt = crate::paging::user_layout::USER_STACK_TOP;
     let user_stack_size = crate::paging::user_layout::USER_STACK_SIZE;
 
-    // Map user stack pages (4KB each)
+    // Map user stack pages (4KB each).
+    // Same caveat as the entry mapping below: TASK_STACKS lives in the
+    // kernel image .bss region, which is NOT in the physical-memory map.
+    // We must walk the page tables per-page to get each stack page's real
+    // physical backing. (If TASK_STACKS happens to span a page boundary
+    // mid-allocation that's fine — page-by-page translation handles it.)
     let stack_pages = (user_stack_size / crate::paging::PAGE_SIZE_4K) as usize;
-    let stack_phys_base = unsafe {
+    let stack_virt_base = unsafe {
         let stacks = &raw const TASK_STACKS;
         (*stacks)[slot].0.as_ptr() as u64
     };
-    // Convert virtual address (in kernel space) to physical
-    let stack_phys = crate::paging::virt_to_phys(stack_phys_base);
 
     for i in 0..stack_pages {
-        let page_phys = stack_phys + (i as u64 * crate::paging::PAGE_SIZE_4K);
+        let page_kvirt = stack_virt_base + (i as u64 * crate::paging::PAGE_SIZE_4K);
+        let page_phys = match crate::paging::walk_active_pml4(page_kvirt) {
+            Some(p) => p,
+            None => {
+                crate::println!("    [spawn_user_task] failed to translate stack page 0x{:X}", page_kvirt);
+                return None;
+            }
+        };
         let page_virt = (user_stack_virt - user_stack_size)
             + (i as u64 * crate::paging::PAGE_SIZE_4K);
         space.map_4k(page_virt, page_phys, crate::paging::PagePermission::ReadWrite);
@@ -588,10 +598,19 @@ pub fn spawn_user_task(
     let entry_page = entry_addr & !0xFFF; // 4KB aligned
     let entry_offset = entry_addr & 0xFFF;
 
-    // Map the entry page at USER_CODE_BASE
+    // Map the entry page at USER_CODE_BASE.
+    // The entry function lives in the kernel image at virtual_address_offset
+    // (e.g. 0x10000000000), which is NOT the bootloader's physical-memory
+    // map region. virt_to_phys would underflow into a bogus high address;
+    // walk_active_pml4 does the real page-table translation.
     let user_code_virt = crate::paging::user_layout::USER_CODE_BASE;
-    // The entry function is in kernel virtual space, convert to physical
-    let entry_phys = crate::paging::virt_to_phys(entry_page);
+    let entry_phys = match crate::paging::walk_active_pml4(entry_page) {
+        Some(p) => p,
+        None => {
+            crate::println!("    [spawn_user_task] failed to translate entry virt 0x{:X}", entry_page);
+            return None;
+        }
+    };
     space.map_4k(
         user_code_virt,
         entry_phys,
