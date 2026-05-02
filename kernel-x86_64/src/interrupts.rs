@@ -267,12 +267,19 @@ extern "x86-interrupt" fn page_fault_handler(
         kill_current_task();
         return;
     }
-    // Kernel page fault — fatal
-    println!("EXCEPTION: PAGE FAULT");
+    // Kernel page fault.
+    // Right now this fires intermittently after a Ring 3 task exits — see
+    // task #40. Rather than hlt the whole kernel and lose every running
+    // task, log it loudly and try to recover by killing the (kernel-mode)
+    // task that took the fault. The leaked iret frame on its kernel stack
+    // is bounded; we lose that one task's state but the rest of the
+    // system (other Ready tasks) keeps running.
+    println!("KERNEL PAGE FAULT — recovering by killing current task");
     println!("  Accessed Address: {:?}", Cr2::read());
-    println!("  Error Code: {:?}", error_code);
-    println!("{:#?}", stack_frame);
-    loop { x86_64::instructions::hlt(); }
+    println!("  Error Code:       {:?}", error_code);
+    println!("  RIP:              {:?}", stack_frame.instruction_pointer);
+    println!("  RSP:              {:?}", stack_frame.stack_pointer);
+    kill_current_task();
 }
 
 extern "x86-interrupt" fn x87_fp_handler(stack_frame: InterruptStackFrame) {
