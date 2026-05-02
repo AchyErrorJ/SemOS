@@ -362,6 +362,11 @@ static mut TEST_ELF_BUF: [u8; 256] = [0; 256];
 /// embedded string then SYS_EXIT(0). Same lifetime story as TEST_ELF_BUF.
 static mut HELLO_ELF_BUF: [u8; 256] = [0; 256];
 
+/// Backing buffer for redact.elf — the killer demo. Contains a string with
+/// PII, prints it raw, calls SYS_LLM_REDACT, prints the kernel-mediated
+/// redacted version, exits.
+static mut REDACT_ELF_BUF: [u8; 512] = [0; 512];
+
 /// Initialize the global filesystem
 pub fn init() {
 
@@ -389,6 +394,14 @@ pub fn init() {
             &(*p)
         };
 
+        // Same for redact.elf
+        let redact = crate::process::elf::create_redact_elf();
+        REDACT_ELF_BUF = redact;
+        let redact_elf_static: &'static [u8] = {
+            let p = &raw const REDACT_ELF_BUF;
+            &(*p)
+        };
+
         // Add some built-in files
         if let Some(ref mut fs) = RAMFS {
             // Add a welcome message
@@ -411,6 +424,10 @@ pub fn init() {
             // Add hello.elf — SYS_WRITE("Hello from Ring 3...\n") + SYS_EXIT(0).
             // Proves user programs with embedded data segments work.
             fs.add("hello.elf", FileType::Executable, hello_elf_static);
+            // Add redact.elf — the killer demo. Prints PII, asks the kernel
+            // to redact it, prints the masked version. Proves the kernel
+            // mediates LLM-bound data at the syscall boundary.
+            fs.add("redact.elf", FileType::Executable, redact_elf_static);
 
             crate::platform::log("    Added built-in files\n");
         }

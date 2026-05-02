@@ -275,10 +275,13 @@ fn task_isolated() {
 /// has no guard page and overflows under the ELF loader's call depth).
 /// After firing the syscalls it idles in `hlt`.
 fn init_loader_task() {
-    // Run hello.elf — the bigger demo (SYS_WRITE of an embedded string,
-    // then SYS_EXIT). Skip test.elf for now since its post-exit cleanup
-    // path is currently flaky and would prevent hello.elf from running.
-    spawn_named("hello.elf");
+    // The killer demo: redact.elf prints raw PII, asks the kernel to
+    // redact via SYS_LLM_REDACT, prints the masked output, exits.
+    // Demonstrates that ring-0 data sanitization sits between user code
+    // and "the LLM" — the original secret never crosses the syscall
+    // boundary in raw form.
+    println!("[*] === KILLER DEMO: kernel-mediated PII redaction ===");
+    spawn_named("redact.elf");
     // Idle.
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }

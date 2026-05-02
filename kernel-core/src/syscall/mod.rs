@@ -1128,17 +1128,26 @@ fn handle_llm_redact(input_ptr: u64, input_len: u64, out_ptr: u64) -> u64 {
     let len = input_len as usize;
     if len == 0 || len > 4096 { return u64::MAX; }
 
+    // Use a static scratch buffer instead of a stack-allocated 4 KiB array.
+    // The per-task kernel stack is 8 KiB, and a 4 KiB local plus the
+    // syscall entry, dispatch, and handler frames overflows it silently
+    // (no guard page yet). Single-threaded for now → static is safe.
+    static mut REDACT_SCRATCH: [u8; 4096] = [0; 4096];
+
     let input = unsafe {
         core::slice::from_raw_parts(input_ptr as *const u8, len)
     };
 
     unsafe {
         let redactor = crate::llm::context_builder::global_redactor();
-        let mut output = [0u8; 4096];
-        let out_len = redactor.redact(input, &mut output);
+        let scratch_slice: &mut [u8] = core::slice::from_raw_parts_mut(
+            (&raw mut REDACT_SCRATCH) as *mut u8,
+            4096,
+        );
+        let out_len = redactor.redact(input, scratch_slice);
         if out_ptr != 0 && out_len > 0 {
             let dest = core::slice::from_raw_parts_mut(out_ptr as *mut u8, out_len);
-            dest.copy_from_slice(&output[..out_len]);
+            dest.copy_from_slice(&scratch_slice[..out_len]);
         }
         out_len as u64
     }
