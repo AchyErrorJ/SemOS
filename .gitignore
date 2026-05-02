@@ -5,6 +5,8 @@ target/
 # QEMU runtime output
 qemu-serial.log
 qemu-int.log
+qemu-out.log
+qemu-stderr.log
 *.img
 
 # Editor / OS noise
