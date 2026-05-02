@@ -314,8 +314,16 @@ extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFram
 
 /// Kill the current task when it causes a fault in Ring 3.
 ///
-/// Marks the task as Exited in the scheduler, then yields to let the
-/// scheduler pick a different task. The faulting task never runs again.
+/// Marks the task as Exited in the scheduler, then context-switches away
+/// to a different task. We never return from this call — when the
+/// scheduler next picks an Exited task, it skips it.
+///
+/// Calling schedule() from within an interrupt handler is safe here:
+/// context_switch saves our current state (mid-handler) into the dying
+/// task's CONTEXTS slot. Since the task is Exited, pick_next will never
+/// resume that saved state. The leaked stack frames on the dying task's
+/// kernel stack are bounded (one task's worth) and will be reclaimed when
+/// we eventually free per-task resources.
 fn kill_current_task() {
     let idx = kernel_core::scheduler::current_task_index();
     println!("[kernel] Killing task {} due to fault", idx);
@@ -323,15 +331,18 @@ fn kill_current_task() {
         let tasks = &raw mut kernel_core::scheduler::TASKS;
         (*tasks)[idx].state = kernel_core::scheduler::TaskState::Exited;
     }
-    // Yield — the timer will eventually switch to another task.
-    // We can't context_switch directly from an interrupt handler that
-    // already has the interrupt frame on the stack, so we just let
-    // the task spin until the next timer tick picks a new task.
-    // The faulting instruction will re-execute, but since the task is
-    // marked Exited, the scheduler will skip it.
-    //
-    // TODO: for a cleaner solution, switch to a "task killed" trampoline
-    // that halts until the scheduler preempts it.
+    // Yield: actively call schedule() to context-switch off this task.
+    // We're inside the page-fault handler, but that's fine — context_switch
+    // saves the current (fault-handler) RSP/RIP into the dying task's slot,
+    // which pick_next will never pick again because we just marked it
+    // Exited. The leaked iret frame at the top of this task's kernel stack
+    // is bounded — it goes away when we eventually free per-task resources.
+    crate::context::schedule();
+    // If pick_next found nothing better (every other slot Exited too),
+    // schedule returns. Halt with interrupts on and try again on next tick.
+    loop {
+        unsafe { core::arch::asm!("sti; hlt", options(nomem, nostack)); }
+    }
 }
 
 // ============================================================================
