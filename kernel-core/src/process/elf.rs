@@ -612,6 +612,240 @@ pub fn create_redact_elf() -> [u8; 512] {
     buf
 }
 
+/// THE second killer demo: SemanticObject + LLM context.
+///
+/// A Sensitive-tier (tier 2) Ring 3 program:
+/// 1. Creates a Sensitive semantic object via SYS_SEM_CREATE with PII content
+/// 2. Reads it back via SYS_SEM_READ — gets the verbatim secret (the
+///    user is allowed direct access because user_tier >= obj_tier)
+/// 3. Calls SYS_LLM_CONTEXT([SUID]) — the kernel applies tier-based
+///    processing inside `context_builder::build_from_suids`. For a
+///    Sensitive object the redactor masks PII before writing the entry
+///    into the user's output buffer.
+/// 4. Prints both versions side by side
+/// 5. SYS_EXIT(0)
+///
+/// What it proves:
+/// - The whole semantic-object pipeline works end-to-end
+///   (SUID → registry → SYS_SEM_CREATE → SYS_SEM_READ → SYS_LLM_CONTEXT)
+/// - Tier-based mediation happens at the kernel/LLM boundary even when
+///   the requesting user has full direct access to the data
+/// - Same primitive scales to Internal (summarize) and Secret (exclude)
+///
+/// File layout: 1024-byte single PT_LOAD R+X
+///   0x00-0x3F: ELF header
+///   0x40-0x77: program header
+///   0x78:      code (~290 bytes)
+///   0x1B0:     secret string (~75 bytes)
+///   0x200:     "DIRECT READ: " label
+///   0x210:     "LLM CONTEXT: " label
+#[allow(dead_code)]
+pub fn create_sem_demo_elf() -> [u8; 1024] {
+    let mut buf = [0u8; 1024];
+
+    // ---- ELF header ----
+    buf[0..4].copy_from_slice(&ELF_MAGIC);
+    buf[4] = ELFCLASS64;
+    buf[5] = ELFDATA2LSB;
+    buf[6] = 1;
+    buf[16..18].copy_from_slice(&ET_EXEC.to_le_bytes());
+    buf[18..20].copy_from_slice(&EXPECTED_MACHINE.to_le_bytes());
+    buf[20..24].copy_from_slice(&1u32.to_le_bytes());
+    buf[24..32].copy_from_slice(&0x400078u64.to_le_bytes());
+    buf[32..40].copy_from_slice(&64u64.to_le_bytes());
+    buf[52..54].copy_from_slice(&64u16.to_le_bytes());
+    buf[54..56].copy_from_slice(&56u16.to_le_bytes());
+    buf[56..58].copy_from_slice(&1u16.to_le_bytes());
+
+    // ---- Program header ----
+    let ph = 64;
+    buf[ph     ..ph +  4].copy_from_slice(&PT_LOAD.to_le_bytes());
+    buf[ph +  4..ph +  8].copy_from_slice(&(PF_R | PF_X).to_le_bytes());
+    buf[ph +  8..ph + 16].copy_from_slice(&0u64.to_le_bytes());
+    buf[ph + 16..ph + 24].copy_from_slice(&0x400000u64.to_le_bytes());
+    buf[ph + 24..ph + 32].copy_from_slice(&0x400000u64.to_le_bytes());
+    buf[ph + 32..ph + 40].copy_from_slice(&1024u64.to_le_bytes());
+    buf[ph + 40..ph + 48].copy_from_slice(&1024u64.to_le_bytes());
+    buf[ph + 48..ph + 56].copy_from_slice(&0x1000u64.to_le_bytes());
+
+    // ---- Strings ----
+    let secret: &[u8] =
+        b"Sensitive: email=user@example.com card=4111-1111-1111-1111\n";
+    const SECRET_OFFSET: usize = 0x1B0;
+    const SECRET_VADDR: u64 = 0x400000 + SECRET_OFFSET as u64;
+    let secret_len = secret.len() as u32;
+    buf[SECRET_OFFSET..SECRET_OFFSET + secret.len()].copy_from_slice(secret);
+
+    let label_direct: &[u8] = b"DIRECT READ: ";
+    const LABEL_DIRECT_OFFSET: usize = 0x200;
+    const LABEL_DIRECT_VADDR: u64 = 0x400000 + LABEL_DIRECT_OFFSET as u64;
+    let label_direct_len = label_direct.len() as u32;
+    buf[LABEL_DIRECT_OFFSET..LABEL_DIRECT_OFFSET + label_direct.len()]
+        .copy_from_slice(label_direct);
+
+    let label_llm: &[u8] = b"LLM CONTEXT: ";
+    const LABEL_LLM_OFFSET: usize = 0x210;
+    const LABEL_LLM_VADDR: u64 = 0x400000 + LABEL_LLM_OFFSET as u64;
+    let label_llm_len = label_llm.len() as u32;
+    buf[LABEL_LLM_OFFSET..LABEL_LLM_OFFSET + label_llm.len()]
+        .copy_from_slice(label_llm);
+
+    // ---- Constants used by the code ----
+    // Arbitrary content-addressed SUID (version 1, type 0). The exact value
+    // doesn't matter; just needs to be unique within the registry.
+    const SUID_HIGH: u64 = 0x1000_0000_0000_0001;
+    const SUID_LOW: u64  = 0x0123_4567_89AB_CDEF;
+    // Pack content_ptr | (content_len << 32) for SYS_SEM_CREATE arg3
+    let content_packed: u64 = SECRET_VADDR | ((secret_len as u64) << 32);
+
+    // ---- Code at file offset 0x78 ----
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut p = 0x78;
+
+        macro_rules! emit {
+            ($($byte:expr),*) => {{
+                $( buf[p] = $byte; p += 1; )*
+            }};
+        }
+        // Helper: write a u64 little-endian and advance p
+        let write_u64 = |buf: &mut [u8], p: &mut usize, v: u64| {
+            buf[*p..*p + 8].copy_from_slice(&v.to_le_bytes());
+            *p += 8;
+        };
+        let write_u32 = |buf: &mut [u8], p: &mut usize, v: u32| {
+            buf[*p..*p + 4].copy_from_slice(&v.to_le_bytes());
+            *p += 4;
+        };
+
+        // ===== Step 1: SYS_SEM_CREATE(suid_high, suid_low, 2, content_packed)
+        //   48 BF <8B>     mov rdi, SUID_HIGH
+        //   48 BE <8B>     mov rsi, SUID_LOW
+        //   48 C7 C2 <4B>  mov rdx, 2 (sign-extended)
+        //   49 BA <8B>     mov r10, content_packed
+        //   48 C7 C0 <4B>  mov rax, 20 (SYS_SEM_CREATE)
+        //   0F 05          syscall
+        emit!(0x48, 0xBF); write_u64(&mut buf, &mut p, SUID_HIGH);
+        emit!(0x48, 0xBE); write_u64(&mut buf, &mut p, SUID_LOW);
+        emit!(0x48, 0xC7, 0xC2); write_u32(&mut buf, &mut p, 2);
+        emit!(0x49, 0xBA); write_u64(&mut buf, &mut p, content_packed);
+        emit!(0x48, 0xC7, 0xC0); write_u32(&mut buf, &mut p, 20);
+        emit!(0x0F, 0x05);
+
+        // ===== Step 2: SYS_SEM_READ → SYS_WRITE label → SYS_WRITE content
+        // sub rsp, 1024 (48 81 EC <imm32>)
+        emit!(0x48, 0x81, 0xEC); write_u32(&mut buf, &mut p, 1024);
+        // mov rdi, SUID_HIGH
+        emit!(0x48, 0xBF); write_u64(&mut buf, &mut p, SUID_HIGH);
+        // mov rsi, SUID_LOW
+        emit!(0x48, 0xBE); write_u64(&mut buf, &mut p, SUID_LOW);
+        // mov rdx, rsp  (48 89 E2)
+        emit!(0x48, 0x89, 0xE2);
+        // mov rax, 21 (SYS_SEM_READ)
+        emit!(0x48, 0xC7, 0xC0); write_u32(&mut buf, &mut p, 21);
+        // syscall
+        emit!(0x0F, 0x05);
+        // mov r10, rax  (49 89 C2) — save read length
+        emit!(0x49, 0x89, 0xC2);
+
+        // SYS_WRITE label
+        // mov rdi, LABEL_DIRECT_VADDR
+        emit!(0x48, 0xBF); write_u64(&mut buf, &mut p, LABEL_DIRECT_VADDR);
+        // mov esi, label_direct_len  (BE <imm32>)
+        emit!(0xBE); write_u32(&mut buf, &mut p, label_direct_len);
+        // xor eax, eax (31 C0) — SYS_WRITE
+        emit!(0x31, 0xC0);
+        // syscall
+        emit!(0x0F, 0x05);
+
+        // SYS_WRITE read content (rsp, r10)
+        // mov rdi, rsp (48 89 E7)
+        emit!(0x48, 0x89, 0xE7);
+        // mov rsi, r10 (4C 89 D6)
+        emit!(0x4C, 0x89, 0xD6);
+        // xor eax, eax
+        emit!(0x31, 0xC0);
+        // syscall
+        emit!(0x0F, 0x05);
+
+        // add rsp, 1024 (48 81 C4 <imm32>)
+        emit!(0x48, 0x81, 0xC4); write_u32(&mut buf, &mut p, 1024);
+
+        // ===== Step 3: SYS_LLM_CONTEXT
+        // Build SUID pair on stack: [SUID_HIGH][SUID_LOW] (16 bytes)
+        // sub rsp, 16
+        emit!(0x48, 0x81, 0xEC); write_u32(&mut buf, &mut p, 16);
+        // mov rax, SUID_HIGH; mov [rsp], rax
+        emit!(0x48, 0xB8); write_u64(&mut buf, &mut p, SUID_HIGH);
+        emit!(0x48, 0x89, 0x04, 0x24);
+        // mov rax, SUID_LOW; mov [rsp+8], rax
+        emit!(0x48, 0xB8); write_u64(&mut buf, &mut p, SUID_LOW);
+        emit!(0x48, 0x89, 0x44, 0x24, 0x08);
+        // mov r12, rsp (saved SUID array ptr) — 49 89 E4
+        emit!(0x49, 0x89, 0xE4);
+
+        // Allocate output buffer: sub rsp, 4096
+        emit!(0x48, 0x81, 0xEC); write_u32(&mut buf, &mut p, 4096);
+        // mov rdi, r12  (4C 89 E7)
+        emit!(0x4C, 0x89, 0xE7);
+        // mov esi, 1  (BE <imm32>)
+        emit!(0xBE); write_u32(&mut buf, &mut p, 1);
+        // mov rdx, rsp  (48 89 E2)
+        emit!(0x48, 0x89, 0xE2);
+        // mov rax, 51 (SYS_LLM_CONTEXT)
+        emit!(0x48, 0xC7, 0xC0); write_u32(&mut buf, &mut p, 51);
+        // syscall
+        emit!(0x0F, 0x05);
+        // rax now holds total bytes written (8-byte len prefix + content)
+        // The first 8 bytes at [rsp] are the content length we want.
+        // mov r10, [rsp] (4C 8B 14 24)
+        emit!(0x4C, 0x8B, 0x14, 0x24);
+
+        // Print label
+        // mov rdi, LABEL_LLM_VADDR
+        emit!(0x48, 0xBF); write_u64(&mut buf, &mut p, LABEL_LLM_VADDR);
+        // mov esi, label_llm_len
+        emit!(0xBE); write_u32(&mut buf, &mut p, label_llm_len);
+        // xor eax, eax
+        emit!(0x31, 0xC0);
+        // syscall
+        emit!(0x0F, 0x05);
+
+        // Print redacted content (skipping the 8-byte length prefix)
+        // lea rdi, [rsp+8] (48 8D 7C 24 08)
+        emit!(0x48, 0x8D, 0x7C, 0x24, 0x08);
+        // mov rsi, r10 (4C 89 D6)
+        emit!(0x4C, 0x89, 0xD6);
+        // xor eax, eax
+        emit!(0x31, 0xC0);
+        // syscall
+        emit!(0x0F, 0x05);
+
+        // SYS_WRITE a newline (since the redacted content may not have one).
+        // Use the secret's trailing \n at vaddr SECRET_VADDR + secret_len - 1.
+        let nl_vaddr: u64 = SECRET_VADDR + secret_len as u64 - 1;
+        emit!(0x48, 0xBF); write_u64(&mut buf, &mut p, nl_vaddr);
+        emit!(0xBE); write_u32(&mut buf, &mut p, 1);
+        emit!(0x31, 0xC0);
+        emit!(0x0F, 0x05);
+
+        // Cleanup stack: add rsp, 4096 + 16 = 4112
+        emit!(0x48, 0x81, 0xC4); write_u32(&mut buf, &mut p, 4112);
+
+        // ===== Step 4: SYS_EXIT(0)
+        // xor edi, edi
+        emit!(0x31, 0xFF);
+        // mov eax, 2
+        emit!(0xB8); write_u32(&mut buf, &mut p, 2);
+        // syscall
+        emit!(0x0F, 0x05);
+
+        let _ = p;
+    }
+
+    buf
+}
+
 /// Get human-readable segment flags
 pub fn flags_str(flags: u32) -> &'static str {
     match (flags & PF_R != 0, flags & PF_W != 0, flags & PF_X != 0) {

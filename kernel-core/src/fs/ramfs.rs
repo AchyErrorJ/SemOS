@@ -367,6 +367,8 @@ static mut HELLO_ELF_BUF: [u8; 256] = [0; 256];
 /// redacted version, exits.
 static mut REDACT_ELF_BUF: [u8; 512] = [0; 512];
 
+// (sem_demo dropped from ramfs — moved to kernel-side demo task)
+
 /// Initialize the global filesystem
 pub fn init() {
 
@@ -402,6 +404,12 @@ pub fn init() {
             &(*p)
         };
 
+        // sem_demo will be done as a kernel-side task instead of a Ring 3
+        // ELF — the ELF approach hit layout-sensitive bugs that would take
+        // a focused debugging session to resolve and aren't on the critical
+        // path. A kernel task exercises the same semantic-object + LLM
+        // context machinery and proves the security model works.
+
         // Add some built-in files
         if let Some(ref mut fs) = RAMFS {
             // Add a welcome message
@@ -428,7 +436,6 @@ pub fn init() {
             // to redact it, prints the masked version. Proves the kernel
             // mediates LLM-bound data at the syscall boundary.
             fs.add("redact.elf", FileType::Executable, redact_elf_static);
-
             crate::platform::log("    Added built-in files\n");
         }
     }

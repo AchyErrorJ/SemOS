@@ -216,7 +216,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // stack than the bootloader's boot stack has (no guard page). Spawning
     // it as a kernel task uses one of the 16 KiB TASK_STACKS slots instead.
     if let Some(slot) = context::spawn_task("init_loader", init_loader_task) {
-        println!("    Spawned init_loader (kernel mode, will load test.elf) in slot {}", slot);
+        println!("    Spawned init_loader (kernel mode) in slot {}", slot);
     }
     println!();
 
@@ -275,25 +275,104 @@ fn task_isolated() {
 /// has no guard page and overflows under the ELF loader's call depth).
 /// After firing the syscalls it idles in `hlt`.
 fn init_loader_task() {
-    // The killer demo: redact.elf prints raw PII, asks the kernel to
-    // redact via SYS_LLM_REDACT, prints the masked output, exits.
-    // Demonstrates that ring-0 data sanitization sits between user code
-    // and "the LLM" — the original secret never crosses the syscall
-    // boundary in raw form.
-    println!("[*] === KILLER DEMO: kernel-mediated PII redaction ===");
-    spawn_named("redact.elf");
-    // Idle.
+    // SemOS demo 1 (Ring 3): redact.elf — user binary asks the kernel to
+    // mediate its PII through SYS_LLM_REDACT.
+    println!();
+    println!("[*] === SemOS DEMO 1: Ring 3 -> SYS_LLM_REDACT ===");
+    spawn_named_at("redact.elf", 0);
+
+    // Wait briefly so demo 1 finishes before demo 2 prints. Each iteration
+    // of this spin loop is a few cycles; 5M iterations is ~milliseconds,
+    // enough for the timer to schedule the spawned ELF and let it exit.
+    for _ in 0..5_000_000 { core::hint::spin_loop(); }
+
+    // SemOS demo 2 (kernel-mediated): create a Sensitive semantic object,
+    // then call the LLM context builder which applies tier-based redaction.
+    // Done from kernel mode (this task) instead of Ring 3 — the same code
+    // path SYS_LLM_CONTEXT uses, just without the syscall round-trip.
+    sem_demo_kernel();
+
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
 }
 
-fn spawn_named(path: &str) {
+/// Kernel-side SemanticObject demo. Exercises the same registry +
+/// context_builder code paths that SYS_SEM_CREATE / SYS_LLM_CONTEXT would
+/// hit from Ring 3, without depending on the user-ELF loader. Proves the
+/// project's headline differentiator: Sensitive content is automatically
+/// redacted when packaged as an LLM context, even though the same content
+/// is fully visible via direct registry access.
+fn sem_demo_kernel() {
+    use kernel_core::semantic::{SUID, SemanticObject};
+    use kernel_core::memory::SecurityTier;
+
+    println!();
+    println!("[*] === SemOS DEMO 2: SemanticObject + LLM context ===");
+
+    // 1. Create a Sensitive-tier object with PII content.
+    let suid = SUID::new(0x1000_0000_0000_0001, 0x0123_4567_89AB_CDEF);
+    let secret = b"Sensitive: email=user@example.com card=4111-1111-1111-1111";
+    let owner = 0u8;
+    let obj = match SemanticObject::with_content(suid, SecurityTier::Sensitive, owner, secret) {
+        Some(o) => o,
+        None => { println!("[sem_demo] SemanticObject::with_content failed"); return; }
+    };
+    let inserted = unsafe {
+        let registry = kernel_core::semantic::registry::global_registry();
+        registry.insert(obj)
+    };
+    if !inserted {
+        println!("[sem_demo] registry.insert failed");
+        return;
+    }
+    println!("    Created SUID 0x{:X}_{:X} (Sensitive tier)",
+        suid.high, suid.low);
+
+    // 2. Direct registry read — caller has Secret-equivalent privileges
+    //    in kernel mode, so the unfiltered content is visible.
+    let direct: &[u8] = unsafe {
+        let registry = kernel_core::semantic::registry::global_registry();
+        match registry.get(&suid) {
+            Some(o) => o.content.as_bytes().unwrap_or(&[]),
+            None => &[],
+        }
+    };
+    print!("    DIRECT  : ");
+    for &b in direct { print!("{}", b as char); }
+    println!();
+
+    // 3. Build an LLM context from this SUID with a Sensitive requester.
+    //    context_builder applies tier-based processing — for Sensitive
+    //    objects that means the redactor runs over the content before it
+    //    lands in the context entry that would be sent to the LLM.
+    let suids: [(u64, u64); 1] = [(suid.high, suid.low)];
+    let ctx_result = unsafe {
+        let builder = kernel_core::llm::context_builder::global_context_builder();
+        builder.build_from_suids(&suids, SecurityTier::Sensitive as u8)
+    };
+    match ctx_result {
+        Ok(ctx) => {
+            print!("    LLM CTX : ");
+            for entry in ctx.iter() {
+                for &b in entry.content() { print!("{}", b as char); }
+            }
+            println!();
+        }
+        Err(_) => println!("    LLM CTX : <error building context>"),
+    }
+    println!("[*] === Demo complete ===");
+    println!();
+}
+
+fn spawn_named(path: &str) { spawn_named_at(path, 0); }
+
+fn spawn_named_at(path: &str, tier: u64) {
     let pid = kernel_core::syscall::dispatch(
         kernel_core::syscall::numbers::SYS_SPAWN,
         path.as_ptr() as u64,
         path.len() as u64,
-        0, // max_tier — Public
+        tier,
         0,
     );
     if pid == u64::MAX {
