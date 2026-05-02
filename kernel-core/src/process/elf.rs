@@ -382,6 +382,92 @@ pub fn create_test_elf() -> [u8; 256] {
     buf
 }
 
+/// Create a slightly less trivial ELF: SYS_WRITE("Hello from Ring 3...\n")
+/// followed by SYS_EXIT(0). Uses a string literal in the same PT_LOAD
+/// segment as the code (after the syscall sequence) — proves that user
+/// programs with embedded data work, which is the prerequisite for
+/// anything more complex (semantic-object demos, an LLM redaction demo,
+/// any real userspace program).
+///
+/// File layout (single 256-byte PT_LOAD at vaddr 0x400000, R+X):
+///   0x00-0x3F: ELF header
+///   0x40-0x77: program header + padding
+///   0x78:      code (entry point) — 31 bytes
+///   0xD0:      string ("Hello from Ring 3 ELF binary!\n", 30 bytes)
+///   ...:       trailing padding
+#[allow(dead_code)]
+pub fn create_hello_elf() -> [u8; 256] {
+    let mut buf = [0u8; 256];
+
+    // ---- ELF header ----
+    buf[0..4].copy_from_slice(&ELF_MAGIC);
+    buf[4] = ELFCLASS64;
+    buf[5] = ELFDATA2LSB;
+    buf[6] = 1; // EV_CURRENT
+    buf[16..18].copy_from_slice(&ET_EXEC.to_le_bytes());
+    buf[18..20].copy_from_slice(&EXPECTED_MACHINE.to_le_bytes());
+    buf[20..24].copy_from_slice(&1u32.to_le_bytes());        // e_version
+    buf[24..32].copy_from_slice(&0x400078u64.to_le_bytes()); // e_entry
+    buf[32..40].copy_from_slice(&64u64.to_le_bytes());       // e_phoff
+    buf[52..54].copy_from_slice(&64u16.to_le_bytes());       // e_ehsize
+    buf[54..56].copy_from_slice(&56u16.to_le_bytes());       // e_phentsize
+    buf[56..58].copy_from_slice(&1u16.to_le_bytes());        // e_phnum
+
+    // ---- Program header (offset 64) ----
+    let ph = 64;
+    buf[ph     ..ph +  4].copy_from_slice(&PT_LOAD.to_le_bytes());
+    buf[ph +  4..ph +  8].copy_from_slice(&(PF_R | PF_X).to_le_bytes());
+    buf[ph +  8..ph + 16].copy_from_slice(&0u64.to_le_bytes());        // p_offset
+    buf[ph + 16..ph + 24].copy_from_slice(&0x400000u64.to_le_bytes()); // p_vaddr
+    buf[ph + 24..ph + 32].copy_from_slice(&0x400000u64.to_le_bytes()); // p_paddr
+    buf[ph + 32..ph + 40].copy_from_slice(&256u64.to_le_bytes());      // p_filesz
+    buf[ph + 40..ph + 48].copy_from_slice(&256u64.to_le_bytes());      // p_memsz
+    buf[ph + 48..ph + 56].copy_from_slice(&0x1000u64.to_le_bytes());   // p_align
+
+    // ---- Embedded string at file offset 0xD0 / vaddr 0x4000D0 ----
+    let msg: &[u8] = b"Hello from Ring 3 ELF binary!\n";
+    const STR_OFFSET: usize = 0xD0;
+    const STR_VADDR: u64 = 0x400000 + STR_OFFSET as u64;
+    let str_len = msg.len() as u32;
+    buf[STR_OFFSET..STR_OFFSET + msg.len()].copy_from_slice(msg);
+
+    // ---- Code at file offset 0x78 / vaddr 0x400078 ----
+    // Sequence (31 bytes total):
+    //   48 BF <8B imm>           mov rdi, STR_VADDR     ; arg0 = buf_ptr
+    //   BE <4B imm>              mov esi, str_len       ; arg1 = buf_len
+    //   B8 00 00 00 00           mov eax, 0             ; SYS_WRITE
+    //   0F 05                    syscall
+    //   31 FF                    xor edi, edi           ; arg0 = 0
+    //   B8 02 00 00 00           mov eax, 2             ; SYS_EXIT
+    //   0F 05                    syscall
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut p = 0x78;
+        // mov rdi, STR_VADDR (REX.W 0xBF + 8-byte imm)
+        buf[p] = 0x48; buf[p + 1] = 0xBF; p += 2;
+        buf[p..p + 8].copy_from_slice(&STR_VADDR.to_le_bytes()); p += 8;
+        // mov esi, str_len  (0xBE + 4-byte imm; clears high 32 bits of rsi)
+        buf[p] = 0xBE; p += 1;
+        buf[p..p + 4].copy_from_slice(&str_len.to_le_bytes()); p += 4;
+        // mov eax, 0 (SYS_WRITE)
+        buf[p] = 0xB8; p += 1;
+        buf[p..p + 4].copy_from_slice(&0u32.to_le_bytes()); p += 4;
+        // syscall
+        buf[p] = 0x0F; buf[p + 1] = 0x05; p += 2;
+        // xor edi, edi
+        buf[p] = 0x31; buf[p + 1] = 0xFF; p += 2;
+        // mov eax, 2 (SYS_EXIT)
+        buf[p] = 0xB8; p += 1;
+        buf[p..p + 4].copy_from_slice(&2u32.to_le_bytes()); p += 4;
+        // syscall
+        buf[p] = 0x0F; buf[p + 1] = 0x05;
+        let _ = p;
+    }
+
+    // No aarch64 implementation — this stretch demo is x86_64-only.
+    buf
+}
+
 /// Get human-readable segment flags
 pub fn flags_str(flags: u32) -> &'static str {
     match (flags & PF_R != 0, flags & PF_W != 0, flags & PF_X != 0) {

@@ -358,6 +358,10 @@ static mut FD_TABLE: Option<FdTable> = None;
 /// and ramfs subsequently exposes it as `&'static [u8]`.
 static mut TEST_ELF_BUF: [u8; 256] = [0; 256];
 
+/// Backing buffer for the built-in hello.elf binary — does SYS_WRITE of an
+/// embedded string then SYS_EXIT(0). Same lifetime story as TEST_ELF_BUF.
+static mut HELLO_ELF_BUF: [u8; 256] = [0; 256];
+
 /// Initialize the global filesystem
 pub fn init() {
 
@@ -374,6 +378,14 @@ pub fn init() {
         TEST_ELF_BUF = elf;
         let test_elf_static: &'static [u8] = {
             let p = &raw const TEST_ELF_BUF;
+            &(*p)
+        };
+
+        // Same for hello.elf
+        let hello = crate::process::elf::create_hello_elf();
+        HELLO_ELF_BUF = hello;
+        let hello_elf_static: &'static [u8] = {
+            let p = &raw const HELLO_ELF_BUF;
             &(*p)
         };
 
@@ -396,6 +408,9 @@ pub fn init() {
             // Add the built-in test ELF — a 256-byte Ring 3 binary that just
             // calls SYS_EXIT(0). spawn_from_elf("test.elf", ...) loads it.
             fs.add("test.elf", FileType::Executable, test_elf_static);
+            // Add hello.elf — SYS_WRITE("Hello from Ring 3...\n") + SYS_EXIT(0).
+            // Proves user programs with embedded data segments work.
+            fs.add("hello.elf", FileType::Executable, hello_elf_static);
 
             crate::platform::log("    Added built-in files\n");
         }

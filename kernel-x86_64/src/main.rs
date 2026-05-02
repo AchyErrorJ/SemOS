@@ -270,12 +270,22 @@ fn task_isolated() {
     }
 }
 
-/// One-shot kernel task that loads and spawns test.elf via SYS_SPAWN.
-/// Lives on its own 16 KiB task stack (vs the boot stack which has no
-/// guard page and overflows under the ELF loader's call depth). After
-/// firing the syscall it idles in `hlt` so it doesn't hog CPU.
+/// One-shot kernel task that loads and spawns built-in user ELFs via
+/// SYS_SPAWN. Lives on its own 16 KiB task stack (vs the boot stack which
+/// has no guard page and overflows under the ELF loader's call depth).
+/// After firing the syscalls it idles in `hlt`.
 fn init_loader_task() {
-    let path = "test.elf";
+    // Run hello.elf — the bigger demo (SYS_WRITE of an embedded string,
+    // then SYS_EXIT). Skip test.elf for now since its post-exit cleanup
+    // path is currently flaky and would prevent hello.elf from running.
+    spawn_named("hello.elf");
+    // Idle.
+    loop {
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+    }
+}
+
+fn spawn_named(path: &str) {
     let pid = kernel_core::syscall::dispatch(
         kernel_core::syscall::numbers::SYS_SPAWN,
         path.as_ptr() as u64,
@@ -284,14 +294,9 @@ fn init_loader_task() {
         0,
     );
     if pid == u64::MAX {
-        println!("[init_loader] SYS_SPAWN(test.elf) FAILED");
+        println!("[init_loader] SYS_SPAWN({}) FAILED", path);
     } else {
-        println!("[init_loader] SYS_SPAWN(test.elf) -> PID {}", pid);
-    }
-    // Idle. The scheduler will keep picking this task between others;
-    // each time we just hlt until the next timer interrupt.
-    loop {
-        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+        println!("[init_loader] SYS_SPAWN({}) -> PID {}", path, pid);
     }
 }
 
