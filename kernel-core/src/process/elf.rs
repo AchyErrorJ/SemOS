@@ -153,8 +153,13 @@ pub enum ElfError {
 /// Default base address for PIE executables
 const PIE_BASE: usize = 0x0000_0000_0040_0000; // 4MB
 
-/// Default stack top
-const STACK_TOP: usize = 0x0000_FFFF_FFFF_0000;
+/// Default user-space stack top.
+///
+/// Must be in the canonical lower half (bit 47 = 0, bits 48-63 = 0) so x86_64
+/// will accept it without #GP, AND below the platform's user-space cap that
+/// the page-table mapping helpers enforce (typically anything below
+/// 0x0000_8000_0000_0000). 512 GiB - 64 KiB sits comfortably under both.
+const STACK_TOP: usize = 0x0000_007F_FFFF_0000;
 
 /// Default stack size
 const STACK_SIZE: usize = 64 * 1024; // 64KB
@@ -322,8 +327,11 @@ pub fn load_segments(data: &[u8], info: &ElfInfo) -> Result<(), ElfError> {
     Ok(())
 }
 
-/// Create a minimal ELF header for testing
-/// This creates a tiny executable that just does an exit syscall
+/// Create a minimal ELF header for testing.
+/// Builds a tiny executable that just does an exit syscall — the simplest
+/// possible Ring 3 program that proves spawn_from_elf works end to end.
+/// The caller is responsible for storing the result in a `'static` location
+/// (e.g. by populating a `static mut [u8; 256]` at boot time).
 #[allow(dead_code)]
 pub fn create_test_elf() -> [u8; 256] {
     let mut buf = [0u8; 256];

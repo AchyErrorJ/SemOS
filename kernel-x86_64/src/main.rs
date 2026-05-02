@@ -209,6 +209,15 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if let Some(slot) = context::spawn_user_task("user_task", user_task_entry, 0) {
         println!("    Spawned user_task (Ring 3, tier<=0) in slot {}", slot);
     }
+
+    // Load test.elf from ramfs via a dedicated kernel "init" task. We
+    // can't call the SYS_SPAWN dispatch chain directly from kernel_main —
+    // ELF parsing + address-space creation + page mapping consumes more
+    // stack than the bootloader's boot stack has (no guard page). Spawning
+    // it as a kernel task uses one of the 16 KiB TASK_STACKS slots instead.
+    if let Some(slot) = context::spawn_task("init_loader", init_loader_task) {
+        println!("    Spawned init_loader (kernel mode, will load test.elf) in slot {}", slot);
+    }
     println!();
 
     println!("====================================================================================================");
@@ -258,6 +267,31 @@ fn task_isolated() {
             println!("[task_iso] tick {} (isolated address space)", counter / 500_000);
         }
         core::hint::spin_loop();
+    }
+}
+
+/// One-shot kernel task that loads and spawns test.elf via SYS_SPAWN.
+/// Lives on its own 16 KiB task stack (vs the boot stack which has no
+/// guard page and overflows under the ELF loader's call depth). After
+/// firing the syscall it idles in `hlt` so it doesn't hog CPU.
+fn init_loader_task() {
+    let path = "test.elf";
+    let pid = kernel_core::syscall::dispatch(
+        kernel_core::syscall::numbers::SYS_SPAWN,
+        path.as_ptr() as u64,
+        path.len() as u64,
+        0, // max_tier — Public
+        0,
+    );
+    if pid == u64::MAX {
+        println!("[init_loader] SYS_SPAWN(test.elf) FAILED");
+    } else {
+        println!("[init_loader] SYS_SPAWN(test.elf) -> PID {}", pid);
+    }
+    // Idle. The scheduler will keep picking this task between others;
+    // each time we just hlt until the next timer interrupt.
+    loop {
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
 }
 

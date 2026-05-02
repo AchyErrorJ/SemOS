@@ -218,12 +218,19 @@ fn handle_exit(code: u64) -> u64 {
     crate::platform::log("[syscall] Process exit with code ");
     crate::platform::log_num(code);
     crate::platform::log("\n");
-    // Mark task as exited
+    // Mark task as exited so pick_next will skip it forever.
     let idx = crate::scheduler::current_task_index();
     unsafe {
         let tasks = &raw mut crate::scheduler::TASKS;
         (*tasks)[idx].state = crate::scheduler::TaskState::Exited;
     }
+    // Returns 0; the syscall asm will SYSRET back to Ring 3, the user RIP
+    // points at whatever follows the `syscall` instruction (usually
+    // padding/zeros) and the task will page-fault on its next instruction
+    // fetch. The page-fault handler kills the (already-exited) task and
+    // the next timer tick picks something else.
+    // TODO: cleaner shutdown — modify the iret frame to point to a
+    // kernel-mode trampoline that calls schedule directly.
     0
 }
 

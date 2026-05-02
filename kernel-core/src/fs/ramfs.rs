@@ -352,6 +352,12 @@ static mut RAMFS: Option<Ramfs> = None;
 /// Global file descriptor table
 static mut FD_TABLE: Option<FdTable> = None;
 
+/// Backing buffer for the built-in test.elf binary. Filled by [`init`] from
+/// `crate::process::elf::create_test_elf()`. Size matches that helper's
+/// return type. Static mut is fine here because we only write once at boot
+/// and ramfs subsequently exposes it as `&'static [u8]`.
+static mut TEST_ELF_BUF: [u8; 256] = [0; 256];
+
 /// Initialize the global filesystem
 pub fn init() {
 
@@ -360,6 +366,16 @@ pub fn init() {
     unsafe {
         RAMFS = Some(Ramfs::new());
         FD_TABLE = Some(FdTable::new());
+
+        // Populate the test ELF backing buffer once, then register it as a
+        // ramfs file. `&*(&raw const TEST_ELF_BUF)` extends the borrow to
+        // 'static (sound because we never mutate the buffer again).
+        let elf = crate::process::elf::create_test_elf();
+        TEST_ELF_BUF = elf;
+        let test_elf_static: &'static [u8] = {
+            let p = &raw const TEST_ELF_BUF;
+            &(*p)
+        };
 
         // Add some built-in files
         if let Some(ref mut fs) = RAMFS {
@@ -376,6 +392,10 @@ pub fn init() {
                 FileType::Regular,
                 b"Available commands:\n  help    - Show this help\n  ls      - List files\n  cat     - Display file contents\n  run     - Execute a program\n  ps      - Show running tasks\n  mem     - Show memory info\n  clear   - Clear screen\n  exit    - Exit shell\n",
             );
+
+            // Add the built-in test ELF — a 256-byte Ring 3 binary that just
+            // calls SYS_EXIT(0). spawn_from_elf("test.elf", ...) loads it.
+            fs.add("test.elf", FileType::Executable, test_elf_static);
 
             crate::platform::log("    Added built-in files\n");
         }
