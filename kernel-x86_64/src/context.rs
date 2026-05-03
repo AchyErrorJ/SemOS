@@ -493,8 +493,8 @@ pub fn spawn_user_task_with_cr3(
     init_fxsave_for(slot);
     scheduler::mark_ready(slot);
 
-    crate::println!("    Ring 3 ELF task '{}': RIP=0x{:X} RSP=0x{:X} CR3=0x{:X}",
-        name, user_rip, user_rsp, cr3);
+    // (silenced) "Ring 3 ELF task '{}': RIP=... RSP=... CR3=..." debug line
+    let _ = (name, user_rip, user_rsp, cr3);
 
     Some(slot)
 }
@@ -636,8 +636,8 @@ pub fn spawn_user_task(
     init_fxsave_for(slot);
     scheduler::mark_ready(slot);
 
-    crate::println!("    Ring 3 task '{}': RIP=0x{:X} RSP=0x{:X} CR3=0x{:X}",
-        name, user_rip, user_rsp, ctx.cr3);
+    // (silenced) Ring 3 task spawn debug line
+    let _ = (name, user_rip, user_rsp, ctx.cr3);
 
     Some(slot)
 }

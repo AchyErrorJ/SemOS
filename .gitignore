@@ -9,6 +9,10 @@ qemu-out.log
 qemu-stderr.log
 *.img
 
+# GDB debugging artifacts
+gdb-out.log
+gdb-trace.log
+
 # Editor / OS noise
 .vscode/
 .idea/

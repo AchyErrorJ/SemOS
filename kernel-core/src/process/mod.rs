@@ -623,11 +623,7 @@ pub fn spawn_from_elf(name: &'static str, elf_data: &[u8], max_tier: u8) -> Opti
     let elf_info = elf::load_elf(elf_data)?;
     let platform = crate::platform::get();
 
-    crate::platform::log("[process] Loading ELF: entry=0x");
-    crate::platform::log_num(elf_info.entry as u64);
-    crate::platform::log(" segments=");
-    crate::platform::log_num(elf_info.num_segments as u64);
-    crate::platform::log("\n");
+    // (silenced — was "[process] Loading ELF: entry=... segments=..." debug log)
 
     // 2. Create a new address space restricted to max_tier
     let cr3 = platform.create_address_space(max_tier)?;
@@ -713,11 +709,8 @@ pub fn spawn_from_elf(name: &'static str, elf_data: &[u8], max_tier: u8) -> Opti
             parent.add_child(pid);
         }
 
-        crate::platform::log("[process] Spawned ELF process PID=");
-        crate::platform::log_num(pid.0 as u64);
-        crate::platform::log(" task=");
-        crate::platform::log_num(task_slot as u64);
-        crate::platform::log("\n");
+        // (silenced — was "[process] Spawned ELF process PID=...")
+        let _ = task_slot;
 
         Some(pid)
     }

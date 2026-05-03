@@ -215,9 +215,7 @@ fn handle_write(buf_ptr: u64, buf_len: u64) -> u64 {
 }
 
 fn handle_exit(code: u64) -> u64 {
-    crate::platform::log("[syscall] Process exit with code ");
-    crate::platform::log_num(code);
-    crate::platform::log("\n");
+    let _ = code; // silenced "[syscall] Process exit with code N" — noisy in demos
     // Mark task as exited so pick_next will skip it forever.
     let idx = crate::scheduler::current_task_index();
     unsafe {
@@ -240,19 +238,7 @@ fn handle_yield() {
 }
 
 fn handle_getpid() -> u64 {
-    let idx = crate::scheduler::current_task_index();
-    // Heartbeat: log every 100,000 GETPID calls so we can prove the Ring 3
-    // user task is alive without it needing to dereference any pointers.
-    static COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
-    let n = COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    if n.is_multiple_of(100_000) {
-        crate::platform::log("[ring3] SYS_GETPID call #");
-        crate::platform::log_num(n);
-        crate::platform::log(" from task ");
-        crate::platform::log_num(idx as u64);
-        crate::platform::log("\n");
-    }
-    idx as u64
+    crate::scheduler::current_task_index() as u64
 }
 
 fn handle_info() -> u64 {
