@@ -1,26 +1,26 @@
 INFO : Framebuffer info: FrameBufferInfo { byte_len: 2764800, width: 1280, height: 720, pixel_format: Bgr, bytes_per_pixel: 3, stride: 1280 }
 INFO : 4th Stage
-INFO : BiosInfo { stage_4: Region { start: 130000, len: 23a90 }, kernel: Region { start: 1000000, len: 2cc360 }, ramdisk: Region { start: 12cd000, len: 0 }, config_file: Region { start: 12cd000, len: 0 }, last_used_addr: 12ccfff, framebuffer: BiosFramebufferInfo { region: Region { start: fd000000, len: 2a3000 }, width: 500, height: 2d0, bytes_per_pixel: 3, stride: 500, pixel_format: Bgr }, memory_map_addr: 11cb0, memory_map_len: 7 }
+INFO : BiosInfo { stage_4: Region { start: 130000, len: 23a90 }, kernel: Region { start: 1000000, len: 2c4c98 }, ramdisk: Region { start: 12c5000, len: 0 }, config_file: Region { start: 12c5000, len: 0 }, last_used_addr: 12c4fff, framebuffer: BiosFramebufferInfo { region: Region { start: fd000000, len: 2a3000 }, width: 500, height: 2d0, bytes_per_pixel: 3, stride: 500, pixel_format: Bgr }, memory_map_addr: 11cb0, memory_map_len: 7 }
 INFO : BIOS boot
 INFO : Elf file loaded at Pointer {
     addr: 0x0000000001000000,
-    metadata: 2933600,
+    metadata: 2903192,
 }
 INFO : virtual_address_offset: 0x10000000000
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(4), offset: 0, virtual_addr: 0, physical_addr: 0, file_size: b235, mem_size: b235, align: 1000 })
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(5), offset: b238, virtual_addr: c238, physical_addr: c238, file_size: e2e1, mem_size: e2e1, align: 1000 })
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 19520, virtual_addr: 1b520, physical_addr: 1b520, file_size: 1e00, mem_size: 2ae0, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(4), offset: 0, virtual_addr: 0, physical_addr: 0, file_size: de51, mem_size: de51, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(5), offset: de54, virtual_addr: ee54, physical_addr: ee54, file_size: d391, mem_size: d391, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 1b1e8, virtual_addr: 1d1e8, physical_addr: 1d1e8, file_size: 1d08, mem_size: 1e18, align: 1000 })
 INFO : Mapping bss section
-INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 1b320, virtual_addr: 1e320, physical_addr: 1e320, file_size: e5640, mem_size: 1a39b0, align: 1000 })
+INFO : Handling Segment: Ph64(ProgramHeader64 { type_: Ok(Load), flags: Flags(6), offset: 1cef0, virtual_addr: 1fef0, physical_addr: 1fef0, file_size: e5640, mem_size: 1a17e0, align: 1000 })
 INFO : Mapping bss section
-INFO : Entry point at: 0x10000010375
-INFO : Creating GDT at PhysAddr(0x13ae000)
+INFO : Entry point at: 0x10000012778
+INFO : Creating GDT at PhysAddr(0x13a4000)
 INFO : Map framebuffer
 INFO : Map physical memory
 INFO : Allocate bootinfo
 INFO : Create Memory Map
 INFO : Create bootinfo
-INFO : Jumping to kernel entry point at VirtAddr(0x10000010375)
+INFO : Jumping to kernel entry point at VirtAddr(0x10000012778)
 ====================================================================================================
   Semantic OS v0.1.0 - x86_64 Bare Metal
 ====================================================================================================
@@ -36,9 +36,9 @@ Platform: x86_64-unknown-none
       000000000009fc00-00000000000a0000 (1 KB) UnknownBios(2)
       00000000000f0000-0000000000100000 (64 KB) UnknownBios(2)
       0000000000100000-0000000001000000 (15360 KB) Usable
-      0000000001000000-00000000012cd000 (2868 KB) Bootloader
-      00000000012cd000-00000000017bd000 (5056 KB) Bootloader
-      00000000017bd000-0000000007fdd000 (106624 KB) Usable
+      0000000001000000-00000000012c5000 (2836 KB) Bootloader
+      00000000012c5000-00000000017b3000 (5048 KB) Bootloader
+      00000000017b3000-0000000007fdd000 (106664 KB) Usable
       0000000007fdd000-0000000008000000 (140 KB) UnknownBios(2)
       00000000fffc0000-0000000100000000 (256 KB) UnknownBios(2)
       000000fd00000000-0000010000000000 (12582912 KB) UnknownBios(2)
@@ -58,22 +58,22 @@ Platform: x86_64-unknown-none
 [OK] Interrupts initialized
 
 [*] Initializing memory pools...
-    Public pool:    0x00000000017BD000 (26656 KB)
-    Internal pool:  0x00000000031C5000 (26656 KB)
-    Sensitive pool: 0x0000000004BCD000 (26656 KB)
-    Secret pool:    0x00000000065D5000 (26656 KB)
+    Public pool:    0x00000000017B3000 (26664 KB)
+    Internal pool:  0x00000000031BD000 (26664 KB)
+    Sensitive pool: 0x0000000004BC7000 (26664 KB)
+    Secret pool:    0x00000000065D1000 (26664 KB)
 [OK] Memory pools initialized
 
 [*] Memory Pool Statistics
 ====================================
-    Public pool: 6664 frames (0 used, 6664 free)
-    Internal pool: 6664 frames (0 used, 6664 free)
-    Sensitive pool: 6664 frames (0 used, 6664 free)
-    Secret pool: 6664 frames (0 used, 6664 free)
+    Public pool: 6666 frames (0 used, 6666 free)
+    Internal pool: 6666 frames (0 used, 6666 free)
+    Sensitive pool: 6666 frames (0 used, 6666 free)
+    Secret pool: 6666 frames (0 used, 6666 free)
 
 [*] Initializing paging...
     Physical memory offset: 0x0000028000000000
-    Active CR3 (PML4):      0x00000000012CD000
+    Active CR3 (PML4):      0x00000000012C5000
     Page table frame pool:  128 frames (512 KB)
     Active PML4 entries:     7/512
 [OK] Paging subsystem initialized
@@ -92,7 +92,7 @@ Platform: x86_64-unknown-none
 
 [*] Probing VirtIO block device...
 [virtio-blk] PCI 00:04.0  io_base=0xC000  host_features=0x79006E54  capacity=32768 sectors (16384 KiB)
-[virtio-blk] queue 0 ready (256 descriptors, ring at phys 0x131E000)
+[virtio-blk] queue 0 ready (256 descriptors, ring at phys 0x1314000)
   [registry] Registered block device: virtio0
 [virtio-blk] registered with driver registry as 'virtio0'
 
@@ -107,6 +107,7 @@ Platform: x86_64-unknown-none
     Ramfs: initialized
     Registered hello-rs.elf (8504 bytes, real Rust user crate)
     Registered sem-demo.elf (12640 bytes, semantic-object Ring 3 demo)
+    Registered exfil-demo.elf (13232 bytes, adversarial exfil demo)
     Semantic registry: initialized
     Vector index: initialized
     Semantic search: initialized
@@ -126,11 +127,11 @@ Platform: x86_64-unknown-none
 
 [*] Initializing SYSCALL/SYSRET...
     STAR: kernel_cs=0x08 user_base=0x13
-    LSTAR: 0x000001000000C2A4
+    LSTAR: 0x000001000000EEC0
 [OK] SYSCALL entry point configured
 
 [*] Testing interrupts...
-EXCEPTION: BREAKPOINT at VirtAddr(0x1000000ebe8)
+EXCEPTION: BREAKPOINT at VirtAddr(0x1000001185c)
 [OK] Breakpoint exception handled
 [*] SYSCALL/SYSRET configured (will be exercised by Ring 3 tasks)
 
@@ -150,6 +151,9 @@ EXCEPTION: BREAKPOINT at VirtAddr(0x1000000ebe8)
     init_loader  (kernel mode)        slot 5
 
 ====================================================================================================
+  Semantic OS x86_64 - Kernel initialized successfully!
+  Timer-driven preemptive scheduling is now active.
+====================================================================================================
 
 ================================================================
   SemOS DEMO 2: SemanticObject + LLM context (Sensitive tier)
@@ -164,195 +168,6 @@ EXCEPTION: BREAKPOINT at VirtAddr(0x1000000ebe8)
 ================================================================
   SUID:        0x1000000000000002_CAFEBABEDEADBEEF
   Tier:        Public
-  Semantic OS x86_64 - Kernel initialized successfully!
-  Timer-driven preemptive scheduling is now active.
-====================================================================================================
-[kernel] PAGE FAULT in slot 1 at RIP=VirtAddr(0x0) — recovering (task #40)
-    slot 0 (kernel): Ready
-    slot 1 (task_a): Running
-    slot 2 (task_b): Ready
-    slot 3 (task_iso): Ready
-    slot 4 (user_task): Ready
-    slot 5 (init_loader): Ready
-[task#40] saved_RSP=0x100001660a8  KERNEL_RSP=0x100001a52b0  TSS.RSP0=0x100001a52b0
-    slot 0 kstack top=0x100001a32b0
-    slot 1 kstack top=0x100001a52b0
-    slot 2 kstack top=0x100001a72b0
-    slot 3 kstack top=0x100001a92b0
-    slot 4 kstack top=0x100001ab2b0
-    slot 5 kstack top=0x100001ad2b0
-    slot 6 kstack top=0x100001af2b0
-    slot 7 kstack top=0x100001b12b0
-    slot 8 kstack top=0x100001b32b0
-    slot 9 kstack top=0x100001b52b0
-    slot 10 kstack top=0x100001b72b0
-    slot 11 kstack top=0x100001b92b0
-    slot 12 kstack top=0x100001bb2b0
-    slot 13 kstack top=0x100001bd2b0
-    slot 14 kstack top=0x100001bf2b0
-    slot 15 kstack top=0x100001c12b0
-    CONTEXTS[0]  rsp=0x18000013510  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[1]  rsp=0x10000166030  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[2]  rsp=0x1000016a030  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[3]  rsp=0x1000016e030  rip=0x10000017bac  cr3=0xfff000
-    CONTEXTS[4]  rsp=0x10000129838  rip=0x10000012657  cr3=0xffe000
-    CONTEXTS[5]  rsp=0x100000f4660  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[6]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[7]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[8]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[9]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[10]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[11]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[12]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[13]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[14]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[15]  rsp=0x0  rip=0x0  cr3=0x0
-    stack dump (32 qw / 256B from saved_RSP-64):
-      0x10000166068 (rsp-64): 0x202
-      0x10000166070 (rsp-56): 0x10
-      0x10000166078 (rsp-48): 0x0
-      0x10000166080 (rsp-40): 0x8
-      0x10000166088 (rsp-32): 0x10202
-      0x10000166090 (rsp-24): 0x100001660a8
-      0x10000166098 (rsp-16): 0x10
-      0x100001660a0 (rsp-8): 0x202
-      0x100001660a8 (rsp+0): 0x10000018b1f
-      0x100001660b0 (rsp+8): 0x0
-      0x100001660b8 (rsp+16): 0x0
-      0x100001660c0 (rsp+24): 0x0
-      0x100001660c8 (rsp+32): 0x0
-      0x100001660d0 (rsp+40): 0x0
-      0x100001660d8 (rsp+48): 0x0
-      0x100001660e0 (rsp+56): 0x0
-      0x100001660e8 (rsp+64): 0x0
-      0x100001660f0 (rsp+72): 0x0
-      0x100001660f8 (rsp+80): 0x0
-      0x10000166100 (rsp+88): 0x0
-      0x10000166108 (rsp+96): 0x0
-      0x10000166110 (rsp+104): 0x0
-      0x10000166118 (rsp+112): 0x0
-      0x10000166120 (rsp+120): 0x0
-      0x10000166128 (rsp+128): 0x0
-      0x10000166130 (rsp+136): 0x0
-      0x10000166138 (rsp+144): 0x0
-      0x10000166140 (rsp+152): 0x0
-      0x10000166148 (rsp+160): 0x0
-      0x10000166150 (rsp+168): 0x0
-      0x10000166158 (rsp+176): 0x0
-      0x10000166160 (rsp+184): 0x0
-    last 7 context-switches (oldest -> newest), idx=7:
-      [  0] cur=0 -> next=1  next_rip=0x1000000f7f7  next_rsp=0x100001660a8
-      [  1] cur=1 -> next=2  next_rip=0x1000000f7f7  next_rsp=0x1000016a0a8
-      [  2] cur=2 -> next=3  next_rip=0x1000000f7f7  next_rsp=0x1000016e0a8
-      [  3] cur=3 -> next=4  next_rip=0x1000000c284  next_rsp=0x100001ab288
-      [  4] cur=4 -> next=5  next_rip=0x1000000f872  next_rsp=0x100001760a8
-      [  5] cur=5 -> next=0  next_rip=0x10000017bac  next_rsp=0x18000013500
-      [  6] cur=0 -> next=1  next_rip=0x10000017bac  next_rsp=0x10000166030
-    expected_iretq_rsp from CONTEXTS[1].rsp+72 = 0x10000166078
-    !! DRIFT: failing iretq rsp 0x100001660a8 != expected 0x10000166078 (delta 48)
-    8 qw at expected_iretq_rsp:
-      0x10000166078: 0x0
-      0x10000166080: 0x8
-      0x10000166088: 0x10202
-      0x10000166090: 0x100001660a8
-      0x10000166098: 0x10
-      0x100001660a0: 0x202
-      0x100001660a8: 0x10000018b1f
-      0x100001660b0: 0x0
-[kernel] PAGE FAULT in slot 3 at RIP=VirtAddr(0x0) — recovering (task #40)
-    slot 0 (kernel): Ready
-    slot 1 (task_a): Exited
-    slot 2 (task_b): Ready
-    slot 3 (task_iso): Running
-    slot 4 (user_task): Ready
-    slot 5 (init_loader): Ready
-[task#40] saved_RSP=0x1000016e0a8  KERNEL_RSP=0x100001a92b0  TSS.RSP0=0x100001a92b0
-    slot 0 kstack top=0x100001a32b0
-    slot 1 kstack top=0x100001a52b0
-    slot 2 kstack top=0x100001a72b0
-    slot 3 kstack top=0x100001a92b0
-    slot 4 kstack top=0x100001ab2b0
-    slot 5 kstack top=0x100001ad2b0
-    slot 6 kstack top=0x100001af2b0
-    slot 7 kstack top=0x100001b12b0
-    slot 8 kstack top=0x100001b32b0
-    slot 9 kstack top=0x100001b52b0
-    slot 10 kstack top=0x100001b72b0
-    slot 11 kstack top=0x100001b92b0
-    slot 12 kstack top=0x100001bb2b0
-    slot 13 kstack top=0x100001bd2b0
-    slot 14 kstack top=0x100001bf2b0
-    slot 15 kstack top=0x100001c12b0
-    CONTEXTS[0]  rsp=0x18000013510  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[1]  rsp=0x10000165ed8  rip=0x10000017e46  cr3=0x0
-    CONTEXTS[2]  rsp=0x1000016a030  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[3]  rsp=0x1000016e030  rip=0x10000017bac  cr3=0xfff000
-    CONTEXTS[4]  rsp=0x10000129838  rip=0x10000012657  cr3=0xffe000
-    CONTEXTS[5]  rsp=0x100000f4660  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[6]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[7]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[8]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[9]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[10]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[11]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[12]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[13]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[14]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[15]  rsp=0x0  rip=0x0  cr3=0x0
-    stack dump (32 qw / 256B from saved_RSP-64):
-      0x1000016e068 (rsp-64): 0x202
-      0x1000016e070 (rsp-56): 0x10
-      0x1000016e078 (rsp-48): 0x0
-      0x1000016e080 (rsp-40): 0x8
-      0x1000016e088 (rsp-32): 0x10202
-      0x1000016e090 (rsp-24): 0x1000016e0a8
-      0x1000016e098 (rsp-16): 0x10
-      0x1000016e0a0 (rsp-8): 0x202
-      0x1000016e0a8 (rsp+0): 0x10000018b1f
-      0x1000016e0b0 (rsp+8): 0x0
-      0x1000016e0b8 (rsp+16): 0x0
-      0x1000016e0c0 (rsp+24): 0x0
-      0x1000016e0c8 (rsp+32): 0x0
-      0x1000016e0d0 (rsp+40): 0x0
-      0x1000016e0d8 (rsp+48): 0x0
-      0x1000016e0e0 (rsp+56): 0x0
-      0x1000016e0e8 (rsp+64): 0x0
-      0x1000016e0f0 (rsp+72): 0x0
-      0x1000016e0f8 (rsp+80): 0x0
-      0x1000016e100 (rsp+88): 0x0
-      0x1000016e108 (rsp+96): 0x0
-      0x1000016e110 (rsp+104): 0x0
-      0x1000016e118 (rsp+112): 0x0
-      0x1000016e120 (rsp+120): 0x0
-      0x1000016e128 (rsp+128): 0x0
-      0x1000016e130 (rsp+136): 0x0
-      0x1000016e138 (rsp+144): 0x0
-      0x1000016e140 (rsp+152): 0x0
-      0x1000016e148 (rsp+160): 0x0
-      0x1000016e150 (rsp+168): 0x0
-      0x1000016e158 (rsp+176): 0x0
-      0x1000016e160 (rsp+184): 0x0
-    last 9 context-switches (oldest -> newest), idx=9:
-      [  0] cur=0 -> next=1  next_rip=0x1000000f7f7  next_rsp=0x100001660a8
-      [  1] cur=1 -> next=2  next_rip=0x1000000f7f7  next_rsp=0x1000016a0a8
-      [  2] cur=2 -> next=3  next_rip=0x1000000f7f7  next_rsp=0x1000016e0a8
-      [  3] cur=3 -> next=4  next_rip=0x1000000c284  next_rsp=0x100001ab288
-      [  4] cur=4 -> next=5  next_rip=0x1000000f872  next_rsp=0x100001760a8
-      [  5] cur=5 -> next=0  next_rip=0x10000017bac  next_rsp=0x18000013500
-      [  6] cur=0 -> next=1  next_rip=0x10000017bac  next_rsp=0x10000166030
-      [  7] cur=1 -> next=2  next_rip=0x10000017bac  next_rsp=0x1000016a030
-      [  8] cur=2 -> next=3  next_rip=0x10000017bac  next_rsp=0x1000016e030
-    expected_iretq_rsp from CONTEXTS[3].rsp+72 = 0x1000016e078
-    !! DRIFT: failing iretq rsp 0x1000016e0a8 != expected 0x1000016e078 (delta 48)
-    8 qw at expected_iretq_rsp:
-      0x1000016e078: 0x0
-      0x1000016e080: 0x8
-      0x1000016e088: 0x10202
-      0x1000016e090: 0x1000016e0a8
-      0x1000016e098: 0x10
-      0x1000016e0a0: 0x202
-      0x1000016e0a8: 0x10000018b1f
-      0x1000016e0b0: 0x0
   DIRECT READ: Public:    email=user@example.com card=4111-1111-1111-1111
   LLM CONTEXT: Public:    email=user@example.com card=4111-1111-1111-1111
 
@@ -362,118 +177,15 @@ EXCEPTION: BREAKPOINT at VirtAddr(0x1000000ebe8)
 
 ================================================================
   SemOS DEMO 0: Ring 3 user binary built from real Rust crate
-[kernel] PAGE FAULT in slot 2 at RIP=VirtAddr(0x0) — recovering (task #40)
-    slot 0 (kernel): Ready
-    slot 1 (task_a): Exited
-    slot 2 (task_b): Running
-    slot 3 (task_iso): Exited
-    slot 4 (user_task): Ready
-    slot 5 (init_loader): Ready
-[task#40] saved_RSP=0x1000016a0a8  KERNEL_RSP=0x100001a72b0  TSS.RSP0=0x100001a72b0
-    slot 0 kstack top=0x100001a32b0
-    slot 1 kstack top=0x100001a52b0
-    slot 2 kstack top=0x100001a72b0
-    slot 3 kstack top=0x100001a92b0
-    slot 4 kstack top=0x100001ab2b0
-    slot 5 kstack top=0x100001ad2b0
-    slot 6 kstack top=0x100001af2b0
-    slot 7 kstack top=0x100001b12b0
-    slot 8 kstack top=0x100001b32b0
-    slot 9 kstack top=0x100001b52b0
-    slot 10 kstack top=0x100001b72b0
-    slot 11 kstack top=0x100001b92b0
-    slot 12 kstack top=0x100001bb2b0
-    slot 13 kstack top=0x100001bd2b0
-    slot 14 kstack top=0x100001bf2b0
-    slot 15 kstack top=0x100001c12b0
-    CONTEXTS[0]  rsp=0x18000013510  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[1]  rsp=0x10000165ed8  rip=0x10000017e46  cr3=0x0
-    CONTEXTS[2]  rsp=0x1000016a030  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[3]  rsp=0x1000016ded8  rip=0x10000017e46  cr3=0xfff000
-    CONTEXTS[4]  rsp=0x100001ab240  rip=0x10000017bac  cr3=0xffe000
-    CONTEXTS[5]  rsp=0x100000f4c70  rip=0x10000017bac  cr3=0x0
-    CONTEXTS[6]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[7]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[8]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[9]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[10]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[11]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[12]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[13]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[14]  rsp=0x0  rip=0x0  cr3=0x0
-    CONTEXTS[15]  rsp=0x0  rip=0x0  cr3=0x0
-    stack dump (32 qw / 256B from saved_RSP-64):
-      0x1000016a068 (rsp-64): 0x202
-      0x1000016a070 (rsp-56): 0x10
-      0x1000016a078 (rsp-48): 0x0
-      0x1000016a080 (rsp-40): 0x8
-      0x1000016a088 (rsp-32): 0x10202
-      0x1000016a090 (rsp-24): 0x1000016a0a8
-      0x1000016a098 (rsp-16): 0x10
-      0x1000016a0a0 (rsp-8): 0x202
-      0x1000016a0a8 (rsp+0): 0x10000018b1f
-      0x1000016a0b0 (rsp+8): 0x0
-      0x1000016a0b8 (rsp+16): 0x0
-      0x1000016a0c0 (rsp+24): 0x0
-      0x1000016a0c8 (rsp+32): 0x0
-      0x1000016a0d0 (rsp+40): 0x0
-      0x1000016a0d8 (rsp+48): 0x0
-      0x1000016a0e0 (rsp+56): 0x0
-      0x1000016a0e8 (rsp+64): 0x0
-      0x1000016a0f0 (rsp+72): 0x0
-      0x1000016a0f8 (rsp+80): 0x0
-      0x1000016a100 (rsp+88): 0x0
-      0x1000016a108 (rsp+96): 0x0
-      0x1000016a110 (rsp+104): 0x0
-      0x1000016a118 (rsp+112): 0x0
-      0x1000016a120 (rsp+120): 0x0
-      0x1000016a128 (rsp+128): 0x0
-      0x1000016a130 (rsp+136): 0x0
-      0x1000016a138 (rsp+144): 0x0
-      0x1000016a140 (rsp+152): 0x0
-      0x1000016a148 (rsp+160): 0x0
-      0x1000016a150 (rsp+168): 0x0
-      0x1000016a158 (rsp+176): 0x0
-      0x1000016a160 (rsp+184): 0x0
-    last 13 context-switches (oldest -> newest), idx=13:
-      [  0] cur=0 -> next=1  next_rip=0x1000000f7f7  next_rsp=0x100001660a8
-      [  1] cur=1 -> next=2  next_rip=0x1000000f7f7  next_rsp=0x1000016a0a8
-      [  2] cur=2 -> next=3  next_rip=0x1000000f7f7  next_rsp=0x1000016e0a8
-      [  3] cur=3 -> next=4  next_rip=0x1000000c284  next_rsp=0x100001ab288
-      [  4] cur=4 -> next=5  next_rip=0x1000000f872  next_rsp=0x100001760a8
-      [  5] cur=5 -> next=0  next_rip=0x10000017bac  next_rsp=0x18000013500
-      [  6] cur=0 -> next=1  next_rip=0x10000017bac  next_rsp=0x10000166030
-      [  7] cur=1 -> next=2  next_rip=0x10000017bac  next_rsp=0x1000016a030
-      [  8] cur=2 -> next=3  next_rip=0x10000017bac  next_rsp=0x1000016e030
-      [  9] cur=3 -> next=4  next_rip=0x10000012657  next_rsp=0x10000129838
-      [ 10] cur=4 -> next=5  next_rip=0x10000017bac  next_rsp=0x100000f4660
-      [ 11] cur=5 -> next=0  next_rip=0x10000017bac  next_rsp=0x18000013510
-      [ 12] cur=0 -> next=2  next_rip=0x10000017bac  next_rsp=0x1000016a030
-    expected_iretq_rsp from CONTEXTS[2].rsp+72 = 0x1000016a078
-    !! DRIFT: failing iretq rsp 0x1000016a0a8 != expected 0x1000016a078 (delta 48)
-    8 qw at expected_iretq_rsp:
-      0x1000016a078: 0x0
-      0x1000016a080: 0x8
-      0x1000016a088: 0x10202
-      0x1000016a090: 0x1000016a0a8
-      0x1000016a098: 0x10
-      0x1000016a0a0: 0x202
-      0x1000016a0a8: 0x10000018b1f
-      0x1000016a0b0: 0x0
 ================================================================
 
 ================================================================
   SemOS DEMO 1: Ring 3 user binary -> SYS_LLM_REDACT
+Hello from real Rust ELF!
 ================================================================
 
 ================================================================
   SemOS DEMO 4: Ring 3 sem-demo (Sensitive obj, direct vs LLM)
 ================================================================
-
-================================================================
-  SemOS DEMO 5: persistent SemanticObject (survives reboot)
-================================================================
-Hello from real Rust ELF!
 Demo PII: email=user@example.com card=4111-1111-1111-1111 ssn=555-12-3456
 Demo PII: email=[EMAIL] card=[CARD] ssn=[SSN]
-  DIRECT READ: Sensitive: email=alice@example.com card=4111-1111-1111-1111

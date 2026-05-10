@@ -171,6 +171,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static SEM_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/sem-demo/target/x86_64-unknown-none/release/sem-demo"
     );
+    static EXFIL_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/exfil-demo/target/x86_64-unknown-none/release/exfil-demo"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -181,6 +184,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered sem-demo.elf ({} bytes, semantic-object Ring 3 demo)", SEM_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register sem-demo.elf");
+        }
+        if fs.add("exfil-demo.elf", kernel_core::fs::ramfs::FileType::Executable, EXFIL_DEMO_ELF) {
+            println!("    Registered exfil-demo.elf ({} bytes, adversarial exfil demo)", EXFIL_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register exfil-demo.elf");
         }
     }
 
@@ -332,27 +340,36 @@ fn init_loader_task() {
     spawn_named_at("redact.elf", 0);
 
     // DEMO 4: the security thesis end-to-end from user space.
-    // sem-demo.elf is spawned at tier 2 (Sensitive). It creates a
-    // Sensitive object containing PII, then reads it two ways: directly
-    // (verbatim, allowed because caller tier == object tier) and via
-    // SYS_LLM_CONTEXT (kernel-mediated, redacted). The visible contrast
-    // proves the kernel applies tier-based policy at the LLM/syscall
-    // boundary, not at the caller's capability.
     println!();
     println!("================================================================");
     println!("  SemOS DEMO 4: Ring 3 sem-demo (Sensitive obj, direct vs LLM)");
     println!("================================================================");
     spawn_named_at("sem-demo.elf", 2);
 
-    // DEMO 5: persistence. On first boot, write a Sensitive object to
-    // disk via the VirtIO BlockDevice. On every subsequent boot, load
-    // it back, insert into the semantic registry, and prove tier-based
-    // LLM redaction still applies after a reboot.
-    println!();
-    println!("================================================================");
-    println!("  SemOS DEMO 5: persistent SemanticObject (survives reboot)");
-    println!("================================================================");
-    persistence_demo();
+    // DEMO 6: adversarial PII exfiltration via the LLM channel.
+    // CURRENTLY DISABLED — the kernel's task#40 cascade starves
+    // exfil-demo before its prints get out, so the demo runs
+    // intermittently and produces unreadable output. Crate is in tree
+    // (user-programs/exfil-demo) and compiles/registers normally; flip
+    // this back on once task #40 is properly fixed.
+    // println!();
+    // println!("================================================================");
+    // println!("  SemOS DEMO 6: adversarial PII exfiltration via the LLM channel");
+    // println!("================================================================");
+    // spawn_named_at("exfil-demo.elf", 2);
+
+    // DEMO 5 (persistent SemanticObject across reboot via VirtIO disk)
+    // CURRENTLY DISABLED — like DEMO 6, the additional code path
+    // reopens task #40's race window, causing kernel-mode tasks to
+    // segfault and starving the Ring-3 demos. The infrastructure
+    // (kernel_core::storage::snapshot + virtio::block) is verified
+    // independently at the raw-sector level; flip back on once
+    // task #40 is properly fixed.
+    // println!();
+    // println!("================================================================");
+    // println!("  SemOS DEMO 5: persistent SemanticObject (survives reboot)");
+    // println!("================================================================");
+    // persistence_demo();
 
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }

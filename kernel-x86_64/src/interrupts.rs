@@ -326,89 +326,17 @@ extern "x86-interrupt" fn page_fault_handler(
     // what each task's saved context looks like. We expect this to
     // reveal whether KERNEL_RSP/TSS.RSP0 is wrong, or whether one task's
     // saved RSP points into another task's per-task kernel stack.
+    // task#40 verbose dump trimmed to a single summary line. The full
+    // dump (per-slot CONTEXTS, 32-quadword stack window, CTX_LOG ring
+    // buffer, expected-iretq-rsp drift) is preserved in the git history
+    // and `project_semantic_os_task40.md` memory; reactivate when
+    // actively debugging the race. Keeping it on at boot eats ~750ms of
+    // serial output per fault and starves user tasks.
     if stack_frame.instruction_pointer.as_u64() == 0 {
         let saved_rsp = stack_frame.stack_pointer.as_u64();
         let kernel_rsp = unsafe { crate::gdt::KERNEL_RSP };
-        let tss_rsp0 = crate::gdt::tss_rsp0_value();
-        println!("[task#40] saved_RSP=0x{:x}  KERNEL_RSP=0x{:x}  TSS.RSP0=0x{:x}",
-            saved_rsp, kernel_rsp, tss_rsp0);
-        // Per-task kernel stack tops (each is 8KB; top exclusive).
-        for i in 0..kernel_core::scheduler::MAX_TASKS {
-            let top = crate::context::debug_kstack_top(i);
-            // Hit if saved_rsp lies in this slot's [top - 8KB, top).
-            let mark = if saved_rsp < top && saved_rsp + 0x2000 >= top { " <== saved_RSP is in THIS slot" } else { "" };
-            println!("    slot {} kstack top=0x{:x}{}", i, top, mark);
-        }
-        // Saved task contexts. The .rsp/.rip values are what
-        // schedule()/context_switch will load when the task is picked.
-        unsafe {
-            let contexts = &raw const crate::context::CONTEXTS;
-            for i in 0..kernel_core::scheduler::MAX_TASKS {
-                let ctx = &(*contexts)[i];
-                println!("    CONTEXTS[{}]  rsp=0x{:x}  rip=0x{:x}  cr3=0x{:x}",
-                    i, ctx.rsp, ctx.rip, ctx.cr3);
-            }
-        }
-        // Memory in a wide window around saved_RSP. The bug appears to
-        // be that iretq read RIP=0 from somewhere; we want to see both
-        // the iret frame AND the surrounding stack so we can pattern-
-        // match where the corruption starts/stops. Dump 32 quadwords
-        // (256 bytes) centered at saved_RSP - 64.
-        if saved_rsp >= 0x100_0000_0000 && saved_rsp < 0x200_0000_0000 {
-            let base = (saved_rsp.saturating_sub(64)) as *const u64;
-            unsafe {
-                println!("    stack dump (32 qw / 256B from saved_RSP-64):");
-                for k in 0..32 {
-                    let p = base.add(k);
-                    let off = (k as i64) * 8 - 64;
-                    println!("      0x{:x} (rsp{:+}): 0x{:x}",
-                        p as u64, off, core::ptr::read_volatile(p));
-                }
-            }
-        }
-        // Dump the context-switch ring buffer. The newest entries are at
-        // the end. If the hypothesis is right we should see an entry with
-        // next_rip == 0 just before the slot-4 switch-in that doomed us.
-        unsafe {
-            let log_ptr = &raw const crate::context::CTX_LOG;
-            let idx = crate::context::CTX_LOG_IDX;
-            let count = if idx as usize >= crate::context::CTX_LOG_LEN {
-                crate::context::CTX_LOG_LEN
-            } else {
-                idx as usize
-            };
-            println!("    last {} context-switches (oldest -> newest), idx={}:", count, idx);
-            for k in 0..count {
-                // Iterate from oldest to newest:
-                let pos = (idx as usize - count + k) & (crate::context::CTX_LOG_LEN - 1);
-                let e = (*log_ptr)[pos];
-                let mark = if e.next_rip == 0 { " !! next_rip == 0" } else { "" };
-                println!("      [{:3}] cur={} -> next={}  next_rip=0x{:x}  next_rsp=0x{:x}{}",
-                    (idx as usize) - count + k, e.cur, e.next, e.next_rip, e.next_rsp, mark);
-            }
-        }
-        // Also dump where the wrapper-iretq SHOULD have read its frame
-        // from based on CONTEXTS[4].rsp + 72 (= rsp after wrapper pops).
-        unsafe {
-            let contexts = &raw const crate::context::CONTEXTS;
-            let cur = kernel_core::scheduler::current_task_index();
-            let expected_iretq_rsp = (*contexts)[cur].rsp + 72;
-            println!("    expected_iretq_rsp from CONTEXTS[{}].rsp+72 = 0x{:x}",
-                cur, expected_iretq_rsp);
-            if expected_iretq_rsp != saved_rsp {
-                println!("    !! DRIFT: failing iretq rsp 0x{:x} != expected 0x{:x} (delta {})",
-                    saved_rsp, expected_iretq_rsp,
-                    saved_rsp as i64 - expected_iretq_rsp as i64);
-            }
-            if expected_iretq_rsp >= 0x100_0000_0000 && expected_iretq_rsp < 0x200_0000_0000 {
-                let p = expected_iretq_rsp as *const u64;
-                println!("    8 qw at expected_iretq_rsp:");
-                for k in 0..8 {
-                    println!("      0x{:x}: 0x{:x}",
-                        p.add(k) as u64, core::ptr::read_volatile(p.add(k)));
-                }
-            }
-        }
+        println!("[task#40] saved_RSP=0x{:x}  KERNEL_RSP=0x{:x}  (verbose dump suppressed)",
+            saved_rsp, kernel_rsp);
     }
 
     kill_current_task();

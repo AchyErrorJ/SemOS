@@ -41,14 +41,15 @@ A captured serial log of a full boot is in [`docs/boot-demo.log`](docs/boot-demo
 
 ## What runs today
 
-| Demo | Path | What it proves |
-|------|------|----------------|
-| DEMO 0 | `user-programs/hello/` | Real Rust no_std ELF crate loaded by the kernel from ramfs and run in Ring 3 (`SYS_WRITE` + `SYS_EXIT`). Toolchain works end-to-end. |
-| DEMO 1 | `kernel-core/src/process/elf.rs::create_redact_elf` (hand-assembled) | Ring 3 binary calls `SYS_LLM_REDACT` on a string with PII. Kernel returns the redacted version. |
-| DEMO 2 | kernel-side, `kernel-x86_64/src/main.rs::sem_demo_kernel` | Kernel-side `SemanticObject` at Sensitive tier: direct read returns verbatim, `build_from_suids` (the LLM context path) returns redacted. |
-| DEMO 3 | same | Same with a Public-tier object — both views verbatim, no redaction. The contrast vs DEMO 2 is the policy made visible. |
-| DEMO 4 | `user-programs/sem-demo/` | DEMO 2's policy, **from Ring 3**. Real Rust user crate creates a Sensitive object, reads it back verbatim (caller tier 2 ≥ object tier 2), then asks for `SYS_LLM_CONTEXT` and receives the kernel-redacted version. |
-| DEMO 5 | `kernel-x86_64/src/main.rs::persistence_demo` | Round-trip a Sensitive `SemanticObject` through the VirtIO block driver to disk and back. Currently flaky due to task #40 (see "Known issues"). |
+| Demo | Status | Path | What it proves |
+|------|--------|------|----------------|
+| DEMO 0 | active | `user-programs/hello/` | Real Rust no_std ELF crate loaded by the kernel from ramfs and run in Ring 3 (`SYS_WRITE` + `SYS_EXIT`). Toolchain works end-to-end. |
+| DEMO 1 | active | `kernel-core/src/process/elf.rs::create_redact_elf` (hand-assembled) | Ring 3 binary calls `SYS_LLM_REDACT` on a string with PII. Kernel returns the redacted version. |
+| DEMO 2 | active | kernel-side, `kernel-x86_64/src/main.rs::sem_demo_kernel` | Kernel-side `SemanticObject` at Sensitive tier: direct read returns verbatim, `build_from_suids` (the LLM context path) returns redacted. |
+| DEMO 3 | active | same | Same with a Public-tier object — both views verbatim, no redaction. The contrast vs DEMO 2 is the policy made visible. |
+| DEMO 4 | active | `user-programs/sem-demo/` | DEMO 2's policy, **from Ring 3**. Real Rust user crate creates a Sensitive object, reads it back verbatim (caller tier 2 ≥ object tier 2), then asks for `SYS_LLM_CONTEXT` and receives the kernel-redacted version. |
+| DEMO 5 | code only, disabled in boot | `kernel-x86_64/src/main.rs::persistence_demo` | Round-trip a Sensitive `SemanticObject` through the VirtIO block driver to disk and back. The infrastructure is verified independently (see "Known issues"); the integration demo is gated on task #40. |
+| DEMO 6 | code only, disabled in boot | `user-programs/exfil-demo/` | Adversarial: 8 PII-exfiltration attempts via the LLM channel (plain text baseline + 7 obfuscations: base64, [at]/[dot] brackets, whitespace splitting, reversal, hex, non-standard CC separators, split-across-objects). Each attempt creates a Sensitive object, asks the kernel for an LLM-bound view, and substring-checks the result for an attacker-chosen leak indicator. The expected outcome — 1 caught, 7 leaked — is the thesis-grade evidence for *why* rule-based redaction is a baseline and a real on-device intent-aware model is the next step. The crate compiles and the attacks are correct; the kernel currently can't run it reliably under task #40. |
 
 Plus the platform-level pieces those exercise:
 
@@ -165,14 +166,17 @@ TSS.RSP0, all `CONTEXTS[*]`, 32 quadwords around saved_RSP, the
 `instruction_pointer == 0`. It's intentional diagnostic, not
 production code.
 
-### DEMO 5 (persistence) is fragile
+### DEMO 5 + DEMO 6 are code-complete but disabled in boot
 
 The infrastructure is solid — VirtIO block driver, BlockDevice trait,
-snapshot module, raw-sector persistence all verified independently.
-The integration demo (round-trip a `SemanticObject` through disk) runs
-but the additional code path's serial-output latency reopens task #40's
-race window often enough that the demo's output is unreliable. Right
-fix is to root-cause task #40 properly.
+snapshot module, raw-sector persistence all verified independently;
+exfil-demo crate compiles and the 8 attacks are correctly designed.
+But the additional code paths reopen task #40's race window often
+enough that under any of them the kernel can't reliably run the
+Ring-3 demos that *are* working today (DEMOs 0/1/4). Toggling
+DEMO 5 or DEMO 6 back on is a one-line change in
+`kernel-x86_64/src/main.rs::init_loader_task` once task #40 is
+properly fixed.
 
 ## Status, honestly
 
