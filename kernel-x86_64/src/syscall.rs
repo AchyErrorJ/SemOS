@@ -115,6 +115,11 @@ extern "C" fn syscall_entry() {
         "mov rsp, [rip + {kernel_rsp}]",    // rsp = kernel RSP
 
         // --- Step 2: Save user context on kernel stack ---
+        // Linux x86-64 syscall convention: only rcx and r11 are clobbered,
+        // every other register survives. Our dispatch reorder destroys the
+        // arg registers (rdi/rsi/rdx/r10/r8/r9), so we save them here and
+        // restore after dispatch — otherwise compilers (rightly) assume
+        // rdx/rsi/etc. survive a syscall and miscompile user code.
         "push r15",          // user RSP
         "push rcx",          // user RIP (SYSCALL saved it in RCX)
         "push r11",          // user RFLAGS (SYSCALL saved it in R11)
@@ -124,6 +129,12 @@ extern "C" fn syscall_entry() {
         "push r13",
         "push r14",
         "push r15",          // save r15 again (we clobbered it for user RSP)
+        "push r9",           // user arg5 — preserve across dispatch
+        "push r8",           // user arg4
+        "push r10",          // user arg3
+        "push rdx",          // user arg2
+        "push rsi",          // user arg1
+        "push rdi",          // user arg0
 
         // --- Step 3: Remap to dispatch(num, arg0, arg1, arg2, arg3) ---
         // Incoming:  rax=num, rdi=arg0, rsi=arg1, rdx=arg2, r10=arg3
@@ -145,7 +156,15 @@ extern "C" fn syscall_entry() {
         // Disable interrupts before returning
         "cli",
 
-        // --- Step 5: Restore user context ---
+        // --- Step 5a: Restore user arg registers (mirrors Step 2's tail). ---
+        "pop rdi",
+        "pop rsi",
+        "pop rdx",
+        "pop r10",
+        "pop r8",
+        "pop r9",
+
+        // --- Step 5b: Restore callee-saved + sysret regs ---
         "pop r15",           // (the extra r15 save)
         "pop r14",
         "pop r13",

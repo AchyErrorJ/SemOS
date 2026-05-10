@@ -31,6 +31,7 @@
 
 pub mod persistence;
 pub mod boot;
+pub mod snapshot;
 
 use crate::crypto::{Salt, Nonce, TAG_SIZE, NONCE_SIZE, SALT_SIZE};
 use crate::memory::SecurityTier;

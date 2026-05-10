@@ -233,8 +233,11 @@ fn handle_exit(code: u64) -> u64 {
 }
 
 fn handle_yield() {
-    // Platform crate's schedule() will be called
-    // This is a hook point — platform crate should wire this up
+    // Yield the rest of this time slice. The platform's schedule() will
+    // pick the next ready task and context-switch. When the caller is
+    // eventually re-scheduled, this returns and SYSRET sends control
+    // back to the user's instruction after `syscall`.
+    crate::platform::schedule();
 }
 
 fn handle_getpid() -> u64 {

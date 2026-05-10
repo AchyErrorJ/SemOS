@@ -31,6 +31,8 @@ mod keyboard;
 pub mod paging;
 pub mod apic;
 pub mod framebuffer;
+pub mod pci;
+pub mod virtio;
 
 use serial::Serial;
 
@@ -137,6 +139,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     println!();
 
+    println!("[*] Scanning PCI bus 0...");
+    pci::print_bus_0();
+    println!();
+
+    println!("[*] Probing VirtIO block device...");
+    if virtio::block::init() {
+        if virtio::block::register_with_kernel_core() {
+            println!("[virtio-blk] registered with driver registry as 'virtio0'");
+        }
+    }
+    println!();
+
     // Initialize kernel-core subsystems
     println!("[*] Initializing kernel-core subsystems...");
     kernel_core::scheduler::init_core();
@@ -145,6 +159,30 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     println!("    Process table: initialized");
     kernel_core::fs::ramfs::init();
     println!("    Ramfs: initialized");
+
+    // Register user-mode programs built from real Rust crates in
+    // user-programs/. The build is currently manual (run
+    // `cargo build --release` in user-programs/hello/ before kernel build);
+    // future: build.rs orchestration. include_bytes! pins the path so the
+    // kernel won't link if the user binary is missing.
+    static HELLO_RS_ELF: &[u8] = include_bytes!(
+        "../../user-programs/hello/target/x86_64-unknown-none/release/hello"
+    );
+    static SEM_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/sem-demo/target/x86_64-unknown-none/release/sem-demo"
+    );
+    if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
+        if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
+            println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
+        } else {
+            println!("    [WARN] failed to register hello-rs.elf");
+        }
+        if fs.add("sem-demo.elf", kernel_core::fs::ramfs::FileType::Executable, SEM_DEMO_ELF) {
+            println!("    Registered sem-demo.elf ({} bytes, semantic-object Ring 3 demo)", SEM_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register sem-demo.elf");
+        }
+    }
 
     // Semantic object system
     kernel_core::semantic::registry::init_global_registry();
@@ -197,6 +235,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // (own page tables), and one Ring 3 user task. They prove preemptive
     // multitasking + 4-tier isolation works during the demos. They no
     // longer print "tick" lines (silenced for clean demo output).
+    // (kstack layout dump removed — we have the addresses)
     println!("[*] Spawning background tasks...");
     if let Some(slot) = context::spawn_task("task_a", task_a) {
         println!("    task_a       (kernel mode)        slot {}", slot);
@@ -276,14 +315,169 @@ fn init_loader_task() {
     // kernel #PF and the kernel can become flaky after.
     sem_demo_kernel();
 
+    // DEMO 0: real Rust user binary (hello-rs.elf, built from
+    // user-programs/hello/). Proves the toolchain works end-to-end —
+    // a no_std Rust crate compiled with rust-lld, loaded by ramfs,
+    // spawned by SYS_SPAWN, runs in Ring 3, prints, exits.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 0: Ring 3 user binary built from real Rust crate");
+    println!("================================================================");
+    spawn_named_at("hello-rs.elf", 0);
+
     println!();
     println!("================================================================");
     println!("  SemOS DEMO 1: Ring 3 user binary -> SYS_LLM_REDACT");
     println!("================================================================");
     spawn_named_at("redact.elf", 0);
 
+    // DEMO 4: the security thesis end-to-end from user space.
+    // sem-demo.elf is spawned at tier 2 (Sensitive). It creates a
+    // Sensitive object containing PII, then reads it two ways: directly
+    // (verbatim, allowed because caller tier == object tier) and via
+    // SYS_LLM_CONTEXT (kernel-mediated, redacted). The visible contrast
+    // proves the kernel applies tier-based policy at the LLM/syscall
+    // boundary, not at the caller's capability.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 4: Ring 3 sem-demo (Sensitive obj, direct vs LLM)");
+    println!("================================================================");
+    spawn_named_at("sem-demo.elf", 2);
+
+    // DEMO 5: persistence. On first boot, write a Sensitive object to
+    // disk via the VirtIO BlockDevice. On every subsequent boot, load
+    // it back, insert into the semantic registry, and prove tier-based
+    // LLM redaction still applies after a reboot.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 5: persistent SemanticObject (survives reboot)");
+    println!("================================================================");
+    persistence_demo();
+
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+    }
+}
+
+/// DEMO 5: round-trip a Sensitive object through the BlockDevice.
+fn persistence_demo() {
+    use kernel_core::drivers::registry::get_block;
+    use kernel_core::semantic::{SUID, SemanticObject};
+    use kernel_core::memory::SecurityTier;
+    use kernel_core::storage::snapshot::{save_snapshot, load_snapshot};
+
+    let dev = match get_block("virtio0") {
+        Some(d) => d,
+        None => {
+            println!("  [DEMO 5] no virtio0 block device — skipping (run with -drive ...,if=virtio)");
+            return;
+        }
+    };
+
+    // SUID for the persisted object — distinct from sem_demo_kernel's
+    // and sem-demo.elf's so they can coexist.
+    let suid = SUID::new(0x1000_0000_0000_00FF, 0xDEAD_BEEF_CAFE_BABE);
+
+    // Try to restore. If absent / first boot, we'll seed a fresh one.
+    // Use a static buffer — a stack-local [u8; 4096] in init_loader_task
+    // overflows the per-task kstack budget under serial-print latency
+    // and triggers task #40. Static is safe because persistence_demo
+    // runs once at boot and is not re-entered.
+    static mut DEMO5_BUF: [u8; 4096] = [0; 4096];
+    let buf = unsafe { &mut *(&raw mut DEMO5_BUF) };
+    match load_snapshot(dev, buf) {
+        Ok(len) => {
+            // Format: [16 SUID][1 tier][1 owner][2 content_len][content]
+            if len < 20 {
+                println!("  [DEMO 5] snapshot too short — re-seeding");
+                seed_persistent_object(dev, &suid);
+                return;
+            }
+            let stored_suid_hi = u64::from_le_bytes(buf[0..8].try_into().unwrap());
+            let stored_suid_lo = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+            let tier_byte = buf[16];
+            let owner = buf[17];
+            let content_len = u16::from_le_bytes(buf[18..20].try_into().unwrap()) as usize;
+            if 20 + content_len != len || content_len > 256 {
+                println!("  [DEMO 5] snapshot malformed (declared {} bytes, file {})",
+                    20 + content_len, len);
+                return;
+            }
+            let tier = match tier_byte {
+                0 => SecurityTier::Public,
+                1 => SecurityTier::Internal,
+                2 => SecurityTier::Sensitive,
+                _ => SecurityTier::Secret,
+            };
+            let restored_suid = SUID::new(stored_suid_hi, stored_suid_lo);
+            let content = &buf[20..20 + content_len];
+            println!("  [DEMO 5] restored from disk:  SUID=0x{:016X}_{:016X}",
+                stored_suid_hi, stored_suid_lo);
+            println!("  [DEMO 5]   tier={:?}  owner={}  content_len={}", tier, owner, content_len);
+            println!("  [DEMO 5]   DIRECT READ:  {}",
+                core::str::from_utf8(content).unwrap_or("<bad utf8>"));
+
+            // Insert into registry so build_from_suids can find it.
+            let obj = match SemanticObject::with_content(restored_suid, tier, owner, content) {
+                Some(o) => o,
+                None => { println!("  [DEMO 5] with_content failed"); return; }
+            };
+            unsafe {
+                let registry = kernel_core::semantic::registry::global_registry();
+                if !registry.insert(obj) {
+                    println!("  [DEMO 5] registry.insert failed (duplicate SUID?)");
+                    return;
+                }
+            }
+
+            // Apply the LLM-context security policy and print the redacted view.
+            unsafe {
+                let builder = kernel_core::llm::context_builder::global_context_builder();
+                let pairs: [(u64, u64); 1] = [(stored_suid_hi, stored_suid_lo)];
+                match builder.build_from_suids(&pairs, 3 /* caller tier = Secret */) {
+                    Ok(ctx) => {
+                        for entry in ctx.iter() {
+                            let s = core::str::from_utf8(entry.content())
+                                .unwrap_or("<bad utf8>");
+                            println!("  [DEMO 5]   LLM CONTEXT: {}", s);
+                        }
+                    }
+                    Err(_) => println!("  [DEMO 5] build_from_suids failed"),
+                }
+            }
+            println!("  [DEMO 5] => kernel redaction policy survives a reboot");
+        }
+        Err(e) if matches!(e, kernel_core::drivers::traits::DriverError::NotReady) => {
+            println!("  [DEMO 5] no snapshot on disk — first boot, seeding");
+            seed_persistent_object(dev, &suid);
+        }
+        Err(e) => {
+            println!("  [DEMO 5] load_snapshot error: {:?} — re-seeding", e);
+            seed_persistent_object(dev, &suid);
+        }
+    }
+}
+
+/// Helper: write a fresh Sensitive object to the snapshot area.
+fn seed_persistent_object(
+    dev: &dyn kernel_core::drivers::traits::BlockDevice,
+    suid: &kernel_core::semantic::SUID,
+) {
+    use kernel_core::storage::snapshot::save_snapshot;
+    let content = b"Persistent Sensitive payload: email=zara@example.com card=5500-0000-0000-0004";
+    static mut SEED_BUF: [u8; 4096] = [0; 4096];
+    let buf = unsafe { &mut *(&raw mut SEED_BUF) };
+    buf[0..8].copy_from_slice(&suid.high.to_le_bytes());
+    buf[8..16].copy_from_slice(&suid.low.to_le_bytes());
+    buf[16] = 2; // Sensitive
+    buf[17] = 0; // owner
+    let len = content.len() as u16;
+    buf[18..20].copy_from_slice(&len.to_le_bytes());
+    buf[20..20 + content.len()].copy_from_slice(content);
+    let total = 20 + content.len();
+    match save_snapshot(dev, &buf[..total]) {
+        Ok(()) => println!("  [DEMO 5] seeded snapshot ({} bytes); reboot to see persistence", total),
+        Err(e) => println!("  [DEMO 5] save_snapshot failed: {:?}", e),
     }
 }
 

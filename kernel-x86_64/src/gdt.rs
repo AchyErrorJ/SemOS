@@ -191,6 +191,14 @@ pub fn kernel_code_selector() -> u16 {
     GDT.selectors.kernel_code.0
 }
 
+/// Read-only view of the current TSS RSP0. Used by the PF-handler
+/// diagnostic when chasing the intermittent kernel-mode RIP=0 fault
+/// (task #40) so we can see whether RSP0 has drifted from the
+/// expected per-task kernel stack top.
+pub fn tss_rsp0_value() -> u64 {
+    unsafe { TSS.privilege_stack_table[0].as_u64() }
+}
+
 /// Update the TSS's RSP0 to a different kernel stack.
 /// Called during context switch when each task might have its own kernel stack.
 ///

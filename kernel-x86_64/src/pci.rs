@@ -1,0 +1,159 @@
+//! Minimal PCI configuration-space access for x86_64.
+//!
+//! Uses the legacy I/O-port mechanism (CONFIG_ADDRESS=0xCF8 /
+//! CONFIG_DATA=0xCFC). Sufficient to find a VirtIO block device on
+//! QEMU. Doesn't yet handle multifunction devices, PCI-to-PCI bridges,
+//! or memory-mapped configuration (MMCONFIG).
+//!
+//! # Discovering a VirtIO device
+//!
+//! ```ignore
+//! if let Some(loc) = pci::find_first(0x1AF4, 0x1001) {
+//!     // Found VirtIO Legacy block device at loc.bus / loc.slot
+//! }
+//! ```
+
+use core::arch::asm;
+
+/// CONFIG_ADDRESS port — write the (bus, slot, fn, offset) here.
+const CONFIG_ADDRESS: u16 = 0xCF8;
+/// CONFIG_DATA port — read or write a 32-bit value at the configured address.
+const CONFIG_DATA: u16 = 0xCFC;
+
+/// Encode the bus/slot/function/offset into the CONFIG_ADDRESS layout.
+/// Bit 31 = enable, bits 23..16 = bus, 15..11 = slot, 10..8 = function,
+/// 7..2 = register offset (must be DWORD-aligned).
+#[inline]
+fn config_address(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
+    (1 << 31)
+        | ((bus as u32) << 16)
+        | (((slot as u32) & 0x1F) << 11)
+        | (((func as u32) & 0x07) << 8)
+        | ((offset as u32) & 0xFC)
+}
+
+#[inline]
+unsafe fn outl(port: u16, value: u32) {
+    asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags));
+}
+
+#[inline]
+unsafe fn inl(port: u16) -> u32 {
+    let value: u32;
+    asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack, preserves_flags));
+    value
+}
+
+/// Read a 32-bit register from the given (bus, slot, function, offset).
+/// `offset` is in bytes, but only DWORD-aligned (offset & 0xFC) accesses are addressable.
+pub fn read_u32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
+    unsafe {
+        outl(CONFIG_ADDRESS, config_address(bus, slot, func, offset));
+        inl(CONFIG_DATA)
+    }
+}
+
+/// Read a 16-bit register at the given offset (offset can be byte-granular within the DWORD).
+pub fn read_u16(bus: u8, slot: u8, func: u8, offset: u8) -> u16 {
+    let dword = read_u32(bus, slot, func, offset & 0xFC);
+    let shift = (offset & 0x02) * 8;
+    ((dword >> shift) & 0xFFFF) as u16
+}
+
+/// Write a 32-bit register at a DWORD-aligned offset.
+pub fn write_u32(bus: u8, slot: u8, func: u8, offset: u8, value: u32) {
+    unsafe {
+        outl(CONFIG_ADDRESS, config_address(bus, slot, func, offset));
+        outl(CONFIG_DATA, value);
+    }
+}
+
+/// PCI config-space register offsets (subset).
+pub mod regs {
+    pub const VENDOR_ID:    u8 = 0x00; // u16
+    pub const DEVICE_ID:    u8 = 0x02; // u16
+    pub const COMMAND:      u8 = 0x04; // u16
+    pub const STATUS:       u8 = 0x06; // u16
+    pub const CLASS_CODE:   u8 = 0x0B; // u8
+    pub const HEADER_TYPE:  u8 = 0x0E; // u8
+    pub const BAR0:         u8 = 0x10; // u32
+    pub const BAR1:         u8 = 0x14; // u32
+    pub const INTERRUPT_LINE: u8 = 0x3C; // u8
+}
+
+/// COMMAND register bits we need.
+pub mod cmd {
+    pub const IO_SPACE:     u16 = 1 << 0;
+    pub const MEMORY_SPACE: u16 = 1 << 1;
+    pub const BUS_MASTER:   u16 = 1 << 2;
+}
+
+/// Where on the PCI bus a device lives.
+#[derive(Clone, Copy, Debug)]
+pub struct Location {
+    pub bus: u8,
+    pub slot: u8,
+    pub func: u8,
+}
+
+impl Location {
+    #[inline]
+    pub fn vendor_id(self) -> u16 {
+        read_u16(self.bus, self.slot, self.func, regs::VENDOR_ID)
+    }
+    #[inline]
+    pub fn device_id(self) -> u16 {
+        read_u16(self.bus, self.slot, self.func, regs::DEVICE_ID)
+    }
+    #[inline]
+    pub fn bar0(self) -> u32 {
+        read_u32(self.bus, self.slot, self.func, regs::BAR0)
+    }
+    /// Enable I/O space + bus mastering. Required before the device
+    /// will respond to MMIO/IO and DMA reads/writes.
+    pub fn enable_io_and_bus_master(self) {
+        let cmd = read_u16(self.bus, self.slot, self.func, regs::COMMAND);
+        let new = cmd | cmd::IO_SPACE | cmd::MEMORY_SPACE | cmd::BUS_MASTER;
+        // Write as part of the same DWORD (status register is the upper 16 bits).
+        let status_cmd = read_u32(self.bus, self.slot, self.func, regs::COMMAND);
+        let updated = (status_cmd & 0xFFFF_0000) | (new as u32);
+        write_u32(self.bus, self.slot, self.func, regs::COMMAND, updated);
+    }
+}
+
+/// Iterate all PCI bus 0 slots looking for a device that matches
+/// `(vendor, device)`. Returns the first match, or None if no match.
+/// Doesn't recurse into PCI-PCI bridges or scan multifunction devices.
+pub fn find_first(vendor: u16, device: u16) -> Option<Location> {
+    for slot in 0..32u8 {
+        let loc = Location { bus: 0, slot, func: 0 };
+        let v = loc.vendor_id();
+        if v == 0xFFFF {
+            // No device present.
+            continue;
+        }
+        let d = loc.device_id();
+        if v == vendor && d == device {
+            return Some(loc);
+        }
+    }
+    None
+}
+
+/// Print a one-line summary of every device on bus 0. Useful for boot-time
+/// diagnostics.
+pub fn print_bus_0() {
+    let mut count = 0;
+    for slot in 0..32u8 {
+        let loc = Location { bus: 0, slot, func: 0 };
+        let v = loc.vendor_id();
+        if v == 0xFFFF {
+            continue;
+        }
+        let d = loc.device_id();
+        crate::println!("    PCI 00:{:02X}.0  vendor=0x{:04X} device=0x{:04X}",
+            slot, v, d);
+        count += 1;
+    }
+    crate::println!("    {} PCI devices on bus 0", count);
+}

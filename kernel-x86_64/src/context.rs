@@ -75,22 +75,20 @@ impl TaskContext {
 }
 
 /// Per-task context storage (indexed by scheduler task slot)
-pub static mut CONTEXTS: [TaskContext; MAX_TASKS] = [
-    TaskContext::empty(), TaskContext::empty(), TaskContext::empty(), TaskContext::empty(),
-    TaskContext::empty(), TaskContext::empty(), TaskContext::empty(), TaskContext::empty(),
-];
+pub static mut CONTEXTS: [TaskContext; MAX_TASKS] = [TaskContext::empty(); MAX_TASKS];
 
 /// FXSAVE/FXRSTOR area — 512 bytes per task, 16-byte aligned.
 /// Holds the FPU/MMX/SSE state for each task during context switch.
 /// Stored in a parallel array (not in TaskContext) so the naked asm
 /// register save/restore offsets remain stable.
+/// `Copy` is purely so the static array can be initialised with `[X; N]`;
+/// the kernel never moves or clones these by value at runtime — all
+/// access is via &raw const/mut and addr arithmetic.
 #[repr(C, align(16))]
+#[derive(Copy, Clone)]
 pub struct FxSaveArea([u8; 512]);
 
-pub static mut FXSAVE_AREAS: [FxSaveArea; MAX_TASKS] = [
-    FxSaveArea([0; 512]), FxSaveArea([0; 512]), FxSaveArea([0; 512]), FxSaveArea([0; 512]),
-    FxSaveArea([0; 512]), FxSaveArea([0; 512]), FxSaveArea([0; 512]), FxSaveArea([0; 512]),
-];
+pub static mut FXSAVE_AREAS: [FxSaveArea; MAX_TASKS] = [FxSaveArea([0; 512]); MAX_TASKS];
 
 /// Initialize a task slot's FXSAVE area with valid default state.
 /// Must be called for each newly-spawned task before its first run, otherwise
@@ -116,18 +114,11 @@ pub fn init_fxsave_for(slot: usize) {
 /// Task stacks (16KB each, 16-byte aligned) — used as the primary stack
 /// for kernel-mode tasks, and as the user-mode stack for Ring 3 tasks.
 #[repr(C, align(16))]
+#[derive(Copy, Clone)]
 struct TaskStack([u8; scheduler::TASK_STACK_SIZE]);
 
-static mut TASK_STACKS: [TaskStack; MAX_TASKS] = [
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-    TaskStack([0; scheduler::TASK_STACK_SIZE]),
-];
+static mut TASK_STACKS: [TaskStack; MAX_TASKS] =
+    [TaskStack([0; scheduler::TASK_STACK_SIZE]); MAX_TASKS];
 
 /// Per-task kernel stacks (8KB each) — used for Ring 3 → Ring 0 transitions.
 /// When an interrupt or SYSCALL fires while a Ring 3 task is running,
@@ -135,18 +126,50 @@ static mut TASK_STACKS: [TaskStack; MAX_TASKS] = [
 const KERNEL_STACK_PER_TASK: usize = 8 * 1024;
 
 #[repr(C, align(16))]
+#[derive(Copy, Clone)]
 struct PerTaskKernelStack([u8; KERNEL_STACK_PER_TASK]);
 
-static mut PER_TASK_KERNEL_STACKS: [PerTaskKernelStack; MAX_TASKS] = [
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-    PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]),
-];
+static mut PER_TASK_KERNEL_STACKS: [PerTaskKernelStack; MAX_TASKS] =
+    [PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]); MAX_TASKS];
+
+/// Public debug accessor — same as kernel_stack_top.
+pub fn debug_kstack_top(slot: usize) -> u64 { kernel_stack_top(slot) }
+
+// ============================================================================
+// Task #40 diagnostic: context-switch ring buffer
+// ============================================================================
+//
+// A circular log of the most recent `schedule -> context_switch` calls. Each
+// entry captures `(current, next, CONTEXTS[next].rip)` immediately before the
+// jmp into `context_switch`. The PF handler dumps this on a kernel-mode RIP=0
+// fault, so we can see whether the next-task's saved rip was 0 at switch-in
+// time — which would prove the "context_switch jumps to 0, then a pending
+// timer pushes an iret frame with RIP=0" hypothesis.
+//
+// Designed to be as low-overhead as possible: no conditional branches in the
+// hot path, no Rust function calls, just three writes and one wrap-around mask.
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct CtxLogEntry {
+    pub cur: u32,
+    pub next: u32,
+    pub next_rip: u64,
+    pub next_rsp: u64,
+}
+
+pub const CTX_LOG_LEN: usize = 64;
+
+pub static mut CTX_LOG: [CtxLogEntry; CTX_LOG_LEN] = [CtxLogEntry {
+    cur: 0,
+    next: 0,
+    next_rip: 0,
+    next_rsp: 0,
+}; CTX_LOG_LEN];
+
+/// Monotonic write index. We only mod CTX_LOG_LEN at access time so that the
+/// PF handler can also tell *how many* switches have happened since boot.
+pub static mut CTX_LOG_IDX: u64 = 0;
 
 /// Get the top (highest address) of a task's kernel stack
 fn kernel_stack_top(slot: usize) -> u64 {
@@ -350,6 +373,17 @@ pub unsafe extern "C" fn context_switch(old: *mut TaskContext, new: *const TaskC
 /// Switches CR3 if the next task has its own address space, and updates
 /// the TSS RSP0 to the next task's per-task kernel stack.
 pub fn schedule() {
+    // Disable interrupts for the entire switch. Required because schedule
+    // is now reachable from syscall handlers (SYS_YIELD) where IF=1; an
+    // intervening timer would re-enter schedule and corrupt FPU/CR3/TSS
+    // state mid-switch. The outgoing task's saved RFLAGS captures IF=0
+    // here, but `context_switch`'s `popfq` restores the *new* task's IF
+    // from its own saved RFLAGS, so kernel tasks resumed normally
+    // (saved-IF=1) get interrupts back. Tasks that called schedule
+    // voluntarily resume with IF=0 until SYSRET/IRETQ restores user IF.
+    unsafe {
+        core::arch::asm!("cli", options(nomem, nostack));
+    }
     if let Some((current, next)) = scheduler::pick_next() {
         unsafe {
             let contexts = &raw mut CONTEXTS;
@@ -385,6 +419,18 @@ pub fn schedule() {
 
             let old_ctx = &mut (*contexts)[current] as *mut TaskContext;
             let new_ctx = &(*contexts)[next] as *const TaskContext;
+            // Task #40 diagnostic — record this switch in the ring buffer
+            // before jumping into context_switch. Three writes, no branches.
+            let log_ptr = &raw mut CTX_LOG;
+            let idx_ptr = &raw mut CTX_LOG_IDX;
+            let i = (*idx_ptr) as usize & (CTX_LOG_LEN - 1);
+            (*log_ptr)[i] = CtxLogEntry {
+                cur: current as u32,
+                next: next as u32,
+                next_rip: (*contexts)[next].rip,
+                next_rsp: (*contexts)[next].rsp,
+            };
+            *idx_ptr = (*idx_ptr).wrapping_add(1);
             context_switch(old_ctx, new_ctx);
         }
     }
@@ -413,7 +459,10 @@ pub fn spawn_task(name: &'static str, entry: fn()) -> Option<usize> {
 
 /// Tracked address spaces for proper cleanup on task exit.
 /// Indexed by CR3 value — we store at most MAX_TASKS address spaces.
+// AddressSpace isn't Copy (it owns frame allocations cleaned up on drop),
+// so `[None; N]` is rejected. Longhand it is — bumped to match MAX_TASKS=16.
 static mut ADDRESS_SPACES: [Option<crate::paging::AddressSpace>; MAX_TASKS] = [
+    None, None, None, None, None, None, None, None,
     None, None, None, None, None, None, None, None,
 ];
 

@@ -15,7 +15,7 @@
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Maximum number of tasks
-pub const MAX_TASKS: usize = 8;
+pub const MAX_TASKS: usize = 16;
 
 /// Task stack size (16KB per task)
 pub const TASK_STACK_SIZE: usize = 16 * 1024;
@@ -49,6 +49,7 @@ pub enum BlockReason {
 /// Platform-independent task metadata.
 /// The arch-specific context (registers, stack pointer) is stored
 /// separately by the platform crate.
+#[derive(Clone, Copy)]
 pub struct TaskInfo {
     /// Task ID
     pub id: usize,
@@ -85,10 +86,7 @@ impl TaskInfo {
 }
 
 /// Task table
-pub static mut TASKS: [TaskInfo; MAX_TASKS] = [
-    TaskInfo::empty(), TaskInfo::empty(), TaskInfo::empty(), TaskInfo::empty(),
-    TaskInfo::empty(), TaskInfo::empty(), TaskInfo::empty(), TaskInfo::empty(),
-];
+pub static mut TASKS: [TaskInfo; MAX_TASKS] = [TaskInfo::empty(); MAX_TASKS];
 
 /// Current running task index
 pub static CURRENT_TASK: AtomicUsize = AtomicUsize::new(0);
@@ -226,8 +224,27 @@ pub fn init_core() {
 pub fn alloc_task_slot(name: &'static str, max_tier: u8, is_kernel: bool) -> Option<usize> {
     unsafe {
         let tasks = &raw mut TASKS;
+        // Reusable slots = Empty (never used) OR Exited (finished and
+        // never picked again by pick_next). Without this, MAX_TASKS=8
+        // becomes a hard cap on the *cumulative* spawn count instead of
+        // the *concurrent* one, and a few demo binaries exhaust it.
+        // Per-task resources (kstack, page tables, fxsave area) are
+        // still tied to the slot index — overwriting an Exited slot's
+        // TaskInfo is safe; reclaiming its address-space frames is a
+        // future task (TODO: hook AddressSpace::destroy from cleanup).
         for i in 1..MAX_TASKS {
-            if (*tasks)[i].state == TaskState::Empty {
+            let was_exited = matches!((*tasks)[i].state, TaskState::Exited);
+            let reusable = was_exited
+                || matches!((*tasks)[i].state, TaskState::Empty);
+            if reusable {
+                // Reap any platform-side per-slot resources from the
+                // previous tenant (e.g. the AddressSpace's PML4 +
+                // subtable frames on x86_64). Done here, not at exit
+                // time, so we never destroy state still in use by the
+                // dying task's kernel-mode unwind path.
+                if was_exited {
+                    crate::platform::get().reap_slot(i);
+                }
                 let task_id = NEXT_TASK_ID.fetch_add(1, Ordering::SeqCst);
                 (*tasks)[i] = TaskInfo {
                     id: task_id,

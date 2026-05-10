@@ -79,6 +79,18 @@ pub trait Platform: Send + Sync + 'static {
 
     /// Destroy an address space, freeing all page table frames.
     fn destroy_address_space(&self, _space: u64) {}
+
+    /// Voluntarily yield the CPU to the scheduler.
+    /// Used by `SYS_YIELD` so a task can give up its time slice without
+    /// waiting for a timer tick. Default is a no-op (busy-wait).
+    fn schedule(&self) {}
+
+    /// Reclaim per-task platform resources for an Exited slot before
+    /// it is reused. Called by `alloc_task_slot` just before overwriting
+    /// the slot's TaskInfo. Default: no-op (platform may not need this).
+    /// On x86_64 this destroys the slot's AddressSpace (frees PML4 +
+    /// subtable frames) so they don't leak as more demos are spawned.
+    fn reap_slot(&self, _slot: usize) {}
 }
 
 /// Null platform used before a real one is registered.
@@ -123,6 +135,12 @@ pub fn log(s: &str) {
 #[inline]
 pub fn ticks() -> u64 {
     get().ticks()
+}
+
+/// Voluntarily yield the CPU to the scheduler.
+#[inline]
+pub fn schedule() {
+    get().schedule();
 }
 
 /// Log a number in decimal.

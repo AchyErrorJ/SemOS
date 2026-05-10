@@ -270,12 +270,39 @@ extern "x86-interrupt" fn page_fault_handler(
         return;
     }
     // Kernel page fault.
-    // This fires intermittently (~20% of boots) after the Ring 3 user_task
-    // (slot 4) chain. RIP=0 + RF flag suggests an iretq read RIP=0 from
-    // its iret frame on the dying task's per-task kernel stack. Root
-    // cause unverified — task #40 in the followup list. Rather than hlt
-    // the kernel, recover by killing the faulting task; pick_next will
-    // pick something else and the rest of the system keeps running.
+    // Historically fired ~20% of boots after the Ring 3 redact.elf SYS_EXIT
+    // chain. Apparent fix 2026-05-06: the syscall_entry naked function was
+    // clobbering caller-saved syscall arg registers (rdx/rsi/r10/r8/r9)
+    // around the dispatch reorder, violating the Linux x86-64 syscall ABI
+    // that user-mode Rust code (and rustc) assume. Saving and restoring
+    // those registers around the dispatch call took the rate from ~20% to
+    // 0/30 in stability runs. The diagnostic dump below is kept anyway —
+    // if task#40 returns, this captures everything we'd need.
+    //
+    // Confirmed (2026-05-04 GDB+kernel-instrumented session, pre-fix):
+    //   * the failing iretq is in the *timer wrapper* (just before the
+    //     `iretq` at offset +0x6c of timer_interrupt_handler).
+    //   * saved_RSP lands inside slot 4's per-task kstack near the top.
+    //   * the iret frame at saved_RSP has RIP=0; CS/RFLAGS/SS are sometimes
+    //     valid kernel values (0x8 / 0x10216 / 0x10) and sometimes all-zero
+    //     — meaning a kernel-mode interrupt fired at the moment a kernel
+    //     instruction had already loaded 0 into RIP (the next-instruction
+    //     fetch never happened because the interrupt was serviced first).
+    //   * static review of every indirect-call site reachable from the
+    //     redact.elf syscall path (handle_write -> platform::log,
+    //     pick_next -> platform::ticks, plus all of dispatch's match arms)
+    //     found NO null function pointer in code — the platform vtable
+    //     methods are all real .text symbols.
+    //   * adding *any* code in schedule()'s hot path between fxrstor and
+    //     context_switch — even just a memory load + compare — closes the
+    //     race window and the bug stops reproducing. So the bug cannot be
+    //     observed under instrumentation; we only see it by its aftermath.
+    // Working hypothesis: a torn write of `static mut PLATFORM: &dyn
+    // Platform` (16-byte fat pointer, two 8-byte stores) leaves the
+    // vtable ptr stale or zero for a single read. Unconfirmed.
+    // Memory: see ~/.claude/.../memory/project_semantic_os_task40.md
+    // Rather than hlt, recover by killing the faulting task; pick_next
+    // picks something else and the rest of the system keeps running.
     let cur = kernel_core::scheduler::current_task_index();
     println!("[kernel] PAGE FAULT in slot {} at RIP={:?} — recovering (task #40)",
         cur, stack_frame.instruction_pointer);
@@ -293,6 +320,97 @@ extern "x86-interrupt" fn page_fault_handler(
             println!("    slot {} ({}): {:?}", i, t.name, t.state);
         }
     }
+
+    // Task #40 diagnostic: when the kernel-mode RIP is exactly 0, dump
+    // enough state to see *which* stack the failing iretq read from and
+    // what each task's saved context looks like. We expect this to
+    // reveal whether KERNEL_RSP/TSS.RSP0 is wrong, or whether one task's
+    // saved RSP points into another task's per-task kernel stack.
+    if stack_frame.instruction_pointer.as_u64() == 0 {
+        let saved_rsp = stack_frame.stack_pointer.as_u64();
+        let kernel_rsp = unsafe { crate::gdt::KERNEL_RSP };
+        let tss_rsp0 = crate::gdt::tss_rsp0_value();
+        println!("[task#40] saved_RSP=0x{:x}  KERNEL_RSP=0x{:x}  TSS.RSP0=0x{:x}",
+            saved_rsp, kernel_rsp, tss_rsp0);
+        // Per-task kernel stack tops (each is 8KB; top exclusive).
+        for i in 0..kernel_core::scheduler::MAX_TASKS {
+            let top = crate::context::debug_kstack_top(i);
+            // Hit if saved_rsp lies in this slot's [top - 8KB, top).
+            let mark = if saved_rsp < top && saved_rsp + 0x2000 >= top { " <== saved_RSP is in THIS slot" } else { "" };
+            println!("    slot {} kstack top=0x{:x}{}", i, top, mark);
+        }
+        // Saved task contexts. The .rsp/.rip values are what
+        // schedule()/context_switch will load when the task is picked.
+        unsafe {
+            let contexts = &raw const crate::context::CONTEXTS;
+            for i in 0..kernel_core::scheduler::MAX_TASKS {
+                let ctx = &(*contexts)[i];
+                println!("    CONTEXTS[{}]  rsp=0x{:x}  rip=0x{:x}  cr3=0x{:x}",
+                    i, ctx.rsp, ctx.rip, ctx.cr3);
+            }
+        }
+        // Memory in a wide window around saved_RSP. The bug appears to
+        // be that iretq read RIP=0 from somewhere; we want to see both
+        // the iret frame AND the surrounding stack so we can pattern-
+        // match where the corruption starts/stops. Dump 32 quadwords
+        // (256 bytes) centered at saved_RSP - 64.
+        if saved_rsp >= 0x100_0000_0000 && saved_rsp < 0x200_0000_0000 {
+            let base = (saved_rsp.saturating_sub(64)) as *const u64;
+            unsafe {
+                println!("    stack dump (32 qw / 256B from saved_RSP-64):");
+                for k in 0..32 {
+                    let p = base.add(k);
+                    let off = (k as i64) * 8 - 64;
+                    println!("      0x{:x} (rsp{:+}): 0x{:x}",
+                        p as u64, off, core::ptr::read_volatile(p));
+                }
+            }
+        }
+        // Dump the context-switch ring buffer. The newest entries are at
+        // the end. If the hypothesis is right we should see an entry with
+        // next_rip == 0 just before the slot-4 switch-in that doomed us.
+        unsafe {
+            let log_ptr = &raw const crate::context::CTX_LOG;
+            let idx = crate::context::CTX_LOG_IDX;
+            let count = if idx as usize >= crate::context::CTX_LOG_LEN {
+                crate::context::CTX_LOG_LEN
+            } else {
+                idx as usize
+            };
+            println!("    last {} context-switches (oldest -> newest), idx={}:", count, idx);
+            for k in 0..count {
+                // Iterate from oldest to newest:
+                let pos = (idx as usize - count + k) & (crate::context::CTX_LOG_LEN - 1);
+                let e = (*log_ptr)[pos];
+                let mark = if e.next_rip == 0 { " !! next_rip == 0" } else { "" };
+                println!("      [{:3}] cur={} -> next={}  next_rip=0x{:x}  next_rsp=0x{:x}{}",
+                    (idx as usize) - count + k, e.cur, e.next, e.next_rip, e.next_rsp, mark);
+            }
+        }
+        // Also dump where the wrapper-iretq SHOULD have read its frame
+        // from based on CONTEXTS[4].rsp + 72 (= rsp after wrapper pops).
+        unsafe {
+            let contexts = &raw const crate::context::CONTEXTS;
+            let cur = kernel_core::scheduler::current_task_index();
+            let expected_iretq_rsp = (*contexts)[cur].rsp + 72;
+            println!("    expected_iretq_rsp from CONTEXTS[{}].rsp+72 = 0x{:x}",
+                cur, expected_iretq_rsp);
+            if expected_iretq_rsp != saved_rsp {
+                println!("    !! DRIFT: failing iretq rsp 0x{:x} != expected 0x{:x} (delta {})",
+                    saved_rsp, expected_iretq_rsp,
+                    saved_rsp as i64 - expected_iretq_rsp as i64);
+            }
+            if expected_iretq_rsp >= 0x100_0000_0000 && expected_iretq_rsp < 0x200_0000_0000 {
+                let p = expected_iretq_rsp as *const u64;
+                println!("    8 qw at expected_iretq_rsp:");
+                for k in 0..8 {
+                    println!("      0x{:x}: 0x{:x}",
+                        p.add(k) as u64, core::ptr::read_volatile(p.add(k)));
+                }
+            }
+        }
+    }
+
     kill_current_task();
 }
 
@@ -351,13 +469,16 @@ fn kill_current_task() {
     unsafe {
         let tasks = &raw mut kernel_core::scheduler::TASKS;
         (*tasks)[idx].state = kernel_core::scheduler::TaskState::Exited;
+
+        // Reclaim the dying task's address space (frees subtable + PML4
+        // frames back to the page-table pool). We're still on this CR3,
+        // but kernel higher-half mappings get freed too only if they
+        // were tracked in space.subtables — which they aren't, since
+        // map_4k only adds user-mapping subtables. So freeing here is
+        // safe even before we leave the CR3.
+        // (cleanup deferred to slot reuse — see context::reap_exited_slot,
+        //  called by alloc_task_slot via Platform::reap_slot)
     }
-    // Yield: actively call schedule() to context-switch off this task.
-    // We're inside the page-fault handler, but that's fine — context_switch
-    // saves the current (fault-handler) RSP/RIP into the dying task's slot,
-    // which pick_next will never pick again because we just marked it
-    // Exited. The leaked iret frame at the top of this task's kernel stack
-    // is bounded — it goes away when we eventually free per-task resources.
     crate::context::schedule();
     // If pick_next found nothing better (every other slot Exited too),
     // schedule returns. Halt with interrupts on and try again on next tick.

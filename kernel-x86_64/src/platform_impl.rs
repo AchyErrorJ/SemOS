@@ -24,6 +24,27 @@ impl Platform for X86Platform {
         x86_64::instructions::hlt();
     }
 
+    fn schedule(&self) {
+        crate::context::schedule();
+    }
+
+    fn reap_slot(&self, slot: usize) {
+        // Free the slot's AddressSpace (PML4 + subtables) and zero its
+        // saved cr3. Called from alloc_task_slot at the moment of
+        // reusing an Exited slot — by this point no kernel code is
+        // running on the dying CR3, so we can safely free its frames.
+        unsafe {
+            let contexts = &raw mut crate::context::CONTEXTS;
+            if slot < crate::context::CONTEXTS.len() {
+                let dying_cr3 = (*contexts)[slot].cr3;
+                if dying_cr3 != 0 {
+                    crate::context::destroy_address_space(dying_cr3);
+                    (*contexts)[slot].cr3 = 0;
+                }
+            }
+        }
+    }
+
     fn alloc_frame(&self, tier: u8) -> Option<u64> {
         use kernel_core::memory::SecurityTier;
         let tier = match tier {
@@ -43,7 +64,6 @@ impl Platform for X86Platform {
     fn create_address_space(&self, max_tier: u8) -> Option<u64> {
         let space = crate::paging::create_process_address_space(max_tier)?;
         let cr3 = space.cr3;
-        // Store the AddressSpace for later cleanup
         crate::context::store_address_space(space);
         Some(cr3)
     }
