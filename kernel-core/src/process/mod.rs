@@ -664,7 +664,12 @@ pub fn spawn_from_elf(name: &'static str, elf_data: &[u8], max_tier: u8) -> Opti
 
     // 4. Map a user stack
     let stack_top = elf_info.stack_top as u64;
-    let stack_size = 64 * 1024u64; // 64KB
+    // 16KB — must NOT exceed TASK_STACK_SIZE in the platform crate. Larger
+    // sizes alias adjacent slots' TASK_STACKS in the platform's user-stack
+    // backing logic and corrupt their iret-RIP slot at [top-56] (task #40).
+    // If user tasks need more stack, fix the platform's stack-allocation
+    // strategy first (allocate from a separate pool, not from TASK_STACKS).
+    let stack_size = 16 * 1024u64;
     let user_rsp = match platform.map_user_stack(cr3, stack_top, stack_size) {
         Some(rsp) => rsp,
         None => {

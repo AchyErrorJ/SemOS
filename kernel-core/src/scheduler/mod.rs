@@ -17,7 +17,13 @@ use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 /// Maximum number of tasks
 pub const MAX_TASKS: usize = 16;
 
-/// Task stack size (16KB per task)
+/// Task stack size (16KB per task).
+/// NOTE 2026-05-12: tried bumping to 32KB but it deterministically broke
+/// SYS_SPAWN's memcmp path (likely due to a layout-dependent bug elsewhere
+/// in the bootloader page-mapping or .bss size limit). Reverted to 16KB.
+/// Stack-overflow detection now uses canaries (`init_stack_canaries`) +
+/// PF-handler check (`check_stack_canaries`) instead of bigger stacks.
+/// Real unmapped guard pages are still future work.
 pub const TASK_STACK_SIZE: usize = 16 * 1024;
 
 /// Task state

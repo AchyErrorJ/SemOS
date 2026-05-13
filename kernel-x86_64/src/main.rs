@@ -244,6 +244,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // multitasking + 4-tier isolation works during the demos. They no
     // longer print "tick" lines (silenced for clean demo output).
     // (kstack layout dump removed — we have the addresses)
+    // Stack-overflow canaries at the bottom of every TASK_STACK — checked
+    // from the PF handler. Cheap detection before metal bring-up.
+    context::init_stack_canaries();
+
     println!("[*] Spawning background tasks...");
     if let Some(slot) = context::spawn_task("task_a", task_a) {
         println!("    task_a       (kernel mode)        slot {}", slot);
@@ -318,9 +322,6 @@ fn task_isolated() {
 /// After firing the syscalls it idles in `hlt`.
 fn init_loader_task() {
     // Run kernel-side demos FIRST (demos 2 & 3 — the SemanticObject path).
-    // These are 100% reliable. Demo 1 (Ring 3 redact.elf) goes LAST
-    // because its post-exit cleanup occasionally triggers task #40's
-    // kernel #PF and the kernel can become flaky after.
     sem_demo_kernel();
 
     // DEMO 0: real Rust user binary (hello-rs.elf, built from
@@ -358,18 +359,13 @@ fn init_loader_task() {
     // println!("================================================================");
     // spawn_named_at("exfil-demo.elf", 2);
 
-    // DEMO 5 (persistent SemanticObject across reboot via VirtIO disk)
-    // CURRENTLY DISABLED — like DEMO 6, the additional code path
-    // reopens task #40's race window, causing kernel-mode tasks to
-    // segfault and starving the Ring-3 demos. The infrastructure
-    // (kernel_core::storage::snapshot + virtio::block) is verified
-    // independently at the raw-sector level; flip back on once
-    // task #40 is properly fixed.
-    // println!();
-    // println!("================================================================");
-    // println!("  SemOS DEMO 5: persistent SemanticObject (survives reboot)");
-    // println!("================================================================");
-    // persistence_demo();
+    // DEMO 5 — re-enabled for task #40 hunt 2026-05-13 with new diagnostics
+    // (canary check, expanded PF dump, IDT-dbg, timer-trap RIP=0 reporter).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 5: persistent SemanticObject (survives reboot)");
+    println!("================================================================");
+    persistence_demo();
 
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }

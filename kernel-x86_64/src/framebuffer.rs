@@ -56,6 +56,94 @@ unsafe impl Sync for FramebufferConsole {}
 /// Global console handle. `None` until `init` is called with a framebuffer.
 static CONSOLE: Mutex<Option<FramebufferConsole>> = Mutex::new(None);
 
+// ============================================================================
+// Scrollback ring buffer
+// ============================================================================
+//
+// Captures every byte that flows through the framebuffer console (which is
+// every byte that flows through `serial::_print`, since serial mirrors to
+// us). This is the on-metal debug lifeline: when a fault dumps more lines
+// than fit on screen, the older lines have scrolled off, but they're still
+// in this buffer. PF handler can call `dump_recent_screen()` to re-render
+// them after the fault clears, OR `replay_to_serial()` for QEMU runs.
+
+const SCROLLBACK_SIZE: usize = 64 * 1024; // 64 KB — ~5-10 screens worth
+
+/// Raw byte ring. NO Mutex — accessed via &raw mut + volatile writes,
+/// which is safe because `serial::_print` already wraps everything in
+/// `without_interrupts(...)`. The earlier Mutex<[u8; N]> wrapping
+/// destabilized the kernel (made memcmp PF in slot 5 deterministically) —
+/// suspect: spin::MutexGuard for a 64KB inner type interacts badly with
+/// stack pressure or LLVM's spill choices in the println-during-syscall
+/// path. Bypass the Mutex entirely.
+#[repr(C, align(16))]
+struct ScrollbackBuf([u8; SCROLLBACK_SIZE]);
+static mut SCROLLBACK_BUF: ScrollbackBuf = ScrollbackBuf([0; SCROLLBACK_SIZE]);
+
+/// Monotonic write index (NOT modulo'd). Index into ring = HEAD % SCROLLBACK_SIZE.
+use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+static SCROLLBACK_HEAD: AtomicU64 = AtomicU64::new(0);
+
+/// Append a single byte to the scrollback ring. Lock-free; safe because
+/// `serial::_print` already runs inside `without_interrupts`.
+fn scrollback_push(byte: u8) {
+    let head = SCROLLBACK_HEAD.fetch_add(1, AtomicOrdering::Relaxed);
+    let pos = (head as usize) & (SCROLLBACK_SIZE - 1);
+    unsafe {
+        let buf_ptr = (&raw mut SCROLLBACK_BUF) as *mut u8;
+        core::ptr::write_volatile(buf_ptr.add(pos), byte);
+    }
+}
+
+/// Render up to one screen-worth of the most recent scrollback content
+/// directly to the framebuffer, scanning back from HEAD until we find
+/// `cols * rows` worth of lines (or hit the start of recorded data).
+///
+/// Useful after a PF clears the screen with its dump; calling this lets
+/// you see what was on screen RIGHT BEFORE the fault.
+pub fn dump_recent_screen() {
+    let head = SCROLLBACK_HEAD.load(AtomicOrdering::Relaxed);
+    let recorded = (head as usize).min(SCROLLBACK_SIZE);
+
+    // 8 KB ≈ one 720p screen at 8x8 chars — conservative cap so we don't
+    // re-render the entire ring after a fault.
+    let walk_back = recorded.min(8 * 1024);
+    let start_idx = head.wrapping_sub(walk_back as u64);
+
+    if let Some(ref mut c) = *CONSOLE.lock() {
+        unsafe {
+            let buf_ptr = (&raw const SCROLLBACK_BUF) as *const u8;
+            let mut idx = start_idx;
+            while idx != head {
+                let pos = (idx as usize) & (SCROLLBACK_SIZE - 1);
+                let byte = core::ptr::read_volatile(buf_ptr.add(pos));
+                c.put_byte(byte);
+                idx = idx.wrapping_add(1);
+            }
+        }
+    }
+}
+
+/// Send the ENTIRE scrollback (from oldest recorded byte forward) to the
+/// SERIAL port. Useful from QEMU debug paths or post-mortem to dump the
+/// full recorded history. Doesn't touch the framebuffer.
+pub fn replay_to_serial() {
+    let head = SCROLLBACK_HEAD.load(AtomicOrdering::Relaxed);
+    let recorded = (head as usize).min(SCROLLBACK_SIZE);
+    let start_idx = head.wrapping_sub(recorded as u64);
+    unsafe {
+        let buf_ptr = (&raw const SCROLLBACK_BUF) as *const u8;
+        let mut serial = crate::serial::SERIAL.lock();
+        let mut idx = start_idx;
+        while idx != head {
+            let pos = (idx as usize) & (SCROLLBACK_SIZE - 1);
+            let byte = core::ptr::read_volatile(buf_ptr.add(pos));
+            serial.write_byte(byte);
+            idx = idx.wrapping_add(1);
+        }
+    }
+}
+
 /// Initialize the framebuffer console from the bootloader's framebuffer.
 pub fn init(fb: &mut FrameBuffer) {
     let info = fb.info();
@@ -101,6 +189,10 @@ struct ConsoleWriter;
 
 impl fmt::Write for ConsoleWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        // Scrollback recording temporarily disabled while diagnosing whether
+        // the recording itself (lock acquisition or 64KB Mutex) destabilizes
+        // the kernel. Re-enable once the cause is found.
+        // for byte in s.bytes() { scrollback_push(byte); }
         if let Some(ref mut c) = *CONSOLE.lock() {
             for byte in s.bytes() {
                 c.put_byte(byte);

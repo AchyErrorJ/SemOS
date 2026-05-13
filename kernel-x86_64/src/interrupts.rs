@@ -80,6 +80,31 @@ extern "x86-interrupt" fn spurious_interrupt_handler(_stack_frame: InterruptStac
 pub fn init() {
     IDT.load();
 
+    // Diagnostic: read IDT[14] (#PF) raw bytes to verify the
+    // 64-bit handler offset was written intact. Each IDT entry is
+    // 16 bytes; the handler offset is split across offset_low (u16
+    // at +0), offset_middle (u16 at +6), offset_high (u32 at +8).
+    // task#40 followup: the int log shows IDT[14] resolving to
+    // offset_high=0 (handler addr truncated to low 32 bits). Verify
+    // whether the truncation is there from boot or whether something
+    // zeroes it later.
+    unsafe {
+        let idt_ptr = &*IDT as *const InterruptDescriptorTable as *const u8;
+        let pf_entry = idt_ptr.add(14 * 16);
+        let lo = core::ptr::read(pf_entry.add(0) as *const u16);
+        let mid = core::ptr::read(pf_entry.add(6) as *const u16);
+        let hi = core::ptr::read(pf_entry.add(8) as *const u32);
+        let opts = core::ptr::read(pf_entry.add(4) as *const u16);
+        let sel = core::ptr::read(pf_entry.add(2) as *const u16);
+        let handler = ((hi as u64) << 32) | ((mid as u64) << 16) | (lo as u64);
+        crate::println!(
+            "[idt-dbg] post-load IDT[14] (#PF) lo=0x{:04x} mid=0x{:04x} hi=0x{:08x} -> handler=0x{:016x}  sel=0x{:04x} opts=0x{:04x}",
+            lo, mid, hi, handler, sel, opts);
+        crate::println!(
+            "[idt-dbg]   expected page_fault_handler addr is high-half (0x100_0000_xxxx); hi=0 means truncated"
+        );
+    }
+
     // Initialize the PICs (remap to vectors 32-47)
     unsafe {
         init_pics();
@@ -306,6 +331,14 @@ extern "x86-interrupt" fn page_fault_handler(
     let cur = kernel_core::scheduler::current_task_index();
     println!("[kernel] PAGE FAULT in slot {} at RIP={:?} — recovering (task #40)",
         cur, stack_frame.instruction_pointer);
+    // Stack-canary check: if any TASK_STACK[slot] bottom has been smashed,
+    // we have a stack overflow somewhere — report it loudly.
+    if let Some(smashed_slot) = crate::context::check_stack_canaries() {
+        let bottom_addr = crate::context::stack_bottom_addr(smashed_slot);
+        let actual = unsafe { core::ptr::read_volatile(bottom_addr as *const u64) };
+        println!("[kernel] !! STACK OVERFLOW: TASK_STACKS[{}] canary at 0x{:x} = 0x{:016x} (expected 0x{:016x})",
+            smashed_slot, bottom_addr, actual, crate::context::STACK_CANARY);
+    }
     // The verbose state dump below is load-bearing — it adds enough
     // serial-output latency that subsequent demos reliably complete
     // (without it the kernel #PF cascade kills more tasks than it
@@ -326,17 +359,55 @@ extern "x86-interrupt" fn page_fault_handler(
     // what each task's saved context looks like. We expect this to
     // reveal whether KERNEL_RSP/TSS.RSP0 is wrong, or whether one task's
     // saved RSP points into another task's per-task kernel stack.
-    // task#40 verbose dump trimmed to a single summary line. The full
-    // dump (per-slot CONTEXTS, 32-quadword stack window, CTX_LOG ring
-    // buffer, expected-iretq-rsp drift) is preserved in the git history
-    // and `project_semantic_os_task40.md` memory; reactivate when
-    // actively debugging the race. Keeping it on at boot eats ~750ms of
-    // serial output per fault and starves user tasks.
+    // task#40 minimal dump: summary line + the last 16 context-switch
+    // events. If the next_rip column is 0 anywhere, that switch jumped
+    // to address 0 and produced this fault.
     if stack_frame.instruction_pointer.as_u64() == 0 {
         let saved_rsp = stack_frame.stack_pointer.as_u64();
         let kernel_rsp = unsafe { crate::gdt::KERNEL_RSP };
-        println!("[task#40] saved_RSP=0x{:x}  KERNEL_RSP=0x{:x}  (verbose dump suppressed)",
-            saved_rsp, kernel_rsp);
+        let cur_slot = kernel_core::scheduler::current_task_index();
+        println!("[task#40] saved_RSP=0x{:x}  KERNEL_RSP=0x{:x}  cur_slot={}",
+            saved_rsp, kernel_rsp, cur_slot);
+        // Dump CONTEXTS[cur_slot].rip *right now* — if it's 0, the slot's
+        // saved rip is genuinely 0 (someone wrote 0 there); if non-zero,
+        // the rip got corrupted in-flight (compiler/CPU caching, fat-ptr
+        // tear, or stack-pop racing with a write).
+        unsafe {
+            let contexts = &raw const crate::context::CONTEXTS;
+            let c = &(*contexts)[cur_slot];
+            println!("[task#40] CONTEXTS[{}]: rip=0x{:x} rsp=0x{:x} cr3=0x{:x}",
+                cur_slot, c.rip, c.rsp, c.cr3);
+        }
+        // Dump quadwords WAY below saved_RSP. The actual zero return-address
+        // popped by `retq` lives ~150-200 bytes below saved_RSP (depth of
+        // schedule's frame + timer_handler frame). Plot a wide range so we
+        // can see WHICH stack slot was 0 to begin with.
+        unsafe {
+            for off in -50i64..8i64 {
+                let addr = saved_rsp.wrapping_add((off * 8) as u64);
+                let val = core::ptr::read_volatile(addr as *const u64);
+                let mark = if off == 0 {
+                    " <-- saved_RSP"
+                } else if val == 0 {
+                    " ZERO"
+                } else {
+                    ""
+                };
+                println!("  [rsp{:+4}]  0x{:016x} = 0x{:016x}{}", off * 8, addr, val, mark);
+            }
+        }
+        unsafe {
+            let log_ptr = &raw const crate::context::CTX_LOG;
+            let idx = crate::context::CTX_LOG_IDX as usize;
+            let count = idx.min(16);
+            for k in 0..count {
+                let pos = (idx - count + k) & (crate::context::CTX_LOG_LEN - 1);
+                let e = (*log_ptr)[pos];
+                let mark = if e.next_rip == 0 { " !! next_rip=0" } else { "" };
+                println!("  [ctx-{:3}] cur={} next={}  next_rip=0x{:x}{}",
+                    idx - count + k, e.cur, e.next, e.next_rip, mark);
+            }
+        }
     }
 
     kill_current_task();
@@ -422,7 +493,32 @@ fn kill_current_task() {
 /// Timer tick counter
 static TIMER_TICKS: spin::Mutex<u64> = spin::Mutex::new(0);
 
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFrame) {
+    // task#40 diagnostic: if the CPU just pushed an iret frame with
+    // RIP=0, log it. This catches "kernel was at RIP=0 when timer
+    // fired" — the alternative theory is "iret frame got overwritten
+    // between push and pop", which we'd distinguish from this firing.
+    if stack_frame.instruction_pointer.as_u64() == 0 {
+        let rsp = stack_frame.stack_pointer.as_u64();
+        crate::println!("[timer-trap] RIP=0! cur_slot={} saved_RSP=0x{:x} CS=0x{:x} RFLAGS=0x{:x}",
+            kernel_core::scheduler::current_task_index(),
+            rsp,
+            stack_frame.code_segment.0,
+            stack_frame.cpu_flags.bits());
+        // Dump 24 quadwords ABOVE saved_RSP (the stack the CPU was about
+        // to fetch from / had just popped from). If RIP became 0 via a
+        // `ret`, the popped-zero is at saved_RSP - 8 (now consumed). The
+        // surrounding region shows what else is on the stack — return
+        // addresses, saved regs, etc. — and helps trace the call chain.
+        unsafe {
+            for off in -8i64..16i64 {
+                let addr = rsp.wrapping_add((off * 8) as u64);
+                let val = core::ptr::read_volatile(addr as *const u64);
+                let mark = if off == 0 { " <-- RSP" } else if off == -1 { " <-- popped" } else { "" };
+                crate::println!("  [rsp{:+3}]  0x{:016x} = 0x{:016x}{}", off * 8, addr, val, mark);
+            }
+        }
+    }
     {
         let mut ticks = TIMER_TICKS.lock();
         *ticks += 1;
