@@ -444,19 +444,22 @@ fn persistence_demo() {
             }
 
             // Apply the LLM-context security policy and print the redacted view.
+            // 2026-05-13: REPLACED build_from_suids (which returns LlmContext
+            // ~258KB by value, ballooning init_loader_task's stack frame to
+            // 528KB and overwriting adjacent slots' iret-RIP slots — task #40
+            // bug source #2). Use redactor.redact directly with a static
+            // scratch, same pattern as sem_demo_one.
+            static mut DEMO5_REDACT_OUT: [u8; 1024] = [0; 1024];
             unsafe {
-                let builder = kernel_core::llm::context_builder::global_context_builder();
-                let pairs: [(u64, u64); 1] = [(stored_suid_hi, stored_suid_lo)];
-                match builder.build_from_suids(&pairs, 3 /* caller tier = Secret */) {
-                    Ok(ctx) => {
-                        for entry in ctx.iter() {
-                            let s = core::str::from_utf8(entry.content())
-                                .unwrap_or("<bad utf8>");
-                            println!("  [DEMO 5]   LLM CONTEXT: {}", s);
-                        }
-                    }
-                    Err(_) => println!("  [DEMO 5] build_from_suids failed"),
-                }
+                let scratch = core::slice::from_raw_parts_mut(
+                    (&raw mut DEMO5_REDACT_OUT) as *mut u8, 1024,
+                );
+                let redactor = kernel_core::llm::context_builder::global_redactor();
+                let n = redactor.redact(content, scratch);
+                let scratch_ro = &*((&raw const DEMO5_REDACT_OUT) as *const [u8; 1024]);
+                print!("  [DEMO 5]   LLM CONTEXT:  ");
+                for &b in &scratch_ro[..n] { print!("{}", b as char); }
+                println!();
             }
             println!("  [DEMO 5] => kernel redaction policy survives a reboot");
         }

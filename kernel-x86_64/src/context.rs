@@ -177,6 +177,7 @@ pub fn stack_bottom_addr(slot: usize) -> u64 {
     }
 }
 
+
 /// Per-task kernel stacks (8KB each) — used for Ring 3 → Ring 0 transitions.
 /// When an interrupt or SYSCALL fires while a Ring 3 task is running,
 /// the CPU loads RSP from TSS.RSP0, which points to this task's kernel stack.

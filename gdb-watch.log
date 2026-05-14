@@ -1,0 +1,8 @@
+The target architecture is set to "i386:x86-64".
+0x000000000000fff0 in semantic_os_x86_64::memory::init (boot_info=<optimized out>) at src/memory.rs:169
+169	    *USABLE_MEMORY.lock() = Some((base, total_size));
+Warning: the current language does not match this frame.
+Hardware watchpoint 1: *(long*)0x1000015dfe8
+warning: Exception condition detected on fd 908
+F:/Software/ArmKernel3/watch.gdb:46: Error in sourced command file:
+Remote communication error.  Target disconnected.: Arg list too long.

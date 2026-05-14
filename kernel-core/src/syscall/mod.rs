@@ -1069,6 +1069,9 @@ fn handle_llm_query(prompt_ptr: u64, prompt_len: u64, out_ptr: u64) -> u64 {
 
 /// SYS_LLM_CONTEXT(suid_pairs_ptr, count, out_ptr) → context size or u64::MAX
 /// Builds an LLM context from a list of SUID pairs. Writes serialized context to out_ptr.
+///
+/// FIXED 2026-05-14: avoid 258KB LlmContext stack allocation (task #40 root cause).
+/// Process entries one-by-one using static scratch buffer instead of build_from_suids.
 fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
     let n = (count as usize).min(32);
     let tier = crate::scheduler::current_task_max_tier();
@@ -1077,36 +1080,76 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
         core::slice::from_raw_parts(suid_pairs_ptr as *const (u64, u64), n)
     };
 
+    // Static scratch buffer for processing one entry at a time.
+    // Safe because syscalls are serialized (no concurrent access).
+    static mut CONTEXT_SCRATCH: [u8; 4096] = [0; 4096];
+
     unsafe {
-        let builder = crate::llm::context_builder::global_context_builder();
-        match builder.build_from_suids(suids, tier) {
-            Ok(ctx) => {
-                // Write context entries as serialized data to out_ptr
-                let total = ctx.total_size();
-                if out_ptr != 0 {
-                    let mut offset = 0usize;
-                    let out = out_ptr as *mut u8;
-                    for entry in ctx.iter() {
-                        let content = entry.content();
-                        let entry_len = content.len();
-                        if offset + entry_len + 8 > 32768 { break; }
-                        // Write length prefix + content
-                        let len_bytes = (entry_len as u64).to_le_bytes();
-                        core::ptr::copy_nonoverlapping(
-                            len_bytes.as_ptr(), out.add(offset), 8,
-                        );
-                        offset += 8;
-                        core::ptr::copy_nonoverlapping(
-                            content.as_ptr(), out.add(offset), entry_len,
-                        );
-                        offset += entry_len;
+        let registry = crate::semantic::registry::global_registry();
+        let redactor = crate::llm::context_builder::global_redactor();
+        let scratch = core::slice::from_raw_parts_mut(
+            (&raw mut CONTEXT_SCRATCH) as *mut u8, 4096
+        );
+
+        let mut total_size = 0usize;
+        let mut offset = 0usize;
+        let out = if out_ptr != 0 { out_ptr as *mut u8 } else { core::ptr::null_mut() };
+
+        for (suid_high, suid_low) in suids {
+            let suid = crate::semantic::SUID::new(*suid_high, *suid_low);
+
+            if let Some(object) = registry.get(&suid) {
+                let obj_tier = object.tier as u8;
+                if obj_tier > tier {
+                    continue; // Can't access this tier
+                }
+
+                // Apply tier-based processing (same logic as build_from_suids)
+                let obj_content_bytes = match object.content.as_bytes() {
+                    Some(bytes) => bytes,
+                    None => continue, // Skip objects with no content
+                };
+
+                let content = match obj_tier {
+                    0 => obj_content_bytes, // Tier 0: verbatim
+                    1 => {
+                        // Tier 1: summarize (placeholder - use redactor for now)
+                        let n = redactor.redact(obj_content_bytes, scratch);
+                        &scratch[..n]
                     }
-                    offset as u64
-                } else {
-                    total as u64
+                    2 => {
+                        // Tier 2: redact
+                        let n = redactor.redact(obj_content_bytes, scratch);
+                        &scratch[..n]
+                    }
+                    _ => continue, // Tier 3+: exclude
+                };
+
+                let entry_len = content.len();
+                total_size += entry_len + 8; // +8 for length prefix
+
+                // Write to output buffer if provided
+                if !out.is_null() && offset + entry_len + 8 <= 32768 {
+                    // Write length prefix
+                    let len_bytes = (entry_len as u64).to_le_bytes();
+                    core::ptr::copy_nonoverlapping(
+                        len_bytes.as_ptr(), out.add(offset), 8
+                    );
+                    offset += 8;
+
+                    // Write content
+                    core::ptr::copy_nonoverlapping(
+                        content.as_ptr(), out.add(offset), entry_len
+                    );
+                    offset += entry_len;
                 }
             }
-            Err(_) => u64::MAX,
+        }
+
+        if out.is_null() {
+            total_size as u64 // Size query
+        } else {
+            offset as u64 // Bytes written
         }
     }
 }
