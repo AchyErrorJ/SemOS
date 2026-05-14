@@ -69,6 +69,8 @@ pub mod numbers {
     pub const SYS_LLM_REDACT: u64 = 52;
     pub const SYS_LLM_SUMMARIZE: u64 = 53;
     pub const SYS_LLM_ACCESS: u64 = 54;
+    pub const SYS_LLM_STREAM_START: u64 = 55;
+    pub const SYS_LLM_STREAM_READ: u64 = 56;
 
     // Crypto/Storage (60-69)
     pub const SYS_ENCRYPT: u64 = 60;
@@ -136,6 +138,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_LLM_REDACT => handle_llm_redact(arg0, arg1, arg2),
         SYS_LLM_SUMMARIZE => handle_llm_summarize(arg0, arg1, arg2),
         SYS_LLM_ACCESS => handle_llm_access(arg0, arg1, arg2, arg3),
+        SYS_LLM_STREAM_START => handle_llm_stream_start(arg0, arg1, arg2),
+        SYS_LLM_STREAM_READ => handle_llm_stream_read(arg0, arg1, arg2),
 
         // Crypto/Storage (60-69)
         SYS_ENCRYPT => handle_encrypt(arg0, arg1, arg2, arg3),
@@ -1230,6 +1234,83 @@ fn handle_llm_access(requester_id: u64, current_tier: u64, requested_tier: u64, 
         match queue.submit(request) {
             Ok(id) => id as u64,
             Err(_) => u64::MAX,
+        }
+    }
+}
+
+/// SYS_LLM_STREAM_START(prompt_ptr, prompt_len, context_ptr) → request_id or u64::MAX
+/// Start a streaming LLM request. Returns request ID for polling with SYS_LLM_STREAM_READ.
+/// context_ptr points to serialized context data (same format as SYS_LLM_CONTEXT output).
+pub fn handle_llm_stream_start(prompt_ptr: u64, prompt_len: u64, context_ptr: u64) -> u64 {
+    let len = prompt_len as usize;
+    if len == 0 || len > 1024 { return u64::MAX; }
+
+    let prompt = unsafe {
+        core::slice::from_raw_parts(prompt_ptr as *const u8, len)
+    };
+
+    let task_id = crate::scheduler::current_task_index() as u8;
+    let tier = crate::scheduler::current_task_max_tier();
+
+    unsafe {
+        let provider = crate::llm::provider::global_provider();
+        let request = crate::llm::provider::LlmRequest::new(task_id, tier, prompt);
+
+        match provider.submit(request) {
+            Ok(request_id) => request_id,
+            Err(_) => u64::MAX,
+        }
+    }
+}
+
+/// SYS_LLM_STREAM_READ(request_id, out_ptr, out_len) → bytes_read or error_code
+/// Read chunk from streaming LLM response. Returns:
+/// - > 0: bytes read (response continues)
+/// - 0: response complete
+/// - u64::MAX: error or invalid request_id
+/// Special values: u64::MAX-1 = still processing, u64::MAX-2 = cancelled
+pub fn handle_llm_stream_read(request_id: u64, out_ptr: u64, out_len: u64) -> u64 {
+    let max_len = out_len as usize;
+    if max_len == 0 || out_ptr == 0 { return u64::MAX; }
+
+    unsafe {
+        let provider = crate::llm::provider::global_provider();
+
+        // Check request status
+        match provider.get_status(request_id) {
+            Some(crate::llm::provider::RequestState::Queued) |
+            Some(crate::llm::provider::RequestState::Processing) => {
+                // Still processing
+                u64::MAX - 1
+            },
+            Some(crate::llm::provider::RequestState::Completed) => {
+                // Get response and copy to output buffer
+                if let Some(response) = provider.get_response(request_id) {
+                    if response.is_success() {
+                        let content = response.content();
+                        let copy_len = content.len().min(max_len);
+                        let out = core::slice::from_raw_parts_mut(out_ptr as *mut u8, copy_len);
+                        out.copy_from_slice(&content[..copy_len]);
+                        copy_len as u64
+                    } else {
+                        response.error_code as u64
+                    }
+                } else {
+                    u64::MAX
+                }
+            },
+            Some(crate::llm::provider::RequestState::Cancelled) => {
+                u64::MAX - 2
+            },
+            Some(crate::llm::provider::RequestState::Failed) => {
+                // Try to get error code from response
+                if let Some(response) = provider.get_response(request_id) {
+                    response.error_code as u64
+                } else {
+                    u64::MAX
+                }
+            },
+            _ => u64::MAX, // Invalid request ID
         }
     }
 }

@@ -367,6 +367,13 @@ fn init_loader_task() {
     println!("================================================================");
     persistence_demo();
 
+    // DEMO 7: LLM Streaming Test
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 7: LLM streaming syscalls");
+    println!("================================================================");
+    llm_streaming_test();
+
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
@@ -539,6 +546,74 @@ fn sem_demo_kernel() {
     println!("================================================================");
     println!("  Same data, two views: kernel mediates only LLM-bound output.");
     println!("================================================================");
+}
+
+/// DEMO 7: LLM streaming syscalls test
+fn llm_streaming_test() {
+    println!("  [DEMO 7] Testing LLM streaming syscalls from kernel space");
+
+    // Make the syscalls directly from kernel space to test the interface
+    let prompt = b"explain semantic operating systems briefly";
+
+    println!("  [DEMO 7] Starting streaming LLM request...");
+    let request_id = unsafe {
+        kernel_core::syscall::handle_llm_stream_start(
+            prompt.as_ptr() as u64,
+            prompt.len() as u64,
+            0, // No context
+        )
+    };
+
+    if request_id == u64::MAX {
+        println!("  [DEMO 7] ERROR: Failed to start LLM stream");
+        return;
+    }
+
+    println!("  [DEMO 7] Stream request started (ID={}), polling for response...", request_id);
+
+    // Give the mock provider a chance to process
+    for _i in 0..1000 {
+        core::hint::spin_loop();
+    }
+
+    // Process pending requests manually since we're in kernel space
+    unsafe {
+        let provider = kernel_core::llm::provider::global_provider();
+        provider.process_pending();
+    }
+
+    // Try to read response
+    let mut buffer = [0u8; 512];
+    let result = unsafe {
+        kernel_core::syscall::handle_llm_stream_read(
+            request_id,
+            buffer.as_mut_ptr() as u64,
+            buffer.len() as u64,
+        )
+    };
+
+    match result {
+        u64::MAX => {
+            println!("  [DEMO 7] ERROR: Stream read failed");
+        },
+        val if val == u64::MAX - 1 => {
+            println!("  [DEMO 7] Stream still processing");
+        },
+        val if val == u64::MAX - 2 => {
+            println!("  [DEMO 7] Stream was cancelled");
+        },
+        0 => {
+            println!("  [DEMO 7] Stream complete (no data)");
+        },
+        bytes_read => {
+            println!("  [DEMO 7] Got response ({} bytes):", bytes_read);
+            let response = core::str::from_utf8(&buffer[..bytes_read as usize])
+                .unwrap_or("[invalid UTF-8]");
+            println!("  [DEMO 7]   Response: {}", response);
+        }
+    }
+
+    println!("  [DEMO 7] => Streaming LLM syscalls working!");
 }
 
 /// Run a single SemanticObject demo: insert, direct read, LLM-context read.

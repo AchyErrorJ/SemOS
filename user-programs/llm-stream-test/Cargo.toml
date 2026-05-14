@@ -1,0 +1,14 @@
+[package]
+name = "llm-stream-test"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+panic = "abort"
+lto = true
+
+[dependencies]
+
+[[bin]]
+name = "llm-stream-test"
+path = "src/main.rs"
