@@ -326,7 +326,7 @@ impl LlmProvider {
             let response = match self.provider_type {
                 ProviderType::Mock => self.mock_process_prompt(&prompt_copy[..prompt_len], request_id, context_entries),
                 ProviderType::Local => LlmResponse::error(request_id, LlmError::ProviderUnavailable as i64),
-                ProviderType::Remote => LlmResponse::error(request_id, LlmError::ProviderUnavailable as i64),
+                ProviderType::Remote => self.remote_process_prompt(&prompt_copy[..prompt_len], request_id, context_entries),
                 ProviderType::None => LlmResponse::error(request_id, LlmError::ProviderUnavailable as i64),
             };
 
@@ -385,13 +385,28 @@ impl LlmProvider {
         )
     }
 
-    /// Remote API call (placeholder)
+    /// Remote API call (placeholder, called via the deprecated `LlmRequest`
+    /// path — the live dispatch goes through [`remote_process_prompt`] below).
     fn remote_process(&self, request: &LlmRequest) -> LlmResponse {
-        // Network not yet implemented
         LlmResponse::error(
             request.id,
             LlmError::ProviderUnavailable as i64,
         )
+    }
+
+    /// Remote-API processing using a copied prompt slice. Routes through
+    /// [`crate::llm::net_provider::NetworkLlmProvider`], which frames an
+    /// HTTP/1.1 request and pushes it down whatever transport is configured
+    /// (today: loopback; tomorrow: TCP over e1000).
+    fn remote_process_prompt(&self, prompt: &[u8], request_id: u64, context_entries: usize) -> LlmResponse {
+        let mut completion = [0u8; super::net_provider::MAX_RESPONSE_BODY];
+        let result = unsafe {
+            super::net_provider::global_net_provider().complete(prompt, &mut completion)
+        };
+        match result {
+            Ok(n) => LlmResponse::success(request_id, &completion[..n], context_entries),
+            Err(e) => LlmResponse::error(request_id, e.to_error_code()),
+        }
     }
 
     /// Get response for a request

@@ -52,6 +52,8 @@ pub mod context_redact;
 pub mod summarize;
 pub mod access_request;
 pub mod provider;
+pub mod transport;
+pub mod net_provider;
 
 pub use context_builder::{ContextBuilder, ContextEntry, LlmContext};
 pub use redact::{Redactor, RedactionLevel};
@@ -59,6 +61,8 @@ pub use context_redact::{ContextAwareRedactor, RedactionContext, init as init_co
 pub use summarize::{Summarizer, Summary};
 pub use access_request::{AccessRequest, AccessDecision, EscalationQueue};
 pub use provider::{LlmProvider, LlmRequest, LlmResponse};
+pub use transport::{NetworkTransport, TransportError, LoopbackTransport};
+pub use net_provider::{NetworkLlmProvider, Endpoint, TransportKind, ApiFormat};
 
 use crate::memory::SecurityTier;
 
@@ -136,6 +140,8 @@ pub fn init() {
     summarize::init();
     access_request::init();
     provider::init();
+    transport::init();
+    net_provider::init();
 
     unsafe {
         LLM_SERVICE_INITIALIZED = true;

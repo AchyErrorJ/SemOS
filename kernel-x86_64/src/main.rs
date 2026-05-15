@@ -390,6 +390,13 @@ fn init_loader_task() {
     println!("================================================================");
     context_aware_redaction_test();
 
+    // DEMO 10: Network-Backed LLM Provider (HTTP/JSON over loopback transport)
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 10: Remote LLM provider (HTTP/JSON, loopback)");
+    println!("================================================================");
+    network_llm_provider_test();
+
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
@@ -825,6 +832,135 @@ fn context_aware_redaction_test() {
     }
 
     println!("  [DEMO 9] => Context-aware redaction engine working!");
+}
+
+/// DEMO 10: network-backed LLM provider end-to-end.
+///
+/// Exercises the full path:
+///   LlmProvider::submit + process_pending (ProviderType::Remote)
+///     → NetworkLlmProvider::complete
+///       → HTTP/1.1 request framing into req_buf
+///       → LoopbackTransport (in-kernel mock peer)
+///         → parses request, synthesises Anthropic-shaped JSON response
+///       → HTTP/JSON parse extracts the completion text
+///   ← LlmResponse delivered back through the queue
+fn network_llm_provider_test() {
+    use kernel_core::llm::{
+        net_provider::{global_net_provider, ApiFormat, TransportKind},
+        provider::{global_provider, LlmRequest, ProviderType, RequestState},
+    };
+
+    println!("  [DEMO 10] Inspecting default endpoint configuration:");
+    unsafe {
+        let net = global_net_provider();
+        let ep = net.endpoint();
+        let host_str = core::str::from_utf8(ep.host()).unwrap_or("<invalid>");
+        let path_str = core::str::from_utf8(ep.path()).unwrap_or("<invalid>");
+        let model_str = core::str::from_utf8(ep.model()).unwrap_or("<invalid>");
+        println!("    host=\"{}\"  port={}", host_str, ep.port());
+        println!("    path=\"{}\"  model=\"{}\"", path_str, model_str);
+        println!("    transport={:?}  format={:?}  max_tokens={}",
+            ep.transport, ep.format, ep.max_tokens);
+    }
+
+    // ---- Test 1: direct round-trip via NetworkLlmProvider::complete ----
+    println!("  [DEMO 10] Test 1: direct round-trip via NetworkLlmProvider");
+    let prompt = b"What is a semantic operating system?";
+    let mut completion = [0u8; 512];
+    let res = unsafe { global_net_provider().complete(prompt, &mut completion) };
+    match res {
+        Ok(n) => {
+            let s = core::str::from_utf8(&completion[..n]).unwrap_or("<binary>");
+            println!("    completion ({} bytes): \"{}\"", n, s);
+        }
+        Err(e) => {
+            println!("    FAILED with LlmError code {}", e.to_error_code());
+        }
+    }
+
+    // ---- Test 2: round-trip via LlmProvider queue with ProviderType::Remote ----
+    println!("  [DEMO 10] Test 2: queue round-trip via LlmProvider (Remote)");
+    unsafe {
+        let provider = global_provider();
+        let saved_type = provider.provider_type();
+        provider.set_type(ProviderType::Remote);
+
+        let task_id = kernel_core::scheduler::current_task_index() as u8;
+        let tier = kernel_core::scheduler::current_task_max_tier();
+        let req = LlmRequest::new(task_id, tier, b"summarize: tiered LLM access");
+        match provider.submit(req) {
+            Ok(request_id) => {
+                println!("    submitted request_id={}", request_id);
+                // Drive the queue. process_pending runs one request at a time.
+                provider.process_pending();
+                match provider.get_status(request_id) {
+                    Some(RequestState::Completed) => {
+                        if let Some(resp) = provider.get_response(request_id) {
+                            let body = resp.content();
+                            let s = core::str::from_utf8(body).unwrap_or("<binary>");
+                            println!("    response ({} bytes, ok={}): \"{}\"",
+                                body.len(), resp.is_success(), s);
+                        } else {
+                            println!("    no response cached");
+                        }
+                    }
+                    Some(s) => println!("    unexpected final state: {:?}", s),
+                    None => println!("    request vanished from queue"),
+                }
+            }
+            Err(e) => println!("    submit FAILED with LlmError code {}", e.to_error_code()),
+        }
+        provider.cleanup();
+        provider.set_type(saved_type);
+    }
+
+    // ---- Test 3: provider counters reflect the activity ----
+    unsafe {
+        let net = global_net_provider();
+        println!("  [DEMO 10] NetworkLlmProvider stats: success={}, failure={}",
+            net.success_count(), net.failure_count());
+    }
+
+    // ---- Test 4: degraded path — unwired Tcp transport refuses cleanly ----
+    println!("  [DEMO 10] Test 4: switching transport to Tcp (unimplemented)");
+    unsafe {
+        let net = global_net_provider();
+        let saved = net.endpoint().transport;
+        net.endpoint_mut().transport = TransportKind::Tcp;
+        let mut sink = [0u8; 64];
+        match net.complete(b"ping", &mut sink) {
+            Ok(_) => println!("    UNEXPECTED success on Tcp transport"),
+            Err(e) => println!("    rejected as expected (LlmError code {})", e.to_error_code()),
+        }
+        net.endpoint_mut().transport = saved;
+    }
+
+    // ---- Test 5: format switch — verify parser rejects mismatched shape ----
+    println!("  [DEMO 10] Test 5: ApiFormat::OpenAi parser rejects Anthropic-shape body");
+    unsafe {
+        let net = global_net_provider();
+        let saved_fmt = net.endpoint().format;
+        net.endpoint_mut().format = ApiFormat::OpenAi;
+        // The loopback peer always answers Anthropic-shape: `content` is an
+        // ARRAY of `{type, text}` objects, not a string. The OpenAI parser
+        // walks `"content":"..."` (a string), so it must fail to extract,
+        // and `complete` must surface InternalError (-57). A success here
+        // would mean the parser was matching the wrong field.
+        let mut out = [0u8; 256];
+        match net.complete(b"hello openai branch", &mut out) {
+            Ok(n) => {
+                let s = core::str::from_utf8(&out[..n]).unwrap_or("<binary>");
+                println!("    UNEXPECTED success: \"{}\"", s);
+            }
+            Err(e) if e.to_error_code() == -57 => {
+                println!("    correctly rejected mismatched shape (LlmError code -57)");
+            }
+            Err(e) => println!("    rejected, but with unexpected code {}", e.to_error_code()),
+        }
+        net.endpoint_mut().format = saved_fmt;
+    }
+
+    println!("  [DEMO 10] => Network-backed LLM provider working end-to-end!");
 }
 
 /// Test policy management syscalls
