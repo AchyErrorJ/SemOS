@@ -71,6 +71,8 @@ pub mod numbers {
     pub const SYS_LLM_ACCESS: u64 = 54;
     pub const SYS_LLM_STREAM_START: u64 = 55;
     pub const SYS_LLM_STREAM_READ: u64 = 56;
+    pub const SYS_LLM_SET_POLICY: u64 = 57;
+    pub const SYS_LLM_GET_POLICY: u64 = 58;
 
     // Crypto/Storage (60-69)
     pub const SYS_ENCRYPT: u64 = 60;
@@ -140,6 +142,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_LLM_ACCESS => handle_llm_access(arg0, arg1, arg2, arg3),
         SYS_LLM_STREAM_START => handle_llm_stream_start(arg0, arg1, arg2),
         SYS_LLM_STREAM_READ => handle_llm_stream_read(arg0, arg1, arg2),
+        SYS_LLM_SET_POLICY => handle_llm_set_policy(arg0, arg1, arg2, arg3),
+        SYS_LLM_GET_POLICY => handle_llm_get_policy(arg0, arg1, arg2, arg3),
 
         // Crypto/Storage (60-69)
         SYS_ENCRYPT => handle_encrypt(arg0, arg1, arg2, arg3),
@@ -1311,6 +1315,151 @@ pub fn handle_llm_stream_read(request_id: u64, out_ptr: u64, out_len: u64) -> u6
                 }
             },
             _ => u64::MAX, // Invalid request ID
+        }
+    }
+}
+
+/// SYS_LLM_SET_POLICY(suid_high, suid_low, policy_data_ptr, policy_data_len) → result
+/// Create or update a security policy. Returns:
+/// - SUID.high: success, policy stored
+/// - u64::MAX: error (permission denied, invalid data, etc.)
+/// - u64::MAX-1: policy validation failed
+/// - u64::MAX-2: insufficient privilege
+pub fn handle_llm_set_policy(suid_high: u64, suid_low: u64, policy_data_ptr: u64, policy_data_len: u64) -> u64 {
+    let data_len = policy_data_len as usize;
+    if data_len == 0 || data_len > crate::security::policy::MAX_POLICY_SIZE || policy_data_ptr == 0 {
+        return u64::MAX - 1; // Invalid parameters
+    }
+
+    let policy_suid = crate::semantic::SUID::new(suid_high, suid_low);
+
+    // Validate this is a policy SUID
+    if !crate::security::policy_suids::is_policy_suid(&policy_suid) {
+        return u64::MAX - 1; // Not a valid policy SUID
+    }
+
+    let requester_id = crate::scheduler::current_task_index() as u8;
+    let requester_tier = crate::scheduler::current_task_max_tier();
+
+    // Read policy data from user space
+    let policy_data = unsafe {
+        core::slice::from_raw_parts(policy_data_ptr as *const u8, data_len)
+    };
+
+    // Deserialize policy object
+    let policy = match crate::security::policy::PolicyObject::deserialize(policy_data) {
+        Ok(p) => p,
+        Err(_) => return u64::MAX - 1, // Invalid policy data
+    };
+
+    // Check permissions
+    unsafe {
+        let registry = crate::semantic::registry::global_registry();
+
+        // If policy already exists, check if requester can modify it
+        if let Some(existing_obj) = registry.get(&policy_suid) {
+            if let Some(existing_content) = existing_obj.content.as_bytes() {
+                if let Ok(existing_policy) = crate::security::policy::PolicyObject::deserialize(existing_content) {
+                    if !existing_policy.can_modify(requester_id) {
+                        return u64::MAX - 2; // Insufficient privilege
+                    }
+                }
+            }
+        } else {
+            // Creating new policy - check if user has permission to create policies
+            // System policies can only be created by admin/system
+            if crate::security::policy_suids::is_system_policy(&policy_suid) {
+                if requester_id != crate::security::user_ids::ADMIN &&
+                   requester_id != crate::security::user_ids::SYSTEM {
+                    return u64::MAX - 2; // Insufficient privilege
+                }
+            }
+        }
+
+        // Validate policy structure
+        if !policy.is_active() && policy.rule_count == 0 {
+            return u64::MAX - 1; // Empty/invalid policy
+        }
+
+        // Create semantic object for the policy
+        // Policies are stored at Secret tier by default for security
+        let policy_obj = match crate::semantic::SemanticObject::with_content(
+            policy_suid,
+            crate::memory::SecurityTier::Secret,
+            policy.owner,
+            policy_data,
+        ) {
+            Some(obj) => obj,
+            None => return u64::MAX, // Failed to create object
+        };
+
+        // Store in registry
+        if registry.insert(policy_obj) {
+            // Policy stored successfully
+            suid_high
+        } else {
+            u64::MAX // Registry insertion failed
+        }
+    }
+}
+
+/// SYS_LLM_GET_POLICY(suid_high, suid_low, out_ptr, out_len) → bytes_read or error
+/// Retrieve a security policy by SUID. Returns:
+/// - >0: bytes written to output buffer
+/// - 0: policy not found
+/// - u64::MAX: error (permission denied, buffer too small)
+/// - u64::MAX-2: insufficient privilege
+pub fn handle_llm_get_policy(suid_high: u64, suid_low: u64, out_ptr: u64, out_len: u64) -> u64 {
+    let buffer_len = out_len as usize;
+    if buffer_len == 0 || out_ptr == 0 {
+        return u64::MAX;
+    }
+
+    let policy_suid = crate::semantic::SUID::new(suid_high, suid_low);
+
+    // Validate this is a policy SUID
+    if !crate::security::policy_suids::is_policy_suid(&policy_suid) {
+        return u64::MAX;
+    }
+
+    let requester_id = crate::scheduler::current_task_index() as u8;
+
+    unsafe {
+        let registry = crate::semantic::registry::global_registry();
+
+        if let Some(policy_obj) = registry.get(&policy_suid) {
+            if let Some(policy_content) = policy_obj.content.as_bytes() {
+                // Parse policy to check read permissions
+                if let Ok(policy) = crate::security::policy::PolicyObject::deserialize(policy_content) {
+                    // Check if requester can read this policy
+                    // System policies are readable by admin/system only
+                    // User policies are readable by owner + admin
+                    let can_read = if crate::security::policy_suids::is_system_policy(&policy_suid) {
+                        requester_id == crate::security::user_ids::ADMIN ||
+                        requester_id == crate::security::user_ids::SYSTEM
+                    } else {
+                        requester_id == policy.owner ||
+                        requester_id == crate::security::user_ids::ADMIN
+                    };
+
+                    if !can_read {
+                        return u64::MAX - 2; // Insufficient privilege
+                    }
+
+                    // Copy policy data to output buffer
+                    let copy_len = policy_content.len().min(buffer_len);
+                    let out_buffer = core::slice::from_raw_parts_mut(out_ptr as *mut u8, copy_len);
+                    out_buffer.copy_from_slice(&policy_content[..copy_len]);
+
+                    copy_len as u64
+                } else {
+                    u64::MAX // Policy deserialization failed
+                }
+            } else {
+                u64::MAX // Policy has no content
+            }
+        } else {
+            0 // Policy not found
         }
     }
 }

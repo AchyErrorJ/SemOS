@@ -159,6 +159,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     println!("    Process table: initialized");
     kernel_core::fs::ramfs::init();
     println!("    Ramfs: initialized");
+    kernel_core::security::init();
+    println!("    Security framework: initialized");
 
     // Register user-mode programs built from real Rust crates in
     // user-programs/. The build is currently manual (run
@@ -373,6 +375,20 @@ fn init_loader_task() {
     println!("  SemOS DEMO 7: LLM streaming syscalls");
     println!("================================================================");
     llm_streaming_test();
+
+    // DEMO 8: Security Policy Framework Test
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 8: Security policy framework");
+    println!("================================================================");
+    security_policy_test();
+
+    // DEMO 9: Context-Aware Redaction Test
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 9: Context-aware redaction engine");
+    println!("================================================================");
+    context_aware_redaction_test();
 
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
@@ -614,6 +630,337 @@ fn llm_streaming_test() {
     }
 
     println!("  [DEMO 7] => Streaming LLM syscalls working!");
+}
+
+/// DEMO 8: Security policy framework test
+fn security_policy_test() {
+    use kernel_core::security::{
+        policy::{PolicyObject, PolicyType, PolicyTarget, PolicyRule, RuleCondition, PolicyAction},
+        evaluation::{create_evaluation_context, RequestType, global_policy_engine},
+        policy_suids, user_ids,
+    };
+    use kernel_core::semantic::SUID;
+    use kernel_core::memory::SecurityTier;
+
+    println!("  [DEMO 8] Testing security policy framework");
+
+    // Create a test policy: "Admin can access everything, others get Public tier"
+    let mut admin_policy = PolicyObject::new(
+        PolicyType::ObjectAccess,
+        PolicyTarget::Everyone,
+        user_ids::ADMIN,
+        100, // High priority
+    );
+
+    // Rule 1: Admin gets full access
+    let admin_rule = PolicyRule::simple(
+        RuleCondition::RequesterIs(user_ids::ADMIN),
+        PolicyAction::Allow(SecurityTier::Secret),
+    );
+
+    // Rule 2: Everyone else gets public access
+    let public_rule = PolicyRule::simple(
+        RuleCondition::Always,
+        PolicyAction::Allow(SecurityTier::Public),
+    );
+
+    if admin_policy.add_rule(admin_rule).is_ok() &&
+       admin_policy.add_rule(public_rule).is_ok() {
+        println!("  [DEMO 8] Created test policy with 2 rules");
+    } else {
+        println!("  [DEMO 8] Failed to create test policy");
+        return;
+    }
+
+    // Store policy as semantic object
+    let policy_suid = policy_suids::new_system_policy(1);
+    let mut policy_data = [0u8; 256];
+    match admin_policy.serialize(&mut policy_data) {
+        Ok(len) => {
+            println!("  [DEMO 8] Serialized policy ({} bytes) to SUID {:016X}_{:016X}",
+                len, policy_suid.high, policy_suid.low);
+
+            // Test evaluation engine with default policies (no storage needed for demo)
+            let test_object = SUID::new(0x1000_0000_0000_1234, 0xABCD_EF01_2345_6789);
+
+            // Test 1: Admin access (should use default policy since no stored policies)
+            let admin_context = create_evaluation_context(
+                user_ids::ADMIN,
+                SecurityTier::Public,
+                test_object,
+                RequestType::DirectAccess,
+            );
+
+            unsafe {
+                let engine = global_policy_engine();
+                let result = engine.evaluate(&admin_context);
+                println!("  [DEMO 8] Admin access result: {:?}", result);
+            }
+
+            // Test 2: Regular user access
+            let user_context = create_evaluation_context(
+                42, // Regular user ID
+                SecurityTier::Internal,
+                test_object,
+                RequestType::DirectAccess,
+            );
+
+            unsafe {
+                let engine = global_policy_engine();
+                let result = engine.evaluate(&user_context);
+                println!("  [DEMO 8] Regular user access result: {:?}", result);
+            }
+
+        },
+        Err(e) => {
+            println!("  [DEMO 8] Policy serialization failed: {:?}", e);
+            return;
+        }
+    }
+
+    // Test policy SUID generation
+    let system_suid = policy_suids::new_system_policy(123);
+    let user_suid = policy_suids::new_user_policy(42, 456);
+
+    println!("  [DEMO 8] System policy SUID: {:016X}_{:016X}", system_suid.high, system_suid.low);
+    println!("  [DEMO 8] User policy SUID:   {:016X}_{:016X}", user_suid.high, user_suid.low);
+
+    println!("  [DEMO 8] Policy SUID validation:");
+    println!("    System SUID is policy: {}", policy_suids::is_policy_suid(&system_suid));
+    println!("    User SUID is policy: {}", policy_suids::is_policy_suid(&user_suid));
+    println!("    System SUID is system policy: {}", policy_suids::is_system_policy(&system_suid));
+    println!("    User SUID is system policy: {}", policy_suids::is_system_policy(&user_suid));
+
+    println!("  [DEMO 8] => Security policy framework working!");
+
+    // Test the SYS_LLM_SET_POLICY and SYS_LLM_GET_POLICY syscalls
+    test_policy_syscalls();
+}
+
+/// DEMO 9: Context-aware redaction engine test
+fn context_aware_redaction_test() {
+    use kernel_core::llm::{ContextAwareRedactor, RedactionContext};
+    use kernel_core::security::{user_ids, evaluation::RequestType};
+    use kernel_core::semantic::SUID;
+    use kernel_core::memory::SecurityTier;
+
+    println!("  [DEMO 9] Testing context-aware redaction engine");
+
+    // Create a redactor instance
+    let mut redactor = ContextAwareRedactor::new();
+    redactor.init();
+
+    // Test data containing various PII patterns
+    let test_content = b"Patient John Smith, MRN123456, DOB 01/15/1990, has account ACCT9876543210. \
+                        Contact: john.smith@email.com, SSN: 123-45-6789, CC: 4532-1234-5678-9012";
+
+    let mut output_buffer = [0u8; 512];
+
+    println!("  [DEMO 9] Original content ({} bytes):", test_content.len());
+    if let Ok(content_str) = core::str::from_utf8(test_content) {
+        println!("    \"{}\"", content_str);
+    }
+
+    // Test 1: Admin user with high-tier access (minimal redaction)
+    println!("  [DEMO 9] Test 1: Admin user (minimal redaction)");
+    let admin_context = RedactionContext {
+        requester_id: user_ids::ADMIN,
+        requester_tier: SecurityTier::Secret,
+        target_suid: SUID::new(0x1234, 0x5678),
+        request_type: RequestType::LLMContext,
+        context_flags: 0,
+        app_context: 0,
+    };
+
+    let len = redactor.redact_with_context(test_content, &admin_context, &mut output_buffer);
+    if let Ok(result) = core::str::from_utf8(&output_buffer[..len]) {
+        println!("    Result: \"{}\"", result);
+    }
+
+    // Test 2: Guest user with medical redaction profile
+    println!("  [DEMO 9] Test 2: Guest user (standard redaction)");
+    let guest_context = RedactionContext {
+        requester_id: user_ids::GUEST,
+        requester_tier: SecurityTier::Public,
+        target_suid: SUID::new(0x1234, 0x5678),
+        request_type: RequestType::LLMContext,
+        context_flags: 0,
+        app_context: 0,
+    };
+
+    output_buffer.fill(0);
+    let len = redactor.redact_with_context(test_content, &guest_context, &mut output_buffer);
+    if let Ok(result) = core::str::from_utf8(&output_buffer[..len]) {
+        println!("    Result: \"{}\"", result);
+    }
+
+    // Test 3: Direct medical pattern testing
+    println!("  [DEMO 9] Test 3: Medical redaction patterns");
+    let medical_content = b"Patient PATIENT789 has MRN456789 and DOB 03/22/1985";
+    output_buffer.fill(0);
+    let len = redactor.redact_with_context(medical_content, &guest_context, &mut output_buffer);
+    if let Ok(result) = core::str::from_utf8(&output_buffer[..len]) {
+        println!("    Medical content: \"{}\"", core::str::from_utf8(medical_content).unwrap_or("invalid"));
+        println!("    Redacted result: \"{}\"", result);
+    }
+
+    // Test 4: Financial pattern testing
+    println!("  [DEMO 9] Test 4: Financial redaction patterns");
+    let financial_content = b"Account ACCT987654321 with routing 123456789";
+    output_buffer.fill(0);
+    let len = redactor.redact_with_context(financial_content, &guest_context, &mut output_buffer);
+    if let Ok(result) = core::str::from_utf8(&output_buffer[..len]) {
+        println!("    Financial content: \"{}\"", core::str::from_utf8(financial_content).unwrap_or("invalid"));
+        println!("    Redacted result: \"{}\"", result);
+    }
+
+    // Test 5: Name-only redaction
+    println!("  [DEMO 9] Test 5: Name pattern detection");
+    let name_content = b"Dr. Elizabeth Martinez and Michael Johnson collaborated on the research";
+    output_buffer.fill(0);
+    let len = redactor.redact_with_context(name_content, &guest_context, &mut output_buffer);
+    if let Ok(result) = core::str::from_utf8(&output_buffer[..len]) {
+        println!("    Name content: \"{}\"", core::str::from_utf8(name_content).unwrap_or("invalid"));
+        println!("    Redacted result: \"{}\"", result);
+    }
+
+    println!("  [DEMO 9] => Context-aware redaction engine working!");
+}
+
+/// Test policy management syscalls
+fn test_policy_syscalls() {
+    println!("  [DEMO 8] Testing policy management syscalls...");
+
+    // Check current user ID and create appropriate policy SUID
+    let current_user = kernel_core::scheduler::current_task_index() as u8;
+
+    // Create a simple test policy owned by current user
+    let mut test_policy = kernel_core::security::policy::PolicyObject::new(
+        kernel_core::security::policy::PolicyType::ObjectAccess,
+        kernel_core::security::policy::PolicyTarget::Everyone,
+        current_user, // Policy owned by current user
+        200, // High priority
+    );
+
+    // Add a simple rule to make the policy valid
+    let allow_rule = kernel_core::security::policy::PolicyRule::simple(
+        kernel_core::security::policy::RuleCondition::Always,
+        kernel_core::security::policy::PolicyAction::Allow(kernel_core::memory::SecurityTier::Public),
+    );
+
+    if test_policy.add_rule(allow_rule).is_err() {
+        println!("  [DEMO 8] Failed to add rule to test policy");
+        return;
+    }
+
+    // Serialize the policy
+    let mut policy_data = [0u8; 256];
+    let policy_len = match test_policy.serialize(&mut policy_data) {
+        Ok(len) => len,
+        Err(_) => {
+            println!("  [DEMO 8] Policy serialization failed");
+            return;
+        }
+    };
+
+    println!("  [DEMO 8] Current user ID: {}", current_user);
+
+    // Try both system policy (should fail unless we're admin/system)
+    // and user policy (should work for any user)
+    let system_suid = kernel_core::security::policy_suids::new_system_policy(42);
+    let user_suid = kernel_core::security::policy_suids::new_user_policy(current_user, 123);
+
+    println!("  [DEMO 8] Testing SYS_LLM_SET_POLICY...");
+    println!("    System SUID: {:016X}_{:016X}", system_suid.high, system_suid.low);
+    println!("    User SUID:   {:016X}_{:016X}", user_suid.high, user_suid.low);
+
+    // Test 1: Try system policy (should fail unless we're admin/system)
+    println!("  [DEMO 8] Test 1: System policy creation");
+    let system_result = unsafe {
+        kernel_core::syscall::handle_llm_set_policy(
+            system_suid.high,
+            system_suid.low,
+            policy_data.as_ptr() as u64,
+            policy_len as u64,
+        )
+    };
+
+    match system_result {
+        val if val == u64::MAX => {
+            println!("    System policy: general error");
+        },
+        val if val == u64::MAX - 1 => {
+            println!("    System policy: validation error");
+        },
+        val if val == u64::MAX - 2 => {
+            println!("    System policy: insufficient privilege (expected for non-admin)");
+        },
+        suid_high => {
+            println!("    System policy: SUCCESS (stored at {:016X}_xxxx)", suid_high);
+        }
+    }
+
+    // Test 2: Try user policy (should succeed)
+    println!("  [DEMO 8] Test 2: User policy creation");
+    let user_result = unsafe {
+        kernel_core::syscall::handle_llm_set_policy(
+            user_suid.high,
+            user_suid.low,
+            policy_data.as_ptr() as u64,
+            policy_len as u64,
+        )
+    };
+
+    match user_result {
+        val if val == u64::MAX => {
+            println!("    User policy: general error");
+        },
+        val if val == u64::MAX - 1 => {
+            println!("    User policy: validation error");
+        },
+        val if val == u64::MAX - 2 => {
+            println!("    User policy: insufficient privilege");
+        },
+        suid_high => {
+            println!("    User policy: SUCCESS (stored at {:016X}_xxxx)", suid_high);
+
+            // Test retrieval of user policy
+            let mut read_buffer = [0u8; 256];
+            let get_result = unsafe {
+                kernel_core::syscall::handle_llm_get_policy(
+                    user_suid.high,
+                    user_suid.low,
+                    read_buffer.as_mut_ptr() as u64,
+                    read_buffer.len() as u64,
+                )
+            };
+
+            match get_result {
+                0 => {
+                    println!("    GET_POLICY: policy not found");
+                },
+                val if val == u64::MAX => {
+                    println!("    GET_POLICY: general error");
+                },
+                val if val == u64::MAX - 2 => {
+                    println!("    GET_POLICY: insufficient privilege");
+                },
+                bytes_read => {
+                    println!("    GET_POLICY: SUCCESS (read {} bytes)", bytes_read);
+
+                    // Verify the data matches what we stored
+                    if bytes_read as usize >= policy_len &&
+                       &read_buffer[..policy_len] == &policy_data[..policy_len] {
+                        println!("    Data verification: PASSED");
+                    } else {
+                        println!("    Data verification: FAILED");
+                    }
+                }
+            }
+        }
+    }
+
+    println!("  [DEMO 8] => Policy syscalls test complete!");
 }
 
 /// Run a single SemanticObject demo: insert, direct read, LLM-context read.

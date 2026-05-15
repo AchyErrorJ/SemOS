@@ -48,12 +48,14 @@
 
 pub mod context_builder;
 pub mod redact;
+pub mod context_redact;
 pub mod summarize;
 pub mod access_request;
 pub mod provider;
 
 pub use context_builder::{ContextBuilder, ContextEntry, LlmContext};
 pub use redact::{Redactor, RedactionLevel};
+pub use context_redact::{ContextAwareRedactor, RedactionContext, init as init_context_redactor};
 pub use summarize::{Summarizer, Summary};
 pub use access_request::{AccessRequest, AccessDecision, EscalationQueue};
 pub use provider::{LlmProvider, LlmRequest, LlmResponse};
@@ -130,6 +132,7 @@ pub fn init() {
     // Initialize submodules
     context_builder::init();
     redact::init();
+    context_redact::init();
     summarize::init();
     access_request::init();
     provider::init();

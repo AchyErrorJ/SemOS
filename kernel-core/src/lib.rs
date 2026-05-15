@@ -34,6 +34,7 @@ pub mod scheduler;
 pub mod process;
 pub mod ipc;
 pub mod syscall;
+pub mod security;
 
 // Re-exports for convenience
 pub use platform::{Platform, set_platform, log, ticks};
