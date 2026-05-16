@@ -91,6 +91,19 @@ pub trait Platform: Send + Sync + 'static {
     /// On x86_64 this destroys the slot's AddressSpace (frees PML4 +
     /// subtable frames) so they don't leak as more demos are spawned.
     fn reap_slot(&self, _slot: usize) {}
+
+    /// Fill `buf` with cryptographically-strong random bytes from the
+    /// hardware RNG (RDRAND on x86_64, equivalent elsewhere).
+    ///
+    /// Returns `Err(())` if no hardware RNG is available — caller must
+    /// treat that as fatal for any security-sensitive use. The default
+    /// impl fails so accidentally using `NullPlatform` for crypto can't
+    /// silently weaken things.
+    ///
+    /// Used at minimum for: TLS 1.3 ClientHello.random (32 bytes per
+    /// connection), X25519 ephemeral scalar (32 bytes per handshake),
+    /// smoltcp's TCP ISN / DNS txid seeds.
+    fn random_bytes(&self, _buf: &mut [u8]) -> Result<(), ()> { Err(()) }
 }
 
 /// Null platform used before a real one is registered.
@@ -141,6 +154,14 @@ pub fn ticks() -> u64 {
 #[inline]
 pub fn schedule() {
     get().schedule();
+}
+
+/// Fill `buf` with cryptographically-strong random bytes from the
+/// hardware RNG. Returns `Err(())` if no RNG is available — security-
+/// sensitive callers must treat this as fatal.
+#[inline]
+pub fn random_bytes(buf: &mut [u8]) -> Result<(), ()> {
+    get().random_bytes(buf)
 }
 
 /// Log a number in decimal.

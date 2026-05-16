@@ -28,6 +28,10 @@ impl Platform for X86Platform {
         crate::context::schedule();
     }
 
+    fn random_bytes(&self, buf: &mut [u8]) -> Result<(), ()> {
+        crate::rng::fill_bytes(buf)
+    }
+
     fn reap_slot(&self, slot: usize) {
         // Free the slot's AddressSpace (PML4 + subtables) and zero its
         // saved cr3. Called from alloc_task_slot at the moment of

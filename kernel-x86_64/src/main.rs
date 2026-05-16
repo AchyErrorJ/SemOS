@@ -33,6 +33,7 @@ pub mod apic;
 pub mod framebuffer;
 pub mod pci;
 pub mod virtio;
+pub mod rng;
 
 use serial::Serial;
 
@@ -141,6 +142,33 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("[*] Scanning PCI bus 0...");
     pci::print_bus_0();
+    println!();
+
+    // Hardware RNG availability check. Required by TLS 1.3 for ClientHello
+    // random + X25519 ephemeral scalar — we panic at boot if missing rather
+    // than degrade silently later. Sample bytes printed for evidence the
+    // RNG actually varies between boots (if you see two boots with the same
+    // sample bytes, something is wrong).
+    println!("[*] Probing hardware RNG (RDRAND)...");
+    if rng::supported() {
+        let mut sample = [0u8; 8];
+        match rng::fill_bytes(&mut sample) {
+            Ok(()) => {
+                println!(
+                    "[rng] RDRAND ok — sample: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+                    sample[0], sample[1], sample[2], sample[3],
+                    sample[4], sample[5], sample[6], sample[7],
+                );
+            }
+            Err(()) => {
+                println!("[rng] RDRAND reported as supported via CPUID but fill_bytes failed — abort");
+                loop { unsafe { core::arch::asm!("hlt", options(nomem, nostack)); } }
+            }
+        }
+    } else {
+        println!("[rng] RDRAND not supported on this CPU — TLS cannot be safe; abort");
+        loop { unsafe { core::arch::asm!("hlt", options(nomem, nostack)); } }
+    }
     println!();
 
     println!("[*] Probing VirtIO block device...");
