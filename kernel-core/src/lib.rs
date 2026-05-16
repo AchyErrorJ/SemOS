@@ -30,6 +30,7 @@ pub mod llm;
 pub mod storage;
 pub mod fs;
 pub mod drivers;
+pub mod net;
 pub mod scheduler;
 pub mod process;
 pub mod ipc;

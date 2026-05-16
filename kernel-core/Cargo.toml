@@ -11,7 +11,16 @@ name = "kernel_core"
 path = "src/lib.rs"
 
 [dependencies]
-# No architecture-specific dependencies
+# smoltcp — no_std TCP/IP stack for Phase 8 Track B.
+# Pinned to 0.11.x per docs/SMOLTCP_VENDORING_BRIEF.md. Default features off;
+# enabled features cover what we actually use (Ethernet medium, IPv4, TCP, +
+# optionally DNS/DHCP). No alloc — buffers are caller-owned via the
+# `Borrowed` ManagedSlice path.
+smoltcp = { version = "0.11", default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-tcp",
+] }
 
 [features]
 default = []

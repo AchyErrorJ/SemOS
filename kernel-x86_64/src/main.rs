@@ -155,6 +155,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if virtio::net::init() {
         if virtio::net::register_with_kernel_core() {
             println!("[virtio-net] registered with driver registry as 'virtio-net0'");
+            // Bring up the smoltcp Interface on top of virtio-net0.
+            // Hardcoded IP per QEMU SLIRP defaults (10.0.2.15/24 via 10.0.2.2).
+            if let Some(nd) = kernel_core::drivers::registry::get_net("virtio-net0") {
+                if kernel_core::net::init(nd) {
+                    // One initial poll to flush any startup state.
+                    kernel_core::net::poll();
+                }
+            }
         }
     }
     println!();
