@@ -200,7 +200,7 @@ If forced to pick one: **crypto extension first**. It's the smallest, lowest-ris
 
 ## Open questions surfaced by the briefs
 
-- **Confirm Anthropic's leaf cert signature algorithm** — agent recommended `ecdsa_secp256r1_sha256` as primary, `rsa_pss_rsae_sha256` as fallback. Verify by running `openssl s_client -connect api.anthropic.com:443 -showcerts` before committing. Determines whether RSA-PSS is needed (~+1400 LOC) or can be skipped.
+- ~~Confirm Anthropic's leaf cert signature algorithm~~ **— RESOLVED 2026-05-16.** `openssl s_client` showed leaf = ECDSA P-256 / SHA-256, TLS handshake CertificateVerify = `ecdsa_secp256r1_sha256`. **RSA-PSS NOT needed.** Pin the intermediate (WE1) SPKI: SHA-256 = `908769e8d34477cc2cba0632c88605b22d7294c0840f78596d247c645b1afc0e`. Intermediate valid through Feb 20, 2029. Detail in `EMBEDDED_TLS_VENDORING_BRIEF.md` §10.
 - **MAC address source for AX211** — comes from OTP via `NVM_ACCESS_CMD`. Decision: read from OTP or hardcode a locally-administered MAC for v1?
 - **AP RSN capabilities for the target Wi-Fi network** — does it require PMF (802.11w)? If yes, +500 LOC for IGTK + management-frame protection.
 - **VT-d BIOS state on the target machine** — verify on Linux first (`dmesg | grep -i dmar`). Determines whether IOMMU code is on Track C critical path.

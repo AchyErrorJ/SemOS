@@ -227,8 +227,18 @@ LOC estimates are for **integration glue only** (not embedded-tls itself).
 1. **Which patch version of 0.17 to pin?** Inspect changelog for any post-0.17.0 `TlsVerifier` shape changes. Lock exact git SHA in `VENDOR.md`.
 2. **Confirm sync `embedded-io` is right** vs vendoring older pre-async-split version. **Recommendation**: 0.17 with `async` disabled. Confirm strip compiles.
 3. **Does the async path leak through with feature off?** Do `cargo expand` with `default-features = false` and inspect.
-4. **Anthropic edge signature algorithm** — same open question as PHASE_8_ROADMAP. If RSA-PSS, +1400 LOC. **Run `openssl s_client -connect api.anthropic.com:443 -showcerts` and decide.**
-5. **Pin the intermediate or leaf?** Recommend intermediate (survives leaf rotation). Document SPKI hash as a const in `spki_pin.rs`.
+4. ~~**Anthropic edge signature algorithm**~~ **— RESOLVED 2026-05-16.** Inspection via `openssl s_client -connect api.anthropic.com:443 -showcerts` shows:
+   - **Leaf**: `CN=api.anthropic.com`, EC P-256, signed `ecdsa-with-SHA256`. Issuer: Google Trust Services `WE1`.
+   - **Intermediate**: `WE1`, EC P-256, signed `ecdsa-with-SHA384` (irrelevant — we pin its SPKI, not its signature).
+   - **TLS 1.3 handshake**: `Peer signature type: ecdsa_secp256r1_sha256`.
+   - **Conclusion**: every primitive we need (ECDSA-P256-verify, SHA-256, X25519, HKDF, ChaCha20-Poly1305) is already in `kernel-core/src/crypto/`. **RSA-PSS-verify NOT required.** The +1400 LOC contingency is off the table.
+5. **Pin the intermediate or leaf?** **Decided: intermediate.** Leaf rotates ~quarterly (Mar→Jun 2026 in the snapshot); intermediate is valid until Feb 20, 2029.
+   - **SPKI pin (SHA-256 of the intermediate's `SubjectPublicKeyInfo`, DER-encoded):**
+     ```
+     908769e8d34477cc2cba0632c88605b22d7294c0840f78596d247c645b1afc0e
+     ```
+   - This is the const to hardcode in `kernel-core/src/tls/spki_pin.rs`.
+   - Re-verify before the verifier lands (issuance churn is rare but possible).
 6. **`defmt` integration**: we have our own logger. Patch `defmt::trace!` / `log::debug!` call sites in vendored tree.
 7. **RNG quality**: RDRAND-required-or-panic recommended over TSC-jitter fallback.
 8. **Distinct `LlmError::TlsHandshakeFailed`** vs generic `ProviderUnavailable` — ~1 line + a mapping in `transport_to_llm`.
