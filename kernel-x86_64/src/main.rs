@@ -459,6 +459,17 @@ fn init_loader_task() {
         tcp_smoke_test();
     }
 
+    // DEMO 13: SPKI-pinning byte-level validation against the real
+    // Anthropic intermediate cert. Unconditional — exercises the DER
+    // scanner + SHA-256 + pin compare without needing network. If this
+    // fails we know the TLS path is broken before we even attempt a
+    // handshake.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 13: SPKI pinning (Anthropic WE1 intermediate)");
+    println!("================================================================");
+    spki_pin_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1243,6 +1254,80 @@ fn tcp_smoke_test() {
     for _ in 0..20 { net::poll(); } // let FIN exchange complete
     stream.release();
     println!("  [DEMO 12] socket released; net state ready for next connection");
+}
+
+/// DEMO 13: SPKI-pinning byte-level validation.
+///
+/// kernel-core can't run `cargo test` (no_std, no test harness), so the
+/// crypto/parser correctness checks live here as boot-time exercises.
+/// All three pieces of the pinning flow get exercised:
+///   1. DER scanner walks the real WE1 intermediate (675 bytes) and
+///      returns the right SubjectPublicKeyInfo sub-slice.
+///   2. SHA-256 of that SPKI equals the hardcoded `ANTHROPIC_INTERMEDIATE_PIN`.
+///   3. EC P-256 point extraction pulls the 65-byte uncompressed point
+///      from the leaf SPKI (the one we'd feed `crypto::p256::verify_p256`).
+/// Any FAIL line means the TLS path is broken before we touch the network.
+fn spki_pin_test() {
+    use kernel_core::tls::spki_pin::{
+        self, ANTHROPIC_INTERMEDIATE_PIN, EC_P256_UNCOMPRESSED_LEN,
+    };
+
+    // Same fixtures the kernel-core tests reference. Bundled into the
+    // binary at compile time — zero runtime cost beyond the bytes.
+    const INTERMEDIATE_DER: &[u8] =
+        include_bytes!("../../kernel-core/src/tls/fixtures/anthropic_intermediate_we1.der");
+    const INTERMEDIATE_SPKI: &[u8] =
+        include_bytes!("../../kernel-core/src/tls/fixtures/anthropic_intermediate_we1_spki.der");
+    const LEAF_SPKI: &[u8] =
+        include_bytes!("../../kernel-core/src/tls/fixtures/anthropic_leaf_spki.der");
+
+    println!("  [DEMO 13] fixtures: intermediate={}B  spki={}B  leaf_spki={}B",
+        INTERMEDIATE_DER.len(), INTERMEDIATE_SPKI.len(), LEAF_SPKI.len());
+
+    // (1) DER scanner — does extract_spki find the right sub-slice?
+    let extracted = match spki_pin::extract_spki(INTERMEDIATE_DER) {
+        Ok(s) => s,
+        Err(e) => { println!("  [DEMO 13] FAIL: extract_spki errored: {:?}", e); return; }
+    };
+    if extracted.len() != INTERMEDIATE_SPKI.len()
+        || extracted.iter().zip(INTERMEDIATE_SPKI.iter()).any(|(a, b)| a != b)
+    {
+        println!("  [DEMO 13] FAIL: extracted SPKI ({} B) doesn't match fixture ({} B)",
+            extracted.len(), INTERMEDIATE_SPKI.len());
+        return;
+    }
+    println!("  [DEMO 13] PASS: DER scanner extracted SPKI byte-exactly ({} B)", extracted.len());
+
+    // (2) Pin compare — SHA-256(SPKI) == ANTHROPIC_INTERMEDIATE_PIN.
+    match spki_pin::verify_pin(INTERMEDIATE_DER, &ANTHROPIC_INTERMEDIATE_PIN) {
+        Ok(()) => println!("  [DEMO 13] PASS: SHA-256(SPKI) == pinned hash"),
+        Err(e) => { println!("  [DEMO 13] FAIL: verify_pin: {:?}", e); return; }
+    }
+
+    // Negative-side check: tampering one bit of the pin must reject.
+    let mut wrong = ANTHROPIC_INTERMEDIATE_PIN;
+    wrong[7] ^= 0x01;
+    match spki_pin::verify_pin(INTERMEDIATE_DER, &wrong) {
+        Err(_) => println!("  [DEMO 13] PASS: wrong pin correctly rejected"),
+        Ok(()) => { println!("  [DEMO 13] FAIL: wrong pin was accepted (!!)"); return; }
+    }
+
+    // (3) EC point extraction from the leaf SPKI. This is what feeds
+    // into ECDSA verification of the CertificateVerify message in
+    // TLS 1.3. Must be exactly 65 bytes starting with 0x04.
+    let point = match spki_pin::extract_ec_p256_point(LEAF_SPKI) {
+        Ok(p) => p,
+        Err(e) => { println!("  [DEMO 13] FAIL: extract_ec_p256_point: {:?}", e); return; }
+    };
+    if point.len() != EC_P256_UNCOMPRESSED_LEN || point[0] != 0x04 {
+        println!("  [DEMO 13] FAIL: leaf EC point malformed (len={}, marker=0x{:02x})",
+            point.len(), point[0]);
+        return;
+    }
+    println!("  [DEMO 13] PASS: leaf EC P-256 point extracted (X[0..4] = {:02x} {:02x} {:02x} {:02x})",
+        point[1], point[2], point[3], point[4]);
+
+    println!("  [DEMO 13] => SPKI pinning ready; TLS verifier needs only the embedded-tls glue");
 }
 
 /// Test policy management syscalls

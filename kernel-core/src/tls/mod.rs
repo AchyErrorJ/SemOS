@@ -22,3 +22,4 @@
 
 pub mod crypto_shim;
 pub mod cipher_suite;
+pub mod spki_pin;
