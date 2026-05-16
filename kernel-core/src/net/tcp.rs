@@ -231,3 +231,88 @@ impl Drop for TcpStream {
         unsafe { SOCKET_IN_USE = false; }
     }
 }
+
+// ============================================================================
+// embedded_io::{Read, Write} blocking impls.
+//
+// embedded-tls drives the transport through these traits, so we have to
+// satisfy the blocking semantics: "if no bytes are currently available
+// to read, this function blocks until at least one byte is available."
+// Our inherent read/write are non-blocking (return Ok(0) when not ready);
+// the trait impls wrap them in a poll loop until the socket is ready or
+// the connection terminates.
+// ============================================================================
+
+impl embedded_io::Error for TcpError {
+    fn kind(&self) -> embedded_io::ErrorKind {
+        use embedded_io::ErrorKind;
+        match self {
+            TcpError::NotInitialized => ErrorKind::NotConnected,
+            TcpError::SocketBusy     => ErrorKind::AlreadyExists,
+            TcpError::ConnectFailed  => ErrorKind::ConnectionRefused,
+            TcpError::NotConnected   => ErrorKind::NotConnected,
+            // Eof is mapped to ConnectionAborted because embedded_io has
+            // no dedicated "graceful close" variant; the read-returns-0
+            // convention of std::io::Read covers it, which we honour by
+            // returning Ok(0) at EOF (per the trait's "read of length 0
+            // means EOF" contract).
+            TcpError::Eof            => ErrorKind::ConnectionAborted,
+        }
+    }
+}
+
+impl embedded_io::ErrorType for TcpStream {
+    type Error = TcpError;
+}
+
+impl embedded_io::Read for TcpStream {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {
+        if buf.is_empty() { return Ok(0); }
+        loop {
+            super::state::poll();
+            match TcpStream::read(self, buf) {
+                Ok(n) if n > 0 => return Ok(n),
+                Ok(_) => {
+                    // No data ready yet. Check whether we should give up:
+                    // peer FIN (Eof) is the clean half-close case; if the
+                    // socket has reached Closed without seeing FIN it's
+                    // an error from our side.
+                    if self.is_closed() {
+                        // embedded_io's convention: read of 0 == EOF.
+                        return Ok(0);
+                    }
+                    core::hint::spin_loop();
+                }
+                Err(TcpError::Eof) => return Ok(0),
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
+impl embedded_io::Write for TcpStream {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, TcpError> {
+        if buf.is_empty() { return Ok(0); }
+        loop {
+            super::state::poll();
+            match TcpStream::write(self, buf) {
+                Ok(n) if n > 0 => return Ok(n),
+                Ok(_) => {
+                    if self.is_closed() {
+                        return Err(TcpError::NotConnected);
+                    }
+                    core::hint::spin_loop();
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn flush(&mut self) -> Result<(), TcpError> {
+        // smoltcp flushes whatever is in the tx ring on each poll. We
+        // poll a few times so that anything just written has a chance
+        // to actually leave the device.
+        for _ in 0..4 { super::state::poll(); }
+        Ok(())
+    }
+}
