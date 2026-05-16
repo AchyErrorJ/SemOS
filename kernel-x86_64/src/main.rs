@@ -420,6 +420,17 @@ fn init_loader_task() {
     println!("================================================================");
     user_identity_test();
 
+    // DEMO 12: TCP smoke test over smoltcp + virtio-net.
+    // Only runs if the net stack came up (skipped silently otherwise so
+    // bare-metal boots without virtio-net don't fail the cascade).
+    if kernel_core::net::is_initialized() {
+        println!();
+        println!("================================================================");
+        println!("  SemOS DEMO 12: TCP connect smoke test (smoltcp + virtio-net)");
+        println!("================================================================");
+        tcp_smoke_test();
+    }
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1113,6 +1124,97 @@ fn user_identity_test() {
     }
 
     println!("  [DEMO 11] => User identity & isolation working!");
+}
+
+/// DEMO 12: TCP smoke test.
+///
+/// Opens a TCP connection to the SLIRP gateway (10.0.2.2) on a port
+/// where no service is listening. The expected outcome is:
+///   SynSent → Closed (RST'd by the host kernel)
+///
+/// Observing that state transition proves the whole L2/L3/L4 stack moves
+/// a packet end-to-end:
+///   - virtio-net descriptor chain works (TX SYN, RX RST)
+///   - smoltcp Interface emits a SYN with correct headers
+///   - smoltcp ARPs for the gateway first; SLIRP replies; ARP cache works
+///   - smoltcp processes incoming RST and advances socket state
+///
+/// We log only state transitions (not every poll), then release the
+/// socket so the slot is available for the next test.
+fn tcp_smoke_test() {
+    use kernel_core::net::{self, TcpStream, Ipv4Address, TcpState as State};
+
+    let target = Ipv4Address::new(10, 0, 2, 2);
+    let target_port: u16 = 1234;
+
+    println!("  [DEMO 12] connect 10.0.2.2:{} (no service expected; should RST quickly)", target_port);
+    let mut stream = match TcpStream::connect(target, target_port) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("  [DEMO 12] connect() returned error: {:?} — aborting", e);
+            return;
+        }
+    };
+
+    // Poll up to N times, log every state change. SLIRP replies fast;
+    // we should see SynSent within the first few polls and the final
+    // state (Closed) within a few dozen.
+    let mut last_state = State::Closed; // placeholder so first observed state is logged
+    let mut first = true;
+    let mut terminal_state: Option<State> = None;
+    for i in 0..5_000 {
+        net::poll();
+        let s = stream.state();
+        if first || s != last_state {
+            println!("  [DEMO 12] poll {:4}: state = {}", i, s);
+            last_state = s;
+            first = false;
+        }
+        // Terminal states for our purposes: Established (handshake OK,
+        // unlikely against a closed port) or Closed (RST'd or never
+        // reachable). Either tells us the stack moved through the SM.
+        if matches!(s, State::Established | State::Closed) && !first {
+            terminal_state = Some(s);
+            // Give the loop a couple more iterations to confirm stability.
+            for _ in 0..10 { net::poll(); }
+            break;
+        }
+        // Bound the cost — each poll is one smoltcp tick.
+        if i > 200 && s == State::SynSent {
+            println!("  [DEMO 12] still SynSent after 200 polls — SLIRP didn't respond; giving up");
+            break;
+        }
+        core::hint::spin_loop();
+    }
+
+    match terminal_state {
+        Some(State::Established) => {
+            // Best possible outcome: full three-way handshake completed
+            // over the virtio-net + smoltcp stack. Either there's a real
+            // service on 10.0.2.2:1234, or QEMU SLIRP optimistically
+            // SYN-ACKed (some SLIRP versions do this before forwarding,
+            // then RST on the first data packet). Either way: SYN out,
+            // SYN-ACK in, ACK out — the stack moves packets both ways.
+            println!("  [DEMO 12] => Stack works END TO END: SYN → SYN-ACK → ACK, socket ESTABLISHED");
+        }
+        Some(State::Closed) => {
+            // Also a valid signal: SYN went out, peer responded (likely
+            // RST), state machine advanced. Less stack work exercised
+            // than the Established case but proves bidirectional flow.
+            println!("  [DEMO 12] => Stack works: SYN went out, peer responded (likely RST), state advanced");
+        }
+        Some(other) => {
+            println!("  [DEMO 12] => Stopped in intermediate state {} — unusual but not necessarily wrong", other);
+        }
+        None => {
+            println!("  [DEMO 12] => No terminal state observed; either SLIRP is dropping or polling too slow");
+        }
+    }
+
+    stream.close();
+    for _ in 0..20 { net::poll(); } // let FIN exchange complete
+    stream.release();
+    println!("  [DEMO 12] socket released; net state ready for next connection");
 }
 
 /// Test policy management syscalls

@@ -36,5 +36,13 @@
 pub mod adapter;
 pub mod clock;
 pub mod state;
+pub mod tcp;
 
 pub use state::{init, poll, is_initialized};
+pub use tcp::{TcpStream, TcpError};
+
+// Re-export smoltcp address / state types the user-facing demos need,
+// so platform crates (e.g. kernel-x86_64) don't have to pull smoltcp
+// as their own dependency just to spell out a constant.
+pub use smoltcp::wire::Ipv4Address;
+pub use smoltcp::socket::tcp::State as TcpState;

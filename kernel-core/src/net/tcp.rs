@@ -1,0 +1,233 @@
+//! Minimal TCP client wrapper over smoltcp's `tcp::Socket`.
+//!
+//! v1 supports one in-flight TCP connection at a time — that matches
+//! the LLM-API use case (the kernel makes a single HTTPS call per chat
+//! turn). Per the brief, rx buffer is 16 KiB (max TLS record) and tx
+//! buffer is 8 KiB (well over our HTTP request size).
+//!
+//! # Usage
+//!
+//! ```ignore
+//! let mut stream = TcpStream::connect(Ipv4Address::new(10,0,2,2), 1234)?;
+//! while stream.state() == State::SynSent { net::poll(); }
+//! match stream.state() {
+//!     State::Established => { /* read/write */ }
+//!     State::Closed      => { /* peer reset */ }
+//!     _ => { /* still negotiating */ }
+//! }
+//! stream.close();
+//! ```
+//!
+//! # What this does NOT do (yet)
+//!
+//! - No `embedded_io::Read + Write` impl. Direct API only for v1; the
+//!   trait impls land when we vendor embedded-tls (which needs them).
+//! - No automatic background polling. Callers must drive
+//!   [`super::poll`] between operations until the desired state is
+//!   reached. A scheduler-tick-driven poller is a follow-up.
+//! - No connection reuse. Once `close()` is called the buffers are
+//!   freed back to the static pool; a fresh `connect()` is required
+//!   for the next request.
+
+use smoltcp::iface::SocketHandle;
+use smoltcp::socket::tcp;
+use smoltcp::wire::{IpAddress, IpEndpoint, IpListenEndpoint, Ipv4Address};
+
+// ============================================================================
+// Static per-socket storage
+// ============================================================================
+
+/// TCP receive buffer. Sized for a full TLS record (16 KiB) plus headroom.
+const TCP_RX_SIZE: usize = 16 * 1024;
+
+/// TCP transmit buffer. The Phase 8 HTTP request is ≤ 4 KiB; doubled
+/// for headroom against handshake message bursts.
+const TCP_TX_SIZE: usize = 8 * 1024;
+
+static mut TCP_RX_BUF: [u8; TCP_RX_SIZE] = [0; TCP_RX_SIZE];
+static mut TCP_TX_BUF: [u8; TCP_TX_SIZE] = [0; TCP_TX_SIZE];
+
+/// Ephemeral local port for outbound connections. RFC 6335 reserves
+/// 49152-65535 for ephemeral use; we pin one because we only ever have
+/// one outbound connection in flight at a time.
+const LOCAL_PORT: u16 = 49152;
+
+/// Single-socket guard. `connect` sets this; `close` clears it.
+static mut SOCKET_IN_USE: bool = false;
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+/// Failure modes for the TCP layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpError {
+    /// `net::init` hasn't run, or its prerequisites failed.
+    NotInitialized,
+    /// A TcpStream already exists; close it before opening another.
+    SocketBusy,
+    /// smoltcp rejected the connect call (bad address/port or socket in wrong state).
+    ConnectFailed,
+    /// Socket isn't in a state that allows the requested I/O.
+    NotConnected,
+    /// Peer half-closed; no more data to read.
+    Eof,
+}
+
+// ============================================================================
+// TcpStream
+// ============================================================================
+
+/// Handle to a TCP socket living in the kernel's smoltcp SocketSet.
+///
+/// Owns the static rx/tx buffer reservation for the lifetime of the
+/// connection — only one TcpStream can exist at a time. Drop / explicit
+/// close releases the reservation.
+pub struct TcpStream {
+    handle: SocketHandle,
+}
+
+impl TcpStream {
+    /// Open a TCP connection to `(remote_ip, remote_port)`. Returns
+    /// immediately after queueing the SYN; the connection is not yet
+    /// established. Caller drives [`super::poll`] until [`Self::state`]
+    /// reaches `Established` (success) or `Closed` (rejection or RST).
+    pub fn connect(remote_ip: Ipv4Address, remote_port: u16) -> Result<Self, TcpError> {
+        unsafe {
+            if SOCKET_IN_USE {
+                return Err(TcpError::SocketBusy);
+            }
+            if !super::state::is_initialized() {
+                return Err(TcpError::NotInitialized);
+            }
+
+            // Build a TCP socket from the static buffers.
+            // SocketBuffer::new takes a `&'static mut [u8]` (via the
+            // ManagedSlice::Borrowed path — no alloc needed).
+            let rx_storage: &'static mut [u8] = &mut *core::ptr::addr_of_mut!(TCP_RX_BUF);
+            let tx_storage: &'static mut [u8] = &mut *core::ptr::addr_of_mut!(TCP_TX_BUF);
+            let rx_buf = tcp::SocketBuffer::new(rx_storage);
+            let tx_buf = tcp::SocketBuffer::new(tx_storage);
+            let socket = tcp::Socket::new(rx_buf, tx_buf);
+
+            // Add to the SocketSet, get a handle.
+            let sockets = match super::state::sockets_mut() {
+                Some(s) => s,
+                None => return Err(TcpError::NotInitialized),
+            };
+            let handle = sockets.add(socket);
+
+            // Issue the connect. Needs the Interface's Context, which is
+            // distinct from the SocketSet so disjoint borrows are fine.
+            let iface = match super::state::iface_mut() {
+                Some(i) => i,
+                None => return Err(TcpError::NotInitialized),
+            };
+            let cx = iface.context();
+            let socket = sockets.get_mut::<tcp::Socket>(handle);
+            let remote_endpoint = IpEndpoint::new(IpAddress::Ipv4(remote_ip), remote_port);
+            let local_endpoint = IpListenEndpoint { addr: None, port: LOCAL_PORT };
+            if socket.connect(cx, remote_endpoint, local_endpoint).is_err() {
+                // Roll back: remove the socket so we don't leak it.
+                sockets.remove(handle);
+                return Err(TcpError::ConnectFailed);
+            }
+
+            SOCKET_IN_USE = true;
+            Ok(TcpStream { handle })
+        }
+    }
+
+    /// Current TCP state. Cheap query — useful in poll loops to detect
+    /// when SYN-SENT advances to ESTABLISHED or back to CLOSED.
+    pub fn state(&self) -> tcp::State {
+        unsafe {
+            let sockets = match super::state::sockets_mut() {
+                Some(s) => s,
+                None => return tcp::State::Closed,
+            };
+            sockets.get_mut::<tcp::Socket>(self.handle).state()
+        }
+    }
+
+    /// Has the connection completed the handshake?
+    pub fn is_established(&self) -> bool { self.state() == tcp::State::Established }
+
+    /// Has the connection torn down (either side)?
+    pub fn is_closed(&self) -> bool { self.state() == tcp::State::Closed }
+
+    /// Pull up to `buf.len()` bytes from the rx ring. Returns `Ok(n)`
+    /// where `n` may be 0 if nothing's ready right now (caller polls and
+    /// retries). Returns `Err(Eof)` if the peer closed cleanly.
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {
+        unsafe {
+            let sockets = match super::state::sockets_mut() {
+                Some(s) => s,
+                None => return Err(TcpError::NotInitialized),
+            };
+            let socket = sockets.get_mut::<tcp::Socket>(self.handle);
+            if !socket.may_recv() {
+                // may_recv is false after the peer FINs us.
+                return Err(TcpError::Eof);
+            }
+            if !socket.can_recv() {
+                return Ok(0);
+            }
+            socket.recv_slice(buf).map_err(|_| TcpError::NotConnected)
+        }
+    }
+
+    /// Push up to `buf.len()` bytes into the tx ring. Returns `Ok(n)`
+    /// — `n` may be less than `buf.len()` if the ring is filling.
+    /// Caller polls and retries with the remainder.
+    pub fn write(&mut self, buf: &[u8]) -> Result<usize, TcpError> {
+        unsafe {
+            let sockets = match super::state::sockets_mut() {
+                Some(s) => s,
+                None => return Err(TcpError::NotInitialized),
+            };
+            let socket = sockets.get_mut::<tcp::Socket>(self.handle);
+            if !socket.may_send() {
+                return Err(TcpError::NotConnected);
+            }
+            if !socket.can_send() {
+                return Ok(0);
+            }
+            socket.send_slice(buf).map_err(|_| TcpError::NotConnected)
+        }
+    }
+
+    /// Initiate clean shutdown (sends FIN). Caller still needs to poll
+    /// until the socket fully drains and returns to CLOSED, then drop
+    /// the handle (or let it go out of scope).
+    pub fn close(&mut self) {
+        unsafe {
+            if let Some(sockets) = super::state::sockets_mut() {
+                sockets.get_mut::<tcp::Socket>(self.handle).close();
+            }
+        }
+    }
+
+    /// Forcibly tear down the socket and release the buffer reservation.
+    /// Use when you've reached a terminal state (CLOSED, the peer RST'd,
+    /// etc.) and want the slot free for the next connect.
+    pub fn release(self) {
+        unsafe {
+            if let Some(sockets) = super::state::sockets_mut() {
+                sockets.remove(self.handle);
+            }
+            SOCKET_IN_USE = false;
+        }
+    }
+}
+
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        // If a TcpStream is dropped without explicit `release()`, free
+        // the socket reservation so the next connect doesn't see
+        // SocketBusy. The smoltcp socket itself stays in the SocketSet
+        // until cleaned up — that's a small leak we'll fix when we
+        // implement a proper socket-reuse pool.
+        unsafe { SOCKET_IN_USE = false; }
+    }
+}

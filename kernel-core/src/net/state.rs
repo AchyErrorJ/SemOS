@@ -168,6 +168,23 @@ pub fn is_initialized() -> bool {
 }
 
 // ============================================================================
+// Crate-internal accessors for the static net state.
+//
+// Used by `super::tcp` (and future `super::dns`) to add sockets / fetch
+// the Interface's Context. Not `pub` outside `super::` — callers should
+// go through the high-level wrappers (`TcpStream`, etc.) rather than
+// touch the singletons directly.
+// ============================================================================
+
+pub(super) unsafe fn sockets_mut() -> Option<&'static mut SocketSet<'static>> {
+    SOCKETS.as_mut()
+}
+
+pub(super) unsafe fn iface_mut() -> Option<&'static mut Interface> {
+    IFACE.as_mut()
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
