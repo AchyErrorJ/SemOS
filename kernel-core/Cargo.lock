@@ -361,8 +361,15 @@ dependencies = [
 name = "kernel-core"
 version = "0.1.0"
 dependencies = [
+ "aead",
+ "crypto-common",
+ "digest",
+ "embedded-io",
  "embedded-tls",
+ "generic-array 0.14.7",
  "smoltcp",
+ "subtle",
+ "typenum",
 ]
 
 [[package]]

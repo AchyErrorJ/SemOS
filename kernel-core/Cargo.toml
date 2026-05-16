@@ -31,6 +31,18 @@ embedded-tls = { version = "0.17", default-features = false }
 # Pin to the same version embedded-tls 0.17 pulls in.
 embedded-io = "0.6"
 
+# RustCrypto trait crates — needed for the kernel-core/src/tls/crypto_shim.rs
+# wrappers that expose our SHA-256 + ChaCha20-Poly1305 as the traits
+# embedded-tls's TlsCipherSuite requires. Versions pinned to whatever
+# embedded-tls 0.17 itself uses (visible in Cargo.lock); changing those
+# pins requires re-checking against the cipher-suite trait bounds.
+digest = { version = "0.10", default-features = false }
+aead   = { version = "0.5",  default-features = false }
+generic-array = { version = "0.14", default-features = false }
+typenum = { version = "1",   default-features = false }
+crypto-common = { version = "0.1", default-features = false }
+subtle = { version = "2",    default-features = false }
+
 [features]
 default = []
 
