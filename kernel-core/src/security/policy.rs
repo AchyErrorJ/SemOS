@@ -358,7 +358,9 @@ mod tests {
         let mut policy = PolicyObject::new(
             PolicyType::ObjectAccess,
             PolicyTarget::Everyone,
-            super::user_ids::ADMIN,
+            // Tests live in `security::policy::tests`, so `super::super`
+            // is the `security` module where `user_ids` is defined.
+            super::super::user_ids::ADMIN,
             100,
         );
 

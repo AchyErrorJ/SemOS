@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_pool_allocate() {
-        let pool = unsafe { MemoryPool::new(SecurityTier::Public, PhysicalAddress::new(0x10000000), 4096 * 16) };
+        let mut pool = unsafe { MemoryPool::new(SecurityTier::Public, PhysicalAddress::new(0x10000000), 4096 * 16) };
 
         let addr1 = pool.allocate(4096, 4096);
         assert!(addr1.is_some());
