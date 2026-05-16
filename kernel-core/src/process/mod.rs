@@ -251,8 +251,10 @@ pub struct Process {
     pub exit_status: ExitStatus,
     /// Process capabilities
     pub capabilities: CapabilitySet,
-    /// Maximum security tier this process can access
-    pub max_tier: SecurityTier,
+    // Note: max security tier is not stored on Process. It lives on the
+    // associated scheduler task (`TaskInfo.max_tier`) and is read via
+    // `scheduler::current_task_max_tier()`. Storing it on both would mean
+    // two sources of truth — see also the user_id note above.
     /// File descriptor table
     pub fds: FdTable,
     /// Process name (for debugging)
@@ -288,7 +290,6 @@ impl Process {
             state: ProcessState::Creating,
             exit_status: ExitStatus::success(),
             capabilities: CapabilitySet::empty(),
-            max_tier: SecurityTier::Public,
             fds: FdTable::with_stdio(),
             name: [0u8; 32],
             name_len: 0,
@@ -311,20 +312,28 @@ impl Process {
         proc
     }
 
-    /// Create the kernel process (PID 0)
+    /// Create the kernel process (PID 0).
+    ///
+    /// Tier isn't set here — the kernel's effective max_tier lives on
+    /// scheduler task slot 0 (`TaskInfo.max_tier = Secret`), established
+    /// in `scheduler::init_core`. The Process PCB carries only the bits
+    /// the scheduler doesn't already know about.
     pub fn kernel() -> Self {
         let mut proc = Self::new(ProcessId::KERNEL, None, "kernel");
         proc.capabilities = CapabilitySet::all();
-        proc.max_tier = SecurityTier::Secret;
         proc.state = ProcessState::Running;
         proc
     }
 
-    /// Create the init process (PID 1)
+    /// Create the init process (PID 1).
+    ///
+    /// Init is a placeholder PCB today — it has no associated scheduler
+    /// task, so its tier would only ever be a write-only field. When init
+    /// gets a real task slot, set the tier on the TaskInfo at spawn time
+    /// rather than here.
     pub fn init() -> Self {
         let mut proc = Self::new(ProcessId::INIT, Some(ProcessId::KERNEL), "init");
         proc.capabilities = CapabilitySet::default_user();
-        proc.max_tier = SecurityTier::Internal;
         proc
     }
 
@@ -367,10 +376,9 @@ impl Process {
         self.capabilities.has(cap)
     }
 
-    /// Check if process can access a security tier
-    pub fn can_access_tier(&self, tier: SecurityTier) -> bool {
-        tier as u8 <= self.max_tier as u8
-    }
+    // Note: removed `can_access_tier(tier)`. The scheduler-task tier
+    // (`current_task_max_tier()`) is the authoritative check; using a
+    // PCB-side mirror was the only reason `Process` still tracked tier.
 
     /// Mark process as zombie with exit status
     pub fn exit(&mut self, status: ExitStatus) {
@@ -543,18 +551,22 @@ pub fn spawn(name: &'static str, entry: fn()) -> Option<ProcessId> {
         // Create process
         let mut proc = Process::new(pid, Some(parent_pid), name);
 
-        // Inherit capabilities from parent (reduced)
+        // Inherit capabilities from parent (reduced). The tier is read off
+        // the current scheduler task rather than the parent PCB: spawn()
+        // runs in the parent's task context, so `current_task_max_tier()`
+        // is the same value `parent.max_tier` used to be, and there's no
+        // PCB-side mirror to drift.
         if let Some(parent) = PROCESS_TABLE.get(parent_pid) {
             proc.capabilities = parent.capabilities.inherit();
-            proc.max_tier = parent.max_tier;
         }
+        let inherited_tier = crate::scheduler::current_task_max_tier();
 
         // Allocate a scheduler task slot
         // NOTE: The platform crate must set up the actual stack and context
         // for this task slot after this function returns.
         let task_id = crate::scheduler::alloc_task_slot(
             name,
-            proc.max_tier as u8,
+            inherited_tier,
             true, // kernel mode
         )?;
         proc.task_id = Some(task_id);
@@ -584,16 +596,16 @@ pub fn spawn_user(name: &'static str, entry: fn()) -> Option<ProcessId> {
         // Create process
         let mut proc = Process::new(pid, Some(parent_pid), name);
 
-        // User processes get limited capabilities
+        // User processes get limited capabilities + the lowest tier.
         proc.capabilities = CapabilitySet::minimal();
-        proc.max_tier = SecurityTier::Public;
+        let new_tier = SecurityTier::Public;
 
         // Allocate a scheduler task slot
         // NOTE: The platform crate must set up user-mode stack, context,
         // and address space for this task slot.
         let task_id = crate::scheduler::alloc_task_slot(
             name,
-            proc.max_tier as u8,
+            new_tier as u8,
             false, // user mode
         )?;
         proc.task_id = Some(task_id);
@@ -695,12 +707,9 @@ pub fn spawn_from_elf(name: &'static str, elf_data: &[u8], max_tier: u8) -> Opti
         let pid = PROCESS_TABLE.alloc_pid()?;
         let mut proc = Process::new(pid, Some(parent_pid), name);
         proc.capabilities = CapabilitySet::minimal();
-        proc.max_tier = match max_tier {
-            0 => SecurityTier::Public,
-            1 => SecurityTier::Internal,
-            2 => SecurityTier::Sensitive,
-            _ => SecurityTier::Secret,
-        };
+        // The tier was already applied to the scheduler task by
+        // `platform.spawn_user_task(...max_tier)` above; the PCB used to
+        // mirror it, but that was the redundancy we just removed.
         proc.task_id = Some(task_slot);
         proc.state = ProcessState::Running;
         proc.entry_point = elf_info.entry;
