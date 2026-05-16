@@ -404,6 +404,18 @@ fn init_loader_task() {
     println!("================================================================");
     user_identity_test();
 
+    // Final marker before idling. On bare metal this is your "the kernel
+    // didn't crash" signal — without serial capture, the framebuffer is
+    // the only feedback channel. Anything other than this banner on the
+    // last line means the boot was interrupted mid-demo.
+    println!();
+    println!("================================================================");
+    println!("  All demos complete — kernel idling. Safe to power off.");
+    println!("  ({} context switches across {} tasks)",
+        kernel_core::scheduler::stats().0,
+        kernel_core::scheduler::current_task_index() + 1);
+    println!("================================================================");
+
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
