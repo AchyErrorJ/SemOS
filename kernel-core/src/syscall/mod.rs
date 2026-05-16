@@ -86,6 +86,12 @@ pub mod numbers {
     pub const SYS_UPTIME: u64 = 71;
     pub const SYS_REBOOT: u64 = 72;
     pub const SYS_SYSINFO: u64 = 73;
+
+    // User identity & isolation (80-89). Backed by `security::users`.
+    pub const SYS_GETUID:        u64 = 80; // -> current user id
+    pub const SYS_SETUID:        u64 = 81; // (uid) -> 0 / err
+    pub const SYS_CREATE_USER:   u64 = 82; // (name_ptr, name_len, tier, group) -> uid / err
+    pub const SYS_LOOKUP_USER:   u64 = 83; // (uid, out_ptr, out_len) -> bytes_written / err
 }
 
 /// Syscall dispatch — called by platform trap handler with
@@ -152,6 +158,12 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
         // System (70-79)
         SYS_TIME => crate::platform::ticks(),
+
+        // User identity & isolation (80-89)
+        SYS_GETUID        => handle_getuid(),
+        SYS_SETUID        => handle_setuid(arg0),
+        SYS_CREATE_USER   => handle_create_user(arg0, arg1, arg2, arg3),
+        SYS_LOOKUP_USER   => handle_lookup_user(arg0, arg1, arg2),
 
         _ => {
             crate::platform::log("[syscall] Unknown syscall: ");
@@ -809,7 +821,7 @@ fn handle_sem_create(suid_high: u64, suid_low: u64, tier: u64, content_info: u64
 
     let suid = crate::semantic::SUID::new(suid_high, suid_low);
     let security_tier = tier_from_u8(obj_tier);
-    let owner = crate::scheduler::current_task_index() as u8;
+    let owner = crate::scheduler::current_user_id();
 
     let content_ptr = content_info & 0xFFFF_FFFF;
     let content_len = (content_info >> 32) as usize;
@@ -1037,7 +1049,7 @@ fn handle_llm_query(prompt_ptr: u64, prompt_len: u64, out_ptr: u64) -> u64 {
     let len = prompt_len as usize;
     if len == 0 || len > 1024 { return u64::MAX; }
     let tier = crate::scheduler::current_task_max_tier();
-    let task_id = crate::scheduler::current_task_index() as u8;
+    let task_id = crate::scheduler::current_user_id();
 
     let prompt = unsafe {
         core::slice::from_raw_parts(prompt_ptr as *const u8, len)
@@ -1253,7 +1265,7 @@ pub fn handle_llm_stream_start(prompt_ptr: u64, prompt_len: u64, context_ptr: u6
         core::slice::from_raw_parts(prompt_ptr as *const u8, len)
     };
 
-    let task_id = crate::scheduler::current_task_index() as u8;
+    let task_id = crate::scheduler::current_user_id();
     let tier = crate::scheduler::current_task_max_tier();
 
     unsafe {
@@ -1338,7 +1350,7 @@ pub fn handle_llm_set_policy(suid_high: u64, suid_low: u64, policy_data_ptr: u64
         return u64::MAX - 1; // Not a valid policy SUID
     }
 
-    let requester_id = crate::scheduler::current_task_index() as u8;
+    let requester_id = crate::scheduler::current_user_id();
     let requester_tier = crate::scheduler::current_task_max_tier();
 
     // Read policy data from user space
@@ -1422,7 +1434,7 @@ pub fn handle_llm_get_policy(suid_high: u64, suid_low: u64, out_ptr: u64, out_le
         return u64::MAX;
     }
 
-    let requester_id = crate::scheduler::current_task_index() as u8;
+    let requester_id = crate::scheduler::current_user_id();
 
     unsafe {
         let registry = crate::semantic::registry::global_registry();
@@ -1532,4 +1544,171 @@ pub fn exit(code: i32) -> ! {
 /// Convenience function for userspace: yield
 pub fn yield_now() {
     dispatch(numbers::SYS_YIELD, 0, 0, 0, 0);
+}
+
+// ============================================================================
+// User identity & isolation (SYS_GETUID, SYS_SETUID, SYS_CREATE_USER, SYS_LOOKUP_USER)
+// ============================================================================
+
+/// SYS_GETUID → current task's effective user id (extended to u64).
+fn handle_getuid() -> u64 {
+    crate::scheduler::current_user_id() as u64
+}
+
+/// SYS_SETUID(uid) → 0 on success, u64::MAX on policy denial / unknown user.
+///
+/// Per `security::users::can_setuid_to`:
+/// - SYSTEM can become anyone.
+/// - ADMIN can drop to any non-SYSTEM user.
+/// - Ordinary users cannot setuid.
+fn handle_setuid(uid: u64) -> u64 {
+    if uid > 255 { return u64::MAX; }
+    let target = uid as u8;
+    let requester = crate::scheduler::current_user_id();
+    unsafe {
+        let registry = crate::security::users::global_user_registry();
+        if !crate::security::users::can_setuid_to(requester, target, registry) {
+            return u64::MAX;
+        }
+    }
+    crate::scheduler::set_current_user_id(target);
+    0
+}
+
+/// SYS_CREATE_USER(name_ptr, name_len, tier, group) → assigned uid or u64::MAX.
+///
+/// `tier` is the new user's default max security tier (0..=3, clamped to the
+/// caller's own tier). `group` is the new user's group id. Only SYSTEM/ADMIN
+/// may create users.
+fn handle_create_user(name_ptr: u64, name_len: u64, tier: u64, group: u64) -> u64 {
+    let requester = crate::scheduler::current_user_id();
+    if !crate::security::users::is_privileged(requester) {
+        return u64::MAX;
+    }
+
+    let len = name_len as usize;
+    if !validate_user_ptr(name_ptr, name_len) { return u64::MAX; }
+    if len == 0 || len > crate::security::users::MAX_USERNAME_LEN { return u64::MAX; }
+    let raw = unsafe { core::slice::from_raw_parts(name_ptr as *const u8, len) };
+    let name = match core::str::from_utf8(raw) {
+        Ok(s) => s,
+        Err(_) => return u64::MAX,
+    };
+
+    // Clamp the new user's tier to the caller's. Without this an admin could
+    // mint a user with a higher tier than themselves — exactly the kind of
+    // privilege-laundering this module is meant to prevent.
+    let requester_tier = crate::scheduler::current_task_max_tier();
+    let new_tier_raw = (tier as u8).min(requester_tier).min(3);
+    let new_tier = tier_from_u8(new_tier_raw);
+
+    let group_id = (group & 0xFF) as u8;
+    unsafe {
+        let registry = crate::security::users::global_user_registry();
+        match registry.create_user(name, group_id, new_tier) {
+            Ok(uid) => uid as u64,
+            Err(_) => u64::MAX,
+        }
+    }
+}
+
+/// SYS_LOOKUP_USER(uid, out_ptr, out_len) → bytes written or u64::MAX.
+///
+/// Writes a compact UTF-8 textual record into `out`:
+///   `uid=<id> name=<name> tier=<n> group=<g> flags=<hex>`
+/// This keeps the syscall ABI simple — user space can split on whitespace
+/// without needing a binary layout shared between kernel and user-programs.
+fn handle_lookup_user(uid: u64, out_ptr: u64, out_len: u64) -> u64 {
+    if uid > 255 { return u64::MAX; }
+    if !validate_user_ptr(out_ptr, out_len) { return u64::MAX; }
+    let target = uid as u8;
+    let cap = out_len as usize;
+
+    let mut scratch = [0u8; 96];
+    let written = unsafe {
+        let registry = crate::security::users::global_user_registry();
+        match registry.lookup(target) {
+            None => return 0, // 0 == "not found", distinct from u64::MAX (= error)
+            Some(acc) => format_user_record(acc, &mut scratch),
+        }
+    };
+    if written > cap { return u64::MAX; }
+    unsafe {
+        let dst = core::slice::from_raw_parts_mut(out_ptr as *mut u8, written);
+        dst.copy_from_slice(&scratch[..written]);
+    }
+    written as u64
+}
+
+/// Render a [`UserAccount`] into the wire format used by SYS_LOOKUP_USER.
+/// Lives next to the syscall so the format stays in sync with the comment
+/// above. Returns bytes written.
+fn format_user_record(acc: &crate::security::users::UserAccount, out: &mut [u8]) -> usize {
+    let mut p = 0;
+    p += write_str(&mut out[p..], b"uid=");
+    p += write_dec(&mut out[p..], acc.id as u64);
+    p += write_str(&mut out[p..], b" name=");
+    p += copy_clamped(&mut out[p..], acc.name());
+    p += write_str(&mut out[p..], b" tier=");
+    p += write_dec(&mut out[p..], acc.default_max_tier as u64);
+    p += write_str(&mut out[p..], b" group=");
+    p += write_dec(&mut out[p..], acc.group as u64);
+    p += write_str(&mut out[p..], b" flags=0x");
+    p += write_hex(&mut out[p..], acc.flags.0 as u64);
+    p
+}
+
+fn write_str(dst: &mut [u8], s: &[u8]) -> usize {
+    let n = dst.len().min(s.len());
+    dst[..n].copy_from_slice(&s[..n]);
+    n
+}
+
+fn copy_clamped(dst: &mut [u8], src: &[u8]) -> usize {
+    let n = dst.len().min(src.len());
+    dst[..n].copy_from_slice(&src[..n]);
+    n
+}
+
+fn write_dec(dst: &mut [u8], n: u64) -> usize {
+    if n == 0 {
+        if dst.is_empty() { return 0; }
+        dst[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut k = 0;
+    let mut v = n;
+    while v > 0 && k < tmp.len() {
+        tmp[k] = b'0' + (v % 10) as u8;
+        v /= 10;
+        k += 1;
+    }
+    let n_out = k.min(dst.len());
+    for i in 0..n_out {
+        dst[i] = tmp[k - 1 - i];
+    }
+    n_out
+}
+
+fn write_hex(dst: &mut [u8], n: u64) -> usize {
+    if n == 0 {
+        if dst.is_empty() { return 0; }
+        dst[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 16];
+    let mut k = 0;
+    let mut v = n;
+    while v > 0 && k < tmp.len() {
+        let nibble = (v & 0xF) as u8;
+        tmp[k] = if nibble < 10 { b'0' + nibble } else { b'a' + nibble - 10 };
+        v >>= 4;
+        k += 1;
+    }
+    let n_out = k.min(dst.len());
+    for i in 0..n_out {
+        dst[i] = tmp[k - 1 - i];
+    }
+    n_out
 }

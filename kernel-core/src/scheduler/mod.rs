@@ -74,6 +74,13 @@ pub struct TaskInfo {
     pub wake_at: u64,
     /// Why this task is blocked (for auto-unblock in pick_next).
     pub block_reason: BlockReason,
+    /// Effective user identity for this task. Used everywhere we need to
+    /// answer "who is this task acting for?" — policy evaluation, redaction
+    /// context, request ownership. Inherited from the parent at spawn, or
+    /// rewritten via `SYS_SETUID`. Before this field existed, the kernel
+    /// was using the scheduler slot index as a proxy, which is wrong:
+    /// slots get recycled, and one user can run many concurrent tasks.
+    pub user_id: u8,
 }
 
 impl TaskInfo {
@@ -87,6 +94,9 @@ impl TaskInfo {
             is_kernel: true,
             wake_at: 0,
             block_reason: BlockReason::None,
+            // 255 == `security::user_ids::NOBODY`. We don't import the
+            // constant here because TaskInfo::empty must stay `const`.
+            user_id: 255,
         }
     }
 }
@@ -118,6 +128,27 @@ pub fn current_task_max_tier() -> u8 {
 /// Get the current task index
 pub fn current_task_index() -> usize {
     CURRENT_TASK.load(Ordering::SeqCst)
+}
+
+/// Get the effective user id for the current task. Replaces the older
+/// pattern of `current_task_index() as u8`, which conflated scheduler
+/// slots with user identity.
+pub fn current_user_id() -> u8 {
+    let current = CURRENT_TASK.load(Ordering::SeqCst);
+    unsafe {
+        let tasks = &raw const TASKS;
+        (*tasks)[current].user_id
+    }
+}
+
+/// Rewrite the effective user id for the current task. Caller is
+/// responsible for enforcing setuid policy — this just mutates the field.
+pub fn set_current_user_id(uid: u8) {
+    let current = CURRENT_TASK.load(Ordering::SeqCst);
+    unsafe {
+        let tasks = &raw mut TASKS;
+        (*tasks)[current].user_id = uid;
+    }
 }
 
 /// Round-robin scheduling: find the next ready task.
@@ -212,6 +243,9 @@ pub fn init_core() {
             is_kernel: true,
             wake_at: 0,
             block_reason: BlockReason::None,
+            // The bootstrap kernel task runs as SYSTEM. Spawned children
+            // inherit this until something explicitly drops privilege.
+            user_id: 0, // == security::user_ids::SYSTEM
         };
     }
     CURRENT_TASK.store(0, Ordering::SeqCst);
@@ -228,6 +262,20 @@ pub fn init_core() {
 /// fire between slot allocation and context initialization, causing
 /// `context_switch` to load a zero RSP from the uninitialized context.
 pub fn alloc_task_slot(name: &'static str, max_tier: u8, is_kernel: bool) -> Option<usize> {
+    // Default: inherit the spawning task's user identity. Callers that need
+    // a different uid should follow with `set_user_id`.
+    alloc_task_slot_with_user(name, max_tier, is_kernel, current_user_id())
+}
+
+/// Like `alloc_task_slot` but lets the caller pin an explicit user id on
+/// the new slot. Used by spawn paths that want to drop privilege at the
+/// moment of creation rather than after the child starts running.
+pub fn alloc_task_slot_with_user(
+    name: &'static str,
+    max_tier: u8,
+    is_kernel: bool,
+    user_id: u8,
+) -> Option<usize> {
     unsafe {
         let tasks = &raw mut TASKS;
         // Reusable slots = Empty (never used) OR Exited (finished and
@@ -263,12 +311,24 @@ pub fn alloc_task_slot(name: &'static str, max_tier: u8, is_kernel: bool) -> Opt
                     // BlockReason::None means "blocked indefinitely until
                     // explicitly woken" — pick_next won't auto-unblock it.
                     block_reason: BlockReason::None,
+                    user_id,
                 };
                 return Some(i);
             }
         }
     }
     None
+}
+
+/// Force a specific user id onto an already-allocated slot. Used by spawn
+/// paths that need to do this between `alloc_task_slot` and `mark_ready`,
+/// without needing to know the calling user's id at slot-alloc time.
+pub fn set_slot_user_id(slot: usize, uid: u8) {
+    if slot >= MAX_TASKS { return; }
+    unsafe {
+        let tasks = &raw mut TASKS;
+        (*tasks)[slot].user_id = uid;
+    }
 }
 
 /// Transition a freshly-allocated slot to `Ready`, making it eligible for

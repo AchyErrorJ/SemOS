@@ -48,11 +48,13 @@ pub mod policy;
 pub mod evaluation;
 pub mod rules;
 pub mod context;
+pub mod users;
 
 pub use policy::{PolicyObject, PolicyType, PolicyTarget, PolicyAction};
 pub use evaluation::{PolicyEngine, EvaluationContext, PolicyResult};
 pub use rules::{PolicyRule, RuleCondition};
 pub use context::{RequestContext, ContextInfo};
+pub use users::{UserAccount, UserRegistry, GroupId, UserFlags, global_user_registry, is_privileged};
 
 use crate::semantic::SUID;
 use crate::memory::SecurityTier;
@@ -157,6 +159,7 @@ pub fn init() {
     evaluation::init();
     rules::init();
     context::init();
+    users::init();
 
     unsafe {
         SECURITY_INITIALIZED = true;

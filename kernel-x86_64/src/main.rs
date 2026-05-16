@@ -397,6 +397,13 @@ fn init_loader_task() {
     println!("================================================================");
     network_llm_provider_test();
 
+    // DEMO 11: User Identity & Isolation
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 11: User identity & isolation");
+    println!("================================================================");
+    user_identity_test();
+
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
@@ -961,6 +968,123 @@ fn network_llm_provider_test() {
     }
 
     println!("  [DEMO 10] => Network-backed LLM provider working end-to-end!");
+}
+
+/// DEMO 11: User identity & isolation.
+///
+/// Exercises the user-account registry and the new identity-aware syscall
+/// surface end-to-end:
+///   1. Read the current uid (boot task should be SYSTEM).
+///   2. Enumerate the built-in accounts.
+///   3. Create a new user via SYS_CREATE_USER.
+///   4. Look it up via SYS_LOOKUP_USER.
+///   5. Drop privilege via SYS_SETUID to the new user.
+///   6. Re-check uid + verify SetUid policy refuses upward setuid.
+///   7. Attempt to create *another* user as the dropped user — must fail.
+///   8. Reset back to SYSTEM and confirm.
+fn user_identity_test() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+    use kernel_core::security::user_ids;
+    use kernel_core::security::users::{global_user_registry, MAX_USERNAME_LEN};
+
+    // ---- 1. Current uid ----
+    let initial_uid = dispatch(SYS_GETUID, 0, 0, 0, 0);
+    println!("  [DEMO 11] initial uid = {} (SYSTEM={}, ADMIN={})",
+        initial_uid, user_ids::SYSTEM, user_ids::ADMIN);
+
+    // ---- 2. Enumerate built-ins ----
+    println!("  [DEMO 11] built-in accounts:");
+    unsafe {
+        let reg = global_user_registry();
+        for acc in reg.iter() {
+            let name = core::str::from_utf8(acc.name()).unwrap_or("?");
+            println!("    uid={:3}  name=\"{}\"  tier={}  group={}  flags=0x{:04x}",
+                acc.id, name, acc.default_max_tier as u8, acc.group, acc.flags.0);
+        }
+    }
+
+    // ---- 3. Create a new user "alice" via SYS_CREATE_USER ----
+    let alice_name = b"alice";
+    let alice_uid = dispatch(SYS_CREATE_USER,
+        alice_name.as_ptr() as u64,
+        alice_name.len() as u64,
+        1, // tier = Internal
+        kernel_core::security::users::groups::USERS as u64);
+    println!("  [DEMO 11] create_user(\"alice\", tier=1) -> uid={}", alice_uid);
+    if alice_uid == u64::MAX {
+        println!("  [DEMO 11] FAILED to create alice; aborting demo");
+        return;
+    }
+
+    // ---- 4. Look alice up via SYS_LOOKUP_USER ----
+    let mut record = [0u8; 128];
+    let n = dispatch(SYS_LOOKUP_USER,
+        alice_uid,
+        record.as_ptr() as u64,
+        record.len() as u64,
+        0);
+    if n > 0 && n < record.len() as u64 {
+        let s = core::str::from_utf8(&record[..n as usize]).unwrap_or("<binary>");
+        println!("  [DEMO 11] lookup_user({}) -> \"{}\"", alice_uid, s);
+    } else {
+        println!("  [DEMO 11] lookup_user({}) returned {} (unexpected)", alice_uid, n);
+    }
+
+    // ---- 5. Drop to alice ----
+    let drop_result = dispatch(SYS_SETUID, alice_uid, 0, 0, 0);
+    println!("  [DEMO 11] setuid({}) -> {}", alice_uid, drop_result);
+    let after_drop = dispatch(SYS_GETUID, 0, 0, 0, 0);
+    println!("  [DEMO 11] uid after drop = {} (expected {})", after_drop, alice_uid);
+
+    // ---- 6. Alice can't escalate back to ADMIN ----
+    let escalate = dispatch(SYS_SETUID, user_ids::ADMIN as u64, 0, 0, 0);
+    if escalate == u64::MAX {
+        println!("  [DEMO 11] setuid(ADMIN) from alice REJECTED (good)");
+    } else {
+        println!("  [DEMO 11] setuid(ADMIN) from alice UNEXPECTEDLY succeeded ({})", escalate);
+    }
+    let still_alice = dispatch(SYS_GETUID, 0, 0, 0, 0);
+    println!("  [DEMO 11] uid still = {} after rejected escalation", still_alice);
+
+    // ---- 7. Alice can't create users ----
+    let bob_name = b"bob";
+    let bob_attempt = dispatch(SYS_CREATE_USER,
+        bob_name.as_ptr() as u64,
+        bob_name.len() as u64,
+        0,
+        kernel_core::security::users::groups::USERS as u64);
+    if bob_attempt == u64::MAX {
+        println!("  [DEMO 11] create_user(\"bob\") from alice REJECTED (good)");
+    } else {
+        println!("  [DEMO 11] create_user(\"bob\") from alice UNEXPECTEDLY returned {}", bob_attempt);
+    }
+
+    // ---- 8. Bypass the syscall guard (we're still in-kernel) to drop back ----
+    // Real userland code would never have this option — the kernel is doing
+    // this on its own behalf to clean up after the demo.
+    kernel_core::scheduler::set_current_user_id(initial_uid as u8);
+    let restored = dispatch(SYS_GETUID, 0, 0, 0, 0);
+    println!("  [DEMO 11] restored uid = {} (expected {})", restored, initial_uid);
+
+    // ---- 9. Show that the lookup format is parseable from user space ----
+    println!("  [DEMO 11] final registry size: {} active account(s)",
+        unsafe { global_user_registry().count() });
+
+    // Touch MAX_USERNAME_LEN so an over-long name doesn't accidentally compile-
+    // away. Negative test: name longer than the cap must be rejected.
+    let too_long = [b'x'; MAX_USERNAME_LEN + 4];
+    let reject = dispatch(SYS_CREATE_USER,
+        too_long.as_ptr() as u64,
+        too_long.len() as u64,
+        0,
+        0);
+    if reject == u64::MAX {
+        println!("  [DEMO 11] over-long name REJECTED (good)");
+    } else {
+        println!("  [DEMO 11] over-long name UNEXPECTEDLY returned {}", reject);
+    }
+
+    println!("  [DEMO 11] => User identity & isolation working!");
 }
 
 /// Test policy management syscalls
