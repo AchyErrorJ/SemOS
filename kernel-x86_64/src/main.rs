@@ -151,6 +151,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     println!();
 
+    println!("[*] Probing VirtIO network device...");
+    if virtio::net::init() {
+        if virtio::net::register_with_kernel_core() {
+            println!("[virtio-net] registered with driver registry as 'virtio-net0'");
+        }
+    }
+    println!();
+
     // Initialize kernel-core subsystems
     println!("[*] Initializing kernel-core subsystems...");
     kernel_core::scheduler::init_core();

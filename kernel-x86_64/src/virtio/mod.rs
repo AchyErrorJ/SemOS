@@ -6,3 +6,4 @@
 //! which advertises the legacy interface at `0x1AF4:0x1001`.
 
 pub mod block;
+pub mod net;
