@@ -263,10 +263,11 @@ pub struct Process {
     pub cwd: [u8; 128],
     /// CWD length
     pub cwd_len: usize,
-    /// User ID (for future multi-user support)
-    pub uid: u32,
-    /// Group ID
-    pub gid: u32,
+    // Note: user/group identity is not stored on Process. The authoritative
+    // identity lives on the associated scheduler task (`TaskInfo.user_id`)
+    // and is read via `scheduler::current_user_id()`. Two parallel fields
+    // would only mean two things to keep in sync; the user registry lives
+    // in `security::users`.
     /// Entry point address (for exec)
     pub entry_point: usize,
     /// Stack pointer
@@ -293,8 +294,6 @@ impl Process {
             name_len: 0,
             cwd: [0u8; 128],
             cwd_len: 1,
-            uid: 0,
-            gid: 0,
             entry_point: 0,
             stack_ptr: 0,
             brk: 0,
