@@ -34,6 +34,7 @@ pub mod key_hierarchy;
 pub mod chacha20;
 pub mod poly1305;
 pub mod sha256;
+pub mod hkdf;
 
 use crate::memory::SecurityTier;
 

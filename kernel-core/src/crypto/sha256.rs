@@ -161,42 +161,68 @@ pub fn hash(data: &[u8]) -> [u8; OUTPUT_SIZE] {
 // without source changes. Move to a dedicated `hmac.rs` later if it grows.
 // ============================================================================
 
-/// HMAC-SHA256 of `data` under `key`.
+/// HMAC-SHA256 of `data` under `key`. One-shot convenience.
 ///
-/// Replaces the earlier inline HMAC that capped `data` at 64 bytes
-/// ("// H(outer || H(inner || data))" with a stack array sized for one
-/// block). This version streams the message through the inner SHA-256 so
-/// `data` can be any length.
+/// Replaces the earlier inline HMAC that capped `data` at 64 bytes. For
+/// callers that need to MAC data arriving in pieces (e.g. HKDF-Expand
+/// concatenates T(i-1) || info || counter), see [`HmacSha256`] below.
 pub fn hmac(key: &[u8], data: &[u8]) -> [u8; OUTPUT_SIZE] {
-    // Per RFC 2104: if `key` exceeds the hash block size, hash it first.
-    // Otherwise pad with zeros up to the block size.
-    let mut k = [0u8; BLOCK_SIZE];
-    if key.len() > BLOCK_SIZE {
-        let h = hash(key);
-        k[..OUTPUT_SIZE].copy_from_slice(&h);
-    } else {
-        k[..key.len()].copy_from_slice(key);
+    let mut h = HmacSha256::new(key);
+    h.update(data);
+    h.finalize()
+}
+
+/// Streaming HMAC-SHA256 (RFC 2104).
+///
+/// Lets the caller feed the message in pieces — needed by HKDF-Expand,
+/// which would otherwise have to concatenate into a stack buffer with a
+/// hard-coded upper bound on `info` length.
+#[derive(Clone)]
+pub struct HmacSha256 {
+    /// Inner SHA-256, pre-fed with `key XOR ipad`. Subsequent `update`
+    /// calls just feed straight through.
+    inner: Sha256,
+    /// Pre-computed `key XOR opad` for the outer hash at finalize time.
+    outer_key: [u8; BLOCK_SIZE],
+}
+
+impl HmacSha256 {
+    /// Initialise an HMAC-SHA256 context with `key`. Per RFC 2104, a
+    /// `key` longer than [`BLOCK_SIZE`] is hashed down first; a shorter
+    /// `key` is zero-padded out.
+    pub fn new(key: &[u8]) -> Self {
+        let mut k = [0u8; BLOCK_SIZE];
+        if key.len() > BLOCK_SIZE {
+            let h = hash(key);
+            k[..OUTPUT_SIZE].copy_from_slice(&h);
+        } else {
+            k[..key.len()].copy_from_slice(key);
+        }
+        let mut inner_key = [0x36u8; BLOCK_SIZE];
+        let mut outer_key = [0x5cu8; BLOCK_SIZE];
+        for i in 0..BLOCK_SIZE {
+            inner_key[i] ^= k[i];
+            outer_key[i] ^= k[i];
+        }
+        let mut inner = Sha256::new();
+        inner.update(&inner_key);
+        Self { inner, outer_key }
     }
 
-    // ipad = 0x36 * BLOCK_SIZE, opad = 0x5C * BLOCK_SIZE.
-    let mut inner_key = [0x36u8; BLOCK_SIZE];
-    let mut outer_key = [0x5cu8; BLOCK_SIZE];
-    for i in 0..BLOCK_SIZE {
-        inner_key[i] ^= k[i];
-        outer_key[i] ^= k[i];
+    /// Append `data` to the MAC's input. Any number of bytes, any number
+    /// of calls — same correctness as one big `update` of the concat.
+    pub fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
     }
 
-    // inner = H( (key ^ ipad) || data ) — stream `data` to allow any length.
-    let mut inner = Sha256::new();
-    inner.update(&inner_key);
-    inner.update(data);
-    let inner_digest = inner.finalize();
-
-    // outer = H( (key ^ opad) || inner )
-    let mut outer = Sha256::new();
-    outer.update(&outer_key);
-    outer.update(&inner_digest);
-    outer.finalize()
+    /// Finalise and produce the 32-byte tag. Consumes the context.
+    pub fn finalize(self) -> [u8; OUTPUT_SIZE] {
+        let inner_digest = self.inner.finalize();
+        let mut outer = Sha256::new();
+        outer.update(&self.outer_key);
+        outer.update(&inner_digest);
+        outer.finalize()
+    }
 }
 
 #[cfg(test)]
@@ -278,6 +304,27 @@ mod hmac_tests {
         let data = b"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.";
         check(&key, data,
             b"9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2");
+    }
+
+    // Streaming HMAC must equal one-shot HMAC for every chunking pattern.
+    // Catches buggy streaming impls that would only show up under HKDF.
+    #[test]
+    fn streaming_hmac_matches_oneshot() {
+        let key = b"secret-key-value-with-medium-length-content";
+        let data: [u8; 200] = core::array::from_fn(|i| (i * 7) as u8);
+        let oneshot = hmac(key, &data);
+        // Single-call streaming
+        let mut h = HmacSha256::new(key);
+        h.update(&data);
+        assert_eq!(oneshot, h.finalize(), "single-update streaming mismatch");
+        // Byte-by-byte streaming
+        let mut h = HmacSha256::new(key);
+        for b in &data { h.update(&[*b]); }
+        assert_eq!(oneshot, h.finalize(), "byte-by-byte streaming mismatch");
+        // Irregular chunks (catches buffer-boundary bugs)
+        let mut h = HmacSha256::new(key);
+        for c in data.chunks(13) { h.update(c); }
+        assert_eq!(oneshot, h.finalize(), "irregular-chunk streaming mismatch");
     }
 }
 
