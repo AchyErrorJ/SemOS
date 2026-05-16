@@ -470,6 +470,17 @@ fn init_loader_task() {
     println!("================================================================");
     spki_pin_test();
 
+    // DEMO 14: end-to-end through the embedded-tls TlsVerifier trait
+    // surface — builds a CertificateRef from the real fixtures and
+    // calls verify_certificate the way embedded-tls will during a
+    // real handshake. Proves the trait wiring works without needing
+    // a network round-trip.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 14: TlsVerifier trait surface (synthetic chain)");
+    println!("================================================================");
+    tls_verifier_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1328,6 +1339,104 @@ fn spki_pin_test() {
         point[1], point[2], point[3], point[4]);
 
     println!("  [DEMO 13] => SPKI pinning ready; TLS verifier needs only the embedded-tls glue");
+}
+
+/// DEMO 14: drive [`kernel_core::tls::verifier::SpkiPinVerifier`]
+/// through its `TlsVerifier` trait surface using a synthetic chain
+/// built from the real fixtures.
+///
+/// What this proves that DEMO 13 doesn't: the spki_pin module is
+/// reachable through the embedded-tls `verify_certificate` signature
+/// — i.e. the vendor visibility patches were correct, the trait
+/// bounds resolve, and the verifier actually populates its captured
+/// leaf-point slot on success.
+///
+/// What this still doesn't prove: `verify_signature` against a real
+/// transcript. That needs an actual handshake; it's exercised once
+/// `NetworkLlmProvider` opens a TLS connection in Task #31.
+fn tls_verifier_test() {
+    use kernel_core::tls::crypto_shim::KernelSha256;
+    use kernel_core::tls::verifier::SpkiPinVerifier;
+    use kernel_core::tls::{CertificateEntryRef, CertificateRef, TlsVerifier};
+
+    const INTERMEDIATE_DER: &[u8] =
+        include_bytes!("../../kernel-core/src/tls/fixtures/anthropic_intermediate_we1.der");
+
+    // For the leaf slot in the synthetic chain we reuse the intermediate
+    // cert. We only need an X.509 cert whose SPKI is EC P-256, and both
+    // fixtures qualify (Anthropic's leaf and intermediate are both EC).
+    // verify_signature isn't run here, so it doesn't matter that we'd
+    // never see this exact leaf in a real handshake.
+    const LEAF_FAKE: &[u8] = INTERMEDIATE_DER;
+
+    println!("  [DEMO 14] building synthetic CertificateRef (leaf={} B, intermediate={} B)",
+        LEAF_FAKE.len(), INTERMEDIATE_DER.len());
+
+    let mut chain = CertificateRef::with_context(&[]);
+    if chain.add(CertificateEntryRef::X509(LEAF_FAKE)).is_err() {
+        println!("  [DEMO 14] FAIL: chain.add(leaf) returned error");
+        return;
+    }
+    if chain.add(CertificateEntryRef::X509(INTERMEDIATE_DER)).is_err() {
+        println!("  [DEMO 14] FAIL: chain.add(intermediate) returned error");
+        return;
+    }
+
+    // Empty transcript — verify_certificate clones it but doesn't
+    // require any particular state for step 1; the transcript is only
+    // used in step 2 (signature verification).
+    let transcript = KernelSha256::default();
+
+    let mut verifier = SpkiPinVerifier::new();
+    match verifier.verify_certificate(&transcript, &None, chain) {
+        Ok(()) => println!("  [DEMO 14] PASS: verify_certificate accepted real chain"),
+        Err(e) => { println!("  [DEMO 14] FAIL: verify_certificate rejected real chain: {:?}", e); return; }
+    }
+
+    // After success the verifier must have captured the leaf EC point.
+    match verifier.captured_leaf_point() {
+        Some(point) => {
+            if point[0] != 0x04 {
+                println!("  [DEMO 14] FAIL: captured leaf point bad marker 0x{:02x}", point[0]);
+                return;
+            }
+            println!("  [DEMO 14] PASS: leaf EC point captured ({:02x} {:02x} {:02x} {:02x}...)",
+                point[1], point[2], point[3], point[4]);
+        }
+        None => { println!("  [DEMO 14] FAIL: leaf EC point NOT captured after success"); return; }
+    }
+
+    // Negative case: build a chain whose intermediate has one byte
+    // flipped INSIDE its SPKI region. Flipping outside the SPKI
+    // wouldn't change the hash (we only hash the SubjectPublicKeyInfo
+    // sub-slice, not the whole cert), so the test would silently
+    // pass-when-it-shouldn't. Compute the SPKI offset by extracting
+    // it from the original cert and taking a pointer difference;
+    // that's the actual byte range the pin covers.
+    const N: usize = 675;
+    let spki_slice = kernel_core::tls::spki_pin::extract_spki(INTERMEDIATE_DER)
+        .expect("intermediate parses");
+    let spki_offset = (spki_slice.as_ptr() as usize) - (INTERMEDIATE_DER.as_ptr() as usize);
+    println!("  [DEMO 14] SPKI lives at byte {}..{} of intermediate",
+        spki_offset, spki_offset + spki_slice.len());
+
+    let mut bad_intermediate = [0u8; N];
+    bad_intermediate.copy_from_slice(INTERMEDIATE_DER);
+    // Flip a byte well inside the SPKI body (past the SEQUENCE +
+    // AlgorithmIdentifier headers — should land in the EC point).
+    bad_intermediate[spki_offset + 40] ^= 0xFF;
+
+    let mut bad_chain = CertificateRef::with_context(&[]);
+    let _ = bad_chain.add(CertificateEntryRef::X509(LEAF_FAKE));
+    let _ = bad_chain.add(CertificateEntryRef::X509(&bad_intermediate));
+
+    let mut v2 = SpkiPinVerifier::new();
+    match v2.verify_certificate(&transcript, &None, bad_chain) {
+        Err(_) => println!("  [DEMO 14] PASS: tampered intermediate correctly rejected"),
+        Ok(()) => { println!("  [DEMO 14] FAIL: tampered intermediate was ACCEPTED (!!)"); return; }
+    }
+
+    println!("  [DEMO 14] => TlsVerifier trait surface OK; ready to plug into TlsConnection");
 }
 
 /// Test policy management syscalls

@@ -77,6 +77,16 @@ pub use extensions::extension_data::signature_algorithms::SignatureScheme;
 pub use handshake::certificate_verify::CertificateVerify;
 pub use rand_core::{CryptoRng, CryptoRngCore};
 
+// VENDORED PATCH (Semantic OS): re-exports added to make types
+// reachable from external `TlsVerifier` implementations. Upstream
+// leaves these reachable only through the (sealed) `mod handshake`
+// and `mod config`. Kernel-core's spki-pinning verifier needs all
+// four. Same rationale as the `pub entries:` patch in
+// handshake/certificate.rs — minimum-surface change, no logic touched.
+pub use config::{Certificate, TlsVerifier, NoVerify};
+pub use handshake::certificate::{CertificateRef, CertificateEntryRef};
+pub use handshake::certificate_verify::CertificateVerifyRef;
+
 #[cfg(feature = "webpki")]
 pub mod webpki;
 

@@ -23,3 +23,16 @@
 pub mod crypto_shim;
 pub mod cipher_suite;
 pub mod spki_pin;
+pub mod verifier;
+
+// Re-exports so kernel-x86_64 and other consumers can build chains
+// and drive the verifier without taking a direct dep on the
+// (vendored) embedded-tls crate. Internal implementation detail
+// that this is embedded-tls — only the trait surface escapes.
+pub use embedded_tls::{
+    CertificateEntryRef,
+    CertificateRef,
+    CertificateVerifyRef,
+    TlsError,
+    TlsVerifier,
+};
