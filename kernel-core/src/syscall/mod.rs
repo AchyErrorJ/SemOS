@@ -49,10 +49,12 @@ pub mod numbers {
     pub const SYS_SEM_META: u64 = 27;
 
     // Memory (30-39)
-    pub const SYS_ALLOC: u64 = 30;
-    pub const SYS_FREE: u64 = 31;
+    pub const SYS_ALLOC: u64 = 30;        // frame-granular, tier-aware (Phase 1)
+    pub const SYS_FREE: u64 = 31;         // frame-granular pair
     pub const SYS_POOL_INFO: u64 = 32;
-    pub const SYS_BRK: u64 = 33;
+    pub const SYS_BRK: u64 = 33;          // Linux-style heap grow (TBD)
+    pub const SYS_HEAP_ALLOC: u64 = 34;   // (size, align) → ptr (Phase 14 prereq)
+    pub const SYS_HEAP_FREE: u64 = 35;    // (ptr, size, align) → 0/err
 
     // Process (40-49)
     pub const SYS_SPAWN: u64 = 40;
@@ -134,6 +136,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_ALLOC => handle_alloc(arg0, arg1),
         SYS_FREE => handle_free(arg0, arg1),
         SYS_POOL_INFO => handle_pool_info(arg0),
+        SYS_HEAP_ALLOC => handle_heap_alloc(arg0, arg1),
+        SYS_HEAP_FREE => handle_heap_free(arg0, arg1, arg2),
 
         // Process (40-49)
         SYS_SPAWN => handle_spawn(arg0, arg1, arg2),
@@ -304,6 +308,33 @@ fn handle_pool_info(tier: u64) -> u64 {
     crate::platform::log("[syscall] pool_info for tier ");
     crate::platform::log_num(tier);
     crate::platform::log("\n");
+    0
+}
+
+/// SYS_HEAP_ALLOC(size, align) → ptr (0 on failure).
+///
+/// General-purpose allocator backing for the Phase 14 std shim. Unlike
+/// SYS_ALLOC which is frame-granular and tier-aware, this routes
+/// through the kernel's free-list heap (memory::heap) and returns
+/// arbitrarily-sized + arbitrarily-aligned blocks.
+///
+/// Used by:
+///  - `std::alloc::GlobalAlloc::alloc` once the std shim lands (M25)
+///  - Any kernel-internal code that wants `Vec`/`Box`/`String` (today
+///    none — kernel-core is no_alloc — but this opens the door)
+fn handle_heap_alloc(size: u64, align: u64) -> u64 {
+    let ptr = crate::memory::heap::allocate(size as usize, align as usize);
+    ptr as u64
+}
+
+/// SYS_HEAP_FREE(ptr, size, align) → 0 on success, u64::MAX on bad ptr.
+///
+/// `size` and `align` are accepted for compatibility with
+/// `std::alloc::dealloc`; the kernel-side heap stores the actual size
+/// in the block header and ignores the args. Caller may pass 0.
+fn handle_heap_free(ptr: u64, size: u64, align: u64) -> u64 {
+    if ptr == 0 { return u64::MAX; }
+    crate::memory::heap::deallocate(ptr as *mut u8, size as usize, align as usize);
     0
 }
 

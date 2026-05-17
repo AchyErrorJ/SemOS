@@ -7,6 +7,7 @@ pub mod types;
 pub mod pools;
 pub mod frames;
 pub mod secure_alloc;
+pub mod heap;
 
 pub use types::{Frame, FrameNumber, PhysicalAddress, Bytes};
 pub use frames::FrameAllocator;

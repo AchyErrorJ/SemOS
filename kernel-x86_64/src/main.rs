@@ -226,6 +226,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     println!("    Ramfs: initialized");
     kernel_core::security::init();
     println!("    Security framework: initialized");
+    kernel_core::memory::heap::init();
+    let (used, free, _blocks) = kernel_core::memory::heap::stats();
+    println!("    Heap allocator: {} KiB arena ({} used, {} free)",
+        (used+free)/1024, used, free);
 
     // Register user-mode programs built from real Rust crates in
     // user-programs/. The build is currently manual (run
@@ -594,6 +598,15 @@ fn init_loader_task() {
     println!("  SemOS DEMO 21: FS snapshot persistence (Phase 9 Stage 2)");
     println!("================================================================");
     fs_persistence_test();
+
+    // DEMO 22: heap allocator (Phase 14 prereq #1).
+    // SYS_HEAP_ALLOC / SYS_HEAP_FREE backed by the kernel's free-list
+    // heap. The first foundation piece for std::alloc::GlobalAlloc.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 22: heap allocator (Phase 14 prereq)");
+    println!("================================================================");
+    heap_allocator_test();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -2315,6 +2328,81 @@ fn wall_clock_test() {
     println!("  [DEMO 19] PASS: timestamp inside plausible epoch range");
 
     println!("  [DEMO 19] => wall_clock works end-to-end; ready for TLS notAfter + file timestamps");
+}
+
+/// DEMO 22: heap allocator through SYS_HEAP_ALLOC / SYS_HEAP_FREE.
+///
+/// Phase 14 Tier 1 prerequisite — std::alloc::GlobalAlloc backing.
+/// What this proves:
+///   1. Small + large allocations succeed (16 B, 1 KiB, 64 KiB)
+///   2. Distinct allocations have distinct addresses
+///   3. Pointers are aligned to the requested alignment
+///   4. Free + realloc cycle returns valid memory
+///   5. Free-list accounting stays consistent across mixed ops
+fn heap_allocator_test() {
+    use kernel_core::syscall::dispatch;
+    use kernel_core::syscall::numbers::*;
+
+    let (used_before, free_before, blocks_before) = kernel_core::memory::heap::stats();
+    println!("  [DEMO 22] heap start: {}K used, {}K free, {} free blocks",
+        used_before/1024, free_before/1024, blocks_before);
+
+    // 1: small alloc, 16-byte align.
+    let p1 = dispatch(SYS_HEAP_ALLOC, 16, 16, 0, 0u64);
+    if p1 == 0 { println!("  [DEMO 22] FAIL: 16-byte alloc returned null"); return; }
+    if p1 % 16 != 0 { println!("  [DEMO 22] FAIL: 16-byte alloc not 16-aligned: 0x{:x}", p1); return; }
+    println!("  [DEMO 22] PASS: 16-byte alloc @ 0x{:x} (16-aligned)", p1);
+
+    // 2: medium alloc, 64-byte align.
+    let p2 = dispatch(SYS_HEAP_ALLOC, 1024, 64, 0, 0);
+    if p2 == 0 { println!("  [DEMO 22] FAIL: 1KB alloc returned null"); return; }
+    if p2 % 64 != 0 { println!("  [DEMO 22] FAIL: 1KB alloc not 64-aligned: 0x{:x}", p2); return; }
+    if p1 == p2 { println!("  [DEMO 22] FAIL: two allocs returned same ptr"); return; }
+    println!("  [DEMO 22] PASS: 1KB alloc @ 0x{:x} (64-aligned, distinct)", p2);
+
+    // 3: large alloc, page-aligned.
+    let p3 = dispatch(SYS_HEAP_ALLOC, 64 * 1024, 4096, 0, 0);
+    if p3 == 0 { println!("  [DEMO 22] FAIL: 64KB alloc returned null"); return; }
+    if p3 % 4096 != 0 { println!("  [DEMO 22] FAIL: 64KB alloc not 4K-aligned: 0x{:x}", p3); return; }
+    println!("  [DEMO 22] PASS: 64KB alloc @ 0x{:x} (4K-aligned)", p3);
+
+    // 4: write through both small + medium buffers, verify no aliasing.
+    unsafe {
+        let buf1 = core::slice::from_raw_parts_mut(p1 as *mut u8, 16);
+        let buf2 = core::slice::from_raw_parts_mut(p2 as *mut u8, 1024);
+        buf1.fill(0xAA);
+        buf2.fill(0xBB);
+        if buf1.iter().any(|&b| b != 0xAA) {
+            println!("  [DEMO 22] FAIL: buf1 corrupted by buf2 write"); return;
+        }
+        if buf2.iter().any(|&b| b != 0xBB) {
+            println!("  [DEMO 22] FAIL: buf2 corrupted"); return;
+        }
+    }
+    println!("  [DEMO 22] PASS: distinct buffers don't alias");
+
+    // 5: free + realloc cycle.
+    let _ = dispatch(SYS_HEAP_FREE, p2, 1024, 64, 0);
+    let p2_again = dispatch(SYS_HEAP_ALLOC, 1024, 64, 0, 0u64);
+    if p2_again == 0 { println!("  [DEMO 22] FAIL: realloc after free returned null"); return; }
+    if p2_again % 64 != 0 { println!("  [DEMO 22] FAIL: realloc not 64-aligned"); return; }
+    println!("  [DEMO 22] PASS: free + realloc returned valid ptr @ 0x{:x}", p2_again);
+
+    // Cleanup so later DEMOs see a non-fragmented arena.
+    let _ = dispatch(SYS_HEAP_FREE, p1, 16, 16, 0);
+    let _ = dispatch(SYS_HEAP_FREE, p2_again, 1024, 64, 0);
+    let _ = dispatch(SYS_HEAP_FREE, p3, 64 * 1024, 4096, 0);
+
+    let (used_after, free_after, blocks_after) = kernel_core::memory::heap::stats();
+    println!("  [DEMO 22] heap end: {}K used, {}K free, {} free blocks",
+        used_after/1024, free_after/1024, blocks_after);
+    if used_after != used_before {
+        println!("  [DEMO 22] FAIL: used bytes drifted ({} -> {})", used_before, used_after);
+        return;
+    }
+    println!("  [DEMO 22] PASS: heap accounting clean (used unchanged across full cycle)");
+
+    println!("  [DEMO 22] => heap allocator ready for std::alloc::GlobalAlloc shim (M25)");
 }
 
 /// Format a u32 as ASCII decimal into `buf`. Returns the populated slice.
