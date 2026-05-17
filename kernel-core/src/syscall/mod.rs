@@ -1039,7 +1039,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64) -> u64 {
     let caller_tier = crate::scheduler::current_task_max_tier();
     let spawn_tier = (max_tier as u8).min(caller_tier);
 
-    let name = unsafe {
+    let path = unsafe {
         let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
         match core::str::from_utf8(slice) {
             Ok(s) => s,
@@ -1047,17 +1047,72 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64) -> u64 {
         }
     };
 
+    // Path-style lookup (Phase 14 prereq for `std::process::Command::new("/bin/X")`).
+    // Convention: `/bin/<name>` maps to the ramfs entry `<name>.elf` if
+    // present. Once user-program ELFs live in the path namespace
+    // proper (currently capped at 256 B inline content per object,
+    // so they don't fit), this collapses to a normal Namespace::resolve.
+    let ramfs_name: &str = if let Some(stripped) = path.strip_prefix("/bin/") {
+        // Promote /bin/foo → look up "foo.elf" first, then "foo"
+        // (so the convention works for either naming style in ramfs).
+        let fs = match crate::fs::ramfs::get_fs() {
+            Some(fs) => fs,
+            None => return u64::MAX,
+        };
+        // Small stack buffer to compose `<stripped>.elf` without alloc.
+        let mut composed = [0u8; 64];
+        let dot_elf = b".elf";
+        if stripped.len() + dot_elf.len() > composed.len() { return u64::MAX; }
+        composed[..stripped.len()].copy_from_slice(stripped.as_bytes());
+        composed[stripped.len()..stripped.len() + dot_elf.len()].copy_from_slice(dot_elf);
+        let with_elf = unsafe {
+            core::str::from_utf8_unchecked(&composed[..stripped.len() + dot_elf.len()])
+        };
+        if fs.find(with_elf).is_some() {
+            // Return path is borrowed from the local buffer; we can't
+            // hand it back across the function boundary. Re-find below.
+            // For now, use a small static interning table — only the
+            // hardcoded user programs are spawnable today.
+            match stripped {
+                "hello-rs" | "hello" => "hello-rs.elf",
+                "sem-demo" => "sem-demo.elf",
+                "exfil-demo" => "exfil-demo.elf",
+                _ => return u64::MAX,
+            }
+        } else if fs.find(stripped).is_some() {
+            // Same problem with returning a borrow; only hardcoded paths.
+            match stripped {
+                "init" => "init",
+                _ => return u64::MAX,
+            }
+        } else {
+            crate::platform::log("[syscall] spawn: /bin/ path not found in ramfs: ");
+            crate::platform::log(stripped);
+            crate::platform::log("\n");
+            return u64::MAX;
+        }
+    } else if path.starts_with('/') {
+        // Other absolute paths point at the path namespace, which
+        // can't store ELF-sized content yet (256 B inline cap).
+        // Once SemanticObject grows >256 B content, route here.
+        crate::platform::log("[syscall] spawn: path-namespace ELF not yet supported: ");
+        crate::platform::log(path);
+        crate::platform::log("\n");
+        return u64::MAX;
+    } else {
+        path  // legacy: flat ramfs name (preserves existing callers)
+    };
+
     // Look up the ELF binary in ramfs
     let fs = match crate::fs::ramfs::get_fs() {
         Some(fs) => fs,
         None => return u64::MAX,
     };
-
-    let file = match fs.find(name) {
+    let file = match fs.find(ramfs_name) {
         Some(f) => f,
         None => {
-            crate::platform::log("[syscall] spawn: file not found: ");
-            crate::platform::log(name);
+            crate::platform::log("[syscall] spawn: file not found in ramfs: ");
+            crate::platform::log(ramfs_name);
             crate::platform::log("\n");
             return u64::MAX;
         }
@@ -1067,10 +1122,13 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64) -> u64 {
 
     // We need a &'static str for the process name — use a fixed set
     // (scheduler requires 'static lifetime names)
-    let static_name: &'static str = match name {
+    let static_name: &'static str = match ramfs_name {
         "init" => "init",
         "shell" => "shell",
         "test" => "test",
+        "hello-rs.elf" => "hello-rs",
+        "sem-demo.elf" => "sem-demo",
+        "exfil-demo.elf" => "exfil-demo",
         _ => "user",
     };
 
