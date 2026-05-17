@@ -34,6 +34,7 @@ pub mod framebuffer;
 pub mod pci;
 pub mod virtio;
 pub mod rng;
+pub mod rtc;
 pub mod usb;
 
 use serial::Serial;
@@ -170,6 +171,15 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         println!("[rng] RDRAND not supported on this CPU — TLS cannot be safe; abort");
         loop { unsafe { core::arch::asm!("hlt", options(nomem, nostack)); } }
     }
+    println!();
+
+    // Probe the MC146818 RTC and log the wall-clock time. Non-fatal —
+    // the kernel boots either way; absent RTC just means
+    // `Platform::wall_clock()` returns None and time-dependent code
+    // (TLS notAfter, file timestamps, Marée/Brise) falls back to
+    // monotonic-only behaviour.
+    println!("[*] Probing RTC (MC146818)...");
+    rtc::init_and_log();
     println!();
 
     println!("[*] Probing VirtIO block device...");
@@ -553,6 +563,15 @@ fn init_loader_task() {
     println!("  SemOS DEMO 18: USB xHCI + HID boot keyboard");
     println!("================================================================");
     usb_hid_demo();
+
+    // DEMO 19: RTC + wall clock through the Platform trait.
+    // Validates that kernel-core's `platform::wall_clock()` reaches the
+    // x86_64 RTC driver and returns a sensible Unix timestamp.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 19: RTC wall clock (Platform::wall_clock)");
+    println!("================================================================");
+    wall_clock_test();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -1994,6 +2013,70 @@ fn paths_namespace_test() {
     println!("  [DEMO 17] PASS: bad paths reject with the right FsError variants");
 
     println!("  [DEMO 17] => path namespace works end-to-end; persistence (Stage 2) is next");
+}
+
+/// DEMO 19: RTC + wall_clock through the Platform trait surface.
+///
+/// What this proves:
+///   1. Direct RTC read via `rtc::read()` returns a stable, decoded
+///      DateTime (BCD/binary handling correct, UIP race avoided).
+///   2. `Platform::wall_clock()` (the kernel-core abstraction)
+///      reaches the x86_64 impl and returns the same Unix seconds.
+///   3. Two reads taken ~10 ticks apart never go backwards (basic
+///      monotonicity sanity — RTC ticks once per second so they may
+///      be equal, but never negative-delta).
+///   4. The timestamp is "plausible" — between 2025-01-01 and 2099-12-31
+///      so we catch a sign error or a Y2K-style overflow.
+fn wall_clock_test() {
+    use kernel_core::platform;
+
+    // Step 1: direct driver read.
+    let dt = match rtc::read() {
+        Some(d) => d,
+        None => { println!("  [DEMO 19] FAIL: rtc::read() returned None"); return; }
+    };
+    println!("  [DEMO 19] PASS: rtc::read() {:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
+
+    let direct_secs = dt.to_unix_seconds();
+
+    // Step 2: through the platform trait abstraction.
+    let via_trait = match platform::wall_clock() {
+        Some(s) => s,
+        None => { println!("  [DEMO 19] FAIL: platform::wall_clock() returned None"); return; }
+    };
+    // The two reads are roughly contemporaneous but the RTC ticks
+    // every second — they may differ by 1 if we crossed a second
+    // boundary between them. Tolerate exactly that.
+    let drift = if via_trait >= direct_secs { via_trait - direct_secs } else { direct_secs - via_trait };
+    if drift > 2 {
+        println!("  [DEMO 19] FAIL: direct={} trait={} (drift {} > 2)", direct_secs, via_trait, drift);
+        return;
+    }
+    println!("  [DEMO 19] PASS: platform::wall_clock() = {} (drift from direct read: {} s)", via_trait, drift);
+
+    // Step 3: simple monotonicity sanity.
+    let t1 = platform::wall_clock().unwrap_or(0);
+    for _ in 0..1_000_000 { core::hint::spin_loop(); }
+    let t2 = platform::wall_clock().unwrap_or(0);
+    if t2 < t1 {
+        println!("  [DEMO 19] FAIL: wall_clock went backwards: {} -> {}", t1, t2);
+        return;
+    }
+    println!("  [DEMO 19] PASS: wall_clock monotonic ({} -> {})", t1, t2);
+
+    // Step 4: plausibility envelope. 2025-01-01 = 1735689600 epoch sec;
+    // 2099-12-31 = 4102444800. If we're outside this range something
+    // is wrong with our BCD decoding or our day arithmetic.
+    const LOWER: u64 = 1_735_689_600; // 2025-01-01T00:00:00Z
+    const UPPER: u64 = 4_102_444_800; // 2099-12-31T00:00:00Z
+    if via_trait < LOWER || via_trait > UPPER {
+        println!("  [DEMO 19] FAIL: timestamp {} outside plausible range [{}..{}]", via_trait, LOWER, UPPER);
+        return;
+    }
+    println!("  [DEMO 19] PASS: timestamp inside plausible epoch range");
+
+    println!("  [DEMO 19] => wall_clock works end-to-end; ready for TLS notAfter + file timestamps");
 }
 
 /// Format a u32 as ASCII decimal into `buf`. Returns the populated slice.

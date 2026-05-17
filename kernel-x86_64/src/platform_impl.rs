@@ -32,6 +32,10 @@ impl Platform for X86Platform {
         crate::rng::fill_bytes(buf)
     }
 
+    fn wall_clock(&self) -> Option<u64> {
+        crate::rtc::unix_time()
+    }
+
     fn reap_slot(&self, slot: usize) {
         // Free the slot's AddressSpace (PML4 + subtables) and zero its
         // saved cr3. Called from alloc_task_slot at the moment of

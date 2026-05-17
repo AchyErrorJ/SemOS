@@ -104,6 +104,21 @@ pub trait Platform: Send + Sync + 'static {
     /// connection), X25519 ephemeral scalar (32 bytes per handshake),
     /// smoltcp's TCP ISN / DNS txid seeds.
     fn random_bytes(&self, _buf: &mut [u8]) -> Result<(), ()> { Err(()) }
+
+    /// Read absolute wall-clock time as seconds since the Unix epoch
+    /// (1970-01-01 00:00:00 UTC). `None` if the platform has no
+    /// real-time clock, or if the RTC read failed.
+    ///
+    /// Unlike `ticks()` (monotonic since boot, platform-defined
+    /// resolution), this returns absolute UTC time. Use it for:
+    /// - TLS `notAfter` validation (Phase 9 follow-up)
+    /// - File timestamps on Semantic Objects (`created_at`, `modified_at`)
+    /// - User-facing date/time displays in the Marée / Brise utilities
+    ///
+    /// Default returns `None` so a platform without an RTC (or a buggy
+    /// one) can't silently feed garbage timestamps into security-
+    /// sensitive code paths.
+    fn wall_clock(&self) -> Option<u64> { None }
 }
 
 /// Null platform used before a real one is registered.
@@ -162,6 +177,13 @@ pub fn schedule() {
 #[inline]
 pub fn random_bytes(buf: &mut [u8]) -> Result<(), ()> {
     get().random_bytes(buf)
+}
+
+/// Absolute wall-clock time in seconds since Unix epoch. `None` if
+/// no RTC is present or the read failed. See [`Platform::wall_clock`].
+#[inline]
+pub fn wall_clock() -> Option<u64> {
+    get().wall_clock()
 }
 
 /// Log a number in decimal.
