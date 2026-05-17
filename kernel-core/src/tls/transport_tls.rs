@@ -171,10 +171,13 @@ static mut TLS_BUFFERS_IN_USE: bool = false;
 /// endpoints; matches [`MAX_HOST_LEN`] for symmetry with the loopback.
 pub const MAX_SNI_LEN: usize = MAX_HOST_LEN;
 
-/// Number of poll iterations we'll spin through waiting for TCP to
-/// reach a terminal state during `connect()`. At ~1 ms per poll on
-/// QEMU this is ~2 seconds — generous for SLIRP but cheap to bound.
-const TCP_CONNECT_POLL_BUDGET: usize = 2000;
+/// Wall-clock budget for TCP connect to reach a terminal state, in
+/// units of platform ticks. The APIC timer is 100 Hz so 1000 ticks
+/// = 10 seconds. SLIRP→host→internet round-trips can take 50-200 ms,
+/// with retransmit backoff if the first SYN is lost; 10 s is a
+/// generous outer bound that still lets us bail before the kernel
+/// looks hung.
+const TCP_CONNECT_TIMEOUT_TICKS: u64 = 1000;
 
 /// TLS 1.3 client transport wrapping a TcpStream.
 ///
@@ -229,18 +232,51 @@ impl TlsTransport {
     /// Return the configured remote IP, if any. Useful for diagnostics.
     pub fn remote_ip(&self) -> Option<Ipv4Address> { self.remote_ip }
 
+    /// Return the embedded-tls error from the most recent failed
+    /// handshake on the global singleton, if any. `None` until at
+    /// least one handshake fails. Diagnostic-only — the
+    /// NetworkTransport surface collapses everything to
+    /// `TransportError::Closed`, which loses the cause.
+    pub fn last_handshake_error() -> Option<TlsError> {
+        unsafe { LAST_HANDSHAKE_ERROR }
+    }
+
+    /// Last TCP-level state reached during connect(). `None` until at
+    /// least one connect attempt has been made. `Some(Established)`
+    /// means TCP came up and any failure that follows is at the TLS
+    /// layer (read [`Self::last_handshake_error`]).
+    pub fn last_tcp_state() -> Option<TcpState> {
+        unsafe { LAST_TCP_STATE }
+    }
+
+    /// Last `TlsError` from a post-handshake send/recv on the global
+    /// singleton, if any. Diagnostic-only.
+    pub fn last_io_error() -> Option<TlsError> {
+        unsafe { LAST_IO_ERROR }
+    }
+
     /// Drive the TCP socket from SYN-SENT to a terminal state.
     /// Returns the final state; caller decides what to do with it.
+    ///
+    /// Loop discipline: keep polling smoltcp + the platform tick
+    /// counter until either the socket reaches a terminal state or
+    /// `TCP_CONNECT_TIMEOUT_TICKS` of wall-clock time elapses.
+    /// `core::hint::spin_loop()` between polls lets the CPU back
+    /// off cleanly so the APIC timer interrupt and the virtio-net
+    /// RX interrupt have a chance to land.
     fn poll_to_terminal(&self, stream: &TcpStream) -> TcpState {
-        for _ in 0..TCP_CONNECT_POLL_BUDGET {
+        let start = crate::platform::ticks();
+        loop {
             net::poll();
             let s = stream.state();
             match s {
                 TcpState::Established | TcpState::Closed => return s,
-                _ => {} // still SynSent / etc.
+                _ => {} // still SynSent / SynReceived / etc.
             }
+            let elapsed = crate::platform::ticks().wrapping_sub(start);
+            if elapsed >= TCP_CONNECT_TIMEOUT_TICKS { return stream.state(); }
+            core::hint::spin_loop();
         }
-        stream.state()
     }
 }
 
@@ -278,9 +314,13 @@ impl NetworkTransport for TlsTransport {
 
         // Stage 1: open TCP socket, wait for SYN/SYN-ACK/ACK to complete.
         let mut stream = TcpStream::connect(remote_ip, remote_port)
-            .map_err(|_| TransportError::Io)?;
+            .map_err(|_| {
+                unsafe { LAST_TCP_STATE = Some(TcpState::Closed); }
+                TransportError::Io
+            })?;
 
         let final_state = self.poll_to_terminal(&stream);
+        unsafe { LAST_TCP_STATE = Some(final_state); }
         if final_state != TcpState::Established {
             // Couldn't reach the peer (RST, timeout, gateway dropped).
             // Release the socket so the next try gets a fresh slot.
@@ -332,10 +372,13 @@ impl NetworkTransport for TlsTransport {
                 unsafe { TLS_BUFFERS_IN_USE = true; }
                 Ok(())
             }
-            Err(_e) => {
+            Err(e) => {
                 // Handshake failure (bad cert, pin mismatch, network
                 // tear-down mid-handshake). The connection drops here;
                 // TcpStream's Drop releases the socket.
+                // Stash the last error so callers can diagnose;
+                // NetworkTransport's enum is too small for the detail.
+                unsafe { LAST_HANDSHAKE_ERROR = Some(e); }
                 Err(TransportError::Closed)
             }
         }
@@ -343,12 +386,27 @@ impl NetworkTransport for TlsTransport {
 
     fn send(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         let conn = self.conn.as_mut().ok_or(TransportError::InvalidState)?;
-        conn.write(data).map_err(|_| TransportError::Io)
+        conn.write(data).map_err(|e| {
+            unsafe { LAST_IO_ERROR = Some(e); }
+            TransportError::Io
+        })
     }
 
     fn recv(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         let conn = self.conn.as_mut().ok_or(TransportError::InvalidState)?;
-        conn.read(buf).map_err(|_| TransportError::Io)
+        // Flush any pending write record before reading — otherwise the
+        // peer never sees what we wrote and we deadlock waiting for a
+        // reply. embedded-tls's write() only buffers; recv() is the
+        // natural "I'm done sending, your turn" sync point for an HTTP
+        // request/response flow.
+        if let Err(e) = conn.flush() {
+            unsafe { LAST_IO_ERROR = Some(e); }
+            return Err(TransportError::Io);
+        }
+        conn.read(buf).map_err(|e| {
+            unsafe { LAST_IO_ERROR = Some(e); }
+            TransportError::Io
+        })
     }
 
     fn close(&mut self) {
@@ -376,6 +434,19 @@ impl NetworkTransport for TlsTransport {
 // selects without juggling owned references.
 
 static mut GLOBAL_TLS: TlsTransport = TlsTransport::new();
+
+/// Last embedded-tls handshake error, populated when `connect()` fails
+/// inside `TlsConnection::open`. Read via [`TlsTransport::last_handshake_error`].
+static mut LAST_HANDSHAKE_ERROR: Option<TlsError> = None;
+
+/// Final TCP state observed during the most recent `connect()`. Helps
+/// distinguish "TCP never came up" from "TLS handshake failed."
+static mut LAST_TCP_STATE: Option<TcpState> = None;
+
+/// Last `TlsError` from a failed `send`/`recv` after the handshake
+/// completed. Diagnostic-only — the NetworkTransport surface collapses
+/// every error to `TransportError::Io`, which loses the cause.
+static mut LAST_IO_ERROR: Option<TlsError> = None;
 
 /// Get the global TLS transport. Used by `NetworkLlmProvider` when
 /// the configured `TransportKind` is `TlsTcp`.

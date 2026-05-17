@@ -254,6 +254,98 @@ fn poly1305_aead_tag(poly_key: &[u8; 32], aad: &[u8], ciphertext: &[u8]) -> [u8;
 }
 
 // ============================================================================
+// RFC 8439 §2.8.2 KAT — runnable at boot time
+// ============================================================================
+//
+// Self-round-trip tests (encrypt → decrypt = identity) prove the AEAD
+// is consistent with itself; they don't prove it matches the spec. A
+// peer running the spec's ciphertext+tag computation against the same
+// key/nonce/plaintext will reject our output if our bytes drift.
+//
+// This function runs RFC 8439's published vector through the same
+// trait surface embedded-tls uses, compares ciphertext + tag byte-for-
+// byte, and returns the result so the boot harness in kernel-x86_64
+// can decide whether to attempt a live TLS handshake at all.
+
+/// Outcome of [`run_rfc8439_aead_kat`]. Pass = bytes match the spec
+/// exactly; on Fail the caller knows the AEAD shim is the bug for any
+/// live handshake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AeadKatOutcome {
+    Pass,
+    CiphertextMismatch { diff_bytes: usize },
+    TagMismatch,
+    EncryptFailed,
+}
+
+/// Drive the RFC 8439 §2.8.2 test vector through
+/// [`KernelChacha20Poly1305`] (the same path embedded-tls's record
+/// layer uses) and verify byte-exact agreement with the spec.
+///
+/// Pure check — no globals, no allocation, safe to call from boot
+/// before the kernel is fully initialised. Use as a precondition
+/// before attempting a live TLS handshake; a failure here means
+/// our crypto is the bug regardless of what handshake-layer
+/// errors get reported.
+pub fn run_rfc8439_aead_kat() -> AeadKatOutcome {
+    use aead::{AeadInPlace, Key, KeyInit, Nonce as AeadNonce};
+
+    const KEY: [u8; 32] = [
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+        0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+        0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
+        0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+    ];
+    const NONCE: [u8; 12] = [
+        0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+    ];
+    const AAD: [u8; 12] = [
+        0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
+    ];
+    const PLAINTEXT: &[u8] = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    const EXPECTED_CT: [u8; 114] = [
+        0xd3, 0x1a, 0x8d, 0x34, 0x64, 0x8e, 0x60, 0xdb, 0x7b, 0x86, 0xaf, 0xbc, 0x53, 0xef, 0x7e, 0xc2,
+        0xa4, 0xad, 0xed, 0x51, 0x29, 0x6e, 0x08, 0xfe, 0xa9, 0xe2, 0xb5, 0xa7, 0x36, 0xee, 0x62, 0xd6,
+        0x3d, 0xbe, 0xa4, 0x5e, 0x8c, 0xa9, 0x67, 0x12, 0x82, 0xfa, 0xfb, 0x69, 0xda, 0x92, 0x72, 0x8b,
+        0x1a, 0x71, 0xde, 0x0a, 0x9e, 0x06, 0x0b, 0x29, 0x05, 0xd6, 0xa5, 0xb6, 0x7e, 0xcd, 0x3b, 0x36,
+        0x92, 0xdd, 0xbd, 0x7f, 0x2d, 0x77, 0x8b, 0x8c, 0x98, 0x03, 0xae, 0xe3, 0x28, 0x09, 0x1b, 0x58,
+        0xfa, 0xb3, 0x24, 0xe4, 0xfa, 0xd6, 0x75, 0x94, 0x55, 0x85, 0x80, 0x8b, 0x48, 0x31, 0xd7, 0xbc,
+        0x3f, 0xf4, 0xde, 0xf0, 0x8e, 0x4b, 0x7a, 0x9d, 0xe5, 0x76, 0xd2, 0x65, 0x86, 0xce, 0xc6, 0x4b,
+        0x61, 0x16,
+    ];
+    const EXPECTED_TAG: [u8; 16] = [
+        0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
+    ];
+
+    let key = Key::<KernelChacha20Poly1305>::from(KEY);
+    let nonce = AeadNonce::<KernelChacha20Poly1305>::from(NONCE);
+    let cipher = KernelChacha20Poly1305::new(&key);
+
+    let mut buf = [0u8; 114];
+    buf.copy_from_slice(PLAINTEXT);
+
+    let tag = match cipher.encrypt_in_place_detached(&nonce, &AAD, &mut buf) {
+        Ok(t) => t,
+        Err(_) => return AeadKatOutcome::EncryptFailed,
+    };
+
+    let mut ct_diffs = 0;
+    for i in 0..PLAINTEXT.len() {
+        if buf[i] != EXPECTED_CT[i] { ct_diffs += 1; }
+    }
+    if ct_diffs != 0 {
+        return AeadKatOutcome::CiphertextMismatch { diff_bytes: ct_diffs };
+    }
+
+    for i in 0..16 {
+        if tag.as_slice()[i] != EXPECTED_TAG[i] {
+            return AeadKatOutcome::TagMismatch;
+        }
+    }
+    AeadKatOutcome::Pass
+}
+
+// ============================================================================
 // Tests — verify the trait-surface roundtrip matches our existing crypto.
 // ============================================================================
 

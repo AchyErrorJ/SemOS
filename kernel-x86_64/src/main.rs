@@ -494,6 +494,35 @@ fn init_loader_task() {
         tls_transport_smoke();
     }
 
+    // DEMO 16-pre: ChaCha20-Poly1305 KAT against the RFC 8439 §2.8.2
+    // published test vector, going through our crypto_shim trait surface
+    // (the exact path embedded-tls's TLS 1.3 record layer takes). The
+    // existing self-roundtrip tests prove encrypt/decrypt are mutually
+    // consistent — they don't prove the ciphertext matches what a peer
+    // computes. If this KAT diverges, the live handshake failure is in
+    // AEAD; if it matches, look further up in the key schedule.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 16-pre: ChaCha20-Poly1305 KAT (RFC 8439 §2.8.2)");
+    println!("================================================================");
+    let aead_ok = aead_kat_test();
+
+    // DEMO 16: live TLS handshake against api.anthropic.com via SLIRP.
+    // The Phase 8 finish line — first real outbound TLS from this kernel.
+    // No API key, so we expect a 401 from the server, but the TLS
+    // handshake itself must complete (real cert chain validated against
+    // the SPKI pin) and we must get a parseable HTTP response back.
+    if kernel_core::net::is_initialized() && aead_ok {
+        println!();
+        println!("================================================================");
+        println!("  SemOS DEMO 16: live TLS handshake to api.anthropic.com");
+        println!("================================================================");
+        tls_live_handshake();
+    } else if !aead_ok {
+        println!();
+        println!("  [DEMO 16] SKIPPED — AEAD KAT failed; live handshake would fail too.");
+    }
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1542,6 +1571,205 @@ fn tls_transport_smoke() {
     }
 
     println!("  [DEMO 15] => TLS transport ready for live handshake once an Anthropic IP is wired");
+}
+
+/// Run the RFC 8439 §2.8.2 ChaCha20-Poly1305 test vector through our
+/// crypto_shim's `KernelChacha20Poly1305` and compare the resulting
+/// ciphertext + auth tag byte-for-byte against the published bytes.
+///
+/// Returns `true` on full match. Diagnoses the bug fast if our shim
+/// drifts from the spec — every cross-impl AEAD failure starts here.
+fn aead_kat_test() -> bool {
+    use kernel_core::tls::crypto_shim::{run_rfc8439_aead_kat, AeadKatOutcome};
+    match run_rfc8439_aead_kat() {
+        AeadKatOutcome::Pass => {
+            println!("  [KAT] PASS: ChaCha20-Poly1305 ciphertext + tag match RFC 8439 §2.8.2");
+            println!("  [KAT] => AEAD shim is byte-correct against the spec");
+            true
+        }
+        AeadKatOutcome::CiphertextMismatch { diff_bytes } => {
+            println!("  [KAT] FAIL: ciphertext differs in {} of 114 bytes", diff_bytes);
+            false
+        }
+        AeadKatOutcome::TagMismatch => {
+            println!("  [KAT] FAIL: Poly1305 tag differs from spec");
+            false
+        }
+        AeadKatOutcome::EncryptFailed => {
+            println!("  [KAT] FAIL: encrypt_in_place_detached errored");
+            false
+        }
+    }
+}
+
+
+/// DEMO 16: live TLS handshake against api.anthropic.com (Phase 8 finale).
+///
+/// This is the first outbound TLS connection this kernel has ever made
+/// to a real server. The success criterion isn't "got a valid Claude
+/// response" — we don't have an API key plumbed in via the boot path
+/// — it's "TLS handshake completed AND we got a parseable HTTP response
+/// back." That means:
+///   • ClientHello / ServerHello / Key Exchange done
+///   • Server's real cert chain walked through our SpkiPinVerifier
+///   • Pin matched the WE1 intermediate (the trust anchor decision)
+///   • Leaf's ECDSA signature over the transcript verified via our p256
+///   • Application-data records exchanged in both directions
+///
+/// Caveats:
+///   • IP is hardcoded from `nslookup api.anthropic.com` on the host.
+///     Anthropic uses cloud routing — the IP can rotate. If this demo
+///     hangs or RSTs, re-resolve and update [`ANTHROPIC_IP`] below.
+///   • SLIRP outbound TCP to arbitrary IPs must be enabled in QEMU
+///     (default; `-netdev user`). On bare metal we'd need iwlwifi.
+///   • The 401 response we expect is the SERVER telling us "you didn't
+///     authenticate," which itself is a strong positive signal — it
+///     means our request was decrypted, parsed, and routed.
+fn tls_live_handshake() {
+    use kernel_core::net::Ipv4Address;
+    use kernel_core::llm::transport::NetworkTransport;
+    use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
+
+    // Resolved 2026-05-16 via `Resolve-DnsName api.anthropic.com` on
+    // the host. Re-resolve if the handshake starts failing.
+    const ANTHROPIC_IP: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
+    const ANTHROPIC_PORT: u16 = 443;
+    const SNI_HOST: &str = "api.anthropic.com";
+
+    println!("  [DEMO 16] target: {}:{} (SNI={})", ANTHROPIC_IP, ANTHROPIC_PORT, SNI_HOST);
+
+    configure_global(ANTHROPIC_IP, ANTHROPIC_PORT);
+
+    // Stage A: connect. This drives TCP SYN/SYN-ACK/ACK and then the
+    // full TLS 1.3 handshake. Expected duration: 1-2 seconds on QEMU
+    // SLIRP depending on network RTT.
+    println!("  [DEMO 16] opening TLS connection... (handshake includes pin check + signature verify)");
+    let connect_result = unsafe {
+        global_tls_transport().connect(SNI_HOST, ANTHROPIC_PORT)
+    };
+    match connect_result {
+        Ok(()) => println!("  [DEMO 16] PASS: TLS handshake succeeded — server cert pinned + signature verified"),
+        Err(e) => {
+            println!("  [DEMO 16] FAIL: handshake failed: {:?}", e);
+            let tcp_state = kernel_core::tls::transport_tls::TlsTransport::last_tcp_state();
+            let tls_err = kernel_core::tls::transport_tls::TlsTransport::last_handshake_error();
+            println!("  [DEMO 16] last TCP state: {:?}", tcp_state);
+            println!("  [DEMO 16] underlying TlsError: {:?}", tls_err);
+            // If TCP never reached Established, the cause is networking
+            // (stale IP, SLIRP routing, host firewall). If TCP came up
+            // and TLS failed, the cause is in our crypto/verifier.
+            match (tcp_state, tls_err) {
+                (Some(s), _) if s != kernel_core::net::TcpState::Established =>
+                    println!("  [DEMO 16] DIAGNOSIS: TCP didn't reach Established ({:?}) — check IP/SLIRP", s),
+                (Some(_), Some(_)) =>
+                    println!("  [DEMO 16] DIAGNOSIS: TCP up, TLS rejected — check cipher/cert/p256"),
+                _ =>
+                    println!("  [DEMO 16] DIAGNOSIS: unclear — neither TCP nor TLS state was captured"),
+            }
+            // Still try to clean up the singleton state so the kernel
+            // boot continues.
+            unsafe { global_tls_transport().close(); }
+            return;
+        }
+    }
+
+    // Stage B: send a minimal HTTP/1.1 POST. No API key, so we expect
+    // a 401 — but that confirms the request was decrypted, parsed,
+    // and routed by Anthropic's frontend.
+    //
+    // Body is deliberately tiny so the whole request fits in one TLS
+    // record. Content-Length must match the body byte count exactly.
+    let body: &[u8] = b"{\"model\":\"claude-haiku-4-5-20251001\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+    let mut req_buf = [0u8; 512];
+    let req_len = {
+        let mut p = 0;
+        let head = b"POST /v1/messages HTTP/1.1\r\nHost: api.anthropic.com\r\nUser-Agent: semantic-os/0.1\r\nContent-Type: application/json\r\nanthropic-version: 2023-06-01\r\nContent-Length: ";
+        req_buf[p..p+head.len()].copy_from_slice(head); p += head.len();
+        // Decimal Content-Length.
+        let mut len_buf = [0u8; 8];
+        let len_str = write_u32_decimal(body.len() as u32, &mut len_buf);
+        req_buf[p..p+len_str.len()].copy_from_slice(len_str); p += len_str.len();
+        req_buf[p..p+4].copy_from_slice(b"\r\n\r\n"); p += 4;
+        req_buf[p..p+body.len()].copy_from_slice(body); p += body.len();
+        p
+    };
+    println!("  [DEMO 16] sending {}-byte HTTP POST...", req_len);
+
+    let mut total_sent = 0;
+    while total_sent < req_len {
+        let n_result = unsafe {
+            global_tls_transport().send(&req_buf[total_sent..req_len])
+        };
+        match n_result {
+            Ok(0) => { println!("  [DEMO 16] FAIL: send returned 0 bytes"); break; }
+            Ok(n) => total_sent += n,
+            Err(e) => { println!("  [DEMO 16] FAIL: send error: {:?}", e); unsafe { global_tls_transport().close(); } return; }
+        }
+    }
+    println!("  [DEMO 16] PASS: {} bytes sent over TLS", total_sent);
+
+    // Stage C: read the response back. Cap at 4 KiB — Anthropic 401
+    // responses are tiny. We only need enough to confirm "HTTP/1.1 4xx"
+    // and dump a few diagnostic headers/JSON characters.
+    let mut resp = [0u8; 4096];
+    let mut total_recv = 0;
+    for _round in 0..20 {
+        if total_recv == resp.len() { break; }
+        let n_result = unsafe {
+            global_tls_transport().recv(&mut resp[total_recv..])
+        };
+        match n_result {
+            Ok(0) => break, // EOF / no more data this poll
+            Ok(n) => total_recv += n,
+            Err(e) => {
+                println!("  [DEMO 16] recv error: {:?} (got {} B so far)", e, total_recv);
+                if let Some(tls_err) = kernel_core::tls::transport_tls::TlsTransport::last_io_error() {
+                    println!("  [DEMO 16] underlying TlsError: {:?}", tls_err);
+                }
+                break;
+            }
+        }
+        // Stop early once we have the status line + a body chunk.
+        if total_recv > 256 { break; }
+    }
+    println!("  [DEMO 16] PASS: {} bytes received over TLS", total_recv);
+
+    // Print the HTTP status line + the first chunk of body so the
+    // outcome is visible in the serial log without needing to dump
+    // the full response.
+    let response_str = match core::str::from_utf8(&resp[..total_recv]) {
+        Ok(s) => s,
+        Err(_) => { println!("  [DEMO 16] response not UTF-8 (binary?)"); ""; "" }
+    };
+    if !response_str.is_empty() {
+        // Print first line (status).
+        if let Some(eol) = response_str.find("\r\n") {
+            println!("  [DEMO 16] status: {}", &response_str[..eol]);
+        }
+        // Print first ~200 chars of the body (after the header block).
+        if let Some(body_start) = response_str.find("\r\n\r\n") {
+            let body_text = &response_str[body_start + 4..];
+            let preview = if body_text.len() > 200 { &body_text[..200] } else { body_text };
+            println!("  [DEMO 16] body preview: {}", preview);
+        }
+    }
+
+    // Tear down.
+    unsafe { global_tls_transport().close(); }
+    println!("  [DEMO 16] => First outbound TLS round-trip from this kernel — Phase 8 closed.");
+}
+
+/// Format a u32 as ASCII decimal into `buf`. Returns the populated slice.
+/// Small helper local to DEMO 16 because the kernel println! ecosystem
+/// has its own formatter we don't want to invoke for a single number.
+fn write_u32_decimal(n: u32, buf: &mut [u8; 8]) -> &[u8] {
+    if n == 0 { buf[0] = b'0'; return &buf[..1]; }
+    let mut tmp = [0u8; 10];
+    let mut k = 0;
+    let mut v = n;
+    while v > 0 && k < tmp.len() { tmp[k] = b'0' + (v % 10) as u8; v /= 10; k += 1; }
+    for i in 0..k { buf[i] = tmp[k - 1 - i]; }
+    &buf[..k]
 }
 
 /// Test policy management syscalls

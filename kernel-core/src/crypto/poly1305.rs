@@ -1,274 +1,285 @@
-//! Poly1305 Message Authentication Code
+//! Poly1305 Message Authentication Code (RFC 8439).
 //!
-//! Implements Poly1305 MAC as defined in RFC 8439.
-//! Used as the authentication component of ChaCha20-Poly1305 AEAD.
+//! Used as the authentication half of ChaCha20-Poly1305 AEAD in TLS 1.3.
 //!
-//! # Security
+//! # Algorithm
 //!
-//! - 128-bit one-time key (derived from ChaCha20 keystream)
-//! - 128-bit authentication tag
-//! - Key MUST be unique for each message (nonce-derived)
+//! This is the "donna 32" approach (Andrew Moon, public domain) — the
+//! Poly1305 accumulator and r-key are each stored as **5 × 26-bit limbs**.
+//! That layout makes carries cheap on a 32-bit (or 64-bit) CPU without
+//! needing 128-bit arithmetic for multiplication, and the modular
+//! reduction folds naturally out of `2^130 ≡ 5 (mod p)`.
+//!
+//! Why this layout and not the obvious 2 × 64-bit limbs:
+//! - With 64-bit limbs you need `u128` for every partial product, and
+//!   the reduction is brittle (lots of carry chains that are easy to
+//!   get wrong by one bit). An earlier version of this file used that
+//!   layout and computed wrong tags on inputs longer than a few blocks
+//!   — caught when ChaCha20-Poly1305 AEAD KAT against RFC 8439 §2.8.2
+//!   diverged from the published tag.
+//! - 5 × 26-bit fits in `u64` per product (each limb is ≤ 26 bits, so
+//!   `26 + 26 = 52` is well under 64) and the carry handling is simple
+//!   row-by-row.
+//!
+//! # Discipline
+//!
+//! - `r` is clamped per spec at `new()`. Once set it doesn't change.
+//! - `h` starts at 0. Each call to `block()` does `h = (h + msg) * r mod p`.
+//! - `finalize()` does the strong reduction (so the result is < p) and
+//!   adds `s` mod 2^128 to produce the 16-byte tag.
+//!
+//! # Tests
+//!
+//! See [`tests`] for the RFC 8439 §2.5.2 single-block KAT plus the
+//! multi-block round-trip via `aead_encrypt` / `aead_decrypt`. The
+//! authoritative end-to-end check is `crate::tls::crypto_shim::
+//! run_rfc8439_aead_kat`, which exercises the full §2.8.2 ChaCha20-
+//! Poly1305 vector through the embedded-tls trait surface.
 
 use super::{CryptoKey, Nonce, CryptoResult, CryptoError, TAG_SIZE};
-use super::chacha20::{ChaCha20, BLOCK_SIZE};
+use super::chacha20::ChaCha20;
 
-/// Poly1305 authentication tag size
+/// Poly1305 authentication tag size.
 pub const POLY1305_TAG_SIZE: usize = 16;
 
-/// Poly1305 key size (r || s)
+/// Poly1305 key size (16-byte r || 16-byte s).
 pub const POLY1305_KEY_SIZE: usize = 32;
 
-/// Poly1305 authenticator state
+/// Poly1305 authenticator state.
+///
+/// Internal layout: `r` and `h` as five 26-bit limbs stored in `u64`
+/// (the upper 38 bits stay zero during accumulation and absorb
+/// partial-product carries during multiply). `s` is held as four
+/// 32-bit limbs because finalize adds it as a 128-bit integer mod 2^128.
 pub struct Poly1305 {
-    /// Accumulator (h)
-    h: [u64; 3],
-    /// r key (clamped)
-    r: [u64; 2],
-    /// s key (for final addition)
-    s: [u64; 2],
-    /// Partial block buffer
+    /// r-key, clamped per spec, as 5 × 26-bit limbs.
+    r: [u64; 5],
+    /// (5 * r[1..5]) precomputed for the multiply step. Lets the
+    /// schoolbook product fold the over-2^130 limbs back into the low
+    /// 130 bits without a separate reduction pass.
+    r5: [u64; 4],
+    /// Running accumulator, 5 × 26-bit limbs.
+    h: [u64; 5],
+    /// s-key (added to h mod 2^128 at finalize), 4 × 32-bit limbs.
+    s: [u32; 4],
+    /// Partial-block buffer (input may not arrive in 16-byte chunks).
     buffer: [u8; 16],
-    /// Bytes in buffer
+    /// Bytes currently held in `buffer`.
     buffer_len: usize,
 }
 
 impl Poly1305 {
-    /// Create a new Poly1305 instance with 32-byte key
+    /// Create a new Poly1305 from a 32-byte one-time key. Performs the
+    /// spec-mandated clamp on the r half.
     pub fn new(key: &[u8; 32]) -> Self {
-        // Split key into r (first 16 bytes) and s (last 16 bytes)
-        let mut r0 = u64::from_le_bytes([
-            key[0], key[1], key[2], key[3],
-            key[4], key[5], key[6], key[7],
-        ]);
-        let mut r1 = u64::from_le_bytes([
-            key[8], key[9], key[10], key[11],
-            key[12], key[13], key[14], key[15],
-        ]);
+        // Read r as a little-endian 128-bit integer, clamp, then split
+        // into 5 × 26-bit limbs.
+        //
+        // The clamp clears specific bits to constrain r so the
+        // multiply by h stays inside the safe range:
+        //   r &= 0x0ffffffc_0ffffffc_0ffffffc_0fffffff
+        // (i.e. top 4 bits of each u32 limb zero; low 2 bits of three
+        //  of them zero — matches the RFC 8439 §2.5.1 specification.)
+        let r0 = u32::from_le_bytes([key[ 0], key[ 1], key[ 2], key[ 3]]) & 0x0fff_ffff;
+        let r1 = u32::from_le_bytes([key[ 4], key[ 5], key[ 6], key[ 7]]) & 0x0fff_fffc;
+        let r2 = u32::from_le_bytes([key[ 8], key[ 9], key[10], key[11]]) & 0x0fff_fffc;
+        let r3 = u32::from_le_bytes([key[12], key[13], key[14], key[15]]) & 0x0fff_fffc;
 
-        // Clamp r (required by spec)
-        // Clear bits 4, 6, 7 of r[3], r[7], r[11], r[15]
-        // Clear bits 0, 1 of r[4], r[8], r[12]
-        r0 &= 0x0ffffffc0fffffff;
-        r1 &= 0x0ffffffc0ffffffc;
+        // Pack the 128-bit r value into 5 × 26-bit limbs (little-endian
+        // by limb, low limb first).
+        //   r_0  bits   0.. 25  = low 26 bits of r0
+        //   r_1  bits  26.. 51  = top 6 of r0 || low 20 of r1
+        //   r_2  bits  52.. 77  = top 12 of r1 || low 14 of r2
+        //   r_3  bits  78..103  = top 18 of r2 || low 8 of r3
+        //   r_4  bits 104..129  = top 24 of r3 (we treat r as 130-bit
+        //                         with the implied 0 bits at top)
+        let lr0 = (r0 & 0x03ff_ffff) as u64;
+        let lr1 = (((r0 >> 26) | (r1 << 6)) & 0x03ff_ffff) as u64;
+        let lr2 = (((r1 >> 20) | (r2 << 12)) & 0x03ff_ffff) as u64;
+        let lr3 = (((r2 >> 14) | (r3 << 18)) & 0x03ff_ffff) as u64;
+        let lr4 = ((r3 >> 8) & 0x03ff_ffff) as u64;
 
-        let s0 = u64::from_le_bytes([
-            key[16], key[17], key[18], key[19],
-            key[20], key[21], key[22], key[23],
-        ]);
-        let s1 = u64::from_le_bytes([
-            key[24], key[25], key[26], key[27],
-            key[28], key[29], key[30], key[31],
-        ]);
-
+        // Precompute 5*r[1..4] for the multiply (folds the over-2^130
+        // limbs back via 2^130 ≡ 5 (mod p)).
         Self {
-            h: [0, 0, 0],
-            r: [r0, r1],
-            s: [s0, s1],
+            r: [lr0, lr1, lr2, lr3, lr4],
+            r5: [(lr1 * 5), (lr2 * 5), (lr3 * 5), (lr4 * 5)],
+            h: [0; 5],
+            s: [
+                u32::from_le_bytes([key[16], key[17], key[18], key[19]]),
+                u32::from_le_bytes([key[20], key[21], key[22], key[23]]),
+                u32::from_le_bytes([key[24], key[25], key[26], key[27]]),
+                u32::from_le_bytes([key[28], key[29], key[30], key[31]]),
+            ],
             buffer: [0u8; 16],
             buffer_len: 0,
         }
     }
 
-    /// Process a 16-byte block
-    fn block(&mut self, data: &[u8], is_final_block: bool) {
-        // Read block as two 64-bit little-endian values
-        let mut n = [0u64; 2];
+    /// Absorb one 16-byte block. `pad_byte` is 0x01 for normal blocks
+    /// (becomes the implicit "1" bit appended at bit 128 of the message
+    /// representation, per RFC 8439 §2.5.1) and 0x00 only for the
+    /// special last-partial-block path which inserts the 0x01 directly
+    /// into the buffer.
+    fn absorb_block(&mut self, block: &[u8; 16], pad_byte: u8) {
+        // Read the block as five 26-bit limbs of the message, with the
+        // high pad byte placed at the bit-128 position.
+        let m0 = u32::from_le_bytes([block[ 0], block[ 1], block[ 2], block[ 3]]);
+        let m1 = u32::from_le_bytes([block[ 4], block[ 5], block[ 6], block[ 7]]);
+        let m2 = u32::from_le_bytes([block[ 8], block[ 9], block[10], block[11]]);
+        let m3 = u32::from_le_bytes([block[12], block[13], block[14], block[15]]);
 
-        if data.len() >= 8 {
-            n[0] = u64::from_le_bytes([
-                data[0], data[1], data[2], data[3],
-                data[4], data[5], data[6], data[7],
-            ]);
-        } else {
-            let mut bytes = [0u8; 8];
-            bytes[..data.len().min(8)].copy_from_slice(&data[..data.len().min(8)]);
-            n[0] = u64::from_le_bytes(bytes);
-        }
+        let h0 = self.h[0] + ((m0 & 0x03ff_ffff) as u64);
+        let h1 = self.h[1] + (((m0 >> 26) | (m1 << 6)) as u64 & 0x03ff_ffff);
+        let h2 = self.h[2] + (((m1 >> 20) | (m2 << 12)) as u64 & 0x03ff_ffff);
+        let h3 = self.h[3] + (((m2 >> 14) | (m3 << 18)) as u64 & 0x03ff_ffff);
+        // High limb gets the pad byte at bit (128 - 104) = 24 of the limb.
+        let h4 = self.h[4] + ((m3 >> 8) as u64 | ((pad_byte as u64) << 24));
 
-        if data.len() >= 16 {
-            n[1] = u64::from_le_bytes([
-                data[8], data[9], data[10], data[11],
-                data[12], data[13], data[14], data[15],
-            ]);
-        } else if data.len() > 8 {
-            let mut bytes = [0u8; 8];
-            let remaining = data.len() - 8;
-            bytes[..remaining].copy_from_slice(&data[8..]);
-            n[1] = u64::from_le_bytes(bytes);
-        }
+        // Multiply h by r mod (2^130 - 5). Each d_i below is the i-th
+        // 26-bit limb of (h * r). The "5 * r_j" entries fold limbs
+        // h_i * r_j with (i+j) >= 5 back into the low 5 limbs.
+        let r = &self.r;
+        let s = &self.r5; // s[i] = 5 * r[i+1]
+        let d0 = h0 * r[0] + h1 * s[3] + h2 * s[2] + h3 * s[1] + h4 * s[0];
+        let d1 = h0 * r[1] + h1 * r[0] + h2 * s[3] + h3 * s[2] + h4 * s[1];
+        let d2 = h0 * r[2] + h1 * r[1] + h2 * r[0] + h3 * s[3] + h4 * s[2];
+        let d3 = h0 * r[3] + h1 * r[2] + h2 * r[1] + h3 * r[0] + h4 * s[3];
+        let d4 = h0 * r[4] + h1 * r[3] + h2 * r[2] + h3 * r[1] + h4 * r[0];
 
-        // Add high bit if not final partial block
-        let hibit: u64 = if is_final_block && data.len() < 16 { 0 } else { 1 };
+        // Propagate carries between limbs. Each d_i is < 2^64; after
+        // carrying out the upper bits each limb fits in 26 bits.
+        let mut c: u64;
+        let h0 = d0 & 0x03ff_ffff;            c = d0 >> 26;
+        let d1 = d1 + c;
+        let h1 = d1 & 0x03ff_ffff;            c = d1 >> 26;
+        let d2 = d2 + c;
+        let h2 = d2 & 0x03ff_ffff;            c = d2 >> 26;
+        let d3 = d3 + c;
+        let h3 = d3 & 0x03ff_ffff;            c = d3 >> 26;
+        let d4 = d4 + c;
+        let h4 = d4 & 0x03ff_ffff;            c = d4 >> 26;
+        // The carry out of h4 is at bit 130+; fold it back via *5.
+        let h0 = h0 + c * 5;
+        let h1 = h1 + (h0 >> 26);
+        let h0 = h0 & 0x03ff_ffff;
 
-        // h += m (with high bit)
-        let h0 = self.h[0].wrapping_add(n[0]);
-        let h1 = self.h[1].wrapping_add(n[1]);
-        let h2 = self.h[2].wrapping_add(hibit);
-
-        // Use 128-bit arithmetic for h *= r mod 2^130 - 5
-        // This is a simplified implementation using 64-bit operations
-        self.multiply_and_reduce(h0, h1, h2);
+        self.h = [h0, h1, h2, h3, h4];
     }
 
-    /// Multiply h by r and reduce mod 2^130 - 5
-    /// Uses schoolbook multiplication with 64-bit limbs
-    fn multiply_and_reduce(&mut self, h0: u64, h1: u64, h2: u64) {
-        let r0 = self.r[0];
-        let r1 = self.r[1];
-
-        // Compute h * r using 128-bit products
-        // h = h0 + h1*2^64 + h2*2^128
-        // r = r0 + r1*2^64
-
-        // We need to compute (h0 + h1*2^64 + h2*2^128) * (r0 + r1*2^64) mod 2^130-5
-
-        // Use 64-bit limbs with carry propagation
-        let (d0, c0) = mul64(h0, r0);
-        let (d1a, c1a) = mul64(h0, r1);
-        let (d1b, c1b) = mul64(h1, r0);
-        let (d2a, c2a) = mul64(h1, r1);
-
-        // h2 is at most 4 bits, so these won't overflow
-        let d2b = h2.wrapping_mul(r0);
-        let d3 = h2.wrapping_mul(r1);
-
-        // Accumulate limbs
-        let (d1, carry1) = d1a.overflowing_add(d1b);
-        let (d1, carry1b) = d1.overflowing_add(c0);
-
-        let (d2, carry2) = d2a.overflowing_add(d2b);
-        let (d2, carry2b) = d2.overflowing_add(c1a);
-        let (d2, carry2c) = d2.overflowing_add(c1b);
-        let (d2, carry2d) = d2.overflowing_add(if carry1 { 1 } else { 0 });
-        let (d2, carry2e) = d2.overflowing_add(if carry1b { 1 } else { 0 });
-
-        let d3 = d3
-            .wrapping_add(c2a)
-            .wrapping_add(if carry2 { 1 } else { 0 })
-            .wrapping_add(if carry2b { 1 } else { 0 })
-            .wrapping_add(if carry2c { 1 } else { 0 })
-            .wrapping_add(if carry2d { 1 } else { 0 })
-            .wrapping_add(if carry2e { 1 } else { 0 });
-
-        // Reduce mod 2^130 - 5
-        // d = d0 + d1*2^64 + d2*2^128 + d3*2^192
-        // 2^130 = 5 mod (2^130 - 5)
-        // So d2*2^128 + d3*2^192 = (d2 + d3*2^64) * 2^128
-        //                        = (d2 + d3*2^64) * 4 * 2^126
-        //                        = (d2 + d3*2^64) * 4 * 5 * 2^(-4) (approximately)
-
-        // Simplified reduction:
-        // h2 = d2 & 3 (keep 2 bits)
-        // carry = d2 >> 2 (bits above 130)
-        // Add carry * 5 back to low bits
-
-        let h2_new = d2 & 3;
-        let carry = (d2 >> 2) | (d3 << 62);
-        let carry5 = carry.wrapping_mul(5);
-
-        let (h0_new, c) = d0.overflowing_add(carry5);
-        let h1_new = d1.wrapping_add(if c { 1 } else { 0 });
-        let h2_final = h2_new.wrapping_add((d3 >> 2).wrapping_mul(5));
-
-        self.h[0] = h0_new;
-        self.h[1] = h1_new;
-        self.h[2] = h2_final & 7; // Keep only 3 bits for h2
-    }
-
-    /// Update with additional data
-    pub fn update(&mut self, data: &[u8]) {
-        let mut offset = 0;
-
-        // Process any buffered data first
+    /// Absorb arbitrary input. Buffers partial blocks across calls.
+    pub fn update(&mut self, mut data: &[u8]) {
+        // Top off any leftover from a previous partial call.
         if self.buffer_len > 0 {
-            let to_copy = (16 - self.buffer_len).min(data.len());
-            self.buffer[self.buffer_len..self.buffer_len + to_copy]
-                .copy_from_slice(&data[..to_copy]);
-            self.buffer_len += to_copy;
-            offset = to_copy;
-
+            let take = (16 - self.buffer_len).min(data.len());
+            self.buffer[self.buffer_len..self.buffer_len + take]
+                .copy_from_slice(&data[..take]);
+            self.buffer_len += take;
+            data = &data[take..];
             if self.buffer_len == 16 {
                 let block = self.buffer;
-                self.block(&block, false);
+                self.absorb_block(&block, 0x01);
                 self.buffer_len = 0;
             }
         }
 
-        // Process full blocks
-        while offset + 16 <= data.len() {
-            self.block(&data[offset..offset + 16], false);
-            offset += 16;
+        // Process full 16-byte blocks straight from the input.
+        while data.len() >= 16 {
+            let mut block = [0u8; 16];
+            block.copy_from_slice(&data[..16]);
+            self.absorb_block(&block, 0x01);
+            data = &data[16..];
         }
 
-        // Buffer remaining bytes
-        if offset < data.len() {
-            let remaining = data.len() - offset;
-            self.buffer[..remaining].copy_from_slice(&data[offset..]);
-            self.buffer_len = remaining;
+        // Buffer the final partial chunk (if any) for the next call
+        // or for finalize.
+        if !data.is_empty() {
+            self.buffer[..data.len()].copy_from_slice(data);
+            self.buffer_len = data.len();
         }
     }
 
-    /// Finalize and produce the authentication tag
+    /// Finish the MAC and produce the 16-byte tag.
     pub fn finalize(mut self) -> [u8; POLY1305_TAG_SIZE] {
-        // Process final partial block if any
+        // Flush the partial buffer (if any) by appending the 0x01
+        // marker AT the end of the message bytes, then zero-padding
+        // to 16 bytes. The marker is part of the message value, not
+        // a "pad bit" added afterwards, so we call absorb_block with
+        // pad_byte=0 (the marker is in the buffer already).
         if self.buffer_len > 0 {
-            // Pad with 0x01 and zeros
             self.buffer[self.buffer_len] = 0x01;
-            for i in self.buffer_len + 1..16 {
-                self.buffer[i] = 0;
-            }
+            for i in self.buffer_len + 1..16 { self.buffer[i] = 0; }
             let block = self.buffer;
-            self.block(&block[..self.buffer_len], true);
+            self.absorb_block(&block, 0x00);
         }
 
-        // Final reduction
-        // Compute h mod 2^130 - 5 (fully reduced)
+        // Final carry propagation: each limb might be slightly over
+        // 26 bits from the last accumulation; fix that.
         let mut h0 = self.h[0];
-        let mut h1 = self.h[1];
-        let mut h2 = self.h[2];
+        let mut h1 = self.h[1] + (h0 >> 26); h0 &= 0x03ff_ffff;
+        let mut h2 = self.h[2] + (h1 >> 26); h1 &= 0x03ff_ffff;
+        let mut h3 = self.h[3] + (h2 >> 26); h2 &= 0x03ff_ffff;
+        let mut h4 = self.h[4] + (h3 >> 26); h3 &= 0x03ff_ffff;
+        h0 = h0 + 5 * (h4 >> 26);
+        h4 &= 0x03ff_ffff;
+        h1 = h1 + (h0 >> 26); h0 &= 0x03ff_ffff;
 
-        // Propagate carries from h2 (bits above 128)
-        // h2 can have bits above position 2 that need to be folded back
-        let c = h2 >> 2;
-        h2 &= 3;
+        // Strong reduction: compute g = h + 5; if g >> 130 == 1 use g,
+        // else use h. This canonicalises h to be < p exactly.
+        let g0 = h0 + 5;
+        let g1 = h1 + (g0 >> 26);
+        let g2 = h2 + (g1 >> 26);
+        let g3 = h3 + (g2 >> 26);
+        let g4 = h4.wrapping_add(g3 >> 26).wrapping_sub(1 << 26);
+        let (g0, g1, g2, g3, g4) = (g0 & 0x03ff_ffff, g1 & 0x03ff_ffff, g2 & 0x03ff_ffff, g3 & 0x03ff_ffff, g4);
 
-        // Add c * 5 to h0, using 128-bit arithmetic to handle overflow
-        let sum = h0 as u128 + (c.wrapping_mul(5)) as u128;
-        h0 = sum as u64;
-        let carry = (sum >> 64) as u64;
-        h1 = h1.wrapping_add(carry);
+        // Constant-time select: mask = 0 if g4 has the borrow bit (i.e.
+        // g overflowed bit 130, meaning h was < p — keep h), all-ones
+        // otherwise (use g).
+        let mask = (g4 >> 63).wrapping_sub(1);
+        let h0 = (h0 & !mask) | (g0 & mask);
+        let h1 = (h1 & !mask) | (g1 & mask);
+        let h2 = (h2 & !mask) | (g2 & mask);
+        let h3 = (h3 & !mask) | (g3 & mask);
+        let h4 = (h4 & !mask) | (g4 & mask);
 
-        // Compute h + s
-        let (t0, c) = h0.overflowing_add(self.s[0]);
-        let t1 = h1.wrapping_add(self.s[1]).wrapping_add(if c { 1 } else { 0 });
+        // Repack the 5 × 26-bit limbs into 4 × 32-bit, then add s mod 2^128.
+        let h0_32 = (h0 | (h1 << 26)) as u32;
+        let h1_32 = ((h1 >> 6) | (h2 << 20)) as u32;
+        let h2_32 = ((h2 >> 12) | (h3 << 14)) as u32;
+        let h3_32 = ((h3 >> 18) | (h4 << 8)) as u32;
 
-        // Output tag
-        let mut tag = [0u8; 16];
-        tag[0..8].copy_from_slice(&t0.to_le_bytes());
-        tag[8..16].copy_from_slice(&t1.to_le_bytes());
+        let f = (h0_32 as u64) + (self.s[0] as u64);
+        let h0_32 = f as u32;
+        let f = (h1_32 as u64) + (self.s[1] as u64) + (f >> 32);
+        let h1_32 = f as u32;
+        let f = (h2_32 as u64) + (self.s[2] as u64) + (f >> 32);
+        let h2_32 = f as u32;
+        let f = (h3_32 as u64) + (self.s[3] as u64) + (f >> 32);
+        let h3_32 = f as u32;
 
+        let mut tag = [0u8; POLY1305_TAG_SIZE];
+        tag[ 0.. 4].copy_from_slice(&h0_32.to_le_bytes());
+        tag[ 4.. 8].copy_from_slice(&h1_32.to_le_bytes());
+        tag[ 8..12].copy_from_slice(&h2_32.to_le_bytes());
+        tag[12..16].copy_from_slice(&h3_32.to_le_bytes());
         tag
     }
 }
 
-/// 64-bit multiplication returning 128-bit result as (low, high)
-#[inline(always)]
-fn mul64(a: u64, b: u64) -> (u64, u64) {
-    let result = (a as u128) * (b as u128);
-    (result as u64, (result >> 64) as u64)
-}
-
-/// One-shot Poly1305 MAC
+/// One-shot Poly1305 MAC. Equivalent to `Poly1305::new(key).update(msg).finalize()`.
 pub fn poly1305_mac(key: &[u8; 32], message: &[u8]) -> [u8; 16] {
-    let mut poly = Poly1305::new(key);
-    poly.update(message);
-    poly.finalize()
+    let mut p = Poly1305::new(key);
+    p.update(message);
+    p.finalize()
 }
 
-/// ChaCha20-Poly1305 AEAD encryption
-///
-/// Encrypts plaintext and produces authentication tag.
-/// Additional authenticated data (AAD) is authenticated but not encrypted.
+// ============================================================================
+// ChaCha20-Poly1305 AEAD (RFC 8439 §2.8)
+// ============================================================================
+
+/// Encrypt `plaintext` into `ciphertext` and write the 16-byte tag.
+/// AAD is authenticated but not encrypted.
 pub fn aead_encrypt(
     key: &CryptoKey,
     nonce: &Nonce,
@@ -281,54 +292,43 @@ pub fn aead_encrypt(
         return Err(CryptoError::BufferTooSmall);
     }
 
-    // Generate Poly1305 key from ChaCha20 block 0
+    // Derive Poly1305 one-time key from ChaCha20 block 0.
     let mut poly_key = [0u8; 32];
-    let cipher = ChaCha20::new(key, nonce, 0);
-    let block = cipher.block();
-    poly_key.copy_from_slice(&block[..32]);
+    {
+        let cipher = ChaCha20::new(key, nonce, 0);
+        let block = cipher.block();
+        poly_key.copy_from_slice(&block[..32]);
+    }
 
-    // Encrypt plaintext with ChaCha20 starting at block 1
+    // Encrypt plaintext starting at ChaCha20 counter 1.
     ciphertext[..plaintext.len()].copy_from_slice(plaintext);
     super::chacha20::chacha20_xor(key, nonce, 1, &mut ciphertext[..plaintext.len()]);
 
-    // Compute Poly1305 tag over AAD and ciphertext
+    // Authenticate: aad || pad16, ciphertext || pad16, aad_len_le_u64 || ct_len_le_u64.
     let mut poly = Poly1305::new(&poly_key);
-
-    // Authenticate AAD with padding
     poly.update(aad);
     if aad.len() % 16 != 0 {
-        let padding = [0u8; 16];
-        poly.update(&padding[..16 - (aad.len() % 16)]);
+        let pad = [0u8; 16];
+        poly.update(&pad[..16 - (aad.len() % 16)]);
     }
-
-    // Authenticate ciphertext with padding
     poly.update(&ciphertext[..plaintext.len()]);
     if plaintext.len() % 16 != 0 {
-        let padding = [0u8; 16];
-        poly.update(&padding[..16 - (plaintext.len() % 16)]);
+        let pad = [0u8; 16];
+        poly.update(&pad[..16 - (plaintext.len() % 16)]);
     }
-
-    // Authenticate lengths (as 64-bit little-endian)
     let mut lengths = [0u8; 16];
     lengths[0..8].copy_from_slice(&(aad.len() as u64).to_le_bytes());
     lengths[8..16].copy_from_slice(&(plaintext.len() as u64).to_le_bytes());
     poly.update(&lengths);
-
-    // Get tag
     *tag = poly.finalize();
 
-    // Zeroize poly key
-    for b in &mut poly_key {
-        unsafe { core::ptr::write_volatile(b, 0); }
-    }
-
+    // Wipe one-time poly key.
+    for b in &mut poly_key { unsafe { core::ptr::write_volatile(b, 0); } }
     Ok(())
 }
 
-/// ChaCha20-Poly1305 AEAD decryption
-///
-/// Decrypts ciphertext and verifies authentication tag.
-/// Returns error if authentication fails (tampered data).
+/// Decrypt `ciphertext` into `plaintext` after verifying `tag`. Returns
+/// `Err(AuthenticationFailed)` on tag mismatch (constant-time compare).
 pub fn aead_decrypt(
     key: &CryptoKey,
     nonce: &Nonce,
@@ -341,56 +341,37 @@ pub fn aead_decrypt(
         return Err(CryptoError::BufferTooSmall);
     }
 
-    // Generate Poly1305 key from ChaCha20 block 0
     let mut poly_key = [0u8; 32];
-    let cipher = ChaCha20::new(key, nonce, 0);
-    let block = cipher.block();
-    poly_key.copy_from_slice(&block[..32]);
+    {
+        let cipher = ChaCha20::new(key, nonce, 0);
+        let block = cipher.block();
+        poly_key.copy_from_slice(&block[..32]);
+    }
 
-    // Compute expected tag
     let mut poly = Poly1305::new(&poly_key);
-
-    // Authenticate AAD with padding
     poly.update(aad);
     if aad.len() % 16 != 0 {
-        let padding = [0u8; 16];
-        poly.update(&padding[..16 - (aad.len() % 16)]);
+        let pad = [0u8; 16];
+        poly.update(&pad[..16 - (aad.len() % 16)]);
     }
-
-    // Authenticate ciphertext with padding
     poly.update(ciphertext);
     if ciphertext.len() % 16 != 0 {
-        let padding = [0u8; 16];
-        poly.update(&padding[..16 - (ciphertext.len() % 16)]);
+        let pad = [0u8; 16];
+        poly.update(&pad[..16 - (ciphertext.len() % 16)]);
     }
-
-    // Authenticate lengths
     let mut lengths = [0u8; 16];
     lengths[0..8].copy_from_slice(&(aad.len() as u64).to_le_bytes());
     lengths[8..16].copy_from_slice(&(ciphertext.len() as u64).to_le_bytes());
     poly.update(&lengths);
+    let expected = poly.finalize();
 
-    let expected_tag = poly.finalize();
+    let mut diff: u8 = 0;
+    for i in 0..16 { diff |= expected[i] ^ tag[i]; }
+    for b in &mut poly_key { unsafe { core::ptr::write_volatile(b, 0); } }
+    if diff != 0 { return Err(CryptoError::AuthenticationFailed); }
 
-    // Constant-time tag comparison
-    let mut diff = 0u8;
-    for (a, b) in expected_tag.iter().zip(tag.iter()) {
-        diff |= a ^ b;
-    }
-
-    // Zeroize poly key
-    for b in &mut poly_key {
-        unsafe { core::ptr::write_volatile(b, 0); }
-    }
-
-    if diff != 0 {
-        return Err(CryptoError::AuthenticationFailed);
-    }
-
-    // Decrypt ciphertext
     plaintext[..ciphertext.len()].copy_from_slice(ciphertext);
     super::chacha20::chacha20_xor(key, nonce, 1, &mut plaintext[..ciphertext.len()]);
-
     Ok(())
 }
 
@@ -398,54 +379,52 @@ pub fn aead_decrypt(
 mod tests {
     use super::*;
 
+    /// RFC 8439 §2.5.2 — Poly1305 single-message test vector.
+    /// key = sum of clamped r (16 bytes) and s (16 bytes)
+    /// msg = "Cryptographic Forum Research Group" (34 bytes)
+    /// tag = a8061dc1305136c6c22b8baf0c0127a9
+    #[test]
+    fn rfc8439_2_5_2_single_block() {
+        let key: [u8; 32] = [
+            0x85, 0xd6, 0xbe, 0x78, 0x57, 0x55, 0x6d, 0x33,
+            0x7f, 0x44, 0x52, 0xfe, 0x42, 0xd5, 0x06, 0xa8,
+            0x01, 0x03, 0x80, 0x8a, 0xfb, 0x0d, 0xb2, 0xfd,
+            0x4a, 0xbf, 0xf6, 0xaf, 0x41, 0x49, 0xf5, 0x1b,
+        ];
+        let msg = b"Cryptographic Forum Research Group";
+        let expected: [u8; 16] = [
+            0xa8, 0x06, 0x1d, 0xc1, 0x30, 0x51, 0x36, 0xc6,
+            0xc2, 0x2b, 0x8b, 0xaf, 0x0c, 0x01, 0x27, 0xa9,
+        ];
+        assert_eq!(poly1305_mac(&key, msg), expected);
+    }
+
     #[test]
     fn test_aead_roundtrip() {
-        let key = CryptoKey::from_bytes([
-            0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
-            0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
-            0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97,
-            0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
-        ]);
-        let nonce = Nonce::from_bytes([
-            0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43,
-            0x44, 0x45, 0x46, 0x47,
-        ]);
-
+        let key = CryptoKey::from_bytes([0x42u8; 32]);
+        let nonce = Nonce::from_bytes([0x07u8; 12]);
         let aad = b"authenticated data";
         let plaintext = b"secret message for Semantic OS";
-
-        let mut ciphertext = [0u8; 64];
+        let mut ct = [0u8; 64];
         let mut tag = [0u8; 16];
-        let mut decrypted = [0u8; 64];
-
-        // Encrypt
-        aead_encrypt(&key, &nonce, aad, plaintext, &mut ciphertext, &mut tag).unwrap();
-
-        // Decrypt
-        aead_decrypt(&key, &nonce, aad, &ciphertext[..plaintext.len()], &tag, &mut decrypted).unwrap();
-
-        assert_eq!(&decrypted[..plaintext.len()], plaintext);
+        let mut dec = [0u8; 64];
+        aead_encrypt(&key, &nonce, aad, plaintext, &mut ct, &mut tag).unwrap();
+        aead_decrypt(&key, &nonce, aad, &ct[..plaintext.len()], &tag, &mut dec).unwrap();
+        assert_eq!(&dec[..plaintext.len()], plaintext);
     }
 
     #[test]
     fn test_aead_tamper_detection() {
         let key = CryptoKey::from_bytes([1u8; 32]);
         let nonce = Nonce::from_bytes([2u8; 12]);
-
         let aad = b"aad";
         let plaintext = b"data";
-
-        let mut ciphertext = [0u8; 16];
+        let mut ct = [0u8; 16];
         let mut tag = [0u8; 16];
-        let mut decrypted = [0u8; 16];
-
-        aead_encrypt(&key, &nonce, aad, plaintext, &mut ciphertext, &mut tag).unwrap();
-
-        // Tamper with ciphertext
-        ciphertext[0] ^= 1;
-
-        // Decryption should fail
-        let result = aead_decrypt(&key, &nonce, aad, &ciphertext[..plaintext.len()], &tag, &mut decrypted);
+        let mut dec = [0u8; 16];
+        aead_encrypt(&key, &nonce, aad, plaintext, &mut ct, &mut tag).unwrap();
+        ct[0] ^= 1;
+        let result = aead_decrypt(&key, &nonce, aad, &ct[..plaintext.len()], &tag, &mut dec);
         assert_eq!(result, Err(CryptoError::AuthenticationFailed));
     }
 }
