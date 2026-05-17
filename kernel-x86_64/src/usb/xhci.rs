@@ -522,28 +522,37 @@ fn phys_of(virt: u64) -> Option<u64> {
 
 /// Pull one event from the event ring, if any. Returns the consumed TRB
 /// or None if the ring's empty. Bumps ERDP after consuming.
+///
+/// Reads the control dword volatile first to check the cycle bit; only if
+/// the cycle bit matches CCS does the rest of the TRB get copied. This
+/// avoids a torn-read window where we might see the new control dword
+/// from a hardware-just-wrote TRB but still-stale param/status from a
+/// previous wrap (HW writes the TRB dword 0..3 in order with the cycle
+/// bit in dword 3 last, so a control-dword-first read is the canonical
+/// handshake).
 pub fn poll_event() -> Option<Trb> {
     let info = unsafe { INFO? };
     unsafe {
-        let trb = EVENT_RING.trbs[EVT_CONS.dequeue];
-        let cycle = trb.cycle();
+        let trb_ptr = &raw const EVENT_RING.trbs[EVT_CONS.dequeue];
+        // Read just the control dword first to check cycle ownership.
+        let control = core::ptr::read_volatile(&(*trb_ptr).control);
+        let cycle = (control & 1) != 0;
         if cycle != EVT_CONS.ccs {
             return None;
         }
-        // Copy out the TRB. We assume the producer (controller) finished
-        // writing it; the cycle bit is the handshake.
         fence(Ordering::Acquire);
-        let out = trb;
+        // Now safe to copy the full TRB; HW wrote dwords 0..2 before dword 3.
+        let out = core::ptr::read_volatile(trb_ptr);
         // Advance.
         EVT_CONS.dequeue += 1;
         if EVT_CONS.dequeue == RING_SIZE {
             EVT_CONS.dequeue = 0;
             EVT_CONS.ccs = !EVT_CONS.ccs;
         }
-        // Update ERDP (low 4 bits hold EHB and DESI; we leave them as-is by
-        // OR'ing in the new pointer with the EHB clear acknowledgement).
+        // Update ERDP. Low 4 bits hold EHB (Event Handler Busy, bit 3, RW1C)
+        // and DESI (Dequeue ERST Segment Index, bits 2:0). We only have one
+        // segment so DESI=0; writing 1 to EHB clears it as a side effect.
         let new_erdp = EVT_RING_PHYS + (EVT_CONS.dequeue as u64) * 16;
-        // Bit 3 = Event Handler Busy (RW1C) — write 1 to clear if set.
         write_u64(info.run_base + rt_reg::IR0_ERDP as u64, new_erdp | (1 << 3));
         Some(out)
     }
