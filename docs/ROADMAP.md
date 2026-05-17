@@ -304,6 +304,127 @@ Tinygrad-NV-style: PTX direct submission, no graphics.
 
 ---
 
+# Phase 13 — Self-development on the metal
+
+Goal: the user sits at the ThinkPad P1 running Semantic OS, opens a
+Claude Code-equivalent agent on the framebuffer, asks Claude to
+modify the kernel, sees the change applied to source files on disk,
+triggers a build, reboots into the changed kernel. North star — the
+moment Semantic OS hosts its own development loop, every subsequent
+phase moves faster.
+
+Depends on: Phase 9 done (FS + paths + syscalls), Phase 10 done
+(Wi-Fi + DNS, so the agent can reach Anthropic). Framebuffer +
+fonts (M6 + M7) are visual prerequisites.
+
+## M19 — TTY layer `[  ]`
+
+The framebuffer console is write-only today. A shell needs bidirectional.
+
+**Done when:**
+- [ ] Buffered stdin sourced from the USB keyboard driver (M3) with
+      line-editing primitives (Backspace, arrow keys)
+- [ ] ANSI escape sequence handler in the framebuffer output path
+      (cursor positioning, color, screen clear, scroll region) — the
+      minimum subset any TUI program assumes
+- [ ] Scrollback buffer (~100 lines) so output isn't lost on scroll
+- [ ] Per-process stdin/stdout/stderr (today there's just one global
+      println!) so multiple programs can read/write independently
+- [ ] DEMO 32 echoes typed characters back through ANSI-coloured output
+
+## M20 — Native shell (`sem-sh` or similar) `[  ]`
+
+Rust shell — no bash compatibility, just what we need.
+
+**Done when:**
+- [ ] Line editor on top of M19 with history (Up/Down recall)
+- [ ] Command parser: argv splitting, quoting, env-var substitution
+- [ ] Builtins: `cd`, `ls`, `cat`, `echo`, `pwd`, `exit`, `env`, `which`
+- [ ] Exec native ELF programs (extension of today's `user-programs/`
+      mechanism — currently only kernel-launched, needs runtime spawn)
+- [ ] Pipes (`|`) and file redirection (`>`, `<`)
+- [ ] Job control deferred to a follow-up; not in v1
+- [ ] DEMO 33 launches `sem-sh` and runs a script that creates a
+      file, cats it back, and pipes through another program
+
+## M21 — Native editor `[  ]`
+
+Edit source files in-place. Not vim-compatible, just usable.
+
+**Done when:**
+- [ ] Modal or modeless (decide based on M22's agent loop's needs —
+      the agent will be the heaviest user)
+- [ ] Open/save against FS Stage 3 syscalls
+- [ ] Basic syntax highlighting for Rust (just keywords + strings +
+      comments; full tree-sitter is later)
+- [ ] Search + replace
+- [ ] Multi-file open (tabs or buffers)
+- [ ] DEMO 34 opens a file, edits a line, saves, re-reads to verify
+
+## M22 — Claude agent client (native Rust port) `[  ]`
+
+The reason for all of the above. A TUI agent like Claude Code but
+written for this kernel, talking to the Anthropic API over the
+TLS stack from Phase 8 + Wi-Fi from Phase 10.
+
+**Done when:**
+- [ ] TUI render loop on M19/M20 (split panes, status line, scrollback)
+- [ ] Agent message loop: read user input, send to API, parse
+      response, render output, repeat
+- [ ] Tool use: at minimum `read_file`, `write_file`, `bash`
+      (executes via M20), `grep`, `glob` — the smallest set that
+      lets Claude make real edits to this codebase
+- [ ] Multi-turn conversation with context management (truncate
+      old turns when nearing token limit)
+- [ ] Loads API key from a file under `/etc/anthropic-api-key`
+      (M5 persistence makes this possible)
+- [ ] DEMO 35 boots the agent, asks Claude to read README.md and
+      summarize it; agent calls `read_file`, returns the summary
+
+## M23 — Build pipeline (Road A: cross-build over the network) `[  ]`
+
+Compilation happens on a build server reachable over Wi-Fi. The
+agent on Semantic OS pushes source changes, kicks off the build,
+pulls back the new kernel image. This is the *achievable* path —
+Road B (port rustc + LLVM) is multi-year scope and deliberately
+parked.
+
+**Done when:**
+- [ ] Network protocol for "push these files, build, return image"
+      (could be: git push → CI webhook → image download; or a
+      simpler custom HTTP service; pick whichever the user runs
+      on the build server)
+- [ ] HTTPS POST + GET on top of the TLS transport (currently we
+      only do POST in NetworkLlmProvider; need general HTTP)
+- [ ] Saved disk image installed to the boot partition
+- [ ] DEMO 36 pushes a no-op change, receives the new image, and
+      writes it to a staging path (actual reboot is M24)
+
+## M24 — Reboot-into-new-kernel `[  ]`
+
+**Done when:**
+- [ ] Replace the running kernel image on the boot device with the
+      new one (BIOS/UEFI partition write)
+- [ ] Trigger a clean reboot (ACPI / triple-fault / power cycle —
+      pick the cleanest available)
+- [ ] DEMO 37 (last in this phase): with the agent loop running,
+      apply a self-modifying patch (say, change a banner string),
+      build, reboot, verify the change is live
+
+## Out of scope for this phase
+
+- **Port rustc + LLVM (Road B).** Reopened only if Road A proves
+  insufficient. Estimated multi-year; almost no hobby kernel
+  attempts this. Even mature Rust-native kernels like Redox
+  haven't done it.
+- **JS runtime port (for running upstream Claude Code as-is).**
+  Easier than rustc but still enormous; the native Rust agent
+  (M22) bypasses the need.
+- **Tree-sitter / LSP** — nice to have but not required for the
+  "make a kernel change with Claude's help" loop.
+
+---
+
 # Future scope — not yet specced, do not start
 
 These are real eventual requirements but not on any current critical
