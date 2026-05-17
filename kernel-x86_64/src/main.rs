@@ -523,6 +523,17 @@ fn init_loader_task() {
         println!("  [DEMO 16] SKIPPED — AEAD KAT failed; live handshake would fail too.");
     }
 
+    // DEMO 17: hierarchical path namespace (Phase 9 Stage 1). Drives
+    // `fs::paths::Namespace` through its public API end-to-end —
+    // init, mkdir, create, write, read, readdir, unlink. Exercises the
+    // path→SUID layer over the existing ObjectRegistry without needing
+    // any persistence or syscall plumbing yet.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 17: hierarchical path namespace (Phase 9 Stage 1)");
+    println!("================================================================");
+    paths_namespace_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1757,6 +1768,154 @@ fn tls_live_handshake() {
     // Tear down.
     unsafe { global_tls_transport().close(); }
     println!("  [DEMO 16] => First outbound TLS round-trip from this kernel — Phase 8 closed.");
+}
+
+/// DEMO 17: hierarchical path namespace end-to-end (Phase 9 Stage 1).
+///
+/// Walks the full public API of [`kernel_core::fs::paths::Namespace`]:
+///   1. init() — installs root directory
+///   2. mkdir() — creates nested dirs
+///   3. create_file() — writes initial content under a path
+///   4. read_file() — reads back exact bytes
+///   5. write_file() — overwrites + reads back the new content
+///   6. readdir() — lists entries by name + SUID
+///   7. unlink() — removes a file
+///   8. negative paths — bad paths/missing entries return the right
+///      FsError variants, no panics
+///
+/// Any FAIL line means the namespace is broken before persistence
+/// or syscalls land on top.
+fn paths_namespace_test() {
+    use kernel_core::fs::paths::{FsError, Namespace};
+    use kernel_core::memory::SecurityTier;
+
+    // Step 1: install root.
+    if let Err(e) = Namespace::init() {
+        println!("  [DEMO 17] FAIL: init: {:?}", e); return;
+    }
+    println!("  [DEMO 17] PASS: namespace init (root directory installed)");
+
+    // Step 2: mkdir / nested mkdir.
+    match Namespace::mkdir("/notes") {
+        Ok(_) => println!("  [DEMO 17] PASS: mkdir /notes"),
+        Err(e) => { println!("  [DEMO 17] FAIL: mkdir /notes: {:?}", e); return; }
+    }
+    match Namespace::mkdir("/notes/2026") {
+        Ok(_) => println!("  [DEMO 17] PASS: mkdir /notes/2026 (nested)"),
+        Err(e) => { println!("  [DEMO 17] FAIL: mkdir /notes/2026: {:?}", e); return; }
+    }
+    // Same name twice should reject.
+    match Namespace::mkdir("/notes") {
+        Err(FsError::AlreadyExists) => println!("  [DEMO 17] PASS: duplicate mkdir rejected (AlreadyExists)"),
+        other => { println!("  [DEMO 17] FAIL: duplicate mkdir got {:?}, want AlreadyExists", other); return; }
+    }
+
+    // Step 3: create a file with initial content.
+    const HELLO: &[u8] = b"first cut of the meeting notes\n";
+    let _file_suid = match Namespace::create_file("/notes/2026/meeting.md", SecurityTier::Internal, HELLO) {
+        Ok(s) => { println!("  [DEMO 17] PASS: create /notes/2026/meeting.md ({} B)", HELLO.len()); s }
+        Err(e) => { println!("  [DEMO 17] FAIL: create_file: {:?}", e); return; }
+    };
+
+    // Step 4: read it back byte-exact.
+    let got = match Namespace::read_file("/notes/2026/meeting.md") {
+        Ok(b) => b,
+        Err(e) => { println!("  [DEMO 17] FAIL: read_file: {:?}", e); return; }
+    };
+    if got != HELLO {
+        println!("  [DEMO 17] FAIL: read_file returned {} B (want {} B)", got.len(), HELLO.len());
+        return;
+    }
+    println!("  [DEMO 17] PASS: read_file returned exact bytes");
+
+    // Step 5: overwrite + re-read.
+    const REVISED: &[u8] = b"REVISED: now with action items.\n";
+    if let Err(e) = Namespace::write_file("/notes/2026/meeting.md", REVISED) {
+        println!("  [DEMO 17] FAIL: write_file: {:?}", e); return;
+    }
+    let got2 = match Namespace::read_file("/notes/2026/meeting.md") {
+        Ok(b) => b,
+        Err(e) => { println!("  [DEMO 17] FAIL: read_file after overwrite: {:?}", e); return; }
+    };
+    if got2 != REVISED {
+        println!("  [DEMO 17] FAIL: read after overwrite mismatched"); return;
+    }
+    println!("  [DEMO 17] PASS: overwrite + reread roundtrip");
+
+    // Step 6: readdir on /notes — should list "2026" alone.
+    let mut found = false;
+    let mut count = 0usize;
+    let dir_res = Namespace::readdir("/notes", |name, _suid| {
+        count += 1;
+        if name == "2026" { found = true; }
+    });
+    match dir_res {
+        Ok(()) => {
+            if !found || count != 1 {
+                println!("  [DEMO 17] FAIL: readdir /notes returned {} entries (want 1, '2026' found={})", count, found);
+                return;
+            }
+            println!("  [DEMO 17] PASS: readdir /notes -> ['2026']");
+        }
+        Err(e) => { println!("  [DEMO 17] FAIL: readdir: {:?}", e); return; }
+    }
+
+    // Create a second file to test multi-entry readdir.
+    if let Err(e) = Namespace::create_file("/notes/2026/scratch.md", SecurityTier::Internal, b"scratch") {
+        println!("  [DEMO 17] FAIL: create scratch: {:?}", e); return;
+    }
+    let mut names: [&'static str; 4] = ["", "", "", ""];
+    let mut ni = 0usize;
+    let _ = Namespace::readdir("/notes/2026", |name, _| {
+        if ni < names.len() {
+            // SAFETY: the name slice lives in the registry; we only
+            // print it (no storage past this closure). For the test
+            // we promote with transmute since the iteration borrow
+            // already prevents mutation during this call.
+            names[ni] = unsafe { core::mem::transmute::<&str, &'static str>(name) };
+            ni += 1;
+        }
+    });
+    if ni != 2 {
+        println!("  [DEMO 17] FAIL: /notes/2026 has {} entries, want 2", ni); return;
+    }
+    println!("  [DEMO 17] PASS: readdir /notes/2026 -> ['{}', '{}']", names[0], names[1]);
+
+    // Step 7: unlink one file, confirm gone, confirm sibling untouched.
+    if let Err(e) = Namespace::unlink("/notes/2026/scratch.md") {
+        println!("  [DEMO 17] FAIL: unlink: {:?}", e); return;
+    }
+    match Namespace::read_file("/notes/2026/scratch.md") {
+        Err(FsError::NotFound) => {}
+        other => { println!("  [DEMO 17] FAIL: read after unlink got {:?}, want NotFound", other.map(|_| ())); return; }
+    }
+    match Namespace::read_file("/notes/2026/meeting.md") {
+        Ok(_) => println!("  [DEMO 17] PASS: unlink removed only the named entry"),
+        Err(e) => { println!("  [DEMO 17] FAIL: sibling read after unlink: {:?}", e); return; }
+    }
+
+    // Step 8: negative-path coverage. Each must return the right
+    // FsError; any Ok (or wrong error) is a regression.
+    match Namespace::mkdir("relative/path") {
+        Err(FsError::NotAbsolute) => {}
+        other => { println!("  [DEMO 17] FAIL: relative path got {:?}, want NotAbsolute", other.map(|_| ())); return; }
+    }
+    match Namespace::mkdir("/notes//double") {
+        Err(FsError::EmptyComponent) => {}
+        other => { println!("  [DEMO 17] FAIL: empty component got {:?}, want EmptyComponent", other.map(|_| ())); return; }
+    }
+    match Namespace::resolve("/does/not/exist") {
+        Err(FsError::NotFound) => {}
+        other => { println!("  [DEMO 17] FAIL: missing path got {:?}, want NotFound", other.map(|_| ())); return; }
+    }
+    // Walking through a file (treating it as a dir) must fail.
+    match Namespace::resolve("/notes/2026/meeting.md/inner") {
+        Err(FsError::NotADirectory) => {}
+        other => { println!("  [DEMO 17] FAIL: through-file got {:?}, want NotADirectory", other.map(|_| ())); return; }
+    }
+    println!("  [DEMO 17] PASS: bad paths reject with the right FsError variants");
+
+    println!("  [DEMO 17] => path namespace works end-to-end; persistence (Stage 2) is next");
 }
 
 /// Format a u32 as ASCII decimal into `buf`. Returns the populated slice.

@@ -1,0 +1,623 @@
+//! Hierarchical-path namespace over SUID-addressed semantic objects.
+//!
+//! Phase 9 Stage 1. Lets apps and the kernel address persistent state
+//! the way users think about it — `/notes/2026/meeting.md` — without
+//! abandoning the SUID-first storage model that Phase 4-7 was built
+//! around.
+//!
+//! # Architecture
+//!
+//! ```text
+//!   "/notes/2026/meeting.md"
+//!         │
+//!         ▼  walk components, look each one up as a dir entry
+//!   Namespace::resolve()
+//!         │
+//!         ▼  yields SUID at end of walk
+//!   SemanticObject (regular file content OR another directory)
+//! ```
+//!
+//! - **Files** are ordinary SemanticObjects whose `content` holds the
+//!   user bytes (Inline ≤ 256 B today; Allocated for larger objects
+//!   when the memory pool can satisfy it).
+//! - **Directories** are SemanticObjects too, with a packed
+//!   table of `(name, SUID)` pairs in their content. See
+//!   [`DirEntries`] for the on-disk format. There's no separate
+//!   "inode" / "dentry" split — the directory IS its semantic object.
+//! - **Root** is a well-known SUID ([`ROOT_SUID`]) created by
+//!   [`Namespace::init`]; absolute paths start there.
+//!
+//! This is **Stage 1** — in-memory only. Persistence (snapshot writeback
+//! per Phase 6) lands in Stage 2; syscalls in Stage 3.
+//!
+//! # Not implemented
+//!
+//! - Permissions beyond what SecurityTier already enforces on the
+//!   underlying object. There's no per-user owner bits / mode bits.
+//! - Symlinks. The directory entries point to SUIDs directly; cycles
+//!   would form a graph, not a tree. Future: a Relationship-typed
+//!   ObjectLink could encode "soft" links.
+//! - Hardlinks (multiple names → one SUID). Easy to add — the
+//!   namespace already stores names alongside SUIDs, but we'd need
+//!   reference counting on unlink. Out of scope for Stage 1.
+//! - Rename. Two-step today: lookup + create + unlink.
+//! - Mount points / VFS-style stacking. Single global namespace.
+//!
+//! # Tests
+//!
+//! kernel-core can't run `cargo test` (no_std, no panic handler).
+//! Boot-time validation lives in `kernel-x86_64/src/main.rs` as
+//! `paths_namespace_test()` (DEMO 17) — see project memory for the
+//! convention.
+
+use crate::semantic::object::{ContentType, ObjectContent, SecurityTier, SemanticObject};
+use crate::semantic::registry::global_registry;
+use crate::semantic::suid::SUID;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Maximum length of a single path component (one segment between
+/// slashes). Chosen to fit comfortably into a few directory entries
+/// per 256-byte inline content block.
+pub const MAX_COMPONENT_LEN: usize = 31;
+
+/// Maximum total path length we'll parse. Generous enough for nested
+/// project trees; small enough to keep stack frames bounded.
+pub const MAX_PATH_LEN: usize = 256;
+
+/// Maximum depth of nested directories in a single `resolve` call.
+/// Guards against pathological inputs (`/a/a/a/a/...`) consuming the
+/// kernel stack via recursion (we iterate, but a cycle check still
+/// needs a bound).
+pub const MAX_PATH_DEPTH: usize = 32;
+
+/// Maximum entries we'll let a single directory hold in Stage 1's
+/// inline format. With per-entry overhead of ~25 bytes (avg 8-char
+/// name) into 256-byte inline content, ten entries leaves room for
+/// the count byte + slack.
+pub const MAX_DIR_ENTRIES: usize = 16;
+
+/// Well-known SUID for the root directory. System type (TYPE_SYSTEM=15)
+/// so it can't be confused with content-addressed or random user SUIDs.
+/// Low half is a memorable bit pattern (`0xF005...`) for ad-hoc
+/// identifiability in hex dumps.
+pub const ROOT_SUID: SUID = SUID::new(
+    0xF000_0000_0000_0001,
+    0xF005_F11E_5300_BA5E,
+);
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+/// Failure modes the namespace can return. Mapped to LlmError-shaped
+/// codes by the syscall layer (Stage 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsError {
+    /// Path didn't start with `/` (we don't support cwd-relative).
+    NotAbsolute,
+    /// Path or one of its components was empty (e.g. `//`).
+    EmptyComponent,
+    /// A component was longer than [`MAX_COMPONENT_LEN`].
+    ComponentTooLong,
+    /// Path was longer than [`MAX_PATH_LEN`].
+    PathTooLong,
+    /// Path nested deeper than [`MAX_PATH_DEPTH`].
+    TooDeep,
+    /// One of the intermediate components doesn't exist.
+    NotFound,
+    /// Tried to walk through a non-directory (e.g. `/foo.txt/bar`).
+    NotADirectory,
+    /// Tried to create/list an entry whose target isn't a directory.
+    IsADirectory,
+    /// Name already exists in the parent directory.
+    AlreadyExists,
+    /// Directory is at capacity (Stage 1: [`MAX_DIR_ENTRIES`]).
+    DirectoryFull,
+    /// ObjectRegistry rejected the insert (probably full).
+    RegistryFull,
+    /// Tried to write content larger than the object format allows.
+    ContentTooLarge,
+    /// Internal invariant violation (e.g. directory content malformed).
+    Corrupt,
+}
+
+// ============================================================================
+// Path parsing
+// ============================================================================
+
+/// Split a `/`-separated absolute path into components. Validates as
+/// it goes; on success calls `visit(component)` for each one.
+///
+/// Iterator-shaped APIs are nicer but allocating a Vec isn't on the
+/// table (no_alloc) and a custom Iterator type adds machinery we
+/// don't need at this layer. Callback works.
+pub fn for_each_component<F>(path: &str, mut visit: F) -> Result<(), FsError>
+where
+    F: FnMut(&str) -> Result<(), FsError>,
+{
+    if path.len() > MAX_PATH_LEN { return Err(FsError::PathTooLong); }
+    if !path.starts_with('/') { return Err(FsError::NotAbsolute); }
+
+    // Skip the leading '/'. Splitting after it yields the components,
+    // with an empty trailing element for "/" itself.
+    let trimmed = &path[1..];
+    if trimmed.is_empty() {
+        // Root path "/" — no components to visit.
+        return Ok(());
+    }
+
+    let mut depth = 0usize;
+    for comp in trimmed.split('/') {
+        if comp.is_empty() { return Err(FsError::EmptyComponent); } // catches "//"
+        if comp.len() > MAX_COMPONENT_LEN { return Err(FsError::ComponentTooLong); }
+        depth += 1;
+        if depth > MAX_PATH_DEPTH { return Err(FsError::TooDeep); }
+        visit(comp)?;
+    }
+    Ok(())
+}
+
+/// Split a path into `(parent_path, last_component)` so callers can
+/// resolve the parent and then operate on the named child. For "/foo"
+/// this returns `("/", "foo")`; for "/a/b/c" → `("/a/b", "c")`; for "/"
+/// returns `Err(NotFound)` because the root has no parent.
+pub fn split_parent(path: &str) -> Result<(&str, &str), FsError> {
+    if path.len() > MAX_PATH_LEN { return Err(FsError::PathTooLong); }
+    if !path.starts_with('/') { return Err(FsError::NotAbsolute); }
+    if path == "/" { return Err(FsError::NotFound); } // no parent
+
+    // Find the last '/'; everything before (or "/") is parent, after is name.
+    let last_slash = path.rfind('/').unwrap(); // we know path starts with '/'
+    let parent = if last_slash == 0 { "/" } else { &path[..last_slash] };
+    let name = &path[last_slash + 1..];
+    if name.is_empty() { return Err(FsError::EmptyComponent); } // e.g. "/foo/"
+    if name.len() > MAX_COMPONENT_LEN { return Err(FsError::ComponentTooLong); }
+    Ok((parent, name))
+}
+
+// ============================================================================
+// Directory entry format
+// ============================================================================
+//
+// A directory's content bytes look like:
+//
+//   [count: u8]  (number of entries, 0..=MAX_DIR_ENTRIES)
+//   then `count` repetitions of:
+//     [name_len: u8]  (1..=MAX_COMPONENT_LEN)
+//     [name: name_len bytes, UTF-8]
+//     [suid: 16 bytes, high then low, big-endian]
+//
+// The format is variable-length — short names use less space, so a
+// typical 8-char-name directory fits more entries in the same 256-byte
+// inline budget than a fixed-size layout. The kernel never trusts the
+// content; every parse validates its bounds.
+
+/// Total bytes a directory entry occupies on disk: 1 (name_len) +
+/// name_len + 16 (SUID).
+fn entry_byte_len(name_len: usize) -> usize { 1 + name_len + 16 }
+
+/// Helper struct for walking a directory's packed bytes.
+pub struct DirEntries<'a> {
+    /// Slice of all entry bytes (excluding the leading count).
+    bytes: &'a [u8],
+    /// Declared number of entries; the iterator returns this many or
+    /// errors if the bytes run out early.
+    count: usize,
+    /// Cursor into `bytes` for the iterator.
+    cursor: usize,
+    /// How many entries have been yielded so far.
+    yielded: usize,
+}
+
+impl<'a> DirEntries<'a> {
+    /// Parse the packed directory content. Validates the count byte
+    /// fits within the slice and bounds. Doesn't validate per-entry
+    /// fields until iteration — those errors get returned per-step.
+    pub fn parse(content: &'a [u8]) -> Result<Self, FsError> {
+        if content.is_empty() { return Err(FsError::Corrupt); }
+        let count = content[0] as usize;
+        if count > MAX_DIR_ENTRIES { return Err(FsError::Corrupt); }
+        Ok(Self { bytes: &content[1..], count, cursor: 0, yielded: 0 })
+    }
+}
+
+impl<'a> Iterator for DirEntries<'a> {
+    type Item = Result<(&'a str, SUID), FsError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.yielded >= self.count { return None; }
+        let cursor = self.cursor;
+        if cursor >= self.bytes.len() { return Some(Err(FsError::Corrupt)); }
+
+        let name_len = self.bytes[cursor] as usize;
+        if name_len == 0 || name_len > MAX_COMPONENT_LEN {
+            return Some(Err(FsError::Corrupt));
+        }
+        let name_start = cursor + 1;
+        let suid_start = name_start + name_len;
+        let suid_end = suid_start + 16;
+        if suid_end > self.bytes.len() {
+            return Some(Err(FsError::Corrupt));
+        }
+
+        // Validate UTF-8 and yield. Names are stored as bytes; we
+        // re-validate as a defence against corrupted directory content.
+        let name = match core::str::from_utf8(&self.bytes[name_start..suid_start]) {
+            Ok(s) => s,
+            Err(_) => return Some(Err(FsError::Corrupt)),
+        };
+        let suid_bytes = &self.bytes[suid_start..suid_end];
+        let high = u64::from_be_bytes(suid_bytes[0..8].try_into().unwrap());
+        let low = u64::from_be_bytes(suid_bytes[8..16].try_into().unwrap());
+        let suid = SUID::new(high, low);
+
+        self.cursor = suid_end;
+        self.yielded += 1;
+        Some(Ok((name, suid)))
+    }
+}
+
+/// Append a `(name, suid)` entry to a directory's content. Returns
+/// the new content bytes via the caller-provided buffer + length.
+/// Doesn't mutate the registry — that's the caller's job.
+fn insert_dir_entry(
+    existing: &[u8],
+    name: &str,
+    suid: SUID,
+    out: &mut [u8],
+) -> Result<usize, FsError> {
+    // Re-validate the input we're appending.
+    if name.is_empty() { return Err(FsError::EmptyComponent); }
+    if name.len() > MAX_COMPONENT_LEN { return Err(FsError::ComponentTooLong); }
+
+    // Parse existing to make sure we're not silently appending after
+    // junk + to reject duplicates.
+    let existing_count = if existing.is_empty() { 0 } else { existing[0] as usize };
+    if existing_count >= MAX_DIR_ENTRIES { return Err(FsError::DirectoryFull); }
+
+    if !existing.is_empty() {
+        for entry in DirEntries::parse(existing)? {
+            let (existing_name, _) = entry?;
+            if existing_name == name { return Err(FsError::AlreadyExists); }
+        }
+    }
+
+    // Compute the new size and bounds-check the destination buffer.
+    let existing_payload_len = if existing.is_empty() { 0 } else { existing.len() - 1 };
+    let new_entry_len = entry_byte_len(name.len());
+    let new_total = 1 + existing_payload_len + new_entry_len;
+    if new_total > out.len() { return Err(FsError::DirectoryFull); }
+
+    // Emit: [new_count][existing_entries][new_entry].
+    out[0] = (existing_count + 1) as u8;
+    if existing_payload_len > 0 {
+        out[1..1 + existing_payload_len].copy_from_slice(&existing[1..]);
+    }
+    let entry_off = 1 + existing_payload_len;
+    out[entry_off] = name.len() as u8;
+    out[entry_off + 1..entry_off + 1 + name.len()].copy_from_slice(name.as_bytes());
+    let suid_off = entry_off + 1 + name.len();
+    out[suid_off..suid_off + 8].copy_from_slice(&suid.high.to_be_bytes());
+    out[suid_off + 8..suid_off + 16].copy_from_slice(&suid.low.to_be_bytes());
+
+    Ok(new_total)
+}
+
+/// Remove the entry with the given name. Returns the new packed
+/// content length, or `Err(NotFound)` if `name` wasn't present.
+fn remove_dir_entry(
+    existing: &[u8],
+    name: &str,
+    out: &mut [u8],
+) -> Result<(usize, SUID), FsError> {
+    if existing.is_empty() { return Err(FsError::NotFound); }
+    let existing_count = existing[0] as usize;
+    if existing_count == 0 { return Err(FsError::NotFound); }
+
+    // First scan finds the target entry and computes its byte range.
+    let mut target_start = None;
+    let mut target_len = 0usize;
+    let mut target_suid = SUID::NULL;
+    let mut byte_off = 1usize; // skip count
+    for _ in 0..existing_count {
+        if byte_off >= existing.len() { return Err(FsError::Corrupt); }
+        let nl = existing[byte_off] as usize;
+        if nl == 0 || nl > MAX_COMPONENT_LEN { return Err(FsError::Corrupt); }
+        let name_start = byte_off + 1;
+        let suid_start = name_start + nl;
+        let next = suid_start + 16;
+        if next > existing.len() { return Err(FsError::Corrupt); }
+
+        let this_name = match core::str::from_utf8(&existing[name_start..suid_start]) {
+            Ok(s) => s,
+            Err(_) => return Err(FsError::Corrupt),
+        };
+        if this_name == name {
+            target_start = Some(byte_off);
+            target_len = next - byte_off;
+            let high = u64::from_be_bytes(existing[suid_start..suid_start+8].try_into().unwrap());
+            let low = u64::from_be_bytes(existing[suid_start+8..next].try_into().unwrap());
+            target_suid = SUID::new(high, low);
+            break;
+        }
+        byte_off = next;
+    }
+
+    let target_start = target_start.ok_or(FsError::NotFound)?;
+
+    // Build the output: new count + everything except the target slice.
+    let new_total = existing.len() - target_len;
+    if new_total > out.len() { return Err(FsError::Corrupt); } // shouldn't happen
+    out[0] = (existing_count - 1) as u8;
+    if target_start > 1 {
+        out[1..target_start].copy_from_slice(&existing[1..target_start]);
+    }
+    let tail_src_start = target_start + target_len;
+    let tail_len = existing.len() - tail_src_start;
+    if tail_len > 0 {
+        out[target_start..target_start + tail_len]
+            .copy_from_slice(&existing[tail_src_start..]);
+    }
+    Ok((new_total, target_suid))
+}
+
+// ============================================================================
+// Namespace — top-level API
+// ============================================================================
+
+/// Singleton orchestrator. Holds the root SUID; methods translate
+/// path-based requests into ObjectRegistry operations.
+///
+/// Stateless aside from the root SUID — recreating an instance is
+/// cheap because all state lives in `global_registry()`.
+pub struct Namespace;
+
+impl Namespace {
+    /// Boot-time setup: install the root directory in the registry as
+    /// an empty directory object. Idempotent — re-running is a no-op
+    /// if root already exists.
+    pub fn init() -> Result<(), FsError> {
+        let registry = unsafe { global_registry() };
+        if registry.get(&ROOT_SUID).is_some() {
+            return Ok(()); // already initialised
+        }
+        let mut root = SemanticObject::new(ROOT_SUID, SecurityTier::Public, 0);
+        root.content_type = ContentType::Structured;
+        // Empty directory: just the count byte = 0.
+        let empty = [0u8; 1];
+        root.content = ObjectContent::from_inline(&empty).ok_or(FsError::Corrupt)?;
+        if !registry.insert(root) {
+            return Err(FsError::RegistryFull);
+        }
+        Ok(())
+    }
+
+    /// Walk a path from root and return the SUID of the named object.
+    /// Each intermediate component must be a directory.
+    pub fn resolve(path: &str) -> Result<SUID, FsError> {
+        let mut current = ROOT_SUID;
+        for_each_component(path, |component| {
+            let next = lookup_in_dir(current, component)?;
+            current = next;
+            Ok(())
+        })?;
+        Ok(current)
+    }
+
+    /// Look up `name` within the directory at `parent` (no path
+    /// walking — single level). Useful when you've already resolved
+    /// the parent.
+    pub fn lookup_in(parent: SUID, name: &str) -> Result<SUID, FsError> {
+        lookup_in_dir(parent, name)
+    }
+
+    /// Create a new (empty) directory at `path`. The parent must
+    /// already exist and be a directory; the basename must not.
+    pub fn mkdir(path: &str) -> Result<SUID, FsError> {
+        let (parent_path, name) = split_parent(path)?;
+        let parent = Self::resolve(parent_path)?;
+        let suid = mint_suid();
+        let mut dir = SemanticObject::new(suid, SecurityTier::Public, 0);
+        dir.content_type = ContentType::Structured;
+        let empty = [0u8; 1];
+        dir.content = ObjectContent::from_inline(&empty).ok_or(FsError::Corrupt)?;
+        let registry = unsafe { global_registry() };
+        if !registry.insert(dir) { return Err(FsError::RegistryFull); }
+        add_child(parent, name, suid)?;
+        Ok(suid)
+    }
+
+    /// Create a regular file at `path` with the given initial content
+    /// and security tier. Returns the new file's SUID.
+    pub fn create_file(
+        path: &str,
+        tier: SecurityTier,
+        content: &[u8],
+    ) -> Result<SUID, FsError> {
+        let (parent_path, name) = split_parent(path)?;
+        let parent = Self::resolve(parent_path)?;
+        let suid = mint_suid();
+        let mut file = SemanticObject::new(suid, tier, 0);
+        file.content_type = ContentType::Binary;
+        file.content = ObjectContent::from_inline(content).ok_or(FsError::ContentTooLarge)?;
+        let registry = unsafe { global_registry() };
+        if !registry.insert(file) { return Err(FsError::RegistryFull); }
+        add_child(parent, name, suid)?;
+        Ok(suid)
+    }
+
+    /// Replace a file's content. The object at `path` must already
+    /// exist and be a regular file. New content must fit the inline
+    /// storage limit (Stage 1).
+    pub fn write_file(path: &str, content: &[u8]) -> Result<(), FsError> {
+        let suid = Self::resolve(path)?;
+        let registry = unsafe { global_registry() };
+        let obj = registry.get_mut(&suid).ok_or(FsError::NotFound)?;
+        if obj.content_type == ContentType::Structured {
+            return Err(FsError::IsADirectory);
+        }
+        obj.content = ObjectContent::from_inline(content).ok_or(FsError::ContentTooLarge)?;
+        Ok(())
+    }
+
+    /// Read a file's content. Returns a slice into the underlying
+    /// SemanticObject's inline buffer; valid until the next mutation.
+    pub fn read_file(path: &str) -> Result<&'static [u8], FsError> {
+        let suid = Self::resolve(path)?;
+        let registry = unsafe { global_registry() };
+        let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
+        if obj.content_type == ContentType::Structured {
+            return Err(FsError::IsADirectory);
+        }
+        // `as_bytes` returns Option<&[u8]> with the object's lifetime.
+        // The registry is 'static so this slice lives until the object
+        // is mutated or removed.
+        let bytes = obj.content.as_bytes().ok_or(FsError::Corrupt)?;
+        // Extend the lifetime — sound because the registry is &'static mut.
+        Ok(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(bytes) })
+    }
+
+    /// Remove the entry named `path`. If it's a directory, the
+    /// directory must be empty (no recursive rmdir in Stage 1). The
+    /// underlying SemanticObject is also removed from the registry.
+    pub fn unlink(path: &str) -> Result<(), FsError> {
+        let (parent_path, name) = split_parent(path)?;
+        let parent = Self::resolve(parent_path)?;
+        let suid = lookup_in_dir(parent, name)?;
+        // If target is a non-empty directory, refuse.
+        {
+            let registry = unsafe { global_registry() };
+            let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
+            if obj.content_type == ContentType::Structured {
+                let bytes = obj.content.as_bytes().unwrap_or(&[]);
+                if !bytes.is_empty() && bytes[0] > 0 {
+                    return Err(FsError::DirectoryFull); // reused: "non-empty"
+                }
+            }
+        }
+        remove_child(parent, name)?;
+        // Drop the object itself.
+        let registry = unsafe { global_registry() };
+        registry.remove(&suid);
+        Ok(())
+    }
+
+    /// Run `visit(name, suid)` for each entry in the directory at
+    /// `path`. Use this instead of returning an iterator because the
+    /// directory's content slice is borrowed from the registry — we
+    /// can't easily express that lifetime through an iterator type
+    /// without `GenericAssociatedType`s + lifetime gymnastics.
+    pub fn readdir<F>(path: &str, mut visit: F) -> Result<(), FsError>
+    where
+        F: FnMut(&str, SUID),
+    {
+        let suid = Self::resolve(path)?;
+        let registry = unsafe { global_registry() };
+        let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
+        if obj.content_type != ContentType::Structured {
+            return Err(FsError::NotADirectory);
+        }
+        let bytes = obj.content.as_bytes().unwrap_or(&[]);
+        if bytes.is_empty() { return Ok(()); }
+        for entry in DirEntries::parse(bytes)? {
+            let (name, child) = entry?;
+            visit(name, child);
+        }
+        Ok(())
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Internal helpers
+// ----------------------------------------------------------------------------
+
+/// Look up one path component in the directory at `parent_suid`.
+/// Errors if the parent isn't a directory or the name isn't present.
+fn lookup_in_dir(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
+    let registry = unsafe { global_registry() };
+    let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
+    if parent.content_type != ContentType::Structured {
+        return Err(FsError::NotADirectory);
+    }
+    let bytes = parent.content.as_bytes().unwrap_or(&[]);
+    if bytes.is_empty() { return Err(FsError::NotFound); }
+    for entry in DirEntries::parse(bytes)? {
+        let (existing_name, child) = entry?;
+        if existing_name == name { return Ok(child); }
+    }
+    Err(FsError::NotFound)
+}
+
+/// Append `(name, suid)` to the directory at `parent_suid`. Rewrites
+/// the parent's content with the new packed bytes.
+fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
+    // Snapshot existing content into a local buffer so we can reborrow
+    // the registry mutably for the rewrite.
+    let mut scratch = [0u8; 256];
+    let existing_len = {
+        let registry = unsafe { global_registry() };
+        let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
+        if parent.content_type != ContentType::Structured {
+            return Err(FsError::NotADirectory);
+        }
+        let bytes = parent.content.as_bytes().unwrap_or(&[]);
+        if bytes.len() > scratch.len() { return Err(FsError::Corrupt); }
+        scratch[..bytes.len()].copy_from_slice(bytes);
+        bytes.len()
+    };
+
+    let mut new_buf = [0u8; 256];
+    let new_len = insert_dir_entry(&scratch[..existing_len], name, suid, &mut new_buf)?;
+
+    let registry = unsafe { global_registry() };
+    let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
+    parent.content = ObjectContent::from_inline(&new_buf[..new_len])
+        .ok_or(FsError::DirectoryFull)?;
+    Ok(())
+}
+
+/// Remove the entry named `name` from the directory at `parent_suid`.
+/// Returns the SUID of the entry that was removed.
+fn remove_child(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
+    let mut scratch = [0u8; 256];
+    let existing_len = {
+        let registry = unsafe { global_registry() };
+        let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
+        if parent.content_type != ContentType::Structured {
+            return Err(FsError::NotADirectory);
+        }
+        let bytes = parent.content.as_bytes().unwrap_or(&[]);
+        if bytes.len() > scratch.len() { return Err(FsError::Corrupt); }
+        scratch[..bytes.len()].copy_from_slice(bytes);
+        bytes.len()
+    };
+
+    let mut new_buf = [0u8; 256];
+    let (new_len, removed_suid) =
+        remove_dir_entry(&scratch[..existing_len], name, &mut new_buf)?;
+
+    let registry = unsafe { global_registry() };
+    let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
+    parent.content = ObjectContent::from_inline(&new_buf[..new_len])
+        .ok_or(FsError::Corrupt)?;
+    Ok(removed_suid)
+}
+
+/// Generate a fresh SUID for a new object. Random type so it can't
+/// collide with content-addressed SUIDs.
+///
+/// Stage 1: derives from a small counter + boot ticks for uniqueness.
+/// Production: should use the RDRAND-backed RNG so two boots with the
+/// same operation sequence don't collide on persistent storage. That's
+/// fine to address in Stage 2 along with persistence.
+fn mint_suid() -> SUID {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    // Type=random in the high nibble of `high`.
+    let high = (1u64 << 60) | (n & 0x0FFF_FFFF_FFFF_FFFF);
+    let low = n.wrapping_mul(0x9E37_79B9_7F4A_7C15); // golden-ratio scramble
+    SUID::new(high, low)
+}
