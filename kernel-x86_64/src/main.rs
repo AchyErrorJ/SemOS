@@ -481,6 +481,19 @@ fn init_loader_task() {
     println!("================================================================");
     tls_verifier_test();
 
+    // DEMO 15: TLS transport wiring smoke test. Only runs if the net
+    // stack is up. We don't have a TLS server reachable in QEMU's
+    // SLIRP, so the goal isn't a successful handshake — it's that
+    // the whole TLS path is reachable, the failure mode is clean,
+    // and no panics escape into the kernel.
+    if kernel_core::net::is_initialized() {
+        println!();
+        println!("================================================================");
+        println!("  SemOS DEMO 15: TLS transport smoke (configure + connect)");
+        println!("================================================================");
+        tls_transport_smoke();
+    }
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1017,15 +1030,17 @@ fn network_llm_provider_test() {
             net.success_count(), net.failure_count());
     }
 
-    // ---- Test 4: degraded path — unwired Tcp transport refuses cleanly ----
-    println!("  [DEMO 10] Test 4: switching transport to Tcp (unimplemented)");
+    // ---- Test 4: degraded path — TlsTcp transport without an IP
+    // configured fails cleanly (no DNS yet; caller must set remote_ip
+    // on the TLS singleton at boot before this transport is usable). ----
+    println!("  [DEMO 10] Test 4: switching transport to TlsTcp (no remote IP yet)");
     unsafe {
         let net = global_net_provider();
         let saved = net.endpoint().transport;
-        net.endpoint_mut().transport = TransportKind::Tcp;
+        net.endpoint_mut().transport = TransportKind::TlsTcp;
         let mut sink = [0u8; 64];
         match net.complete(b"ping", &mut sink) {
-            Ok(_) => println!("    UNEXPECTED success on Tcp transport"),
+            Ok(_) => println!("    UNEXPECTED success on unconfigured TlsTcp"),
             Err(e) => println!("    rejected as expected (LlmError code {})", e.to_error_code()),
         }
         net.endpoint_mut().transport = saved;
@@ -1437,6 +1452,96 @@ fn tls_verifier_test() {
     }
 
     println!("  [DEMO 14] => TlsVerifier trait surface OK; ready to plug into TlsConnection");
+}
+
+/// DEMO 15: TLS transport wiring smoke test.
+///
+/// What this proves:
+///   1. `global_tls_transport()` returns a singleton that starts in
+///      a sensible state (not connected, no remote IP).
+///   2. `configure_global(ip, port)` plumbs through to the singleton.
+///   3. A `connect()` against an unreachable target fails cleanly via
+///      `TransportError::Closed` — no panic, no buffer leak, the
+///      transport returns to `!is_connected()` and is reusable.
+///
+/// What this DOESN'T prove (yet):
+///   - That a real TLS handshake succeeds against api.anthropic.com.
+///     We have no DNS, so until the user wires an actual Anthropic IP
+///     into `configure_global`, the handshake path is exercised only
+///     up to "TCP connect" (and only as a failure). Live-handshake
+///     test is a separate task pending an Anthropic IP or an
+///     in-QEMU TLS server.
+fn tls_transport_smoke() {
+    use kernel_core::net::Ipv4Address;
+    use kernel_core::llm::transport::NetworkTransport;
+    use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
+
+    // Step 1: initial state.
+    let (initially_connected, initially_ip) = unsafe {
+        let t = global_tls_transport();
+        (t.is_connected(), t.remote_ip())
+    };
+    if initially_connected {
+        println!("  [DEMO 15] FAIL: singleton started connected (!?)"); return;
+    }
+    if initially_ip.is_some() {
+        println!("  [DEMO 15] FAIL: singleton started with a remote_ip"); return;
+    }
+    println!("  [DEMO 15] PASS: singleton starts clean (not connected, no IP)");
+
+    // Step 2: configure with an unreachable target. SLIRP routes to
+    // the host stack, but port 1 is reserved (no service ever listens)
+    // — we get a clean RST. This is enough to drive TCP through to a
+    // terminal state without leaving any sockets dangling.
+    let target = Ipv4Address::new(10, 0, 2, 2);
+    let target_port = 1u16;
+    configure_global(target, target_port);
+
+    let remote = unsafe { global_tls_transport().remote_ip() };
+    if remote != Some(target) {
+        println!("  [DEMO 15] FAIL: configure_global didn't stick (got {:?})", remote);
+        return;
+    }
+    println!("  [DEMO 15] PASS: configured remote_ip = {:?}:{}", target, target_port);
+
+    // Step 3: try to connect. Three possible outcomes:
+    //   - Closed: SLIRP responded with RST (most likely on port 1).
+    //   - Closed: TCP came up but TLS handshake failed (no server).
+    //   - Ok(()): impossible without a real TLS server (would mean
+    //     SLIRP is forwarding port 1 to something — buggy setup).
+    // Pass on any clean error; fail on success or panic.
+    let mut sink = [0u8; 16];
+    let connect_result = unsafe {
+        global_tls_transport().connect("api.anthropic.com", target_port)
+    };
+    match connect_result {
+        Err(e) => println!("  [DEMO 15] PASS: connect to unreachable target failed cleanly ({:?})", e),
+        Ok(()) => {
+            println!("  [DEMO 15] UNEXPECTED: connect succeeded — closing");
+            unsafe { global_tls_transport().close(); }
+        }
+    }
+
+    // Make sure we don't return with the singleton claiming an open connection.
+    let post_state = unsafe {
+        let t = global_tls_transport();
+        (t.is_connected(), t.name())
+    };
+    if post_state.0 {
+        println!("  [DEMO 15] FAIL: singleton still connected after error path"); return;
+    }
+    println!("  [DEMO 15] PASS: singleton reusable after failed connect (name={})", post_state.1);
+
+    // Step 4: prove send/recv before connect rejects with InvalidState
+    // (the trait's contract for the unhappy path).
+    let send_err = unsafe { global_tls_transport().send(b"x") };
+    let recv_err = unsafe { global_tls_transport().recv(&mut sink) };
+    match (send_err, recv_err) {
+        (Err(_), Err(_)) => println!("  [DEMO 15] PASS: send/recv before connect both reject"),
+        (s, r) => { println!("  [DEMO 15] FAIL: pre-connect send/recv didn't reject (send={:?} recv={:?})", s, r); return; }
+    }
+
+    println!("  [DEMO 15] => TLS transport ready for live handshake once an Anthropic IP is wired");
 }
 
 /// Test policy management syscalls

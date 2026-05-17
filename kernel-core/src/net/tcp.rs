@@ -261,6 +261,18 @@ impl embedded_io::Error for TcpError {
     }
 }
 
+// embedded_io 0.7 added a `core::error::Error` supertrait on
+// `embedded_io::Error`. That needs Display in turn. We have nothing
+// interesting to say beyond the Debug repr, so the Display impl
+// just defers to it.
+impl core::fmt::Display for TcpError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl core::error::Error for TcpError {}
+
 impl embedded_io::ErrorType for TcpStream {
     type Error = TcpError;
 }

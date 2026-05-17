@@ -78,12 +78,19 @@ pub use handshake::certificate_verify::CertificateVerify;
 pub use rand_core::{CryptoRng, CryptoRngCore};
 
 // VENDORED PATCH (Semantic OS): re-exports added to make types
-// reachable from external `TlsVerifier` implementations. Upstream
-// leaves these reachable only through the (sealed) `mod handshake`
-// and `mod config`. Kernel-core's spki-pinning verifier needs all
-// four. Same rationale as the `pub entries:` patch in
-// handshake/certificate.rs — minimum-surface change, no logic touched.
-pub use config::{Certificate, TlsVerifier, NoVerify};
+// reachable from external `TlsVerifier` implementations + external
+// CryptoProvider impls (kernel-core/src/tls/transport_tls.rs).
+// Upstream leaves these reachable only through the (sealed)
+// `mod handshake` and `mod config`. Same rationale as the
+// `pub entries:` patch in handshake/certificate.rs — minimum-surface
+// change, no logic touched. `TlsConfig`/`TlsContext`/`CryptoProvider`
+// are already re-exported via `pub use asynch::*` (asynch.rs does
+// `pub use crate::config::*;`), but we restate them explicitly here
+// so an upstream re-vendor doesn't quietly drop them.
+pub use config::{
+    Certificate, CryptoProvider, NoSign, NoVerify, TlsConfig, TlsContext,
+    TlsVerifier,
+};
 pub use handshake::certificate::{CertificateRef, CertificateEntryRef};
 pub use handshake::certificate_verify::CertificateVerifyRef;
 

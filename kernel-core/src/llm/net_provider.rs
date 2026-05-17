@@ -21,6 +21,7 @@
 
 use super::transport::{NetworkTransport, TransportError, MAX_HOST_LEN, global_loopback_transport};
 use super::LlmError;
+use crate::tls::transport_tls::global_tls_transport;
 
 /// Max length of the API path component (e.g. `/v1/messages`).
 pub const MAX_PATH_LEN: usize = 64;
@@ -42,13 +43,20 @@ pub const MAX_RESPONSE_BODY: usize = 2048;
 
 /// Which transport this provider is wired to.
 ///
-/// Today only [`TransportKind::Loopback`] is implemented. When a real TCP
-/// stack arrives, add a variant here and route `with_transport` to it.
+/// - [`Loopback`](TransportKind::Loopback) — in-kernel mock peer used
+///   by DEMO 10 (no NIC, no network). Synthesises an Anthropic-shaped
+///   response so the parser path is exercised end-to-end.
+/// - [`TlsTcp`](TransportKind::TlsTcp) — TLS 1.3 over TCP, the real
+///   remote path. The transport is configured at boot via
+///   [`crate::tls::transport_tls::configure_global`] with a target IP
+///   (no DNS yet); the host string from the endpoint config becomes
+///   the SNI name and feeds the SPKI verifier. See
+///   `kernel-core/src/tls/transport_tls.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TransportKind {
     Loopback = 0,
-    Tcp = 1, // reserved for future e1000+TCP backend
+    TlsTcp   = 1,
 }
 
 /// Wire-format flavour for the chat completion API.
@@ -215,11 +223,6 @@ impl NetworkLlmProvider {
             return Err(LlmError::InvalidRequest);
         }
 
-        // Reject transports we haven't wired up yet before doing any work.
-        if !matches!(self.endpoint.transport, TransportKind::Loopback) {
-            return self.fail(LlmError::ProviderUnavailable);
-        }
-
         // 1. Build the request bytes.
         let req_len = self.build_request(prompt)?;
 
@@ -231,12 +234,21 @@ impl NetworkLlmProvider {
             Err(_) => return self.fail(LlmError::InvalidRequest),
         };
         let port = self.endpoint.port;
+        let transport_kind = self.endpoint.transport;
 
-        // 2. Drive the loopback transport directly. The transport is a
-        // global singleton, so we just re-acquire its &mut reference
-        // between phases — no borrow on `self` survives across calls.
+        // 2. Drive the transport. Either backend is a global singleton
+        // re-acquired between phases — no borrow on `self` survives
+        // across calls. The `dyn NetworkTransport` coercion lets the
+        // send/recv loops below not care which backend they're driving.
+        //
+        // Safety: single-threaded kernel; we own the &mut for the
+        // duration of this method, releasing between iterations of
+        // the recv loop so `self.resp_buf` can be re-borrowed.
         unsafe {
-            let t = global_loopback_transport();
+            let t: &mut dyn NetworkTransport = match transport_kind {
+                TransportKind::Loopback => global_loopback_transport(),
+                TransportKind::TlsTcp   => global_tls_transport(),
+            };
             if !t.is_connected() {
                 if let Err(e) = t.connect(host_str, port) {
                     return self.fail(transport_to_llm(e));
@@ -261,8 +273,11 @@ impl NetworkLlmProvider {
                 return self.fail(LlmError::ContextTooLarge);
             }
             let n_result = unsafe {
-                global_loopback_transport()
-                    .recv(&mut self.resp_buf[total_resp..])
+                let t: &mut dyn NetworkTransport = match transport_kind {
+                    TransportKind::Loopback => global_loopback_transport(),
+                    TransportKind::TlsTcp   => global_tls_transport(),
+                };
+                t.recv(&mut self.resp_buf[total_resp..])
             };
             match n_result {
                 Ok(0) => break, // EOF
@@ -272,7 +287,13 @@ impl NetworkLlmProvider {
         }
 
         // 3. Close the transport (best-effort; ignore any error).
-        unsafe { global_loopback_transport().close(); }
+        unsafe {
+            let t: &mut dyn NetworkTransport = match transport_kind {
+                TransportKind::Loopback => global_loopback_transport(),
+                TransportKind::TlsTcp   => global_tls_transport(),
+            };
+            t.close();
+        }
 
         // 4. Parse the HTTP response, then the JSON body.
         let body = match parse_http_body(&self.resp_buf[..total_resp]) {

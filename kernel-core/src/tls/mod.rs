@@ -24,6 +24,7 @@ pub mod crypto_shim;
 pub mod cipher_suite;
 pub mod spki_pin;
 pub mod verifier;
+pub mod transport_tls;
 
 // Re-exports so kernel-x86_64 and other consumers can build chains
 // and drive the verifier without taking a direct dep on the
