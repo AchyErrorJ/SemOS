@@ -195,11 +195,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
     }
 
-    // Bring up the xHCI USB controller. Independent of virtio; safe to skip
-    // if no qemu-xhci device is present (the kernel boots fine without it).
-    // DEMO 18 (in init_loader_task) reports the PASS/FAIL lines.
-    println!("[*] Probing xHCI USB controller...");
-    let _usb_ok = usb::init_and_enumerate();
+    // Bring up the xHCI USB controller. TEMPORARILY DISABLED: USB init
+    // re-triggers the task#40 #GP fault around DEMO 8 (probably a memory
+    // layout collision between USB BSS and the user-program ELF region).
+    // Module is declared so symbols compile; init is skipped to verify.
+    // println!("[*] Probing xHCI USB controller...");
+    // let _usb_ok = usb::init_and_enumerate();
     println!();
 
     // Initialize kernel-core subsystems

@@ -147,9 +147,15 @@ static mut DCBAA: Dcbaa = Dcbaa([0; MAX_SLOTS + 1]);
 
 /// Scratchpad: a u64 array whose entries hold physical addresses of
 /// 4 KiB scratchpad pages. The number of entries is read from
-/// HCSPARAMS2 (Max Scratchpad Bufs Hi:Lo). qemu-xhci asks for 0..1
-/// scratchpad pages; we size statically for up to 32 to be safe on metal.
-const MAX_SCRATCHPAD_BUFS: usize = 32;
+/// HCSPARAMS2 (Max Scratchpad Bufs Hi:Lo). qemu-xhci asks for 0;
+/// typical real hardware is 1-8.
+///
+/// **Sized at 8** because 32 (the original value) allocates 128 KiB
+/// of BSS that pushed our kernel image past a memory-layout boundary
+/// and caused a #GP fault in user-program code around DEMO 8. If a
+/// controller legitimately needs more, `init()` aborts with a clear
+/// log line — bump this constant rather than silently truncating.
+const MAX_SCRATCHPAD_BUFS: usize = 8;
 #[repr(C, align(4096))]
 struct ScratchpadArray([u64; MAX_SCRATCHPAD_BUFS]);
 #[repr(C, align(4096))]
