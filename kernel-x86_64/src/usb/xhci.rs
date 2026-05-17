@@ -355,13 +355,15 @@ pub fn init() -> bool {
     println!("[xhci] MaxSlots={} MaxPorts={} MaxIntrs={} CSZ={} ScratchpadBufs={}",
         max_slots, max_ports, max_intrs, if csz1 { 1 } else { 0 }, max_scratchpad_bufs);
 
-    if !csz1 {
-        // CSZ=0 means 32-byte contexts. Our InputContext / DeviceContext
-        // layout is 64-byte (CSZ=1). Adding CSZ=0 support means a parallel
-        // 32-byte struct path; deferred. qemu-xhci is always CSZ=1, so this
-        // path is the metal-only AMD/legacy branch — flagged in module docs.
-        println!("[xhci] CSZ=0 (32-byte contexts) not supported — abort. \
-            See usb/device.rs for the layout; need parallel 32-byte structs.");
+    if csz1 {
+        // CSZ=1 means 64-byte contexts (modern Intel). Our InputContext
+        // / DeviceContext layout is 32-byte (CSZ=0), which is what
+        // qemu-xhci uses. Adding CSZ=1 support means restoring the
+        // `_csz1_pad: [u32; 8]` fields and align(64) on the inner
+        // structs in usb/device.rs; deferred until we have Intel
+        // hardware in front of us.
+        println!("[xhci] CSZ=1 (64-byte contexts) not supported — abort. \
+            See usb/device.rs for the layout; need to restore the _csz1_pad fields.");
         return false;
     }
     if max_scratchpad_bufs > MAX_SCRATCHPAD_BUFS {

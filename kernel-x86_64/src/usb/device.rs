@@ -1,28 +1,27 @@
 //! xHCI device / slot / endpoint context structures (spec §6.2).
 //!
 //! Two layouts exist on real hardware:
-//!   - **32-byte contexts** (legacy/AMD): CSZ=0 in HCCPARAMS1.
-//!   - **64-byte contexts** (Intel, modern controllers, qemu-xhci): CSZ=1.
+//!   - **32-byte contexts**: CSZ=0 in HCCPARAMS1. qemu-xhci, AMD, legacy.
+//!   - **64-byte contexts**: CSZ=1. Modern Intel controllers.
 //!
 //! Both layouts pack the same fields in the same low bytes — the extra
-//! 32 bytes in the 64-byte variant are reserved padding. So we
-//! *allocate* every context at 64-byte stride but the field accessors
-//! are size-aware: writes go to the low bytes, reads pull from the low
-//! bytes, padding is left zero. This means a single set of structures
-//! works on both layouts AS LONG AS the stride between adjacent contexts
-//! (which xHCI itself indexes by raw offset from the Input/Device
-//! Context base) matches CSZ.
+//! 32 bytes in the 64-byte variant are reserved padding. Stride
+//! between adjacent contexts in the Input/Device Context (which the
+//! xHCI controller indexes by raw byte offset from the base) must
+//! match CSZ.
 //!
-//! We always **allocate** as 64-byte stride (matching qemu-xhci and
-//! Intel hardware), and at runtime we *branch* on CSZ:
-//! - CSZ=1 (Intel, qemu-xhci): the allocation matches the hardware
-//!   expectation; we use it directly.
-//! - CSZ=0 (AMD/legacy): we currently FAIL boot with a clear log line.
-//!   Supporting CSZ=0 requires a parallel 32-byte allocation; deferred.
+//! We **allocate at 32-byte stride** (matching qemu-xhci, which is
+//! what every demo here gets validated against). At runtime we
+//! *branch* on CSZ in `xhci::probe_xhci`:
+//! - CSZ=0 (qemu-xhci, AMD, legacy): the allocation matches the
+//!   hardware expectation; we use it directly.
+//! - CSZ=1 (modern Intel): we currently FAIL boot with a clear log
+//!   line. Supporting CSZ=1 needs a parallel 64-byte allocation
+//!   (just add the 8 dwords of padding back); deferred until we
+//!   have Intel hardware in front of us.
 //!
-//! The check lives in `xhci::probe_csz()` and is the documented branch
-//! point for the metal-side test (qemu-xhci is always CSZ=1, so this
-//! path is exercised; AMD hardware is the only place CSZ=0 shows up).
+//! The check lives in `xhci::probe_xhci` and is the documented branch
+//! point for the metal-side test on Intel.
 //!
 //! # USB device descriptor (spec §9.6.1) — separate from xHCI contexts
 //!
@@ -33,7 +32,10 @@
 //! this file because they form the union of "what we know about an
 //! attached device."
 
-#[repr(C, align(64))]
+/// SlotContext is exactly 32 bytes (CSZ=0 layout). For Intel CSZ=1
+/// hardware we'd add `_csz1_pad: [u32; 8]` and align(64); see module
+/// docs. align(4) is the default for u32 fields — kept implicit.
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct SlotContext {
     /// dword 0: route string (19:0), speed (23:20), reserved, MTT (25),
@@ -47,16 +49,14 @@ pub struct SlotContext {
     pub dw2: u32,
     /// dword 3: USB device address (7:0), reserved (26:8), slot state (31:27).
     pub dw3: u32,
-    /// Reserved dwords for spec future expansion (16 bytes).
+    /// Reserved dwords for spec future expansion (16 bytes). Brings
+    /// the structure to exactly 32 bytes.
     pub reserved: [u32; 4],
-    /// Padding to bring the structure up to 64 bytes (CSZ=1 layout).
-    /// Hardware ignores this when CSZ=0.
-    pub _csz1_pad: [u32; 8],
 }
 
 impl SlotContext {
     pub const fn zero() -> Self {
-        Self { dw0: 0, dw1: 0, dw2: 0, dw3: 0, reserved: [0; 4], _csz1_pad: [0; 8] }
+        Self { dw0: 0, dw1: 0, dw2: 0, dw3: 0, reserved: [0; 4] }
     }
     /// Build dw0 with context-entries=N (we always pass 1 for "EP0 only").
     #[inline]
@@ -86,7 +86,9 @@ impl SlotContext {
     }
 }
 
-#[repr(C, align(64))]
+/// EndpointContext is exactly 32 bytes (CSZ=0 layout). See module
+/// docs for the CSZ=1 (Intel) variant.
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct EndpointContext {
     /// dword 0: EP state (2:0), reserved, mult (9:8), max-pstreams (14:10),
@@ -101,16 +103,15 @@ pub struct EndpointContext {
     pub dw3: u32,
     /// dword 4: average TRB length (15:0), max ESIT payload lo (31:16).
     pub dw4: u32,
+    /// 12 bytes reserved — brings the structure to exactly 32 bytes.
     pub reserved: [u32; 3],
-    /// 64-byte stride padding (CSZ=1 layout).
-    pub _csz1_pad: [u32; 8],
 }
 
 impl EndpointContext {
     pub const fn zero() -> Self {
         Self {
             dw0: 0, dw1: 0, dw2: 0, dw3: 0, dw4: 0,
-            reserved: [0; 3], _csz1_pad: [0; 8],
+            reserved: [0; 3],
         }
     }
     /// Configure as a Control endpoint (EP0): EP type=4 (Control bidirectional),
@@ -157,18 +158,22 @@ impl EndpointContext {
 }
 
 /// Input Context — used to issue Address Device and Configure Endpoint
-/// commands. Layout: input control context, slot context, then 31
-/// endpoint contexts (EP0 IN/OUT bidirectional + EP1..EP15 each direction).
-/// Each at 64-byte stride.
+/// commands. CSZ=0 layout: input control context (32 B) || slot
+/// context (32 B) || 31 endpoint contexts at 32-byte stride =
+/// 32 + 32 + 31*32 = **1056 bytes**.
+///
+/// `align(64)` is on the OUTER struct because xHCI spec §6.2.5.1
+/// requires the InputContext to start on a 64-byte boundary. The
+/// internal stride is 32 (per the embedded `SlotContext`/`EndpointContext`
+/// being 32 bytes each).
 #[repr(C, align(64))]
 pub struct InputContext {
     /// Input Control Context — D=drop flags, A=add flags. Spec §6.2.5.
+    /// Naturally 32 bytes: 2 flag dwords + 5 reserved dwords + config_value.
     pub icc_drop: u32,
     pub icc_add: u32,
     pub icc_reserved: [u32; 5],
-    pub icc_config_value: u32,  // also Interface Number / Alt Setting on byte 1/2
-    /// 64-byte stride padding for the input control context itself.
-    pub icc_pad: [u32; 8],
+    pub icc_config_value: u32,
     pub slot: SlotContext,
     /// EP0 is at index 0; EP1 OUT=1, EP1 IN=2, ..., EP15 OUT=29, EP15 IN=30.
     /// Spec §6.2.3 Table 6-16: dci = 2*ep_num + direction (1=IN), with
@@ -183,15 +188,14 @@ impl InputContext {
             icc_add: 0,
             icc_reserved: [0; 5],
             icc_config_value: 0,
-            icc_pad: [0; 8],
             slot: SlotContext::zero(),
             eps: [EndpointContext::zero(); 31],
         }
     }
 }
 
-/// Device Context — written by hardware, read by software. Same layout
-/// as the Input Context minus the Input Control Context.
+/// Device Context — written by hardware, read by software. CSZ=0
+/// layout: slot (32 B) + 31 endpoints (31*32 = 992 B) = **1024 bytes**.
 #[repr(C, align(64))]
 pub struct DeviceContext {
     pub slot: SlotContext,
