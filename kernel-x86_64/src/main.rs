@@ -205,10 +205,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
     }
 
-    // Bring up the xHCI USB controller. TEMPORARILY DISABLED: USB init
-    // re-triggers the task#40 #GP fault around DEMO 8 (probably a memory
-    // layout collision between USB BSS and the user-program ELF region).
-    // Module is declared so symbols compile; init is skipped to verify.
+    // USB init — parked behind a comment (task #36). Bisect proved
+    // the failure isn't in USB code: with init_and_enumerate()
+    // short-circuited so LLVM can DCE the xhci graph, kernel boots
+    // clean. ANY link-level reference to xhci's code shifts the
+    // binary layout enough to trigger a pre-existing layout-sensitive
+    // kernel bug (same family as old task #40). The fix is in the
+    // underlying kernel bug, not in USB.
     // println!("[*] Probing xHCI USB controller...");
     // let _usb_ok = usb::init_and_enumerate();
     println!();
@@ -572,6 +575,16 @@ fn init_loader_task() {
     println!("  SemOS DEMO 19: RTC wall clock (Platform::wall_clock)");
     println!("================================================================");
     wall_clock_test();
+
+    // DEMO 20: FS Stage 3 syscalls — exercise SYS_OPEN / SYS_FREAD /
+    // SYS_FWRITE / SYS_CLOSE / SYS_MKDIR / SYS_UNLINK / SYS_READDIR /
+    // SYS_STAT against the path namespace from Ring 0. User-space port
+    // (fs-demo program) lands in a follow-up commit.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 20: FS syscalls over path namespace (Phase 9 Stage 3)");
+    println!("================================================================");
+    fs_syscall_test();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -2013,6 +2026,117 @@ fn paths_namespace_test() {
     println!("  [DEMO 17] PASS: bad paths reject with the right FsError variants");
 
     println!("  [DEMO 17] => path namespace works end-to-end; persistence (Stage 2) is next");
+}
+
+/// DEMO 20: FS syscalls (SYS_OPEN/FREAD/FWRITE/CLOSE/MKDIR/UNLINK/READDIR/STAT)
+/// driven against the path namespace from Ring 0.
+///
+/// We use kernel-core's `syscall::dispatch` directly instead of going
+/// through SYSCALL/SYSRET — same code path, no user-mode round-trip,
+/// faster to verify. Once `user-programs/fs-demo` is ported, the same
+/// surface gets exercised from Ring 3 via SYSCALL.
+fn fs_syscall_test() {
+    use kernel_core::syscall::dispatch;
+    use kernel_core::syscall::numbers::*;
+    use kernel_core::syscall::open_flags;
+
+    fn path_args(p: &str) -> (u64, u64) {
+        (p.as_ptr() as u64, p.len() as u64)
+    }
+
+    // The namespace was init'd by DEMO 17; root + /notes already exist.
+    // Make a fresh subtree under /fs-demo so we don't tangle with that.
+    let (p, l) = path_args("/fs-demo");
+    let r = dispatch(SYS_MKDIR, p, l, 0, 0);
+    if r != 0 { println!("  [DEMO 20] FAIL: mkdir /fs-demo: {}", r); return; }
+    println!("  [DEMO 20] PASS: SYS_MKDIR /fs-demo");
+
+    // Create a file via SYS_OPEN with CREATE flag.
+    let (p, l) = path_args("/fs-demo/hello.txt");
+    let fd = dispatch(SYS_OPEN, p, l, open_flags::CREATE, 0);
+    if fd == u64::MAX { println!("  [DEMO 20] FAIL: open+create /fs-demo/hello.txt"); return; }
+    println!("  [DEMO 20] PASS: SYS_OPEN(CREATE) returned fd={}", fd);
+
+    // Write content.
+    const MSG: &[u8] = b"phase 9 stage 3, syscalls live\n";
+    let n = dispatch(SYS_FWRITE, fd, MSG.as_ptr() as u64, MSG.len() as u64, 0);
+    if n as usize != MSG.len() {
+        println!("  [DEMO 20] FAIL: fwrite returned {}, want {}", n, MSG.len());
+        dispatch(SYS_CLOSE, fd, 0, 0, 0);
+        return;
+    }
+    println!("  [DEMO 20] PASS: SYS_FWRITE wrote {} bytes", n);
+
+    // Close + reopen for read.
+    let close_r = dispatch(SYS_CLOSE, fd, 0, 0, 0);
+    if close_r != 0 { println!("  [DEMO 20] FAIL: close: {}", close_r); return; }
+    println!("  [DEMO 20] PASS: SYS_CLOSE");
+
+    let fd2 = dispatch(SYS_OPEN, p, l, 0, 0);
+    if fd2 == u64::MAX { println!("  [DEMO 20] FAIL: reopen for read"); return; }
+
+    // Read and verify content.
+    let mut buf = [0u8; 64];
+    let n = dispatch(SYS_FREAD, fd2, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+    if n as usize != MSG.len() || &buf[..n as usize] != MSG {
+        println!("  [DEMO 20] FAIL: fread mismatch: got {} bytes", n);
+        dispatch(SYS_CLOSE, fd2, 0, 0, 0);
+        return;
+    }
+    println!("  [DEMO 20] PASS: SYS_FREAD round-trip ({} bytes match)", n);
+    dispatch(SYS_CLOSE, fd2, 0, 0, 0);
+
+    // SYS_STAT on the path.
+    let size = dispatch(SYS_STAT, p, l, 0, 0);
+    if size as usize != MSG.len() {
+        println!("  [DEMO 20] FAIL: stat returned {}, want {}", size, MSG.len());
+        return;
+    }
+    println!("  [DEMO 20] PASS: SYS_STAT returned {} bytes", size);
+
+    // Add a second file so readdir has something to walk.
+    let (p2, l2) = path_args("/fs-demo/notes.md");
+    let fd3 = dispatch(SYS_OPEN, p2, l2, open_flags::CREATE, 0);
+    if fd3 == u64::MAX { println!("  [DEMO 20] FAIL: create notes.md"); return; }
+    dispatch(SYS_CLOSE, fd3, 0, 0, 0);
+
+    // Open /fs-demo as a directory and walk it.
+    let (dp, dl) = path_args("/fs-demo");
+    let dfd = dispatch(SYS_OPEN, dp, dl, open_flags::DIRECTORY, 0);
+    if dfd == u64::MAX { println!("  [DEMO 20] FAIL: open /fs-demo as dir"); return; }
+    let mut name_buf = [0u8; 64];
+    let mut entries_seen = 0;
+    for idx in 0u64..16 {
+        let n = dispatch(SYS_READDIR, dfd, idx,
+            name_buf.as_mut_ptr() as u64, name_buf.len() as u64);
+        if n == 0 { break; }
+        if n == u64::MAX {
+            println!("  [DEMO 20] FAIL: readdir at idx {}", idx);
+            dispatch(SYS_CLOSE, dfd, 0, 0, 0);
+            return;
+        }
+        let name = core::str::from_utf8(&name_buf[..n as usize]).unwrap_or("?");
+        println!("  [DEMO 20]   readdir[{}] = '{}'", idx, name);
+        entries_seen += 1;
+    }
+    dispatch(SYS_CLOSE, dfd, 0, 0, 0);
+    if entries_seen != 2 {
+        println!("  [DEMO 20] FAIL: readdir saw {} entries, want 2", entries_seen);
+        return;
+    }
+    println!("  [DEMO 20] PASS: SYS_READDIR walked 2 entries");
+
+    // Unlink and confirm.
+    let unlink_r = dispatch(SYS_UNLINK, p, l, 0, 0);
+    if unlink_r != 0 { println!("  [DEMO 20] FAIL: unlink: {}", unlink_r); return; }
+    let stat_after = dispatch(SYS_STAT, p, l, 0, 0);
+    if stat_after != u64::MAX {
+        println!("  [DEMO 20] FAIL: stat after unlink returned {}, want u64::MAX", stat_after);
+        return;
+    }
+    println!("  [DEMO 20] PASS: SYS_UNLINK + post-stat returns NotFound");
+
+    println!("  [DEMO 20] => FS syscalls work end-to-end against path namespace");
 }
 
 /// DEMO 19: RTC + wall_clock through the Platform trait surface.

@@ -110,12 +110,15 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_INFO => handle_info(),
 
         // File I/O (10-19)
-        SYS_OPEN => handle_open(arg0, arg1),
+        SYS_OPEN => handle_open(arg0, arg1, arg2),
         SYS_CLOSE => handle_close(arg0),
         SYS_FREAD => handle_fread(arg0, arg1, arg2),
         SYS_FWRITE => handle_fwrite(arg0, arg1, arg2),
         SYS_SEEK => handle_seek(arg0, arg1),
         SYS_STAT => handle_stat(arg0, arg1),
+        SYS_MKDIR => handle_mkdir(arg0, arg1),
+        SYS_UNLINK => handle_unlink(arg0, arg1),
+        SYS_READDIR => handle_readdir(arg0, arg1, arg2, arg3),
 
         // Semantic objects (20-29)
         SYS_SEM_CREATE => handle_sem_create(arg0, arg1, arg2, arg3),
@@ -307,9 +310,127 @@ fn handle_pool_info(tier: u64) -> u64 {
 // --- File I/O handlers ---
 
 /// SYS_OPEN(path_ptr, path_len) → fd or u64::MAX on error
-fn handle_open(path_ptr: u64, path_len: u64) -> u64 {
+// ============================================================================
+// Path-namespace FD tracking (Phase 9 Stage 3)
+// ============================================================================
+//
+// FDs land in distinct ranges so the three backends (pipe / path / ramfs)
+// can't collide:
+//   - Ramfs FDs:   3..63   (legacy embedded-files store, read-only)
+//   - Pipe FDs:    3..63   (sharing range historically; alloc_fd_number
+//                  walks the pipe table, ramfs check is a known gap)
+//   - Path FDs:    96..127 (this block — separate range to dodge the gap)
+//
+// Path FDs reference SemanticObjects via the path namespace
+// (kernel-core::fs::paths). Each entry tracks the SUID + a read cursor
+// + a flag for "this was opened from a directory" (so SYS_READDIR can
+// validate before walking).
+
+const MAX_PATH_FDS: usize = 32;
+const PATH_FD_BASE: usize = 96;
+
+#[derive(Clone, Copy)]
+struct PathFdEntry {
+    fd: u32,
+    suid: crate::semantic::suid::SUID,
+    position: u32,
+    is_directory: bool,
+    active: bool,
+}
+
+impl PathFdEntry {
+    const fn empty() -> Self {
+        Self {
+            fd: 0,
+            suid: crate::semantic::suid::SUID::NULL,
+            position: 0,
+            is_directory: false,
+            active: false,
+        }
+    }
+}
+
+static mut PATH_FDS: [PathFdEntry; MAX_PATH_FDS] =
+    [PathFdEntry::empty(); MAX_PATH_FDS];
+
+/// SYS_OPEN flag bits (passed in `flags` arg).
+pub mod open_flags {
+    /// Create the file if it doesn't exist. Tier is taken from bits 1-2.
+    pub const CREATE: u64 = 1 << 0;
+    /// Open as a directory (must already exist). Used by SYS_READDIR.
+    pub const DIRECTORY: u64 = 1 << 1;
+    // Bits 4-5 reserved for tier when CREATE is set:
+    // tier = (flags >> 4) & 0x3 → 0=Public, 1=Internal, 2=Sensitive, 3=Secret.
+}
+
+/// Allocate a free path-FD slot. Returns the FD number (in PATH_FD_BASE..),
+/// or `None` if the table is full.
+fn alloc_path_fd_slot(suid: crate::semantic::suid::SUID, is_directory: bool) -> Option<usize> {
+    unsafe {
+        let table = &raw mut PATH_FDS;
+        // Find a free slot; FD number = PATH_FD_BASE + slot index.
+        for (slot, entry) in (*table).iter_mut().enumerate() {
+            if !entry.active {
+                let fd = PATH_FD_BASE + slot;
+                *entry = PathFdEntry {
+                    fd: fd as u32,
+                    suid,
+                    position: 0,
+                    is_directory,
+                    active: true,
+                };
+                return Some(fd);
+            }
+        }
+    }
+    None
+}
+
+/// Look up a path FD. Returns the entry (copied) if found.
+fn lookup_path_fd(fd: usize) -> Option<PathFdEntry> {
+    if !(PATH_FD_BASE..PATH_FD_BASE + MAX_PATH_FDS).contains(&fd) {
+        return None;
+    }
+    let slot = fd - PATH_FD_BASE;
+    unsafe {
+        let table = &raw const PATH_FDS;
+        let entry = (*table)[slot];
+        if entry.active && entry.fd as usize == fd { Some(entry) } else { None }
+    }
+}
+
+/// Update a path FD's read cursor.
+fn update_path_fd_position(fd: usize, new_position: u32) {
+    if !(PATH_FD_BASE..PATH_FD_BASE + MAX_PATH_FDS).contains(&fd) { return; }
+    let slot = fd - PATH_FD_BASE;
+    unsafe {
+        let table = &raw mut PATH_FDS;
+        if (*table)[slot].active && (*table)[slot].fd as usize == fd {
+            (*table)[slot].position = new_position;
+        }
+    }
+}
+
+/// Free a path FD. Returns true if it was active.
+fn free_path_fd(fd: usize) -> bool {
+    if !(PATH_FD_BASE..PATH_FD_BASE + MAX_PATH_FDS).contains(&fd) { return false; }
+    let slot = fd - PATH_FD_BASE;
+    unsafe {
+        let table = &raw mut PATH_FDS;
+        if (*table)[slot].active && (*table)[slot].fd as usize == fd {
+            (*table)[slot].active = false;
+            return true;
+        }
+    }
+    false
+}
+
+// ============================================================================
+// SYS_OPEN — path namespace first, ramfs fallback
+// ============================================================================
+
+fn handle_open(path_ptr: u64, path_len: u64, flags: u64) -> u64 {
     let name = unsafe {
-        // Allow both user and kernel pointers for now
         let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
         match core::str::from_utf8(slice) {
             Ok(s) => s,
@@ -317,6 +438,13 @@ fn handle_open(path_ptr: u64, path_len: u64) -> u64 {
         }
     };
 
+    // Path-namespace entries are absolute (start with '/'). Anything else
+    // falls straight through to ramfs's flat-name lookup.
+    if name.starts_with('/') {
+        return handle_open_path(name, flags);
+    }
+
+    // Ramfs path: existing behaviour for embedded files.
     let fs = match crate::fs::ramfs::get_fs() {
         Some(fs) => fs,
         None => return u64::MAX,
@@ -334,6 +462,71 @@ fn handle_open(path_ptr: u64, path_len: u64) -> u64 {
             crate::platform::log("\n");
             u64::MAX
         }
+    }
+}
+
+/// Open through the path namespace. Resolves the path, possibly creates
+/// the entry per CREATE flag, allocates a path FD, returns its number.
+fn handle_open_path(path: &str, flags: u64) -> u64 {
+    use crate::fs::paths::{Namespace, FsError};
+    use crate::semantic::object::SecurityTier;
+
+    let want_create = (flags & open_flags::CREATE) != 0;
+    let want_dir = (flags & open_flags::DIRECTORY) != 0;
+
+    let suid = match Namespace::resolve(path) {
+        Ok(s) => s,
+        Err(FsError::NotFound) if want_create => {
+            // Create the file with the requested tier (default Public).
+            let tier = match (flags >> 4) & 0x3 {
+                0 => SecurityTier::Public,
+                1 => SecurityTier::Internal,
+                2 => SecurityTier::Sensitive,
+                _ => SecurityTier::Secret,
+            };
+            match Namespace::create_file(path, tier, &[]) {
+                Ok(s) => s,
+                Err(_) => return u64::MAX,
+            }
+        }
+        Err(_) => return u64::MAX,
+    };
+
+    // Security: caller's max_tier must cover the object's tier. The
+    // current task's max_tier is the strongest filter; without it any
+    // user could open Secret objects by path. SecurityTier is repr(u8)
+    // so a numeric ≥ comparison matches the SecurityTier::can_access
+    // semantics (higher value = stronger clearance).
+    let caller_tier = crate::scheduler::current_task_max_tier();
+    let obj_tier = {
+        let registry = unsafe { crate::semantic::registry::global_registry() };
+        match registry.get(&suid) {
+            Some(o) => o.tier,
+            None => return u64::MAX,
+        }
+    };
+    if caller_tier < (obj_tier as u8) {
+        crate::platform::log("[syscall] open: tier denied for ");
+        crate::platform::log(path);
+        crate::platform::log("\n");
+        return u64::MAX;
+    }
+
+    // Is it a directory? Path-namespace dirs have ContentType::Structured.
+    let is_dir = {
+        let registry = unsafe { crate::semantic::registry::global_registry() };
+        registry.get(&suid).map(|o| {
+            o.content_type == crate::semantic::object::ContentType::Structured
+        }).unwrap_or(false)
+    };
+    if want_dir && !is_dir {
+        // Explicit dir-open of a non-dir is an error.
+        return u64::MAX;
+    }
+
+    match alloc_path_fd_slot(suid, is_dir) {
+        Some(fd) => fd as u64,
+        None => u64::MAX,
     }
 }
 
@@ -433,7 +626,10 @@ fn alloc_fd_number() -> Option<usize> {
 fn handle_close(fd: u64) -> u64 {
     let fd_num = fd as usize;
 
-    // Check if it's a pipe FD first
+    // Path-namespace FD (range PATH_FD_BASE..)
+    if free_path_fd(fd_num) { return 0; }
+
+    // Check if it's a pipe FD
     if let Some((pipe_id, is_read_end)) = unregister_pipe_fd(fd_num) {
         if is_read_end {
             crate::ipc::close_read_end(pipe_id);
@@ -456,6 +652,29 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     let fd_num = fd as usize;
     let len = buf_len as usize;
     if len == 0 || len > 4096 { return u64::MAX; }
+
+    // Path-namespace FD: read from the SemanticObject at the cursor.
+    if let Some(entry) = lookup_path_fd(fd_num) {
+        if entry.is_directory { return u64::MAX; }  // use SYS_READDIR instead
+        let registry = unsafe { crate::semantic::registry::global_registry() };
+        let obj = match registry.get(&entry.suid) {
+            Some(o) => o,
+            None => return u64::MAX,
+        };
+        let bytes = match obj.content.as_bytes() {
+            Some(b) => b,
+            None => return u64::MAX,
+        };
+        let pos = entry.position as usize;
+        if pos >= bytes.len() { return 0; }
+        let n = (bytes.len() - pos).min(len);
+        unsafe {
+            let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
+            dest.copy_from_slice(&bytes[pos..pos + n]);
+        }
+        update_path_fd_position(fd_num, (pos + n) as u32);
+        return n as u64;
+    }
 
     // Check if it's a pipe FD
     if let Some((pipe_id, true)) = lookup_pipe_fd(fd_num) {
@@ -523,6 +742,30 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         return handle_write(buf_ptr, buf_len);
     }
 
+    // Path-namespace FD: overwrite the SemanticObject's content with
+    // the buffer. v1: full-file overwrite (matches Namespace::write_file).
+    // Append/random-write are follow-ups (need richer object content
+    // ownership than today's Inline { [u8; 256], len }).
+    if let Some(entry) = lookup_path_fd(fd_num) {
+        if entry.is_directory { return u64::MAX; }
+        let len = (buf_len as usize).min(256);  // inline-content cap today
+        let data = unsafe {
+            core::slice::from_raw_parts(buf_ptr as *const u8, len)
+        };
+        let registry = unsafe { crate::semantic::registry::global_registry() };
+        let obj = match registry.get_mut(&entry.suid) {
+            Some(o) => o,
+            None => return u64::MAX,
+        };
+        obj.content = match crate::semantic::object::ObjectContent::from_inline(data) {
+            Some(c) => c,
+            None => return u64::MAX,
+        };
+        // Reset cursor — write is full-file overwrite for now.
+        update_path_fd_position(fd_num, 0);
+        return len as u64;
+    }
+
     // Check if it's a pipe FD (write end)
     if let Some((pipe_id, false)) = lookup_pipe_fd(fd_num) {
         let len = (buf_len as usize).min(4096);
@@ -574,15 +817,112 @@ fn handle_stat(path_ptr: u64, path_len: u64) -> u64 {
         }
     };
 
+    // Path-namespace first (absolute paths).
+    if name.starts_with('/') {
+        use crate::fs::paths::Namespace;
+        let suid = match Namespace::resolve(name) {
+            Ok(s) => s,
+            Err(_) => return u64::MAX,
+        };
+        let registry = unsafe { crate::semantic::registry::global_registry() };
+        return match registry.get(&suid) {
+            Some(o) => o.content.len() as u64,
+            None => u64::MAX,
+        };
+    }
+
+    // Ramfs fallback.
     let fs = match crate::fs::ramfs::get_fs() {
         Some(fs) => fs,
         None => return u64::MAX,
     };
-
     match fs.find(name) {
         Some(file) => file.size() as u64,
         None => u64::MAX,
     }
+}
+
+/// SYS_MKDIR(path_ptr, path_len) → 0 on success, u64::MAX on error.
+fn handle_mkdir(path_ptr: u64, path_len: u64) -> u64 {
+    let path = unsafe {
+        let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return u64::MAX,
+        }
+    };
+    match crate::fs::paths::Namespace::mkdir(path) {
+        Ok(_) => 0,
+        Err(_) => u64::MAX,
+    }
+}
+
+/// SYS_UNLINK(path_ptr, path_len) → 0 on success, u64::MAX on error.
+/// Removes the file or empty directory at the given absolute path.
+fn handle_unlink(path_ptr: u64, path_len: u64) -> u64 {
+    let path = unsafe {
+        let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return u64::MAX,
+        }
+    };
+    match crate::fs::paths::Namespace::unlink(path) {
+        Ok(()) => 0,
+        Err(_) => u64::MAX,
+    }
+}
+
+/// SYS_READDIR(fd, idx, name_buf_ptr, name_buf_len) → name length on
+/// success, 0 if no entry at idx (end of dir), u64::MAX on error.
+///
+/// Caller opens a directory with `SYS_OPEN(path, OPEN_FLAGS_DIRECTORY)`,
+/// then walks indices 0..N until SYS_READDIR returns 0. Each call
+/// writes the entry name into `name_buf` and returns its length.
+///
+/// SUIDs are intentionally not exposed at this layer — the user-space
+/// surface is paths and names. To get the entry's metadata, the caller
+/// joins the name to the dir path and calls SYS_STAT or SYS_OPEN.
+fn handle_readdir(fd: u64, idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u64 {
+    let entry = match lookup_path_fd(fd as usize) {
+        Some(e) if e.is_directory => e,
+        _ => return u64::MAX,
+    };
+
+    let buf_len = name_buf_len as usize;
+    if buf_len == 0 || buf_len > 256 { return u64::MAX; }
+
+    // Walk the packed directory bytes to the requested index, then
+    // copy that entry's name out. The path namespace exposes this
+    // via the visitor-callback API.
+    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let obj = match registry.get(&entry.suid) {
+        Some(o) => o,
+        None => return u64::MAX,
+    };
+    let bytes = match obj.content.as_bytes() {
+        Some(b) => b,
+        None => return u64::MAX,
+    };
+    if bytes.is_empty() { return 0; }
+    let entries = match crate::fs::paths::DirEntries::parse(bytes) {
+        Ok(e) => e,
+        Err(_) => return u64::MAX,
+    };
+    for (i, item) in entries.enumerate() {
+        if i as u64 != idx { continue; }
+        let (name, _suid) = match item {
+            Ok(t) => t,
+            Err(_) => return u64::MAX,
+        };
+        let n = name.len().min(buf_len);
+        unsafe {
+            let dest = core::slice::from_raw_parts_mut(name_buf_ptr as *mut u8, n);
+            dest.copy_from_slice(&name.as_bytes()[..n]);
+        }
+        return n as u64;
+    }
+    0 // index past end → caller stops walking
 }
 
 // --- Sleep handler ---
