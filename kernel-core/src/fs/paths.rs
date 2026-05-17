@@ -419,8 +419,11 @@ impl Namespace {
         let (parent_path, name) = split_parent(path)?;
         let parent = Self::resolve(parent_path)?;
         let suid = mint_suid();
+        let now = crate::platform::wall_clock().unwrap_or(0);
         let mut dir = SemanticObject::new(suid, SecurityTier::Public, 0);
         dir.content_type = ContentType::Structured;
+        dir.created_at = now;
+        dir.modified_at = now;
         let empty = [0u8; 1];
         dir.content = ObjectContent::from_inline(&empty).ok_or(FsError::Corrupt)?;
         let registry = unsafe { global_registry() };
@@ -439,8 +442,11 @@ impl Namespace {
         let (parent_path, name) = split_parent(path)?;
         let parent = Self::resolve(parent_path)?;
         let suid = mint_suid();
+        let now = crate::platform::wall_clock().unwrap_or(0);
         let mut file = SemanticObject::new(suid, tier, 0);
         file.content_type = ContentType::Binary;
+        file.created_at = now;
+        file.modified_at = now;
         file.content = ObjectContent::from_inline(content).ok_or(FsError::ContentTooLarge)?;
         let registry = unsafe { global_registry() };
         if !registry.insert(file) { return Err(FsError::RegistryFull); }
@@ -453,12 +459,14 @@ impl Namespace {
     /// storage limit (Stage 1).
     pub fn write_file(path: &str, content: &[u8]) -> Result<(), FsError> {
         let suid = Self::resolve(path)?;
+        let now = crate::platform::wall_clock().unwrap_or(0);
         let registry = unsafe { global_registry() };
         let obj = registry.get_mut(&suid).ok_or(FsError::NotFound)?;
         if obj.content_type == ContentType::Structured {
             return Err(FsError::IsADirectory);
         }
         obj.content = ObjectContent::from_inline(content).ok_or(FsError::ContentTooLarge)?;
+        obj.modified_at = now;
         Ok(())
     }
 
@@ -526,6 +534,216 @@ impl Namespace {
             visit(name, child);
         }
         Ok(())
+    }
+
+    // ========================================================================
+    // Stage 2 — persistence
+    // ========================================================================
+
+    /// Walk the namespace from [`ROOT_SUID`] and write a packed
+    /// serialization into `buf`. Returns the number of bytes written.
+    ///
+    /// Format (see [`serial`] for details):
+    /// ```text
+    ///   [magic 4]["FSNS"][version u32][count u32]
+    ///   for each object reachable from ROOT_SUID (BFS order):
+    ///     [suid 16][tier u8][content_type u8][reserved 2][created_at u64]
+    ///     [modified_at u64][content_len u16][content content_len]
+    /// ```
+    ///
+    /// BFS, not DFS, so the root + its immediate children land first
+    /// and a partial truncated load can still see a usable subtree.
+    pub fn serialize(buf: &mut [u8]) -> Result<usize, FsError> {
+        serial::serialize_namespace(buf)
+    }
+
+    /// Reverse of [`serialize`]. Walks the packed bytes, inserts each
+    /// object into the registry, then verifies the root SUID came back.
+    /// Existing namespace state is NOT cleared — callers should reset
+    /// the registry first if they want a clean reload.
+    pub fn deserialize(buf: &[u8]) -> Result<usize, FsError> {
+        serial::deserialize_namespace(buf)
+    }
+
+    /// Snapshot the path namespace through the storage layer. Wraps
+    /// `crate::storage::snapshot::save_snapshot` with our serializer.
+    /// Caller passes a `BlockDevice` — typically `"virtio0"`.
+    pub fn save(dev: &dyn crate::drivers::traits::BlockDevice) -> Result<usize, FsError> {
+        let mut scratch = [0u8; crate::storage::snapshot::MAX_SNAPSHOT_BYTES];
+        let n = Self::serialize(&mut scratch)?;
+        crate::storage::snapshot::save_snapshot(dev, &scratch[..n])
+            .map_err(|_| FsError::Corrupt)?;
+        Ok(n)
+    }
+
+    /// Read a previously-saved snapshot and reconstruct the namespace
+    /// in `global_registry()`. Returns the number of bytes consumed.
+    pub fn load(dev: &dyn crate::drivers::traits::BlockDevice) -> Result<usize, FsError> {
+        let mut scratch = [0u8; crate::storage::snapshot::MAX_SNAPSHOT_BYTES];
+        let n = crate::storage::snapshot::load_snapshot(dev, &mut scratch)
+            .map_err(|_| FsError::Corrupt)?;
+        Self::deserialize(&scratch[..n])?;
+        Ok(n)
+    }
+}
+
+// ============================================================================
+// Stage 2 — packed serializer (BFS from root)
+// ============================================================================
+
+mod serial {
+    use super::*;
+
+    /// On-disk magic so a stale or wrong snapshot can't be loaded as
+    /// a namespace. ASCII "FSNS".
+    const MAGIC: [u8; 4] = *b"FSNS";
+    /// Bump when the field layout changes.
+    const VERSION: u32 = 1;
+    /// Per-object header size (everything except the trailing content).
+    const OBJ_HEADER: usize = 16 + 1 + 1 + 2 + 8 + 8 + 2;
+    //                       suid + tier + type + rsvd + ctime + mtime + clen
+
+    /// Maximum reachable objects we'll serialize in one snapshot. The
+    /// registry caps at MAX_OBJECTS (1024) but the path namespace
+    /// will be much smaller in practice; bounding here keeps the
+    /// BFS queue static.
+    const MAX_QUEUE: usize = 256;
+
+    pub fn serialize_namespace(buf: &mut [u8]) -> Result<usize, FsError> {
+        if buf.len() < 12 { return Err(FsError::Corrupt); }
+        // Header: magic | version | count (count filled at the end).
+        buf[0..4].copy_from_slice(&MAGIC);
+        buf[4..8].copy_from_slice(&VERSION.to_le_bytes());
+        // count placeholder — we know the final value only after BFS
+        // walks the tree, so write 0 here and patch at the end.
+        buf[8..12].copy_from_slice(&0u32.to_le_bytes());
+        let mut cursor = 12usize;
+        let mut count = 0u32;
+
+        let mut queue = [SUID::NULL; MAX_QUEUE];
+        let mut visited = [SUID::NULL; MAX_QUEUE];
+        queue[0] = ROOT_SUID;
+        let mut head = 0usize;
+        let mut tail = 1usize;
+
+        let registry = unsafe { global_registry() };
+        while head < tail {
+            let suid = queue[head];
+            head += 1;
+
+            // Guard against cycles. The path namespace is a tree by
+            // construction (no hardlinks yet) so this should never
+            // trigger, but a corrupted directory could send us in
+            // circles — bound the work either way.
+            if visited[..count as usize].iter().any(|&v| v == suid) { continue; }
+
+            let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
+            let content_bytes = obj.content.as_bytes().unwrap_or(&[]);
+            let content_len = content_bytes.len();
+            if content_len > u16::MAX as usize { return Err(FsError::ContentTooLarge); }
+
+            // Bounds-check before writing the object record.
+            let record_len = OBJ_HEADER + content_len;
+            if cursor + record_len > buf.len() {
+                return Err(FsError::ContentTooLarge);
+            }
+
+            // suid
+            buf[cursor..cursor + 8].copy_from_slice(&suid.high.to_be_bytes());
+            buf[cursor + 8..cursor + 16].copy_from_slice(&suid.low.to_be_bytes());
+            // tier, content_type
+            buf[cursor + 16] = obj.tier as u8;
+            buf[cursor + 17] = obj.content_type as u8;
+            // reserved
+            buf[cursor + 18] = 0;
+            buf[cursor + 19] = 0;
+            // timestamps
+            buf[cursor + 20..cursor + 28].copy_from_slice(&obj.created_at.to_le_bytes());
+            buf[cursor + 28..cursor + 36].copy_from_slice(&obj.modified_at.to_le_bytes());
+            // content length + body
+            buf[cursor + 36..cursor + 38].copy_from_slice(&(content_len as u16).to_le_bytes());
+            buf[cursor + 38..cursor + 38 + content_len].copy_from_slice(content_bytes);
+            cursor += record_len;
+
+            visited[count as usize] = suid;
+            count += 1;
+
+            // BFS: if this is a directory, enqueue its children.
+            if obj.content_type == ContentType::Structured && !content_bytes.is_empty() {
+                for entry in DirEntries::parse(content_bytes)? {
+                    let (_, child) = entry?;
+                    if tail >= queue.len() { return Err(FsError::DirectoryFull); }
+                    queue[tail] = child;
+                    tail += 1;
+                }
+            }
+        }
+
+        // Patch the count field at offset 8.
+        buf[8..12].copy_from_slice(&count.to_le_bytes());
+        Ok(cursor)
+    }
+
+    pub fn deserialize_namespace(buf: &[u8]) -> Result<usize, FsError> {
+        if buf.len() < 12 { return Err(FsError::Corrupt); }
+        if &buf[0..4] != &MAGIC { return Err(FsError::Corrupt); }
+        let version = u32::from_le_bytes(buf[4..8].try_into().unwrap());
+        if version != VERSION { return Err(FsError::Corrupt); }
+        let count = u32::from_le_bytes(buf[8..12].try_into().unwrap()) as usize;
+
+        let registry = unsafe { global_registry() };
+        let mut cursor = 12usize;
+        for _ in 0..count {
+            if cursor + OBJ_HEADER > buf.len() { return Err(FsError::Corrupt); }
+            let suid_high = u64::from_be_bytes(buf[cursor..cursor + 8].try_into().unwrap());
+            let suid_low = u64::from_be_bytes(buf[cursor + 8..cursor + 16].try_into().unwrap());
+            let suid = SUID::new(suid_high, suid_low);
+            let tier_raw = buf[cursor + 16];
+            let ctype_raw = buf[cursor + 17];
+            let created_at = u64::from_le_bytes(buf[cursor + 20..cursor + 28].try_into().unwrap());
+            let modified_at = u64::from_le_bytes(buf[cursor + 28..cursor + 36].try_into().unwrap());
+            let content_len = u16::from_le_bytes(buf[cursor + 36..cursor + 38].try_into().unwrap()) as usize;
+            cursor += OBJ_HEADER;
+            if cursor + content_len > buf.len() { return Err(FsError::Corrupt); }
+            let content_slice = &buf[cursor..cursor + content_len];
+            cursor += content_len;
+
+            let tier = match tier_raw {
+                0 => SecurityTier::Public,
+                1 => SecurityTier::Internal,
+                2 => SecurityTier::Sensitive,
+                3 => SecurityTier::Secret,
+                _ => return Err(FsError::Corrupt),
+            };
+            let ctype = match ctype_raw {
+                0 => ContentType::Binary,
+                1 => ContentType::Text,
+                2 => ContentType::Vector,
+                3 => ContentType::Structured,
+                4 => ContentType::Reference,
+                _ => return Err(FsError::Corrupt),
+            };
+            // If an object with this SUID already exists in the registry
+            // (e.g. ROOT_SUID was installed by Namespace::init), update
+            // it in place instead of failing on duplicate insert.
+            if let Some(existing) = registry.get_mut(&suid) {
+                existing.tier = tier;
+                existing.content_type = ctype;
+                existing.created_at = created_at;
+                existing.modified_at = modified_at;
+                existing.content = ObjectContent::from_inline(content_slice)
+                    .ok_or(FsError::ContentTooLarge)?;
+            } else {
+                let mut obj = SemanticObject::new(suid, tier, 0);
+                obj.content_type = ctype;
+                obj.created_at = created_at;
+                obj.modified_at = modified_at;
+                obj.content = ObjectContent::from_inline(content_slice)
+                    .ok_or(FsError::ContentTooLarge)?;
+                if !registry.insert(obj) { return Err(FsError::RegistryFull); }
+            }
+        }
+        Ok(cursor)
     }
 }
 
@@ -605,19 +823,31 @@ fn remove_child(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
     Ok(removed_suid)
 }
 
-/// Generate a fresh SUID for a new object. Random type so it can't
-/// collide with content-addressed SUIDs.
+/// Generate a fresh SUID for a new object. RDRAND-backed (Stage 2) so
+/// SUIDs persisted across boots don't collide with newly-minted ones.
 ///
-/// Stage 1: derives from a small counter + boot ticks for uniqueness.
-/// Production: should use the RDRAND-backed RNG so two boots with the
-/// same operation sequence don't collide on persistent storage. That's
-/// fine to address in Stage 2 along with persistence.
+/// If the platform RNG fails (no RDRAND, e.g. `NullPlatform`), fall
+/// back to a counter + boot-tick scramble. That's only safe for
+/// in-memory-only use — persistent state would risk collision. Worth
+/// failing loudly here once we have a way to signal it; today we
+/// log and continue with the degraded SUID.
 fn mint_suid() -> SUID {
+    let mut buf = [0u8; 16];
+    if crate::platform::random_bytes(&mut buf).is_ok() {
+        let high = u64::from_be_bytes(buf[0..8].try_into().unwrap());
+        let low = u64::from_be_bytes(buf[8..16].try_into().unwrap());
+        // Stamp the random-type nibble in the top of `high` so it can't
+        // collide with content-addressed (type 0) or system (type 15)
+        // SUIDs. Bits 60-63 = 0b0001 (TYPE_RANDOM); preserve the rest.
+        let high = (high & 0x0FFF_FFFF_FFFF_FFFF) | (1u64 << 60);
+        return SUID::new(high, low);
+    }
+    // Degraded fallback for platforms without RDRAND (testing only).
+    crate::platform::log("[fs] mint_suid: RDRAND unavailable, using counter fallback\n");
     use core::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(1);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    // Type=random in the high nibble of `high`.
     let high = (1u64 << 60) | (n & 0x0FFF_FFFF_FFFF_FFFF);
-    let low = n.wrapping_mul(0x9E37_79B9_7F4A_7C15); // golden-ratio scramble
+    let low = n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     SUID::new(high, low)
 }

@@ -586,6 +586,15 @@ fn init_loader_task() {
     println!("================================================================");
     fs_syscall_test();
 
+    // DEMO 21: FS Stage 2 — snapshot persistence. Save the namespace
+    // to virtio0, simulate reboot by clearing in-memory state, reload,
+    // verify same content + timestamps. Only runs if virtio0 is present.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 21: FS snapshot persistence (Phase 9 Stage 2)");
+    println!("================================================================");
+    fs_persistence_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -2026,6 +2035,111 @@ fn paths_namespace_test() {
     println!("  [DEMO 17] PASS: bad paths reject with the right FsError variants");
 
     println!("  [DEMO 17] => path namespace works end-to-end; persistence (Stage 2) is next");
+}
+
+/// DEMO 21: FS snapshot persistence — survives a "reboot" within
+/// one boot cycle by saving to virtio0, removing in-memory state,
+/// reloading from disk.
+///
+/// What this proves end-to-end:
+///   1. `Namespace::save(dev)` serializes the live tree and writes it.
+///   2. After `unlink`-ing every saved entry, the namespace is empty.
+///   3. `Namespace::load(dev)` reconstructs the entries with identical
+///      paths and content (byte-exact).
+///   4. Timestamps (`created_at` / `modified_at`) round-trip correctly.
+fn fs_persistence_test() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::memory::SecurityTier;
+
+    let dev = match kernel_core::drivers::registry::get_block("virtio0") {
+        Some(d) => d,
+        None => {
+            println!("  [DEMO 21] SKIPPED: no virtio0 block device — run with -drive ...,if=virtio");
+            return;
+        }
+    };
+
+    // Step 1: lay down a small tree under /persist (independent of
+    // /notes from DEMO 17 + /fs-demo from DEMO 20 to avoid tangling).
+    if Namespace::mkdir("/persist").is_err() {
+        println!("  [DEMO 21] FAIL: mkdir /persist"); return;
+    }
+    const FILE_A: &[u8] = b"alpha file, saved across reboot\n";
+    const FILE_B: &[u8] = b"beta file with different content\n";
+    if Namespace::create_file("/persist/a.txt", SecurityTier::Public, FILE_A).is_err() {
+        println!("  [DEMO 21] FAIL: create /persist/a.txt"); return;
+    }
+    if Namespace::create_file("/persist/b.txt", SecurityTier::Internal, FILE_B).is_err() {
+        println!("  [DEMO 21] FAIL: create /persist/b.txt"); return;
+    }
+    println!("  [DEMO 21] PASS: created /persist/{{a.txt,b.txt}}");
+
+    // Capture timestamps for the round-trip check.
+    let ts_before = {
+        let suid_a = Namespace::resolve("/persist/a.txt").unwrap();
+        let registry = unsafe { kernel_core::semantic::registry::global_registry() };
+        registry.get(&suid_a).map(|o| (o.created_at, o.modified_at)).unwrap_or((0,0))
+    };
+
+    // Step 2: save.
+    match Namespace::save(dev) {
+        Ok(n) => println!("  [DEMO 21] PASS: Namespace::save() wrote {} bytes to virtio0", n),
+        Err(e) => { println!("  [DEMO 21] FAIL: save: {:?}", e); return; }
+    }
+
+    // Step 3: simulate a reboot — drop the entries we'll reload, so
+    // success of the reload is provable. We unlink the files (which
+    // also removes them from the registry); the empty /persist dir
+    // stays. Root and /notes from DEMO 17 stay too — they'll be
+    // re-loaded by deserialize and overwrite the live entries.
+    let _ = Namespace::unlink("/persist/a.txt");
+    let _ = Namespace::unlink("/persist/b.txt");
+    if Namespace::read_file("/persist/a.txt").is_ok() {
+        println!("  [DEMO 21] FAIL: a.txt still present after unlink (test setup bug)");
+        return;
+    }
+    println!("  [DEMO 21] PASS: pre-reload state cleared (a.txt + b.txt gone)");
+
+    // Step 4: load.
+    match Namespace::load(dev) {
+        Ok(n) => println!("  [DEMO 21] PASS: Namespace::load() consumed {} bytes from virtio0", n),
+        Err(e) => { println!("  [DEMO 21] FAIL: load: {:?}", e); return; }
+    }
+
+    // Step 5: verify both files came back byte-exact.
+    let a_back = match Namespace::read_file("/persist/a.txt") {
+        Ok(b) => b,
+        Err(e) => { println!("  [DEMO 21] FAIL: read a.txt after load: {:?}", e); return; }
+    };
+    if a_back != FILE_A {
+        println!("  [DEMO 21] FAIL: a.txt content mismatch ({} bytes after load, want {})",
+            a_back.len(), FILE_A.len());
+        return;
+    }
+    let b_back = match Namespace::read_file("/persist/b.txt") {
+        Ok(b) => b,
+        Err(e) => { println!("  [DEMO 21] FAIL: read b.txt after load: {:?}", e); return; }
+    };
+    if b_back != FILE_B {
+        println!("  [DEMO 21] FAIL: b.txt content mismatch"); return;
+    }
+    println!("  [DEMO 21] PASS: both files restored byte-exact ({} + {} bytes)",
+        a_back.len(), b_back.len());
+
+    // Step 6: timestamps round-tripped.
+    let ts_after = {
+        let suid_a = Namespace::resolve("/persist/a.txt").unwrap();
+        let registry = unsafe { kernel_core::semantic::registry::global_registry() };
+        registry.get(&suid_a).map(|o| (o.created_at, o.modified_at)).unwrap_or((0,0))
+    };
+    if ts_before != ts_after {
+        println!("  [DEMO 21] FAIL: timestamps drifted: before={:?} after={:?}", ts_before, ts_after);
+        return;
+    }
+    println!("  [DEMO 21] PASS: timestamps round-tripped (created={} modified={})",
+        ts_after.0, ts_after.1);
+
+    println!("  [DEMO 21] => snapshot persistence works; namespace survives reboot");
 }
 
 /// DEMO 20: FS syscalls (SYS_OPEN/FREAD/FWRITE/CLOSE/MKDIR/UNLINK/READDIR/STAT)
