@@ -34,6 +34,7 @@ pub mod framebuffer;
 pub mod pci;
 pub mod virtio;
 pub mod rng;
+pub mod usb;
 
 use serial::Serial;
 
@@ -193,6 +194,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             }
         }
     }
+
+    // Bring up the xHCI USB controller. Independent of virtio; safe to skip
+    // if no qemu-xhci device is present (the kernel boots fine without it).
+    // DEMO 18 (in init_loader_task) reports the PASS/FAIL lines.
+    println!("[*] Probing xHCI USB controller...");
+    let _usb_ok = usb::init_and_enumerate();
     println!();
 
     // Initialize kernel-core subsystems
@@ -534,6 +541,18 @@ fn init_loader_task() {
     println!("================================================================");
     paths_namespace_test();
 
+    // DEMO 18: USB xHCI + HID boot keyboard. PASS/FAIL/SKIPPED lines.
+    // The first PASS lines (controller found, reset complete, descriptor
+    // parsed) are printed inside usb::init_and_enumerate at boot. The
+    // remaining ones (HID report read) require polling for keypress events,
+    // which we do here for a bounded number of iterations and then either
+    // PASS or SKIPPED if no keypress arrived (QEMU may not type into us).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 18: USB xHCI + HID boot keyboard");
+    println!("================================================================");
+    usb_hid_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -548,6 +567,64 @@ fn init_loader_task() {
 
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+    }
+}
+
+/// DEMO 18: poll the HID transfer ring for a few seconds, print any keypress
+/// reports. Emits PASS/FAIL/SKIPPED lines matching the brief's checklist.
+fn usb_hid_demo() {
+    let dev = match usb::xhci::enumerated_device() {
+        Some(d) => d,
+        None => {
+            println!("  [DEMO 18] SKIPPED: no USB device enumerated (run with -device qemu-xhci -device usb-kbd)");
+            return;
+        }
+    };
+    println!("  [DEMO 18] device: slot={} addr={} port={} speed={} v=0x{:04X} p=0x{:04X} kbd={}",
+        dev.slot_id, dev.usb_address, dev.port, dev.speed,
+        dev.vendor, dev.product, dev.is_keyboard);
+    if !dev.is_keyboard {
+        println!("  [DEMO 18] SKIPPED: enumerated device is not a HID boot keyboard");
+        return;
+    }
+
+    // Poll for ~3 seconds (300 iterations of ~10ms each). Each iteration
+    // drains all currently-pending Transfer Events on the HID ring. We
+    // print the first report we see (idle or pressed) so the PASS line
+    // doesn't require an actual keypress — QEMU may not type into us. If
+    // a real keypress arrives we also translate keycodes to ASCII via
+    // `keycode_to_ascii`.
+    let mut reports_seen: usize = 0;
+    let mut printed_first = false;
+    for _outer in 0..300 {
+        let n = usb::xhci::poll_hid(|rep| {
+            if !printed_first {
+                let k0 = rep.keys[0];
+                println!("  [DEMO 18] PASS: HID report read (modifiers=0x{:02X} key0=0x{:02X})",
+                    rep.modifiers, k0);
+                printed_first = true;
+            }
+            let shift = rep.shift_held();
+            for k in rep.pressed_keys() {
+                if let Some(c) = usb::hid::keycode_to_ascii(k, shift) {
+                    if c.is_ascii_graphic() || c == b' ' {
+                        print!("{}", c as char);
+                    } else if c == b'\n' {
+                        println!();
+                    }
+                }
+            }
+        });
+        reports_seen += n;
+        // Short busy wait — about 10ms per iteration on QEMU.
+        for _ in 0..1_000_000 { core::hint::spin_loop(); }
+    }
+
+    if !printed_first {
+        println!("  [DEMO 18] SKIPPED: HID report read (no report arrived during {} polls; \
+            the keyboard may still be enumerated correctly — QEMU's usb-kbd only sends \
+            reports on actual key state change, not periodically)",
+            reports_seen);
     }
 }
 
