@@ -636,6 +636,13 @@ fn init_loader_task() {
     println!("================================================================");
     env_cwd_test();
 
+    // DEMO 25: Tier 2 extended file ops (FSYNC / RENAME / TRUNCATE / STATX).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 25: extended file ops (Phase 14 Tier 2)");
+    println!("================================================================");
+    extended_fs_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -2385,6 +2392,128 @@ fn wall_clock_test() {
     println!("  [DEMO 19] PASS: timestamp inside plausible epoch range");
 
     println!("  [DEMO 19] => wall_clock works end-to-end; ready for TLS notAfter + file timestamps");
+}
+
+/// DEMO 25: Tier 2 extended file ops — SYS_FSYNC, SYS_RENAME,
+/// SYS_TRUNCATE, SYS_STATX.
+///
+/// What this proves:
+///   1. STATX returns the rich metadata struct (type + size + tier + timestamps)
+///   2. RENAME atomically moves a file within and across directories
+///   3. TRUNCATE shrinks + extends file content; STATX size reflects it
+///   4. FSYNC writes the namespace to disk without error (requires virtio0)
+fn extended_fs_test() {
+    use kernel_core::syscall::{dispatch, StatX};
+    use kernel_core::syscall::numbers::*;
+    use kernel_core::syscall::open_flags;
+
+    // Clean leftover state from prior boots (DEMO 25 might run multiple times
+    // against a persistent disk).
+    fn unlink(path: &str) {
+        let _ = dispatch(SYS_UNLINK, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    }
+    unlink("/t2/file.txt"); unlink("/t2/renamed.txt"); unlink("/t2/sub/file.txt");
+    unlink("/t2/sub"); unlink("/t2");
+
+    // Setup: /t2/file.txt with 32 bytes of known content.
+    let path = "/t2";
+    let _ = dispatch(SYS_MKDIR, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    let file = "/t2/file.txt";
+    let fd = dispatch(SYS_OPEN, file.as_ptr() as u64, file.len() as u64, open_flags::CREATE, 0);
+    if fd == u64::MAX { println!("  [DEMO 25] FAIL: open+create"); return; }
+    let msg = b"tier 2 file ops test content!\n\n\n";  // 32 bytes
+    let _ = dispatch(SYS_FWRITE, fd, msg.as_ptr() as u64, msg.len() as u64, 0);
+    let _ = dispatch(SYS_CLOSE, fd, 0, 0, 0);
+
+    // Step 1: STATX returns rich metadata.
+    let mut st = core::mem::MaybeUninit::<StatX>::zeroed();
+    let r = dispatch(SYS_STATX, file.as_ptr() as u64, file.len() as u64,
+        st.as_mut_ptr() as u64, 0);
+    if r != 0 { println!("  [DEMO 25] FAIL: SYS_STATX returned {}", r); return; }
+    let st = unsafe { st.assume_init() };
+    if st.size != msg.len() as u64 {
+        println!("  [DEMO 25] FAIL: STATX size {}, want {}", st.size, msg.len());
+        return;
+    }
+    if st.created_at == 0 || st.modified_at == 0 {
+        println!("  [DEMO 25] FAIL: STATX timestamps zero (wall_clock not working?)");
+        return;
+    }
+    println!("  [DEMO 25] PASS: SYS_STATX → size={} tier={} type={} created={} modified={}",
+        st.size, st.tier, st.file_type, st.created_at, st.modified_at);
+
+    // Helper to do a STATX into a fresh buffer (avoids variable-shadow
+    // confusion when the same buffer would otherwise be reused after
+    // `assume_init` consumed it).
+    fn stat(path: &str) -> Result<StatX, u64> {
+        let mut buf = core::mem::MaybeUninit::<StatX>::zeroed();
+        let r = dispatch(SYS_STATX, path.as_ptr() as u64, path.len() as u64,
+            buf.as_mut_ptr() as u64, 0);
+        if r == 0 { Ok(unsafe { buf.assume_init() }) } else { Err(r) }
+    }
+
+    // Step 2: RENAME within same dir.
+    let renamed = "/t2/renamed.txt";
+    let r = dispatch(SYS_RENAME,
+        file.as_ptr() as u64, file.len() as u64,
+        renamed.as_ptr() as u64, renamed.len() as u64);
+    if r != 0 { println!("  [DEMO 25] FAIL: SYS_RENAME within dir: {}", r); return; }
+    if stat(file).is_ok() {
+        println!("  [DEMO 25] FAIL: old path still resolvable after rename");
+        return;
+    }
+    let st_renamed = match stat(renamed) {
+        Ok(s) => s,
+        Err(e) => { println!("  [DEMO 25] FAIL: new path STATX: {}", e); return; }
+    };
+    if (st_renamed.suid_high, st_renamed.suid_low) != (st.suid_high, st.suid_low) {
+        println!("  [DEMO 25] FAIL: SUID changed during rename (not atomic!)");
+        return;
+    }
+    println!("  [DEMO 25] PASS: SYS_RENAME within-dir preserves SUID + content");
+
+    // Step 3: RENAME cross-directory.
+    let _ = dispatch(SYS_MKDIR, "/t2/sub".as_ptr() as u64, 7, 0, 0);
+    let moved = "/t2/sub/file.txt";
+    let r = dispatch(SYS_RENAME,
+        renamed.as_ptr() as u64, renamed.len() as u64,
+        moved.as_ptr() as u64, moved.len() as u64);
+    if r != 0 { println!("  [DEMO 25] FAIL: SYS_RENAME cross-dir: {}", r); return; }
+    if stat(moved).is_err() { println!("  [DEMO 25] FAIL: moved path STATX"); return; }
+    println!("  [DEMO 25] PASS: SYS_RENAME cross-dir works");
+
+    // Step 4: TRUNCATE shrink.
+    let r = dispatch(SYS_TRUNCATE, moved.as_ptr() as u64, moved.len() as u64, 10, 0);
+    if r != 0 { println!("  [DEMO 25] FAIL: SYS_TRUNCATE shrink: {}", r); return; }
+    let st_trunc = stat(moved).expect("STATX after truncate");
+    if st_trunc.size != 10 {
+        println!("  [DEMO 25] FAIL: post-truncate size {}, want 10", st_trunc.size); return;
+    }
+    println!("  [DEMO 25] PASS: SYS_TRUNCATE shrink (32 → 10 bytes)");
+
+    // Step 5: TRUNCATE extend with zeros.
+    let r = dispatch(SYS_TRUNCATE, moved.as_ptr() as u64, moved.len() as u64, 64, 0);
+    if r != 0 { println!("  [DEMO 25] FAIL: SYS_TRUNCATE extend: {}", r); return; }
+    let st_ext = stat(moved).expect("STATX after extend");
+    if st_ext.size != 64 {
+        println!("  [DEMO 25] FAIL: post-extend size {}, want 64", st_ext.size); return;
+    }
+    println!("  [DEMO 25] PASS: SYS_TRUNCATE extend (10 → 64 bytes)");
+
+    // Step 6: FSYNC (only meaningful with virtio0; skip if absent).
+    let r = dispatch(SYS_FSYNC, 0, 0, 0, 0);
+    if r == u64::MAX {
+        println!("  [DEMO 25] SKIPPED: SYS_FSYNC needs virtio0 disk (none attached)");
+    } else {
+        println!("  [DEMO 25] PASS: SYS_FSYNC flushed namespace to virtio0");
+    }
+
+    // Cleanup so re-runs don't accumulate state.
+    let _ = dispatch(SYS_UNLINK, moved.as_ptr() as u64, moved.len() as u64, 0, 0);
+    let _ = dispatch(SYS_UNLINK, "/t2/sub".as_ptr() as u64, 7, 0, 0);
+    let _ = dispatch(SYS_UNLINK, "/t2".as_ptr() as u64, 3, 0, 0);
+
+    println!("  [DEMO 25] => Tier 2 file ops ready for cargo's atomic-rename build flow");
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).

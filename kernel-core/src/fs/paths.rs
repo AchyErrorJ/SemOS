@@ -537,6 +537,74 @@ impl Namespace {
     }
 
     // ========================================================================
+    // Phase 14 Tier 2 — rename + truncate
+    // ========================================================================
+
+    /// Atomically rename `old_path` → `new_path`. The underlying SUID
+    /// stays the same — we just swap the parent-dir entries. Both
+    /// parents must exist; the new basename must not.
+    ///
+    /// Cross-directory move is supported (`/a/foo` → `/b/foo`).
+    pub fn rename(old_path: &str, new_path: &str) -> Result<(), FsError> {
+        let (old_parent_path, old_name) = split_parent(old_path)?;
+        let (new_parent_path, new_name) = split_parent(new_path)?;
+
+        let old_parent = Self::resolve(old_parent_path)?;
+        let new_parent = Self::resolve(new_parent_path)?;
+
+        // Reject if the target name already exists.
+        if lookup_in_dir(new_parent, new_name).is_ok() {
+            return Err(FsError::AlreadyExists);
+        }
+
+        // Look up the SUID we're moving.
+        let suid = lookup_in_dir(old_parent, old_name)?;
+
+        // Add to new parent first — if that fails, old state is intact.
+        add_child(new_parent, new_name, suid)?;
+
+        // Then remove from old parent. If THIS fails, we've left a
+        // duplicate entry in new_parent; recover by removing it.
+        if let Err(e) = remove_child(old_parent, old_name).map(|_| ()) {
+            let _ = remove_child(new_parent, new_name);
+            return Err(e);
+        }
+
+        // Bump mtime on the moved object so std::fs::Metadata sees the rename.
+        let now = crate::platform::wall_clock().unwrap_or(0);
+        let registry = unsafe { global_registry() };
+        if let Some(obj) = registry.get_mut(&suid) {
+            obj.modified_at = now;
+        }
+        Ok(())
+    }
+
+    /// Set the file's content length to `new_size`. Shrinks (drops
+    /// the tail) or extends with zero bytes. Errors with
+    /// `ContentTooLarge` if `new_size > 256` (today's inline cap) —
+    /// see task #44 for the `Allocated` content-path follow-up.
+    pub fn truncate(path: &str, new_size: usize) -> Result<(), FsError> {
+        let suid = Self::resolve(path)?;
+        let registry = unsafe { global_registry() };
+        let obj = registry.get_mut(&suid).ok_or(FsError::NotFound)?;
+        if obj.content_type == ContentType::Structured {
+            return Err(FsError::IsADirectory);
+        }
+        // Build the new content as a stack-allocated slice. Inline
+        // limit today is 256 B; anything larger errors until #44.
+        if new_size > 256 { return Err(FsError::ContentTooLarge); }
+        let mut buf = [0u8; 256];
+        let existing = obj.content.as_bytes().unwrap_or(&[]);
+        let keep = existing.len().min(new_size);
+        buf[..keep].copy_from_slice(&existing[..keep]);
+        // Tail past `keep` is already zero from the buf init.
+        obj.content = ObjectContent::from_inline(&buf[..new_size])
+            .ok_or(FsError::ContentTooLarge)?;
+        obj.modified_at = crate::platform::wall_clock().unwrap_or(0);
+        Ok(())
+    }
+
+    // ========================================================================
     // Stage 2 — persistence
     // ========================================================================
 

@@ -33,10 +33,11 @@ pub mod numbers {
     pub const SYS_FREAD: u64 = 12;
     pub const SYS_FWRITE: u64 = 13;
     pub const SYS_SEEK: u64 = 14;
-    pub const SYS_STAT: u64 = 15;
+    pub const SYS_STAT: u64 = 15;  // legacy: returns size only, kept for compat
     pub const SYS_MKDIR: u64 = 16;
     pub const SYS_UNLINK: u64 = 17;
     pub const SYS_READDIR: u64 = 18;
+    pub const SYS_FSYNC: u64 = 19;       // Phase 14 Tier 2: flush namespace to disk
 
     // Semantic objects (20-29)
     pub const SYS_SEM_CREATE: u64 = 20;
@@ -55,6 +56,11 @@ pub mod numbers {
     pub const SYS_BRK: u64 = 33;          // Linux-style heap grow (TBD)
     pub const SYS_HEAP_ALLOC: u64 = 34;   // (size, align) → ptr (Phase 14 prereq)
     pub const SYS_HEAP_FREE: u64 = 35;    // (ptr, size, align) → 0/err
+    // Extended file ops (36-38). Overflowed the 10-19 range, parked
+    // in 36-39 next to the heap-alloc cluster. Phase 14 Tier 2.
+    pub const SYS_RENAME: u64 = 36;       // (old_ptr, old_len, new_ptr, new_len) → 0/err
+    pub const SYS_TRUNCATE: u64 = 37;     // (path_ptr, path_len, new_size) → 0/err
+    pub const SYS_STATX: u64 = 38;        // (path_ptr, path_len, out_struct_ptr) → 0/err
 
     // Process (40-49)
     pub const SYS_SPAWN: u64 = 40;
@@ -128,6 +134,10 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_MKDIR => handle_mkdir(arg0, arg1),
         SYS_UNLINK => handle_unlink(arg0, arg1),
         SYS_READDIR => handle_readdir(arg0, arg1, arg2, arg3),
+        SYS_FSYNC => handle_fsync(),
+        SYS_RENAME => handle_rename(arg0, arg1, arg2, arg3),
+        SYS_TRUNCATE => handle_truncate(arg0, arg1, arg2),
+        SYS_STATX => handle_statx(arg0, arg1, arg2),
 
         // Semantic objects (20-29)
         SYS_SEM_CREATE => handle_sem_create(arg0, arg1, arg2, arg3),
@@ -1028,6 +1038,119 @@ fn handle_unlink(path_ptr: u64, path_len: u64) -> u64 {
         Ok(()) => 0,
         Err(_) => u64::MAX,
     }
+}
+
+// ============================================================================
+// Phase 14 Tier 2 extended file ops (FSYNC / RENAME / TRUNCATE / STATX)
+// ============================================================================
+
+/// `StatX` is what SYS_STATX writes into the user-provided struct
+/// pointer. Layout-stable so std::fs::Metadata can shim onto it.
+///
+/// All 64-bit fields so the layout is portable regardless of
+/// alignment of the surrounding caller-side buffer.
+#[repr(C)]
+pub struct StatX {
+    /// File size in bytes.
+    pub size: u64,
+    /// Object's SUID high half. Caller treats this as opaque.
+    pub suid_high: u64,
+    /// Object's SUID low half.
+    pub suid_low: u64,
+    /// Unix-epoch wall-clock seconds of creation. 0 if unknown.
+    pub created_at: u64,
+    /// Unix-epoch wall-clock seconds of last write. 0 if unknown.
+    pub modified_at: u64,
+    /// File type: 0=Binary, 1=Text, 2=Vector, 3=Directory (Structured), 4=Reference.
+    pub file_type: u32,
+    /// Security tier: 0=Public, 1=Internal, 2=Sensitive, 3=Secret.
+    pub tier: u32,
+    /// Reserved for future use; always 0.
+    pub _reserved: [u64; 3],
+}
+
+/// SYS_FSYNC() — flush the path namespace to virtio0. No args, no
+/// per-FD selection (the snapshot covers everything). Returns 0 on
+/// success, u64::MAX if virtio0 isn't present or the save failed.
+///
+/// std::fs::File::sync_all maps to this; cargo's atomic-rename
+/// build flow depends on it.
+fn handle_fsync() -> u64 {
+    let dev = match crate::drivers::registry::get_block("virtio0") {
+        Some(d) => d,
+        None => {
+            crate::platform::log("[syscall] fsync: no virtio0\n");
+            return u64::MAX;
+        }
+    };
+    match crate::fs::paths::Namespace::save(dev) {
+        Ok(_) => 0,
+        Err(_) => u64::MAX,
+    }
+}
+
+/// SYS_RENAME(old_ptr, old_len, new_ptr, new_len) — atomically rename.
+/// In our path namespace this means: remove old name from old parent,
+/// add new name to new parent. SUID stays the same → atomic. Both
+/// parent dirs must exist; new name must not.
+fn handle_rename(old_ptr: u64, old_len: u64, new_ptr: u64, new_len: u64) -> u64 {
+    let old_path = unsafe {
+        let s = core::slice::from_raw_parts(old_ptr as *const u8, old_len as usize);
+        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    };
+    let new_path = unsafe {
+        let s = core::slice::from_raw_parts(new_ptr as *const u8, new_len as usize);
+        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    };
+    match crate::fs::paths::Namespace::rename(old_path, new_path) {
+        Ok(()) => 0,
+        Err(_) => u64::MAX,
+    }
+}
+
+/// SYS_TRUNCATE(path_ptr, path_len, new_size) — set file content
+/// length to `new_size`. Shrinks (drops tail bytes) or extends with
+/// zeros. Errors if `new_size > 256` (today's inline-only limit) —
+/// follow-up task #44 wires the Allocated content path.
+fn handle_truncate(path_ptr: u64, path_len: u64, new_size: u64) -> u64 {
+    let path = unsafe {
+        let s = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
+        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    };
+    match crate::fs::paths::Namespace::truncate(path, new_size as usize) {
+        Ok(()) => 0,
+        Err(_) => u64::MAX,
+    }
+}
+
+/// SYS_STATX(path_ptr, path_len, out_struct_ptr) — fill a [`StatX`]
+/// at `out_struct_ptr` with the object's metadata. Caller is
+/// responsible for the struct buffer being large enough (sizeof
+/// StatX = 64 bytes).
+fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
+    let path = unsafe {
+        let s = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
+        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    };
+    let suid = match crate::fs::paths::Namespace::resolve(path) {
+        Ok(s) => s,
+        Err(_) => return u64::MAX,
+    };
+    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let obj = match registry.get(&suid) {
+        Some(o) => o,
+        None => return u64::MAX,
+    };
+    let out = unsafe { &mut *(out_ptr as *mut StatX) };
+    out.size = obj.content.len() as u64;
+    out.suid_high = suid.high;
+    out.suid_low = suid.low;
+    out.created_at = obj.created_at;
+    out.modified_at = obj.modified_at;
+    out.file_type = obj.content_type as u32;
+    out.tier = obj.tier as u32;
+    out._reserved = [0; 3];
+    0
 }
 
 /// SYS_READDIR(fd, idx, name_buf_ptr, name_buf_len) → name length on
