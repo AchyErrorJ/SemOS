@@ -627,7 +627,24 @@ pub fn spawn_user(name: &'static str, entry: fn()) -> Option<ProcessId> {
 ///
 /// Orchestrates: parse ELF → create address space → map segments → map stack
 /// → spawn Ring 3 task. All hardware operations go through the Platform trait.
+/// Spawn a Ring 3 task from an ELF binary, no argv/envp. Equivalent
+/// to `spawn_from_elf_with_args(name, elf_data, max_tier, &[], &[])`.
+/// Existing call sites use this; new ones that want argv should use
+/// the `_with_args` variant.
 pub fn spawn_from_elf(name: &'static str, elf_data: &[u8], max_tier: u8) -> Option<ProcessId> {
+    spawn_from_elf_with_args(name, elf_data, max_tier, &[], &[])
+}
+
+/// Spawn a Ring 3 task from an ELF, writing `argv` + `envp` onto the
+/// new process's user stack at SysV positions per
+/// [`crate::platform::Platform::setup_user_argv`]. Phase 14 prereq #2.
+pub fn spawn_from_elf_with_args(
+    name: &'static str,
+    elf_data: &[u8],
+    max_tier: u8,
+    argv: &[&[u8]],
+    envp: &[&[u8]],
+) -> Option<ProcessId> {
     use crate::process::elf::{self, Elf64Phdr, PT_LOAD, PF_X, PF_W};
 
     // 1. Parse and validate the ELF binary
@@ -685,6 +702,21 @@ pub fn spawn_from_elf(name: &'static str, elf_data: &[u8], max_tier: u8) -> Opti
         Some(rsp) => rsp,
         None => {
             crate::platform::log("[process] Failed to map user stack\n");
+            platform.destroy_address_space(cr3);
+            return None;
+        }
+    };
+
+    // 4b. Phase 14 prereq #2: if argv or envp are non-empty, write
+    // them onto the top of the new user stack at SysV positions.
+    // The returned RSP is below the layout, so the user-side _start
+    // (when written) can do `pop argc; pop argv; pop envp` style.
+    // If argv+envp are empty (legacy callers), this is a no-op and
+    // returns stack_top unchanged.
+    let user_rsp = match platform.setup_user_argv(cr3, user_rsp, argv, envp) {
+        Some(rsp) => rsp,
+        None => {
+            crate::platform::log("[process] Failed to set up user argv/envp\n");
             platform.destroy_address_space(cr3);
             return None;
         }

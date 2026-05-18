@@ -257,6 +257,45 @@ pub fn virt_to_phys(virt: u64) -> u64 {
 /// Returns `None` if any level along the path is not present, or if a
 /// huge page is encountered (we conservatively reject those for now —
 /// add 2MiB / 1GiB handling when we actually use huge pages).
+/// Same as [`walk_active_pml4`] but walks a SPECIFIC PML4 (i.e. some
+/// other process's address space) instead of the currently-loaded CR3.
+/// Used when the kernel needs to read or write a user-virtual address
+/// in a process that isn't currently running — e.g. writing argv onto
+/// a newly-spawned process's user stack before its first scheduling.
+pub fn walk_pml4_for(cr3: u64, virt: u64) -> Option<u64> {
+    let cr3 = cr3 & 0x000F_FFFF_FFFF_F000;
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+    let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
+    let page_off = virt & 0xFFF;
+    unsafe {
+        let pml4 = &*(phys_to_virt(cr3) as *const PageTable);
+        let pml4e = pml4.entry(pml4_idx);
+        if !pml4e.is_present() { return None; }
+        let pdpt_phys = pml4e.0 & flags::ADDR_MASK;
+        let pdpt = &*(phys_to_virt(pdpt_phys) as *const PageTable);
+        let pdpte = pdpt.entry(pdpt_idx);
+        if !pdpte.is_present() { return None; }
+        if pdpte.0 & flags::HUGE_PAGE != 0 { return None; }
+        let pd_phys = pdpte.0 & flags::ADDR_MASK;
+        let pd = &*(phys_to_virt(pd_phys) as *const PageTable);
+        let pde = pd.entry(pd_idx);
+        if !pde.is_present() { return None; }
+        if pde.0 & flags::HUGE_PAGE != 0 {
+            let base_2m = pde.0 & 0x000F_FFFF_FFE0_0000;
+            let off_2m = virt & 0x1F_FFFF;
+            return Some(base_2m + off_2m);
+        }
+        let pt_phys = pde.0 & flags::ADDR_MASK;
+        let pt = &*(phys_to_virt(pt_phys) as *const PageTable);
+        let pte = pt.entry(pt_idx);
+        if !pte.is_present() { return None; }
+        let page_phys = pte.0 & flags::ADDR_MASK;
+        Some(page_phys + page_off)
+    }
+}
+
 pub fn walk_active_pml4(virt: u64) -> Option<u64> {
     let cr3 = read_cr3() & 0x000F_FFFF_FFFF_F000;
     let pml4_idx = ((virt >> 39) & 0x1FF) as usize;

@@ -140,7 +140,7 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_HEAP_FREE => handle_heap_free(arg0, arg1, arg2),
 
         // Process (40-49)
-        SYS_SPAWN => handle_spawn(arg0, arg1, arg2),
+        SYS_SPAWN => handle_spawn(arg0, arg1, arg2, arg3),
         SYS_WAIT => handle_wait(arg0),
         SYS_KILL => handle_kill(arg0),
         SYS_DUP => handle_dup(arg0),
@@ -1065,7 +1065,45 @@ fn handle_dup2(old_fd: u64, new_fd: u64) -> u64 {
 /// SYS_SPAWN(path_ptr, path_len, max_tier) → PID or u64::MAX on error
 ///
 /// Loads an ELF binary from ramfs and spawns it as a Ring 3 process.
-fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64) -> u64 {
+/// Caller-supplied argv/envp blob layout, pointed to by arg3 when
+/// non-zero. argv_blob / envp_blob is `[count: u32][len1: u32][bytes1]
+/// [len2: u32][bytes2]...` — each item is a u32 length prefix followed
+/// by raw bytes (NOT null-terminated; the kernel adds null terminators
+/// when writing to the user stack).
+#[repr(C)]
+pub struct SpawnArgs {
+    pub argv_blob_ptr: u64,
+    pub argv_blob_len: u32,
+    pub envp_blob_ptr: u64,
+    pub envp_blob_len: u32,
+}
+
+/// Maximum total bytes accepted in argv_blob OR envp_blob. Bounded
+/// to keep the kernel-side scratch buffers small.
+const MAX_BLOB_BYTES: usize = 1024;
+/// Maximum items (per side). Matches the platform impl's cap.
+const MAX_BLOB_ITEMS: usize = 32;
+
+/// Parse a `[count: u32][len: u32][bytes]...` blob into a slice of
+/// byte-slice references. Refs point into the caller-supplied blob,
+/// valid for the lifetime of the borrow.
+fn parse_argv_blob<'a>(blob: &'a [u8], items_out: &mut [&'a [u8]]) -> Option<usize> {
+    if blob.len() < 4 { return None; }
+    let count = u32::from_le_bytes(blob[0..4].try_into().unwrap()) as usize;
+    if count > items_out.len() { return None; }
+    let mut cursor = 4usize;
+    for i in 0..count {
+        if cursor + 4 > blob.len() { return None; }
+        let len = u32::from_le_bytes(blob[cursor..cursor+4].try_into().unwrap()) as usize;
+        cursor += 4;
+        if cursor + len > blob.len() { return None; }
+        items_out[i] = &blob[cursor..cursor+len];
+        cursor += len;
+    }
+    Some(count)
+}
+
+fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64) -> u64 {
     // Validate tier access — can't spawn at a higher tier than yourself
     let caller_tier = crate::scheduler::current_task_max_tier();
     let spawn_tier = (max_tier as u8).min(caller_tier);
@@ -1163,7 +1201,45 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64) -> u64 {
         _ => "user",
     };
 
-    match crate::process::spawn_from_elf(static_name, elf_data, spawn_tier) {
+    // Parse the optional SpawnArgs struct pointed to by arg3.
+    // Backwards-compatible: arg3=0 → empty argv/envp, behave like old API.
+    let mut argv_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
+    let mut envp_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
+    let mut argc = 0usize;
+    let mut envc = 0usize;
+    if spawn_args_ptr != 0 {
+        let sa = unsafe { &*(spawn_args_ptr as *const SpawnArgs) };
+        if sa.argv_blob_len as usize > MAX_BLOB_BYTES
+            || sa.envp_blob_len as usize > MAX_BLOB_BYTES
+        {
+            crate::platform::log("[syscall] spawn: argv/envp blob too large\n");
+            return u64::MAX;
+        }
+        if sa.argv_blob_ptr != 0 && sa.argv_blob_len > 0 {
+            let blob = unsafe {
+                core::slice::from_raw_parts(sa.argv_blob_ptr as *const u8, sa.argv_blob_len as usize)
+            };
+            argc = match parse_argv_blob(blob, &mut argv_items) {
+                Some(n) => n,
+                None => { crate::platform::log("[syscall] spawn: argv blob malformed\n"); return u64::MAX; }
+            };
+        }
+        if sa.envp_blob_ptr != 0 && sa.envp_blob_len > 0 {
+            let blob = unsafe {
+                core::slice::from_raw_parts(sa.envp_blob_ptr as *const u8, sa.envp_blob_len as usize)
+            };
+            envc = match parse_argv_blob(blob, &mut envp_items) {
+                Some(n) => n,
+                None => { crate::platform::log("[syscall] spawn: envp blob malformed\n"); return u64::MAX; }
+            };
+        }
+    }
+
+    match crate::process::spawn_from_elf_with_args(
+        static_name, elf_data, spawn_tier,
+        &argv_items[..argc],
+        &envp_items[..envc],
+    ) {
         Some(pid) => pid.0 as u64,
         None => {
             crate::platform::log("[syscall] spawn: failed to load ELF\n");

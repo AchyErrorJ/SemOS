@@ -36,6 +36,123 @@ impl Platform for X86Platform {
         crate::rtc::unix_time()
     }
 
+    fn setup_user_argv(
+        &self,
+        space: u64,
+        stack_top: u64,
+        argv: &[&[u8]],
+        envp: &[&[u8]],
+    ) -> Option<u64> {
+        if argv.is_empty() && envp.is_empty() {
+            return Some(stack_top);
+        }
+        // Cap individual lengths so a runaway request can't trash the
+        // whole page. The whole layout has to fit comfortably under the
+        // 4 KiB top stack page; bound by sane-defaults rather than try
+        // to be precise.
+        const MAX_ITEMS: usize = 32;
+        const MAX_STR_BYTES: usize = 256;
+        if argv.len() > MAX_ITEMS || envp.len() > MAX_ITEMS { return None; }
+        for s in argv.iter().chain(envp.iter()) {
+            if s.len() > MAX_STR_BYTES { return None; }
+        }
+
+        // Step 1: compute total string-data size (each string +
+        // 1-byte null terminator).
+        let mut str_bytes: usize = 0;
+        for s in argv.iter().chain(envp.iter()) { str_bytes += s.len() + 1; }
+
+        // Step 2: compute pointer-array size.
+        //   argc(8) + argv ptrs(8 * (argc+1, +1 for NULL)) +
+        //   envp ptrs(8 * (envc+1))
+        let ptr_bytes = 8 + 8 * (argv.len() + 1) + 8 * (envp.len() + 1);
+
+        // Total layout, with 16-byte alignment slop.
+        let total = str_bytes + ptr_bytes + 16;
+        if total > 4096 { return None; }
+
+        // Step 3: assemble the layout in a kernel-side scratch buffer,
+        // then page-translate the top of the new user stack and copy
+        // it across. Doing it in two halves (build + copy) keeps the
+        // logic clear and lets us bail before any writes.
+        let mut scratch = [0u8; 4096];
+        // Pack into scratch starting from the END (the bytes we want
+        // at the highest addresses come first in our buffer-from-end
+        // perspective).
+        //
+        // Layout in scratch (low→high address) BEFORE we shift to user
+        // space: we mirror what'll be on the user stack.
+        //
+        //   scratch[0..ptr_bytes]                  pointer area
+        //     [argc][argv[0]..argv[N-1]][NULL][envp[0]..envp[M-1]][NULL]
+        //   scratch[ptr_bytes..ptr_bytes+str_bytes] string data
+        //
+        // Then we copy this to (user_top - total), and the user RSP
+        // points to scratch[0]'s equivalent on the user stack.
+
+        // Where on the user stack does our layout START (low end)?
+        let layout_base_user_virt = (stack_top - total as u64) & !0xF;
+        // Where do strings start within scratch (low end)?
+        let strings_base_user_virt = layout_base_user_virt + ptr_bytes as u64;
+
+        // Fill pointer area in scratch.
+        let mut cursor = 0usize;
+        // argc
+        scratch[cursor..cursor+8].copy_from_slice(&(argv.len() as u64).to_le_bytes());
+        cursor += 8;
+        // argv ptrs (each points into the string-data region)
+        let mut str_cursor = strings_base_user_virt;
+        for s in argv.iter() {
+            scratch[cursor..cursor+8].copy_from_slice(&str_cursor.to_le_bytes());
+            cursor += 8;
+            str_cursor += (s.len() + 1) as u64;
+        }
+        // argv terminator
+        scratch[cursor..cursor+8].copy_from_slice(&0u64.to_le_bytes());
+        cursor += 8;
+        // envp ptrs
+        for s in envp.iter() {
+            scratch[cursor..cursor+8].copy_from_slice(&str_cursor.to_le_bytes());
+            cursor += 8;
+            str_cursor += (s.len() + 1) as u64;
+        }
+        // envp terminator
+        scratch[cursor..cursor+8].copy_from_slice(&0u64.to_le_bytes());
+        cursor += 8;
+
+        // String data
+        for s in argv.iter().chain(envp.iter()) {
+            scratch[cursor..cursor+s.len()].copy_from_slice(s);
+            cursor += s.len();
+            scratch[cursor] = 0; // null terminator
+            cursor += 1;
+        }
+
+        // Step 4: copy scratch[0..cursor] to user-space at layout_base_user_virt.
+        // The user stack page is mapped into `space` (the new process's cr3);
+        // we translate page-by-page via walk_pml4_for and write through the
+        // kernel's identity-map window.
+        let bytes_to_write = cursor;
+        let mut written = 0usize;
+        while written < bytes_to_write {
+            let user_virt = layout_base_user_virt + written as u64;
+            let phys = crate::paging::walk_pml4_for(space, user_virt)?;
+            let page_off = (user_virt & 0xFFF) as usize;
+            let chunk = (4096 - page_off).min(bytes_to_write - written);
+            unsafe {
+                let dst = crate::paging::phys_to_virt(phys & !0xFFF) as *mut u8;
+                core::ptr::copy_nonoverlapping(
+                    scratch.as_ptr().add(written),
+                    dst.add(page_off),
+                    chunk,
+                );
+            }
+            written += chunk;
+        }
+
+        Some(layout_base_user_virt)
+    }
+
     fn reap_slot(&self, slot: usize) {
         // Free the slot's AddressSpace (PML4 + subtables) and zero its
         // saved cr3. Called from alloc_task_slot at the moment of

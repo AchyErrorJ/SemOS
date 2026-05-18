@@ -624,6 +624,14 @@ fn init_loader_task() {
     println!("================================================================");
     heap_allocator_test();
 
+    // DEMO 23: argv/envp passthrough in SYS_SPAWN (Phase 14 prereq #2).
+    // Phase 14 prereq #2 — std::env::args() and cargo→rustc handoff.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 23: SYS_SPAWN argv/envp passthrough (Phase 14 prereq)");
+    println!("================================================================");
+    spawn_argv_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -2366,6 +2374,89 @@ fn wall_clock_test() {
     println!("  [DEMO 19] PASS: timestamp inside plausible epoch range");
 
     println!("  [DEMO 19] => wall_clock works end-to-end; ready for TLS notAfter + file timestamps");
+}
+
+/// DEMO 23: SYS_SPAWN with argv/envp via SpawnArgs (Phase 14 prereq #2).
+///
+/// What this proves:
+///   1. SpawnArgs struct + blob format are valid — kernel parses it.
+///   2. spawn_from_elf_with_args returns a valid PID with non-empty argv.
+///   3. Backwards compat: SYS_SPAWN with arg3=0 still works.
+///   4. Negative path: oversized argv blob → kernel rejects cleanly.
+///
+/// What this DOESN'T prove yet:
+///   - User-side reading of argv from the stack. That needs a startup
+///     shim in user-programs; lands when std-shim work begins (M25).
+fn spawn_argv_test() {
+    use kernel_core::syscall::{dispatch, SpawnArgs};
+    use kernel_core::syscall::numbers::*;
+
+    // Step 1: build the argv blob — [count u32][len u32][bytes]…
+    // Two args: "/bin/hello-rs" and "--demo23".
+    const ARGV_BLOB: &[u8] = b"\x02\x00\x00\x00\
+                               \x0d\x00\x00\x00/bin/hello-rs\
+                               \x08\x00\x00\x00--demo23";
+    // Envp blob with one entry: "TEST=phase14".
+    const ENVP_BLOB: &[u8] = b"\x01\x00\x00\x00\
+                               \x0c\x00\x00\x00TEST=phase14";
+
+    let spawn_args = SpawnArgs {
+        argv_blob_ptr: ARGV_BLOB.as_ptr() as u64,
+        argv_blob_len: ARGV_BLOB.len() as u32,
+        envp_blob_ptr: ENVP_BLOB.as_ptr() as u64,
+        envp_blob_len: ENVP_BLOB.len() as u32,
+    };
+    let path = "/bin/hello-rs";
+
+    let pid = dispatch(
+        SYS_SPAWN,
+        path.as_ptr() as u64,
+        path.len() as u64,
+        0,  // tier
+        &spawn_args as *const SpawnArgs as u64,
+    );
+    if pid == u64::MAX {
+        println!("  [DEMO 23] FAIL: SYS_SPAWN with argv returned u64::MAX");
+        return;
+    }
+    println!("  [DEMO 23] PASS: SYS_SPAWN with 2-arg argv + 1-entry envp → PID {}", pid);
+
+    // Step 2: backwards compat — arg3=0 should still work.
+    let pid2 = dispatch(
+        SYS_SPAWN,
+        path.as_ptr() as u64,
+        path.len() as u64,
+        0,
+        0,  // arg3=0 → no SpawnArgs, behave like legacy 3-arg API
+    );
+    if pid2 == u64::MAX {
+        println!("  [DEMO 23] FAIL: SYS_SPAWN with arg3=0 (legacy) returned u64::MAX");
+        return;
+    }
+    println!("  [DEMO 23] PASS: backwards-compat (arg3=0) still works → PID {}", pid2);
+
+    // Step 3: oversized blob rejected.
+    const TOO_BIG_ARGV: [u8; 4096] = [0u8; 4096];  // declared count=0 but len > MAX_BLOB_BYTES
+    let big_args = SpawnArgs {
+        argv_blob_ptr: TOO_BIG_ARGV.as_ptr() as u64,
+        argv_blob_len: TOO_BIG_ARGV.len() as u32,  // 4096 > MAX_BLOB_BYTES (1024)
+        envp_blob_ptr: 0,
+        envp_blob_len: 0,
+    };
+    let bad_pid = dispatch(
+        SYS_SPAWN,
+        path.as_ptr() as u64,
+        path.len() as u64,
+        0,
+        &big_args as *const SpawnArgs as u64,
+    );
+    if bad_pid != u64::MAX {
+        println!("  [DEMO 23] FAIL: oversized argv blob accepted (PID {})", bad_pid);
+        return;
+    }
+    println!("  [DEMO 23] PASS: oversized argv blob rejected cleanly");
+
+    println!("  [DEMO 23] => SYS_SPAWN argv/envp ABI works; user-side reader is M25 follow-up");
 }
 
 /// DEMO 22: heap allocator through SYS_HEAP_ALLOC / SYS_HEAP_FREE.

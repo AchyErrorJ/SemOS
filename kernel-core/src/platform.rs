@@ -105,6 +105,41 @@ pub trait Platform: Send + Sync + 'static {
     /// smoltcp's TCP ISN / DNS txid seeds.
     fn random_bytes(&self, _buf: &mut [u8]) -> Result<(), ()> { Err(()) }
 
+    /// Write argv + envp onto a newly-mapped user stack at the SysV
+    /// AMD64 ABI positions, returning the adjusted initial RSP.
+    ///
+    /// Layout written, starting at `stack_top` and growing down:
+    /// ```text
+    ///   [string data: argv strings + envp strings, null-terminated]
+    ///   [NULL]              (envp terminator)
+    ///   [envp[n-1] ptr]
+    ///   ...
+    ///   [envp[0] ptr]
+    ///   [NULL]              (argv terminator)
+    ///   [argv[argc-1] ptr]
+    ///   ...
+    ///   [argv[0] ptr]
+    ///   [argc]              ← new RSP, returned
+    /// ```
+    ///
+    /// Each pointer is a u64 in the user process's virtual address
+    /// space, pointing into the string-data region just above. The
+    /// new RSP is 16-byte aligned per ABI.
+    ///
+    /// Default impl returns `Some(stack_top)` so platforms without
+    /// argv-write support behave as if argv was empty (existing
+    /// `spawn_from_elf` callers that pass empty argv/envp still work).
+    ///
+    /// Phase 14 prereq #2 — `std::env::args()` and the
+    /// cargo→rustc handoff depend on this.
+    fn setup_user_argv(
+        &self,
+        _space: u64,
+        stack_top: u64,
+        _argv: &[&[u8]],
+        _envp: &[&[u8]],
+    ) -> Option<u64> { Some(stack_top) }
+
     /// Read absolute wall-clock time as seconds since the Unix epoch
     /// (1970-01-01 00:00:00 UTC). `None` if the platform has no
     /// real-time clock, or if the RTC read failed.
