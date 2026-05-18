@@ -205,15 +205,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
     }
 
-    // USB init — parked behind a comment (task #36). Bisect proved
-    // the failure isn't in USB code: with init_and_enumerate()
-    // short-circuited so LLVM can DCE the xhci graph, kernel boots
-    // clean. ANY link-level reference to xhci's code shifts the
-    // binary layout enough to trigger a pre-existing layout-sensitive
-    // kernel bug (same family as old task #40). The fix is in the
-    // underlying kernel bug, not in USB.
-    // println!("[*] Probing xHCI USB controller...");
-    // let _usb_ok = usb::init_and_enumerate();
+    // USB init. Task #36 root cause: TASK_STACK_SIZE was 16 KiB,
+    // adding USB pushed some kernel function's stack frame past
+    // the cliff and overflowed into the previous slot's iret-RIP.
+    // Fixed by bumping TASK_STACK_SIZE to 64 KiB (Phase 9 M3).
+    println!("[*] Probing xHCI USB controller...");
+    let _usb_ok = usb::init_and_enumerate();
     println!();
 
     // Initialize kernel-core subsystems
@@ -680,9 +677,15 @@ fn usb_hid_demo() {
     // doesn't require an actual keypress — QEMU may not type into us. If
     // a real keypress arrives we also translate keycodes to ASCII via
     // `keycode_to_ascii`.
+    // Bounded poll: 20 iterations is enough to drain whatever's
+    // already pending without burning the remaining DEMO-run budget.
+    // QEMU's usb-kbd only sends reports on actual key-state changes,
+    // not periodically, so without external input there's usually
+    // nothing to drain. The fix #36 stack bump means subsequent
+    // DEMOs MUST get a chance to run — keep this brief.
     let mut reports_seen: usize = 0;
     let mut printed_first = false;
-    for _outer in 0..300 {
+    for _outer in 0..20 {
         let n = usb::xhci::poll_hid(|rep| {
             if !printed_first {
                 let k0 = rep.keys[0];
@@ -702,8 +705,9 @@ fn usb_hid_demo() {
             }
         });
         reports_seen += n;
-        // Short busy wait — about 10ms per iteration on QEMU.
-        for _ in 0..1_000_000 { core::hint::spin_loop(); }
+        // Brief spin between polls (~ms). Was 1M before — way too long
+        // under QEMU's TCG slowness; choked the rest of the DEMOs.
+        for _ in 0..50_000 { core::hint::spin_loop(); }
     }
 
     if !printed_first {

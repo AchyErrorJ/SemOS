@@ -236,12 +236,14 @@ pub const MAX_CHILDREN: usize = 32;
 /// Maximum total bytes per process environment block. Holds packed
 /// `KEY=VALUE\0KEY=VALUE\0…` entries — see [`Process::env`].
 ///
-/// **Sized down from 2 KiB to 512 B** because 2 KiB × MAX_PROCESSES(64)
-/// = 128 KiB of new BSS pushed the kernel image past a layout-sensitive
-/// boundary and hung boot at IDT-init (same memory-layout-sensitivity
-/// family as the parked USB bug — see task #36). 512 B is enough for
-/// typical command-line dev workflows (maybe 8-10 vars); bump along
-/// with whatever layout fix lands for #36.
+/// **Capped at 512 B** (= 32 KiB total BSS across MAX_PROCESSES=64).
+/// Task #36's TASK_STACK_SIZE fix (16 KiB → 64 KiB) unblocked USB but
+/// the BSS budget still has a tight ceiling somewhere between 512 B
+/// and 1024 B × MAX_PROCESSES (16-bit BIOS bootloader region appears
+/// to overlap kernel BSS past a certain point — hangs at IDT init
+/// when crossed). The underlying bootloader memory-layout issue is
+/// a separate follow-up; for now 512 B is enough for typical
+/// command-line workflows (~8-10 env vars at ~50 bytes each).
 pub const ENV_BLOCK_SIZE: usize = 512;
 
 /// Process Control Block
@@ -809,12 +811,13 @@ pub fn spawn_from_elf_with_args(
 
     // 4. Map a user stack
     let stack_top = elf_info.stack_top as u64;
-    // 16KB — must NOT exceed TASK_STACK_SIZE in the platform crate. Larger
-    // sizes alias adjacent slots' TASK_STACKS in the platform's user-stack
-    // backing logic and corrupt their iret-RIP slot at [top-56] (task #40).
-    // If user tasks need more stack, fix the platform's stack-allocation
-    // strategy first (allocate from a separate pool, not from TASK_STACKS).
-    let stack_size = 16 * 1024u64;
+    // User stack size — must NOT exceed crate::scheduler::TASK_STACK_SIZE
+    // on the platform crate, because we reuse the TASK_STACKS slot as
+    // physical backing. Currently 64 KiB (was 16 KiB before task #36's
+    // fix); larger sizes would alias adjacent slots' TASK_STACKS and
+    // corrupt their iret-RIP slot at [top-56] (original task #40 family).
+    // Long-term: allocate from a separate pool, not from TASK_STACKS.
+    let stack_size = crate::scheduler::TASK_STACK_SIZE as u64;
     let user_rsp = match platform.map_user_stack(cr3, stack_top, stack_size) {
         Some(rsp) => rsp,
         None => {

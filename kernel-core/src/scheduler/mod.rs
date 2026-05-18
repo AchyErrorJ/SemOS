@@ -21,10 +21,25 @@ pub const MAX_TASKS: usize = 16;
 /// NOTE 2026-05-12: tried bumping to 32KB but it deterministically broke
 /// SYS_SPAWN's memcmp path (likely due to a layout-dependent bug elsewhere
 /// in the bootloader page-mapping or .bss size limit). Reverted to 16KB.
-/// Stack-overflow detection now uses canaries (`init_stack_canaries`) +
-/// PF-handler check (`check_stack_canaries`) instead of bigger stacks.
-/// Real unmapped guard pages are still future work.
-pub const TASK_STACK_SIZE: usize = 16 * 1024;
+/// Per-task stack size. Stack-overflow detection uses canaries
+/// (`init_stack_canaries`) + PF-handler check (`check_stack_canaries`);
+/// real unmapped guard pages are still future work.
+///
+/// **Bumped from 16 KiB → 64 KiB on 2026-05-18** to absorb the
+/// layout-sensitivity bug behind task #36. The pattern: adding
+/// new code to the binary (USB, larger env block, etc.) changes
+/// LLVM's inlining + spill decisions, which sometimes pushes a
+/// function's stack frame past the 16 KiB cliff. Overflow writes
+/// PAST a slot's bottom into the previous slot's TOP — including
+/// the iret-RIP slot at `[top - 56]` — corrupting the next context
+/// switch's return address. Surfaces later as #GP at a non-canonical
+/// RIP (stuck-bit pattern, bits 56+58 set) during user-program
+/// execution.
+///
+/// At 64 KiB × MAX_TASKS = 1 MiB of BSS, comfortable against our
+/// 16 MiB heap budget. If the same bug returns we bump again — but
+/// the right long-term fix is real guard pages (unmapped, fault-on-touch).
+pub const TASK_STACK_SIZE: usize = 64 * 1024;
 
 /// Task state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
