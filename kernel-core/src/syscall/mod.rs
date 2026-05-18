@@ -818,7 +818,9 @@ fn handle_close(fd: u64) -> u64 {
 fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     let fd_num = fd as usize;
     let len = buf_len as usize;
-    if len == 0 || len > 4096 { return u64::MAX; }
+    // Match the path-FD FWRITE upper bound (task #44). Pipe/ramfs
+    // paths below still use stack tmp buffers — 4 KiB ceiling there.
+    if len == 0 || len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
 
     // Path-namespace FD: read from the SemanticObject at the cursor.
     if let Some(entry) = lookup_path_fd(fd_num) {
@@ -845,8 +847,12 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
 
     // Check if it's a pipe FD
     if let Some((pipe_id, true)) = lookup_pipe_fd(fd_num) {
+        // Pipe path uses a 4 KiB stack tmp; cap per-call here regardless
+        // of the outer MAX_FILE_CONTENT (which is for path FDs).
+        let tmp_cap = 4096usize;
         let mut tmp = [0u8; 4096];
-        let read_buf = &mut tmp[..len];
+        let read_len = len.min(tmp_cap);
+        let read_buf = &mut tmp[..read_len];
         match crate::ipc::pipe_read(pipe_id, read_buf) {
             Some(n) => {
                 if n > 0 {
@@ -882,8 +888,11 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
             None => return u64::MAX,
         };
 
+        // Ramfs path also uses a 4 KiB stack tmp.
+        let tmp_cap = 4096usize;
         let mut tmp = [0u8; 4096];
-        let read_buf = &mut tmp[..len];
+        let read_len = len.min(tmp_cap);
+        let read_buf = &mut tmp[..read_len];
 
         match fd_table.read(fs, fd_num, read_buf) {
             Some(n) => {
@@ -912,10 +921,16 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     // Path-namespace FD: overwrite the SemanticObject's content with
     // the buffer. v1: full-file overwrite (matches Namespace::write_file).
     // Append/random-write are follow-ups (need richer object content
-    // ownership than today's Inline { [u8; 256], len }).
+    // ownership).
     if let Some(entry) = lookup_path_fd(fd_num) {
         if entry.is_directory { return u64::MAX; }
-        let len = (buf_len as usize).min(256);  // inline-content cap today
+        // task #44: accept up to MAX_FILE_CONTENT (64 KiB). Inline still
+        // covers ≤ 256 B; larger payloads route through heap-Allocated
+        // via from_bytes. Reject anything past the cap rather than
+        // silently truncate (silent truncation in the old 256-cap path
+        // looked like data loss to apps).
+        let len = buf_len as usize;
+        if len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
         let data = unsafe {
             core::slice::from_raw_parts(buf_ptr as *const u8, len)
         };
@@ -924,7 +939,7 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
             Some(o) => o,
             None => return u64::MAX,
         };
-        obj.content = match crate::semantic::object::ObjectContent::from_inline(data) {
+        obj.content = match crate::semantic::object::ObjectContent::from_bytes(data) {
             Some(c) => c,
             None => return u64::MAX,
         };
@@ -1649,7 +1664,9 @@ fn handle_sem_write(suid_high: u64, suid_low: u64, data_ptr: u64, data_len: u64)
                     return u64::MAX;
                 }
                 let data = core::slice::from_raw_parts(data_ptr as *const u8, len);
-                match crate::semantic::ObjectContent::from_inline(data) {
+                // task #44: from_bytes promotes >256 B writes to
+                // heap-Allocated transparently.
+                match crate::semantic::ObjectContent::from_bytes(data) {
                     Some(content) => {
                         obj.content = content;
                         0

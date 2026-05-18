@@ -35,21 +35,36 @@ pub enum ContentType {
     Reference = 4,
 }
 
-/// Object content storage
-#[derive(Clone)]
+/// Maximum size for a heap-Allocated object's content. Bounded so a
+/// runaway FWRITE can't drain the 16 MiB kernel heap on a single file.
+/// Larger than MAX_CONTENT_SIZE would be inconsistent; keep them aligned.
+pub const MAX_FILE_CONTENT: usize = MAX_CONTENT_SIZE; // 64 KiB
+
+/// Object content storage.
+///
+/// `Allocated` owns its heap block. The Drop impl frees it via
+/// [`crate::memory::heap::deallocate`]. We deliberately do NOT derive
+/// `Clone` — accidental bitwise copies of an `Allocated` would alias the
+/// same heap pointer and double-free at drop time. If a deep copy is
+/// needed in the future, add an explicit `try_clone()` that allocates a
+/// fresh buffer.
 pub enum ObjectContent {
-    /// Inline content (small objects)
+    /// Inline content (small objects — ≤256 B, fits in this enum).
     Inline {
         data: [u8; 256],
         len: usize,
     },
-    /// Pointer to allocated memory (large objects)
+    /// Heap-Allocated content (>256 B). `ptr` is from
+    /// `kernel-core::memory::heap::allocate(capacity, 8)`.
     Allocated {
         ptr: usize,
         len: usize,
         capacity: usize,
     },
-    /// Vector embedding (fixed 384 dimensions for MiniLM)
+    /// Vector embedding (fixed 384 dimensions for MiniLM).
+    /// NOTE: `data_ptr` is currently not owned (no Drop) — vectors are
+    /// produced by static fixtures today, not heap. Revisit when LLM
+    /// embeddings actually land in this enum at runtime.
     Vector {
         dimensions: u16,
         /// Pointer to f32 array
@@ -65,8 +80,23 @@ impl Default for ObjectContent {
     }
 }
 
+impl Drop for ObjectContent {
+    fn drop(&mut self) {
+        // Only Allocated owns memory we must free. Vector's data_ptr is
+        // not owned by us (see field doc above). Inline / Empty are
+        // self-contained.
+        if let Self::Allocated { ptr, capacity, .. } = *self {
+            if ptr != 0 && capacity != 0 {
+                crate::memory::heap::deallocate(ptr as *mut u8, capacity, 8);
+            }
+        }
+    }
+}
+
 impl ObjectContent {
-    /// Create inline content from bytes
+    /// Create inline content from bytes (legacy — ≤256 B only).
+    /// Prefer [`from_bytes`] for new code so the caller doesn't have to
+    /// know the inline threshold.
     pub fn from_inline(data: &[u8]) -> Option<Self> {
         if data.len() > 256 {
             return None;
@@ -76,12 +106,40 @@ impl ObjectContent {
         Some(Self::Inline { data: buf, len: data.len() })
     }
 
+    /// Create content from bytes, choosing the right storage variant:
+    /// - ≤ 256 B → `Inline`
+    /// - 257 .. MAX_FILE_CONTENT B → heap-`Allocated`
+    /// - > MAX_FILE_CONTENT → `None` (file too large)
+    ///
+    /// Returns `None` on OOM too.
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() <= 256 {
+            return Self::from_inline(data);
+        }
+        if data.len() > MAX_FILE_CONTENT {
+            return None;
+        }
+        let cap = data.len();
+        let ptr = crate::memory::heap::allocate(cap, 8);
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: heap::allocate returned a fresh, unaliased, `cap`-byte
+        // block. We initialise it fully before exposing it.
+        unsafe {
+            core::ptr::copy_nonoverlapping(data.as_ptr(), ptr, cap);
+        }
+        Some(Self::Allocated { ptr: ptr as usize, len: cap, capacity: cap })
+    }
+
     /// Get content as bytes (if available)
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
             Self::Inline { data, len } => Some(&data[..*len]),
             Self::Allocated { ptr, len, .. } => {
-                // Safety: Caller must ensure ptr is valid
+                // SAFETY: `Allocated` owns the block; the lifetime is
+                // tied to `&self`, so the slice can't outlive the
+                // ObjectContent that holds the ptr.
                 unsafe {
                     Some(core::slice::from_raw_parts(*ptr as *const u8, *len))
                 }

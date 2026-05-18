@@ -447,7 +447,7 @@ impl Namespace {
         file.content_type = ContentType::Binary;
         file.created_at = now;
         file.modified_at = now;
-        file.content = ObjectContent::from_inline(content).ok_or(FsError::ContentTooLarge)?;
+        file.content = ObjectContent::from_bytes(content).ok_or(FsError::ContentTooLarge)?;
         let registry = unsafe { global_registry() };
         if !registry.insert(file) { return Err(FsError::RegistryFull); }
         add_child(parent, name, suid)?;
@@ -465,7 +465,7 @@ impl Namespace {
         if obj.content_type == ContentType::Structured {
             return Err(FsError::IsADirectory);
         }
-        obj.content = ObjectContent::from_inline(content).ok_or(FsError::ContentTooLarge)?;
+        obj.content = ObjectContent::from_bytes(content).ok_or(FsError::ContentTooLarge)?;
         obj.modified_at = now;
         Ok(())
     }
@@ -581,25 +581,60 @@ impl Namespace {
 
     /// Set the file's content length to `new_size`. Shrinks (drops
     /// the tail) or extends with zero bytes. Errors with
-    /// `ContentTooLarge` if `new_size > 256` (today's inline cap) —
-    /// see task #44 for the `Allocated` content-path follow-up.
+    /// `ContentTooLarge` if `new_size > MAX_FILE_CONTENT`.
+    ///
+    /// Sub-256 sizes land in the `Inline` storage variant; larger
+    /// sizes go through the heap `Allocated` path (task #44).
     pub fn truncate(path: &str, new_size: usize) -> Result<(), FsError> {
+        use crate::semantic::object::MAX_FILE_CONTENT;
+
         let suid = Self::resolve(path)?;
         let registry = unsafe { global_registry() };
         let obj = registry.get_mut(&suid).ok_or(FsError::NotFound)?;
         if obj.content_type == ContentType::Structured {
             return Err(FsError::IsADirectory);
         }
-        // Build the new content as a stack-allocated slice. Inline
-        // limit today is 256 B; anything larger errors until #44.
-        if new_size > 256 { return Err(FsError::ContentTooLarge); }
-        let mut buf = [0u8; 256];
-        let existing = obj.content.as_bytes().unwrap_or(&[]);
-        let keep = existing.len().min(new_size);
-        buf[..keep].copy_from_slice(&existing[..keep]);
-        // Tail past `keep` is already zero from the buf init.
-        obj.content = ObjectContent::from_inline(&buf[..new_size])
-            .ok_or(FsError::ContentTooLarge)?;
+        if new_size > MAX_FILE_CONTENT { return Err(FsError::ContentTooLarge); }
+
+        if new_size <= 256 {
+            // Small path: stack buf + Inline.
+            let mut buf = [0u8; 256];
+            let existing = obj.content.as_bytes().unwrap_or(&[]);
+            let keep = existing.len().min(new_size);
+            buf[..keep].copy_from_slice(&existing[..keep]);
+            // Tail past `keep` is already zero from the buf init.
+            obj.content = ObjectContent::from_inline(&buf[..new_size])
+                .ok_or(FsError::ContentTooLarge)?;
+        } else {
+            // Large path: allocate the final heap block directly and
+            // hand it to the Allocated variant. Doing it in one shot
+            // (rather than allocate-temp + from_bytes-which-allocates-again)
+            // halves the heap pressure for this op.
+            let buf = crate::memory::heap::allocate(new_size, 8);
+            if buf.is_null() { return Err(FsError::ContentTooLarge); }
+            // Copy existing bytes + zero-pad the tail, while the
+            // existing borrow is alive — its lifetime ends with the
+            // final use below (NLL), before we overwrite `obj.content`.
+            {
+                let existing = obj.content.as_bytes().unwrap_or(&[]);
+                let keep = existing.len().min(new_size);
+                // SAFETY: `buf` is a fresh, unaliased `new_size`-byte
+                // block; `existing.as_ptr()` is valid for `keep` reads.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(existing.as_ptr(), buf, keep);
+                    if new_size > keep {
+                        core::ptr::write_bytes(buf.add(keep), 0, new_size - keep);
+                    }
+                }
+            }
+            // Assignment drops the previous content (frees its heap
+            // block if it was Allocated) and installs the new one.
+            obj.content = ObjectContent::Allocated {
+                ptr: buf as usize,
+                len: new_size,
+                capacity: new_size,
+            };
+        }
         obj.modified_at = crate::platform::wall_clock().unwrap_or(0);
         Ok(())
     }
