@@ -32,6 +32,8 @@ A milestone is **done** when:
 | 1-6 | GDT/TSS, IDT, paging, APIC, framebuffer console, PCI bus, VirtIO block, snapshot persistence |
 | 7 | Streaming LLM syscalls, security policy framework, context-aware redaction, network LLM provider (loopback), user identity + isolation |
 | 8 | Crypto stack (SHA-256, HMAC, HKDF, X25519, ECDSA P-256, ChaCha20-Poly1305), virtio-net, smoltcp, TcpStream, RDRAND, embedded-tls vendored + crypto-shim, SPKI-pinning TlsVerifier, TLS-backed NetworkTransport, **first outbound HTTPS round-trip to api.anthropic.com** |
+| 9 (mostly) | Path namespace (M1), RTC + wall_clock (M2), FS Stage 3 syscalls (M4), FS Stage 2 persistence (M5) **with cross-boot vdisk verification**, USB driver code (M3) **parked behind a layout-sensitivity bug** |
+| 14 prep | Cranelift + cg_clif vendor placeholders + briefs (agent), Tier 1 prereqs: heap allocator, argv/envp passthrough, per-process env+CWD |
 
 ---
 
@@ -65,58 +67,59 @@ Landed `991928b`. DEMO 19 covers it.
 
 ## M3 — USB stack (xHCI + HID keyboard) `[⏸️]`
 
-Driver code landed (`1301bcb`), init gated behind a comment because it
-triggers a delayed kernel #GP fault during DEMO 8.
+Driver code landed (`1301bcb`), init gated behind a comment because
+it surfaces a **deeper kernel-side layout-sensitivity bug** (task
+#36): adding the xHCI code graph to the binary triggers a pre-existing
+issue elsewhere. Bisect proved the bug isn't IN USB code — with
+`init_and_enumerate()` short-circuited so LLVM DCEs xhci, kernel
+boots clean. ANY link-level reference to xhci's code shifts binary
+layout enough to trigger a stuck-bit-pattern #GP at non-canonical
+RIP `0x500010000044800` during DEMO 8, or hang at DEMO 15.
+
+**Same layout-sensitivity family seen again** in the Phase 14
+prereq #3 work: 2 KiB-per-process env block × 64 processes = 128 KiB
+of new BSS hung boot at IDT-init. Reduced ENV_BLOCK_SIZE from 2 KiB
+to 512 B as a workaround. The persistent recurrence means **task #36
+should be treated as a kernel-wide BSS-budget / layout-sensitivity
+issue, not a USB-specific bug.** Fixing it unblocks larger static
+allocations everywhere (env block, USB scratchpad, future heap
+sizes, fontdue's glyph cache, tiny-skia's path buffers).
 
 **Done when:**
-- [ ] `usb::init_and_enumerate()` runs without corrupting kernel/user memory
+- [ ] Root-cause the underlying kernel layout-sensitivity (probably
+      a stack-overflow-class bug like the original task #40, just in a
+      different code path; same fix pattern — move large stack
+      allocations to static buffers, or extend the stack)
+- [ ] `usb::init_and_enumerate()` runs without corrupting state
 - [ ] DEMO 18 passes all 5 sub-checks against `qemu-xhci -device usb-kbd`
-- [ ] All DEMOs 0-19 still pass in the same boot
+- [ ] All other DEMOs still pass in the same boot
+- [ ] ENV_BLOCK_SIZE bumped back to 2 KiB (or higher) as proof the
+      underlying budget is no longer a constraint
 - [ ] CSZ=1 (Intel 64-byte contexts) branch noted as not-validated-in-QEMU,
       so the metal test on ThinkPad P1 surfaces it as a known gap
 
-**Blocker:** `usb::init_and_enumerate()` corrupts memory; surfaces as
-#GP at non-canonical RIP `0x500010000044800` during the next
-user-program execution cycle. Bisect plan in task #36.
+## M4 — FS Stage 3: `SYS_FS_*` syscalls `[✅]`
 
-## M4 — FS Stage 3: `SYS_FS_*` syscalls `[  ]`
+Path namespace exposed to user space via existing SYS_OPEN/CLOSE/
+FREAD/FWRITE/STAT/MKDIR/UNLINK/READDIR numbers. Path-FD range
+96..127 sits alongside legacy pipe/ramfs FDs. Tier-aware open
+gate via `current_task_max_tier()`.
+Landed `dfca48f`. DEMO 20 covers all 8 syscalls from Ring 0.
+User-program port (fs-demo) still pending.
 
-Expose the path namespace to user space.
+## M5 — FS Stage 2: snapshot persistence for the namespace `[✅]`
 
-**Done when:**
-- [ ] `SYS_FS_OPEN(path, flags) → fd` allocates a per-process FD
-      against the path-namespace SUID
-- [ ] `SYS_FS_READ(fd, buf, n) → n` and `SYS_FS_WRITE(fd, buf, n) → n`
-      read/write the underlying SemanticObject
-- [ ] `SYS_FS_CREATE(path, tier) → fd`, `SYS_FS_MKDIR(path)`,
-      `SYS_FS_UNLINK(path)`, `SYS_FS_READDIR(fd, buf)`, `SYS_FS_STAT(path)`
-- [ ] FD table extended (today `fs::ramfs::FdTable` is read-only embedded
-      files) to hold path-namespace handles
-- [ ] Security check: callers can only `open` objects whose `tier` the
-      calling task's `max_tier` covers; `readdir` filters out
-      inaccessible children
-- [ ] A user-space program (`fs-demo` or extension of `sem-demo`)
-      uses the syscalls end-to-end and prints what it sees
-- [ ] DEMO 20 covers it from Ring 0; the user-space test covers it
-      from Ring 3
-
-## M5 — FS Stage 2: snapshot persistence for the namespace `[  ]`
-
-Survive reboot.
-
-**Done when:**
-- [ ] Each `Namespace` mutation marks the affected SUIDs dirty
-- [ ] A kernel-side flush walks the dirty set and writes through
-      `storage::snapshot` to VirtIO block
-- [ ] Boot path: if a snapshot exists, replay it into `global_registry`
-      before `Namespace::init` runs; init becomes idempotent (already is)
-- [ ] DEMO 21: create files → flush → reboot (in the same QEMU run via
-      a soft re-init path, or two QEMU runs against the same vdisk
-      image) → read same content back
-- [ ] `mint_suid()` switched from atomic counter + boot-tick scramble
-      to RDRAND so persisted SUIDs don't collide across boots
-- [ ] SemanticObject `created_at`/`modified_at` populated from
-      `platform::wall_clock()` (M2)
+`Namespace::save(dev)` / `load(dev)` via `storage::snapshot`. Packed
+FSNS format, BFS from root, RDRAND-backed `mint_suid` so persisted
+SUIDs don't collide across boots, `created_at`/`modified_at` from
+`platform::wall_clock()` populated on every mutation.
+Landed `920e6da` (in-process roundtrip) + `1f62c08` (cross-boot
+auto-load + idempotent DEMOs 17/20/21). Two-QEMU-cycle test
+validates byte-exact restore with 450 s timestamp.
+**Operational gotcha:** boot-time `Namespace::load(virtio0)` MUST
+run AFTER `init_global_registry()` — that call clears the registry;
+loading earlier wipes the entries. Verified by the log line
+"loaded 643 bytes" still showing even when the data was wiped.
 - [ ] Snapshot size limit (64 KiB today) documented as a "namespace
       metadata only" cap; large-object content goes into a separate
       per-object stream when that becomes necessary
@@ -381,19 +384,20 @@ TLS stack from Phase 8 + Wi-Fi from Phase 10.
 - [ ] DEMO 35 boots the agent, asks Claude to read README.md and
       summarize it; agent calls `read_file`, returns the summary
 
-## M23 — Build pipeline (Road A: cross-build over the network) `[  ]`
+## M23 — Build pipeline (cross-build over network) `[  ]` — OPTIONAL FALLBACK
 
-Compilation happens on a build server reachable over Wi-Fi. The
-agent on Semantic OS pushes source changes, kicks off the build,
-pulls back the new kernel image. This is the *achievable* path —
-Road B (port rustc + LLVM) is multi-year scope and deliberately
-parked.
+User has chosen Phase 14 (self-hosting on the metal) as the
+committed build path. M23 stays in the roadmap as a fallback in
+case Phase 14 stalls badly enough that we still want the
+"changes-edit-reboot" loop working in the meantime via a network
+build. **Skip this milestone unless Phase 14 hits a wall.**
+
+If picked up:
 
 **Done when:**
 - [ ] Network protocol for "push these files, build, return image"
       (could be: git push → CI webhook → image download; or a
-      simpler custom HTTP service; pick whichever the user runs
-      on the build server)
+      simpler custom HTTP service)
 - [ ] HTTPS POST + GET on top of the TLS transport (currently we
       only do POST in NetworkLlmProvider; need general HTTP)
 - [ ] Saved disk image installed to the boot partition
@@ -413,15 +417,147 @@ parked.
 
 ## Out of scope for this phase
 
-- **Port rustc + LLVM (Road B).** Reopened only if Road A proves
-  insufficient. Estimated multi-year; almost no hobby kernel
-  attempts this. Even mature Rust-native kernels like Redox
-  haven't done it.
+- **Port rustc + LLVM as-is (Phase 14).** Achievable but bigger
+  scope than Phase 13 needs. Moved to its own phase below — the
+  realistic shape is **port std + adopt Cranelift**, not "rewrite
+  LLVM from scratch."
 - **JS runtime port (for running upstream Claude Code as-is).**
   Easier than rustc but still enormous; the native Rust agent
   (M22) bypasses the need.
 - **Tree-sitter / LSP** — nice to have but not required for the
   "make a kernel change with Claude's help" loop.
+
+---
+
+# Phase 14 — Self-hosting compilation (COMMITTED PATH, tracked as research)
+
+Goal: rustc + cargo run *on* Semantic OS, building Semantic OS.
+**User-chosen committed path** for kernel self-development. The
+ThinkPad P1 running Semantic OS hosts its entire dev loop — edit,
+build, reboot, no other machine in the loop. Phase 13 M23 (network
+build server) is the fallback if this stalls.
+
+Runs in parallel with Phase 13's M19-M22 + M24 (TTY, shell, editor,
+agent, reboot-into-new-kernel — all still needed regardless of where
+the compiler runs). Independent of Phases 11/12 (rendering / NVIDIA
+dGPU).
+
+## Tracked as a research project on AI-assisted porting
+
+User decision: this phase doubles as **research into AI usage** —
+how productive is LLM-driven compiler porting, where does iteration
+overhead actually come from, what's the real ratio of generated to
+kept code on a project this size? **No wall-clock estimates** here
+because they'd be guesses; we measure as we go.
+
+Per-session metrics worth tracking (write into the commit body or
+a `docs/RESEARCH-LOG.md` as the phase progresses):
+
+- Tokens generated (rough — agent run length × rate)
+- LOC added to repo
+- LOC deleted (iteration cost)
+- LOC kept after the session (net useful delta)
+- Build attempts before clean
+- Bugs caught at compile vs at test vs at runtime
+- Subjective: was this session bottlenecked by agent throughput,
+  by iteration cycles, by underlying-bug debugging, or by
+  spec/code-reading time?
+
+After 5-10 sessions we should have honest empirical numbers
+to replace the LOC-budget guesses below.
+
+## Starting LOC hypotheses (validate during research, don't trust)
+
+| Component | LOC guess | Notes |
+|---|---|---|
+| std shim over our syscalls (M25) | ~30K | Probably the highest-iteration component — std's surface is broad and tests are unforgiving |
+| Spawn/wait + thread/sync syscalls + scheduler upgrade | ~15K | Kernel-side prerequisite for std::process and std::thread |
+| Memory allocator (jemalloc-class minimum) | ~8K | Could vendor an existing one; net new work smaller |
+| Vendor + integrate Cranelift (M26) | mostly read+review | Cranelift exists (~150K LOC). Integration is the work |
+| First rustc build on Semantic OS (M27) | iteration only | The test-suite phase. Open-ended |
+| Self-bootstrap (M28) | the moment, not the work | Validation, not coding |
+
+**Why not port LLVM from C++ to Rust?** ~10M LOC of C++. Cranelift
+(~150K LOC of Rust, exists today) gives us a Rust-native codegen
+backend that's "good enough" for self-hosting. Drop LLVM entirely
+on Semantic OS; keep it on the build server (Phase 13 M23) if we
+want the full optimizer.
+
+**Why not run upstream Claude Code (Node.js) instead of M22's
+native Rust port?** Node.js + V8 is ~5M LOC of C++. The native
+Rust agent (M22) is ~4K LOC, ships with Phase 13.
+
+## M25 — std shim over Semantic OS syscalls `[  ]`
+
+Get upstream rustc's std dependencies satisfied on our kernel.
+
+**Tier 1 prereqs (all ✅ as of 2026-05-18 — M25 unblocked to start):**
+- ✅ Real general-purpose allocator (heap alloc, `9a5850e` — `SYS_HEAP_ALLOC`/`SYS_HEAP_FREE`)
+- ✅ argv/envp passthrough in SYS_SPAWN (`8937041` — `setup_user_argv` Platform
+  method writes SysV layout to new process's user stack; SpawnArgs struct passed
+  via syscall arg3)
+- ✅ Per-process env block + CWD (`8a3c29f` — `SYS_GET_CWD`/`SET_CWD`/`GET_ENV`/`SET_ENV`,
+  inherit-on-spawn)
+- ✅ SYS_FS_* surface (`dfca48f` — already done for std::fs backing)
+
+**Tier 2 prereqs still pending (these gate M26 "first compile" smoke test):**
+- ◻️ SYS_FSYNC (crash-safe writes for cargo)
+- ◻️ SYS_RENAME (atomic rename for cargo's overwrite-on-success pattern)
+- ◻️ SYS_TRUNCATE + FWRITE that handles >256 bytes (today's `from_inline` cap)
+- ◻️ Enriched SYS_STAT (type + mtime + mode word)
+
+**Tier 3 prereqs (parallel/threaded rustc, future):**
+- ◻️ SYS_THREAD_SPAWN/JOIN + thread-local storage
+- ◻️ Mutex/Condvar via futex (`SYS_FUTEX_WAIT` / `SYS_FUTEX_WAKE`)
+
+**Done when (M25 itself):**
+- [ ] `std::fs` routes to `SYS_FS_*` (M4)
+- [ ] `std::process::Command` calls `SYS_SPAWN` / `SYS_WAIT`
+- [ ] `std::thread` over a preemptive scheduler with
+      `std::sync::{Mutex, Condvar, RwLock}` primitives (needs Tier 3)
+- [ ] `std::net::{TcpStream, UdpSocket}` over kernel-core::net
+- [ ] `std::env`, `std::path`, `std::time` (env + wall_clock backings already done)
+- [ ] A "hello world" program built against this std runs on Semantic OS
+
+## M26 — Cranelift backend integration `[🔨 prep done]`
+
+Avoid the LLVM C++ port by adopting the Rust-native codegen.
+
+**Prep already landed (2026-05-18, commit `8ed4aa7`):**
+- ✅ Vendor placeholders + VENDOR_NOTEs in
+  `kernel-core/vendor/cranelift/` and `vendor/rustc_codegen_cranelift/`
+  pinning the versions (cranelift 0.121.0; cg_clif tied to nightly-2026-02-01).
+  Sources themselves NOT YET copied — agent's sandbox blocked network +
+  cargo execution; documented re-vendoring procedure in each VENDOR_NOTE.
+- ✅ `docs/PHASE_14_CRANELIFT_BRIEF.md` (~450 LOC) — sub-crate
+  architecture, MIR→CLIF→x86_64 pipeline, integration plan, 10 known-
+  unknowns, what LLVM features we give up.
+- ✅ `docs/STD_SHIM_SURFACE.md` — 65 std methods catalogued with their
+  syscall dependencies, drove the Tier-1/2/3 prereq list above.
+
+**Done when:**
+- [ ] Cranelift sources fully vendored (one agent session in a less-restricted
+      sandbox, OR manual rsync from the cargo registry cache)
+- [ ] `rustc_codegen_cranelift` similarly vendored / patched
+- [ ] Smoke test: cranelift compiles a small Rust program to
+      x86_64 machine code that runs on Semantic OS
+
+## M27 — First rustc build on Semantic OS `[  ]`
+
+**Done when:**
+- [ ] Cargo (built against M25's std) drives a rustc invocation
+      that produces a working binary
+- [ ] The "hello world" test from M25 compiles and runs end-to-end
+      on Semantic OS without the cross-build server
+
+## M28 — Self-bootstrap `[  ]`
+
+The capstone moment for Phase 14.
+
+**Done when:**
+- [ ] `cargo build --release` of Semantic OS, run *on* Semantic OS,
+      produces a working kernel image
+- [ ] That image, when booted, can rebuild itself the same way
 
 ---
 
