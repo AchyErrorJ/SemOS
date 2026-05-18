@@ -233,6 +233,17 @@ impl FdTable {
 /// Maximum children per process
 pub const MAX_CHILDREN: usize = 32;
 
+/// Maximum total bytes per process environment block. Holds packed
+/// `KEY=VALUE\0KEY=VALUE\0…` entries — see [`Process::env`].
+///
+/// **Sized down from 2 KiB to 512 B** because 2 KiB × MAX_PROCESSES(64)
+/// = 128 KiB of new BSS pushed the kernel image past a layout-sensitive
+/// boundary and hung boot at IDT-init (same memory-layout-sensitivity
+/// family as the parked USB bug — see task #36). 512 B is enough for
+/// typical command-line dev workflows (maybe 8-10 vars); bump along
+/// with whatever layout fix lands for #36.
+pub const ENV_BLOCK_SIZE: usize = 512;
+
 /// Process Control Block
 pub struct Process {
     /// Process ID
@@ -261,10 +272,18 @@ pub struct Process {
     pub name: [u8; 32],
     /// Name length
     pub name_len: usize,
-    /// Working directory path
+    /// Working directory path. Always absolute (starts with `/`).
+    /// Inherited by child processes on spawn. Default: `/`.
     pub cwd: [u8; 128],
     /// CWD length
     pub cwd_len: usize,
+    /// Process environment block. Packed `KEY=VALUE\0KEY=VALUE\0…`
+    /// (the trailing `\0` separates entries, no second `\0` for end).
+    /// Inherited by child processes on spawn. Phase 14 prereq #3 —
+    /// std::env::var / std::env::vars reach in here via SYS_GET_ENV / SYS_SET_ENV.
+    pub env: [u8; ENV_BLOCK_SIZE],
+    /// Bytes used in `env`.
+    pub env_len: usize,
     // Note: user/group identity is not stored on Process. The authoritative
     // identity lives on the associated scheduler task (`TaskInfo.user_id`)
     // and is read via `scheduler::current_user_id()`. Two parallel fields
@@ -295,6 +314,8 @@ impl Process {
             name_len: 0,
             cwd: [0u8; 128],
             cwd_len: 1,
+            env: [0u8; ENV_BLOCK_SIZE],
+            env_len: 0,
             entry_point: 0,
             stack_ptr: 0,
             brk: 0,
@@ -379,6 +400,102 @@ impl Process {
     // Note: removed `can_access_tier(tier)`. The scheduler-task tier
     // (`current_task_max_tier()`) is the authoritative check; using a
     // PCB-side mirror was the only reason `Process` still tracked tier.
+
+    // --- Env + CWD accessors (Phase 14 prereq #3) ---
+
+    /// Current CWD as a string slice. Always valid UTF-8 (we only
+    /// write valid paths in via [`set_cwd`]).
+    pub fn cwd_str(&self) -> &str {
+        // Safety: cwd is only written via set_cwd which validates UTF-8.
+        unsafe { core::str::from_utf8_unchecked(&self.cwd[..self.cwd_len]) }
+    }
+
+    /// Replace CWD. Validates that `path` is absolute (starts with `/`)
+    /// and fits the fixed 128-byte buffer. Returns true on success.
+    pub fn set_cwd(&mut self, path: &str) -> bool {
+        let bytes = path.as_bytes();
+        if !path.starts_with('/') || bytes.len() > self.cwd.len() {
+            return false;
+        }
+        self.cwd[..bytes.len()].copy_from_slice(bytes);
+        self.cwd_len = bytes.len();
+        true
+    }
+
+    /// Look up a single env var by key. Returns the value bytes, or None
+    /// if the key isn't present. Walks the packed `KEY=VALUE\0…` block.
+    pub fn env_get(&self, key: &str) -> Option<&[u8]> {
+        let key_bytes = key.as_bytes();
+        let mut start = 0usize;
+        while start < self.env_len {
+            // Find the end of this entry (next \0 or end of block).
+            let mut end = start;
+            while end < self.env_len && self.env[end] != 0 { end += 1; }
+            let entry = &self.env[start..end];
+            // Find the '=' within the entry.
+            if let Some(eq) = entry.iter().position(|&b| b == b'=') {
+                if &entry[..eq] == key_bytes {
+                    return Some(&entry[eq + 1..]);
+                }
+            }
+            start = end + 1;
+        }
+        None
+    }
+
+    /// Set or update an env var. If the key exists, replaces the value
+    /// (entire entry rewritten in place is too brittle — we delete the
+    /// old entry and append the new one). Returns true on success,
+    /// false if the env block would overflow.
+    pub fn env_set(&mut self, key: &str, value: &str) -> bool {
+        // Step 1: remove any existing entry with this key.
+        let key_bytes = key.as_bytes();
+        let mut start = 0usize;
+        while start < self.env_len {
+            let mut end = start;
+            while end < self.env_len && self.env[end] != 0 { end += 1; }
+            let entry = &self.env[start..end];
+            let matches = entry.iter().position(|&b| b == b'=')
+                .map(|eq| &entry[..eq] == key_bytes)
+                .unwrap_or(false);
+            if matches {
+                // Shift the tail down by (end - start + 1) bytes
+                // (+1 to also skip the entry's trailing \0, if any).
+                let consumed = if end < self.env_len { end - start + 1 } else { end - start };
+                let tail_src_start = start + consumed;
+                let tail_len = self.env_len.saturating_sub(tail_src_start);
+                self.env.copy_within(tail_src_start..tail_src_start + tail_len, start);
+                self.env_len -= consumed;
+                break;
+            }
+            start = end + 1;
+        }
+
+        // Step 2: append the new entry.
+        let needed = key_bytes.len() + 1 + value.len() + 1; // KEY=VALUE\0
+        if self.env_len + needed > self.env.len() { return false; }
+        let mut p = self.env_len;
+        self.env[p..p + key_bytes.len()].copy_from_slice(key_bytes);
+        p += key_bytes.len();
+        self.env[p] = b'=';
+        p += 1;
+        self.env[p..p + value.len()].copy_from_slice(value.as_bytes());
+        p += value.len();
+        self.env[p] = 0;
+        p += 1;
+        self.env_len = p;
+        true
+    }
+
+    /// Inherit env + CWD from another process (used on spawn). Copies
+    /// the raw bytes — no validation, parent is assumed to have valid
+    /// state.
+    pub fn inherit_env_cwd_from(&mut self, parent: &Process) {
+        self.cwd[..parent.cwd_len].copy_from_slice(&parent.cwd[..parent.cwd_len]);
+        self.cwd_len = parent.cwd_len;
+        self.env[..parent.env_len].copy_from_slice(&parent.env[..parent.env_len]);
+        self.env_len = parent.env_len;
+    }
 
     /// Mark process as zombie with exit status
     pub fn exit(&mut self, status: ExitStatus) {
@@ -739,6 +856,18 @@ pub fn spawn_from_elf_with_args(
         let pid = PROCESS_TABLE.alloc_pid()?;
         let mut proc = Process::new(pid, Some(parent_pid), name);
         proc.capabilities = CapabilitySet::minimal();
+        // Inherit env + CWD from parent (Phase 14 prereq #3). Default
+        // is empty env + cwd="/"; if the parent has set anything, the
+        // child gets a copy. Standard POSIX semantics.
+        if let Some(parent) = PROCESS_TABLE.get(parent_pid) {
+            // Clone the parent's slice into a stack snapshot so we don't
+            // hold a borrow while we mutate `proc` (same struct, same table).
+            let parent_snap = (parent.cwd, parent.cwd_len, parent.env, parent.env_len);
+            proc.cwd = parent_snap.0;
+            proc.cwd_len = parent_snap.1;
+            proc.env = parent_snap.2;
+            proc.env_len = parent_snap.3;
+        }
         // The tier was already applied to the scheduler task by
         // `platform.spawn_user_task(...max_tier)` above; the PCB used to
         // mirror it, but that was the redundancy we just removed.

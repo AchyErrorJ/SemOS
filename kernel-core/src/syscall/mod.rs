@@ -94,6 +94,13 @@ pub mod numbers {
     pub const SYS_SETUID:        u64 = 81; // (uid) -> 0 / err
     pub const SYS_CREATE_USER:   u64 = 82; // (name_ptr, name_len, tier, group) -> uid / err
     pub const SYS_LOOKUP_USER:   u64 = 83; // (uid, out_ptr, out_len) -> bytes_written / err
+
+    // Per-process environment + CWD (74-77). Phase 14 prereq #3 —
+    // std::env::{var, vars, current_dir, set_current_dir} reach here.
+    pub const SYS_GET_CWD: u64 = 74; // (buf_ptr, buf_len) -> bytes_written / err
+    pub const SYS_SET_CWD: u64 = 75; // (path_ptr, path_len) -> 0 / err
+    pub const SYS_GET_ENV: u64 = 76; // (key_ptr, key_len, buf_ptr, buf_len) -> bytes / 0=not-found / err
+    pub const SYS_SET_ENV: u64 = 77; // (key_ptr, key_len, val_ptr, val_len) -> 0 / err
 }
 
 /// Syscall dispatch — called by platform trap handler with
@@ -165,6 +172,10 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
         // System (70-79)
         SYS_TIME => crate::platform::ticks(),
+        SYS_GET_CWD => handle_get_cwd(arg0, arg1),
+        SYS_SET_CWD => handle_set_cwd(arg0, arg1),
+        SYS_GET_ENV => handle_get_env(arg0, arg1, arg2, arg3),
+        SYS_SET_ENV => handle_set_env(arg0, arg1, arg2, arg3),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),
@@ -301,6 +312,121 @@ fn handle_free(ptr: u64, _size: u64) -> u64 {
         0 // success
     } else {
         u64::MAX // error: address not recognized
+    }
+}
+
+// ============================================================================
+// Per-process env + CWD (Phase 14 prereq #3)
+// ============================================================================
+
+/// SYS_GET_CWD(buf_ptr, buf_len) → bytes_written, or u64::MAX on error
+/// (no current process, or buffer too small for the CWD).
+fn handle_get_cwd(buf_ptr: u64, buf_len: u64) -> u64 {
+    let pid = crate::process::current_pid();
+    let len_out = buf_len as usize;
+    if len_out == 0 || len_out > 256 { return u64::MAX; }
+
+    let cwd_bytes: [u8; 128];
+    let cwd_len: usize;
+    unsafe {
+        let proc = match crate::process::get(pid) {
+            Some(p) => p,
+            None => return u64::MAX,
+        };
+        cwd_bytes = proc.cwd;
+        cwd_len = proc.cwd_len;
+    }
+
+    if cwd_len > len_out { return u64::MAX; }
+    unsafe {
+        let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, cwd_len);
+        dest.copy_from_slice(&cwd_bytes[..cwd_len]);
+    }
+    cwd_len as u64
+}
+
+/// SYS_SET_CWD(path_ptr, path_len) → 0 on success, u64::MAX on error
+/// (path not absolute, too long, or current process not present).
+fn handle_set_cwd(path_ptr: u64, path_len: u64) -> u64 {
+    let len = path_len as usize;
+    if len == 0 || len > 128 { return u64::MAX; }
+    let path = unsafe {
+        let slice = core::slice::from_raw_parts(path_ptr as *const u8, len);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return u64::MAX,
+        }
+    };
+    let pid = crate::process::current_pid();
+    unsafe {
+        let proc = match crate::process::get_mut(pid) {
+            Some(p) => p,
+            None => return u64::MAX,
+        };
+        if proc.set_cwd(path) { 0 } else { u64::MAX }
+    }
+}
+
+/// SYS_GET_ENV(key_ptr, key_len, val_buf_ptr, val_buf_len) →
+///   bytes_written on success, 0 if key not found, u64::MAX on error
+///   (bad UTF-8 in key, buffer too small, current process missing).
+fn handle_get_env(key_ptr: u64, key_len: u64, val_buf_ptr: u64, val_buf_len: u64) -> u64 {
+    let klen = key_len as usize;
+    let vlen_out = val_buf_len as usize;
+    if klen == 0 || klen > 64 || vlen_out == 0 || vlen_out > 1024 { return u64::MAX; }
+
+    let key = unsafe {
+        let slice = core::slice::from_raw_parts(key_ptr as *const u8, klen);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return u64::MAX,
+        }
+    };
+    let pid = crate::process::current_pid();
+    unsafe {
+        let proc = match crate::process::get(pid) {
+            Some(p) => p,
+            None => return u64::MAX,
+        };
+        match proc.env_get(key) {
+            Some(value) => {
+                if value.len() > vlen_out { return u64::MAX; }
+                let dest = core::slice::from_raw_parts_mut(val_buf_ptr as *mut u8, value.len());
+                dest.copy_from_slice(value);
+                value.len() as u64
+            }
+            None => 0,
+        }
+    }
+}
+
+/// SYS_SET_ENV(key_ptr, key_len, val_ptr, val_len) → 0 on success,
+/// u64::MAX on error (bad UTF-8, env block full, key too long).
+fn handle_set_env(key_ptr: u64, key_len: u64, val_ptr: u64, val_len: u64) -> u64 {
+    let klen = key_len as usize;
+    let vlen = val_len as usize;
+    if klen == 0 || klen > 64 || vlen > 1024 { return u64::MAX; }
+    let key = unsafe {
+        let slice = core::slice::from_raw_parts(key_ptr as *const u8, klen);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return u64::MAX,
+        }
+    };
+    let val = unsafe {
+        let slice = core::slice::from_raw_parts(val_ptr as *const u8, vlen);
+        match core::str::from_utf8(slice) {
+            Ok(s) => s,
+            Err(_) => return u64::MAX,
+        }
+    };
+    let pid = crate::process::current_pid();
+    unsafe {
+        let proc = match crate::process::get_mut(pid) {
+            Some(p) => p,
+            None => return u64::MAX,
+        };
+        if proc.env_set(key, val) { 0 } else { u64::MAX }
     }
 }
 

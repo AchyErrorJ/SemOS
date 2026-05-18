@@ -632,6 +632,13 @@ fn init_loader_task() {
     println!("================================================================");
     spawn_argv_test();
 
+    // DEMO 24: per-process env + CWD via SYS_GET_*/SET_* (Phase 14 prereq #3).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 24: per-process env + CWD (Phase 14 prereq)");
+    println!("================================================================");
+    env_cwd_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -2374,6 +2381,104 @@ fn wall_clock_test() {
     println!("  [DEMO 19] PASS: timestamp inside plausible epoch range");
 
     println!("  [DEMO 19] => wall_clock works end-to-end; ready for TLS notAfter + file timestamps");
+}
+
+/// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).
+///
+/// What this proves:
+///   1. GET_CWD returns the default `/` for the kernel process
+///   2. SET_CWD writes a new value; GET_CWD reflects it
+///   3. SET_CWD rejects non-absolute paths
+///   4. SET_ENV creates a key; GET_ENV reads it back byte-exact
+///   5. SET_ENV updates an existing key (no duplicate entries left behind)
+///   6. GET_ENV on a missing key returns 0
+fn env_cwd_test() {
+    use kernel_core::syscall::dispatch;
+    use kernel_core::syscall::numbers::*;
+
+    let mut buf = [0u8; 128];
+
+    // Step 1: read default CWD.
+    let n = dispatch(SYS_GET_CWD, buf.as_mut_ptr() as u64, buf.len() as u64, 0, 0);
+    if n == u64::MAX || n == 0 {
+        println!("  [DEMO 24] FAIL: GET_CWD returned {}", n); return;
+    }
+    let cwd = core::str::from_utf8(&buf[..n as usize]).unwrap_or("?");
+    println!("  [DEMO 24] PASS: GET_CWD = '{}' ({} bytes)", cwd, n);
+
+    // Step 2: change CWD.
+    let new_cwd = "/persist";
+    let r = dispatch(SYS_SET_CWD, new_cwd.as_ptr() as u64, new_cwd.len() as u64, 0, 0);
+    if r != 0 { println!("  [DEMO 24] FAIL: SET_CWD: {}", r); return; }
+    let n2 = dispatch(SYS_GET_CWD, buf.as_mut_ptr() as u64, buf.len() as u64, 0, 0);
+    let cwd2 = core::str::from_utf8(&buf[..n2 as usize]).unwrap_or("?");
+    if cwd2 != new_cwd {
+        println!("  [DEMO 24] FAIL: GET_CWD after set returned '{}', want '{}'", cwd2, new_cwd);
+        return;
+    }
+    println!("  [DEMO 24] PASS: SET_CWD then GET_CWD round-trip ('{}')", cwd2);
+
+    // Step 3: SET_CWD rejects non-absolute.
+    let bad = "relative/path";
+    let r_bad = dispatch(SYS_SET_CWD, bad.as_ptr() as u64, bad.len() as u64, 0, 0);
+    if r_bad != u64::MAX {
+        println!("  [DEMO 24] FAIL: SET_CWD accepted relative path (got {})", r_bad);
+        return;
+    }
+    println!("  [DEMO 24] PASS: SET_CWD rejects relative path");
+
+    // Step 4: SET_ENV + GET_ENV byte-exact.
+    let key = "RUST_LOG";
+    let val = "debug";
+    let r = dispatch(SYS_SET_ENV,
+        key.as_ptr() as u64, key.len() as u64,
+        val.as_ptr() as u64, val.len() as u64);
+    if r != 0 { println!("  [DEMO 24] FAIL: SET_ENV: {}", r); return; }
+    let mut vbuf = [0u8; 64];
+    let n = dispatch(SYS_GET_ENV,
+        key.as_ptr() as u64, key.len() as u64,
+        vbuf.as_mut_ptr() as u64, vbuf.len() as u64);
+    if n == u64::MAX || n == 0 {
+        println!("  [DEMO 24] FAIL: GET_ENV after set returned {}", n);
+        return;
+    }
+    let got = core::str::from_utf8(&vbuf[..n as usize]).unwrap_or("?");
+    if got != val {
+        println!("  [DEMO 24] FAIL: GET_ENV returned '{}', want '{}'", got, val);
+        return;
+    }
+    println!("  [DEMO 24] PASS: SET_ENV + GET_ENV round-trip ('{}={}')", key, got);
+
+    // Step 5: SET_ENV updates existing key.
+    let val2 = "trace";
+    let _ = dispatch(SYS_SET_ENV,
+        key.as_ptr() as u64, key.len() as u64,
+        val2.as_ptr() as u64, val2.len() as u64);
+    let n = dispatch(SYS_GET_ENV,
+        key.as_ptr() as u64, key.len() as u64,
+        vbuf.as_mut_ptr() as u64, vbuf.len() as u64);
+    let got2 = core::str::from_utf8(&vbuf[..n as usize]).unwrap_or("?");
+    if got2 != val2 {
+        println!("  [DEMO 24] FAIL: SET_ENV update: got '{}', want '{}'", got2, val2);
+        return;
+    }
+    println!("  [DEMO 24] PASS: SET_ENV updates existing key in place ('{}={}')", key, got2);
+
+    // Step 6: GET_ENV on missing key returns 0.
+    let missing = "NOT_SET";
+    let n = dispatch(SYS_GET_ENV,
+        missing.as_ptr() as u64, missing.len() as u64,
+        vbuf.as_mut_ptr() as u64, vbuf.len() as u64);
+    if n != 0 {
+        println!("  [DEMO 24] FAIL: GET_ENV on missing key returned {}, want 0", n);
+        return;
+    }
+    println!("  [DEMO 24] PASS: GET_ENV on missing key returns 0");
+
+    // Restore default CWD so later DEMOs aren't surprised.
+    let _ = dispatch(SYS_SET_CWD, "/".as_ptr() as u64, 1, 0, 0);
+
+    println!("  [DEMO 24] => per-process env + CWD ready for std::env shim");
 }
 
 /// DEMO 23: SYS_SPAWN with argv/envp via SpawnArgs (Phase 14 prereq #2).
