@@ -1452,6 +1452,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
                 "sem-demo" => "sem-demo.elf",
                 "exfil-demo" => "exfil-demo.elf",
                 "thread-demo" => "thread-demo.elf",
+                "hello-std" => "hello-std.elf",
                 _ => return u64::MAX,
             }
         } else if fs.find(stripped).is_some() {

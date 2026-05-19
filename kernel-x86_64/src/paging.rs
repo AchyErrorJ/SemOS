@@ -148,7 +148,14 @@ impl PageTable {
 // ============================================================================
 
 /// Maximum page table frames we can allocate (for page table structures themselves)
-const MAX_PT_FRAMES: usize = 128;
+// Each user process consumes ~10-15 PT frames (PML4 + 3 subtables per
+// segment-page-frame chain × 3 LOAD segments + user stack). Phase 14
+// M25 spawned ~6 demos worth before hitting the 128-frame cap. Bumped
+// to 512 to give M25-era processes (hello-std + thread-demo + future
+// shim-based binaries) headroom without yet adding per-slot reaping
+// at process-exit time. Real fix is to free PT frames on
+// PROCESS_TABLE.remove() — separate refactor.
+const MAX_PT_FRAMES: usize = 512;
 
 /// Pool of pre-allocated 4KB frames for page table structures.
 /// These come from the kernel's usable memory, separate from the security pools.

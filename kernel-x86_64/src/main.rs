@@ -258,6 +258,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static THREAD_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/thread-demo/target/x86_64-unknown-none/release/thread-demo"
     );
+    // Phase 14 M25 Tier-1 validation: same observable behaviour as
+    // hello-rs.elf but produced through the new semos-std shim.
+    // Exercises println! → fmt::Write::write_str → SYS_WRITE, plus
+    // the main!() macro's _start glue + panic_handler routing.
+    static HELLO_STD_ELF: &[u8] = include_bytes!(
+        "../../user-programs/hello-std/target/x86_64-unknown-none/release/hello-std"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -278,6 +285,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered thread-demo.elf ({} bytes, Ring 3 threading demo)", THREAD_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register thread-demo.elf");
+        }
+        if fs.add("hello-std.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_STD_ELF) {
+            println!("    Registered hello-std.elf ({} bytes, semos-std M25 hello-world)", HELLO_STD_ELF.len());
+        } else {
+            println!("    [WARN] failed to register hello-std.elf");
         }
     }
 
@@ -686,6 +698,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 28: Ring 3 thread_spawn (Phase 14 Tier 3 #45)");
     println!("================================================================");
     ring3_thread_demo();
+
+    // DEMO 29: hello-std.elf — first program using the semos-std shim.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 29: semos-std shim hello-world (Phase 14 M25)");
+    println!("================================================================");
+    hello_std_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -2923,6 +2942,54 @@ fn ring3_thread_demo() {
         return;
     }
     println!("  [DEMO 28] => Ring 3 same-AS thread spawn fully unblocked; Tier 3 #45 closed");
+}
+
+/// DEMO 29: hello-std.elf — first Phase 14 M25 program.
+///
+/// Spawns `/bin/hello-std`, which prints "Hello from semos-std!"
+/// through the new shim's `println!` macro and exits 0. Validates
+/// the full M25 Tier 1 path: `main!()` macro → user `_start` → user
+/// `main` body → `println!` → `core::fmt::Write` → `Stdout::write_str`
+/// → SYS_WRITE → kernel serial.
+fn hello_std_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let path = "/bin/hello-std";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 29] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 29] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    // Poll the scheduler slot for Exited and read the published code.
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 29] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+    let mut polled = 0u64;
+    loop {
+        if kernel_core::scheduler::task_state(slot) == kernel_core::scheduler::TaskState::Exited {
+            break;
+        }
+        if polled > 500 {
+            println!("  [DEMO 29] FAIL: hello-std didn't exit within 500 ticks");
+            return;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot);
+    if code != 0 {
+        println!("  [DEMO 29] FAIL: hello-std exit code = {} (want 0)", code);
+        return;
+    }
+    println!("  [DEMO 29] PASS: hello-std exited 0 via semos-std::main!()");
+    println!("  [DEMO 29] => Phase 14 M25 Tier 1 shim foundation green");
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).

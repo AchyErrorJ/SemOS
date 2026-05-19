@@ -1,0 +1,17 @@
+[package]
+name = "semos-std"
+version = "0.0.1"
+edition = "2021"
+description = "Minimal std-shim over Semantic OS syscalls (Phase 14 M25 Tier 1)"
+
+# Opt out of any parent workspace.
+[workspace]
+
+[lib]
+name = "semos_std"
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
