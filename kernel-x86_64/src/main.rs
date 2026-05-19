@@ -265,6 +265,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static HELLO_STD_ELF: &[u8] = include_bytes!(
         "../../user-programs/hello-std/target/x86_64-unknown-none/release/hello-std"
     );
+    // M25 Tier 2 #50 validation: exercises GlobalAlloc → SYS_HEAP_ALLOC
+    // via Vec/String/Box/format! end-to-end.
+    static VEC_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/vec-demo/target/x86_64-unknown-none/release/vec-demo"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -290,6 +295,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered hello-std.elf ({} bytes, semos-std M25 hello-world)", HELLO_STD_ELF.len());
         } else {
             println!("    [WARN] failed to register hello-std.elf");
+        }
+        if fs.add("vec-demo.elf", kernel_core::fs::ramfs::FileType::Executable, VEC_DEMO_ELF) {
+            println!("    Registered vec-demo.elf ({} bytes, semos-std M25 Tier 2 alloc demo)", VEC_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register vec-demo.elf");
         }
     }
 
@@ -705,6 +715,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 29: semos-std shim hello-world (Phase 14 M25)");
     println!("================================================================");
     hello_std_demo();
+
+    // DEMO 30: vec-demo.elf — Vec/String/Box via SYS_HEAP_ALLOC.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 30: semos-std alloc (Vec/String/Box) — M25 Tier 2 #50");
+    println!("================================================================");
+    vec_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -2990,6 +3007,54 @@ fn hello_std_demo() {
     }
     println!("  [DEMO 29] PASS: hello-std exited 0 via semos-std::main!()");
     println!("  [DEMO 29] => Phase 14 M25 Tier 1 shim foundation green");
+}
+
+/// DEMO 30: vec-demo.elf — Phase 14 M25 Tier 2 #50 acceptance.
+///
+/// Spawns `/bin/vec-demo`, which exercises Vec / String / Box / format!
+/// to validate the GlobalAlloc → SYS_HEAP_ALLOC path end-to-end. Pass
+/// criterion: process exits with code 0 (any failure inside the user
+/// program exits non-zero with a stage-specific code).
+fn vec_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let path = "/bin/vec-demo";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 30] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 30] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 30] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+    // Larger tick budget than hello-std (this one does meaningful work:
+    // multiple growth-rounds on Vec + 32 transient String allocs).
+    let mut polled = 0u64;
+    loop {
+        if kernel_core::scheduler::task_state(slot) == kernel_core::scheduler::TaskState::Exited {
+            break;
+        }
+        if polled > 2000 {
+            println!("  [DEMO 30] FAIL: vec-demo didn't exit within 2000 ticks");
+            return;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot);
+    if code != 0 {
+        println!("  [DEMO 30] FAIL: vec-demo exit code = 0x{:X} (want 0)", code);
+        return;
+    }
+    println!("  [DEMO 30] PASS: vec-demo exited 0 (GlobalAlloc + Vec/String/Box working)");
+    println!("  [DEMO 30] => M25 Tier 2 #50 closed — alloc-crate downstream is live");
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).

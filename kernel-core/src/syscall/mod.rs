@@ -61,6 +61,12 @@ pub mod numbers {
     pub const SYS_RENAME: u64 = 36;       // (old_ptr, old_len, new_ptr, new_len) → 0/err
     pub const SYS_TRUNCATE: u64 = 37;     // (path_ptr, path_len, new_size) → 0/err
     pub const SYS_STATX: u64 = 38;        // (path_ptr, path_len, out_struct_ptr) → 0/err
+    // Map fresh, zeroed, USER-accessible frames into the caller's
+    // address space at `addr` (M25 Tier 2 #50 — backs the user-space
+    // heap allocator). Unlike SYS_HEAP_ALLOC (which returns a KERNEL
+    // heap pointer only valid in Ring 0), this gives Ring-3 code memory
+    // it can actually write.
+    pub const SYS_MMAP_ANON: u64 = 39;    // (addr, size) → addr / u64::MAX
 
     // Process (40-49)
     pub const SYS_SPAWN: u64 = 40;
@@ -162,6 +168,7 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_POOL_INFO => handle_pool_info(arg0),
         SYS_HEAP_ALLOC => handle_heap_alloc(arg0, arg1),
         SYS_HEAP_FREE => handle_heap_free(arg0, arg1, arg2),
+        SYS_MMAP_ANON => handle_mmap_anon(arg0, arg1),
 
         // Process (40-49)
         SYS_SPAWN => handle_spawn(arg0, arg1, arg2, arg3),
@@ -495,6 +502,34 @@ fn handle_pool_info(tier: u64) -> u64 {
 fn handle_heap_alloc(size: u64, align: u64) -> u64 {
     let ptr = crate::memory::heap::allocate(size as usize, align as usize);
     ptr as u64
+}
+
+/// SYS_MMAP_ANON(addr, size) → addr on success, u64::MAX on failure.
+///
+/// Map `size` bytes (rounded up to whole pages) of fresh, zeroed,
+/// USER-accessible memory into the calling process's address space
+/// starting at virtual `addr`. Backs the user-space heap allocator in
+/// semos-std (M25 Tier 2 #50).
+///
+/// `addr` must be page-aligned and in the lower half (user space).
+/// The memory is mapped ReadWrite with the user bit set, so Ring-3
+/// code can actually touch it — unlike SYS_HEAP_ALLOC's kernel-heap
+/// pointers, which fault on user write.
+fn handle_mmap_anon(addr: u64, size: u64) -> u64 {
+    if size == 0 { return u64::MAX; }
+    if addr & 0xFFF != 0 { return u64::MAX; }        // must be page-aligned
+    if addr >= 0x0000_8000_0000_0000 { return u64::MAX; } // user (lower half) only
+
+    let cr3 = crate::platform::get().current_cr3();
+    // cr3==0 would be the kernel boot tables — refuse, this is a
+    // user-process-only facility.
+    if cr3 == 0 { return u64::MAX; }
+
+    if crate::platform::get().map_user_region(cr3, addr, size) {
+        addr
+    } else {
+        u64::MAX
+    }
 }
 
 /// SYS_HEAP_FREE(ptr, size, align) → 0 on success, u64::MAX on bad ptr.
@@ -1453,6 +1488,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
                 "exfil-demo" => "exfil-demo.elf",
                 "thread-demo" => "thread-demo.elf",
                 "hello-std" => "hello-std.elf",
+                "vec-demo"  => "vec-demo.elf",
                 _ => return u64::MAX,
             }
         } else if fs.find(stripped).is_some() {

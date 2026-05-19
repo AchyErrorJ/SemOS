@@ -34,6 +34,17 @@
 #![no_std]
 #![allow(unsafe_op_in_unsafe_fn)]
 
+// The `alloc` crate provides Vec/String/Box/Arc — wired up via our
+// own GlobalAlloc impl below (M25 Tier 2 #50). Pulled in via build-std
+// in .cargo/config.toml.
+extern crate alloc as core_alloc;
+
+// Re-export the `alloc` crate's surface so downstream programs can do
+// `use semos_std::vec::Vec` exactly as they'd `use std::vec::Vec`.
+// `alloc` reuses the same module names std does (vec, string, boxed,
+// collections, sync), so this is enough for a transparent rename.
+pub use core_alloc::{boxed, collections, format, rc, string, sync, vec};
+
 // Re-export core surface so downstream programs can do `use semos_std::fmt`
 // the way they'd `use std::fmt`. Keeps the migration cost from raw-syscall
 // code low.
@@ -41,6 +52,7 @@ pub use core::{
     cmp, fmt, hint, marker, mem, ops, option, ptr, result, slice, str,
 };
 
+mod alloc_impl;
 pub mod arch;
 pub mod env;
 pub mod fs;
@@ -50,6 +62,12 @@ pub mod thread;
 
 #[doc(hidden)]
 pub use core as __core;
+
+// Install our SYS_HEAP_ALLOC-backed allocator as the global. Downstream
+// programs that depend on semos-std inherit this automatically — no
+// further #[global_allocator] needed.
+#[global_allocator]
+static SEMOS_ALLOCATOR: alloc_impl::SemosAllocator = alloc_impl::SemosAllocator::new();
 
 /// Define the program's `_start` entry. Wraps the user's `main` function
 /// so it gets called with no arguments and its return value (anything

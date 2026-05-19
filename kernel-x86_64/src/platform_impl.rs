@@ -218,19 +218,32 @@ impl Platform for X86Platform {
 
         let mut page = start_page;
         while page < end_page {
-            // Allocate a physical frame for this page
-            let frame = match crate::paging::alloc_pt_frame() {
-                Some(f) => f,
-                None => return false,
+            // Two segments can share a virtual page when the linker packs
+            // a small .data/.rodata right after a larger one (e.g. vec-demo
+            // has rodata ending at 0x403D1A and the next RW segment starting
+            // at 0x403D20 — same page 0x403000). If we allocate a fresh
+            // zeroed frame for the second segment we'd wipe the first's
+            // content. So: reuse the existing frame if the page is already
+            // mapped, and copy our bytes INTO it without zeroing.
+            let already = crate::paging::walk_pml4_for(space, page);
+            let (frame, zero_first) = match already {
+                Some(phys) => (phys & !0xFFF, false), // reuse; don't clobber
+                None => {
+                    let f = match crate::paging::alloc_pt_frame() {
+                        Some(f) => f,
+                        None => return false,
+                    };
+                    (f, true)
+                }
             };
 
-            // Copy data into the frame (via physical memory mapping)
             let frame_virt = crate::paging::phys_to_virt(frame);
             unsafe {
-                // Zero the frame first (handles BSS and partial pages)
-                core::ptr::write_bytes(frame_virt as *mut u8, 0, page_size as usize);
-
-                // Copy file data that falls within this page
+                if zero_first {
+                    // Fresh frame — zero it (covers BSS + partial pages).
+                    core::ptr::write_bytes(frame_virt as *mut u8, 0, page_size as usize);
+                }
+                // Copy file data that falls within this page.
                 let page_offset_in_seg = if page >= virt_addr {
                     (page - virt_addr) as usize
                 } else {
@@ -241,7 +254,6 @@ impl Platform for X86Platform {
                 } else {
                     0
                 };
-
                 if page_offset_in_seg < data.len() {
                     let remaining = data.len() - page_offset_in_seg;
                     let copy_len = remaining.min((page_size as usize) - copy_start_in_page);
@@ -251,10 +263,15 @@ impl Platform for X86Platform {
                 }
             }
 
-            // Map the page into the address space
-            // We need to find the AddressSpace by CR3 and call map_4k
-            if !crate::context::map_page_in_space(space, page, frame, perm) {
-                return false;
+            // Only (re)map if this page wasn't already mapped. Re-mapping
+            // an existing page would need an unmap first and could change
+            // permissions for the shared page — we keep the first
+            // segment's perms (acceptable: shared pages are rare and the
+            // looser of R / RW is what the data needs anyway).
+            if already.is_none() {
+                if !crate::context::map_page_in_space(space, page, frame, perm) {
+                    return false;
+                }
             }
 
             page += page_size;
@@ -307,6 +324,38 @@ impl Platform for X86Platform {
         // Same-AS thread spawn (task #45) calls this from a syscall
         // handler running in the parent's AS, so this is what we want.
         crate::paging::read_cr3()
+    }
+
+    fn map_user_region(&self, cr3: u64, addr: u64, size: u64) -> bool {
+        use kernel_core::memory::SecurityTier;
+        let page_size = crate::paging::PAGE_SIZE_4K;
+        let start = addr & !(page_size - 1);
+        let end = (addr + size + page_size - 1) & !(page_size - 1);
+        let mut page = start;
+        while page < end {
+            // Data frames come from the big tiered pool (13.5K frames
+            // each), NOT the 512-frame PT pool — a multi-MiB user heap
+            // would exhaust the PT pool instantly. Page-table interior
+            // nodes still draw from the PT pool inside map_page_in_space,
+            // but those are ~1 per 2 MiB.
+            let frame = match crate::memory::alloc(SecurityTier::Public) {
+                Some(f) => f,
+                None => return false, // pool OOM
+            };
+            // Zero the frame before exposing it to user space (no info leak).
+            unsafe {
+                let virt = crate::paging::phys_to_virt(frame);
+                core::ptr::write_bytes(virt as *mut u8, 0, page_size as usize);
+            }
+            if !crate::context::map_page_in_space(
+                cr3, page, frame,
+                crate::paging::PagePermission::ReadWrite,
+            ) {
+                return false;
+            }
+            page += page_size;
+        }
+        true
     }
 
     fn spawn_thread(

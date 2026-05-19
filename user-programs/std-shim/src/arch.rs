@@ -28,6 +28,7 @@ pub const SYS_HEAP_FREE:    u64 = 35;
 pub const SYS_RENAME:       u64 = 36;
 pub const SYS_TRUNCATE:     u64 = 37;
 pub const SYS_STATX:        u64 = 38;
+pub const SYS_MMAP_ANON:    u64 = 39;
 
 pub const SYS_SPAWN:        u64 = 40;
 pub const SYS_WAIT:         u64 = 41;

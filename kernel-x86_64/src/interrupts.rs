@@ -290,7 +290,25 @@ extern "x86-interrupt" fn page_fault_handler(
         // on the byte after a user `syscall` (SYS_EXIT returns to padding
         // that page-faults), so we keep the message short to avoid drowning
         // out the demo output. Use stderr-style brevity.
-        let _ = (cs, error_code, Cr2::read()); // suppress unused warnings
+        //
+        // Normally silent — this fires on the post-SYS_EXIT padding byte
+        // for programs that don't loop after exit, so logging every one
+        // would drown the demo output. The fault exit-code sentinel set
+        // in kill_current_task() is what lets parents/pollers detect a
+        // real crash (vs SYS_EXIT(0)). Flip USER_PF_VERBOSE to debug.
+        const USER_PF_VERBOSE: bool = false;
+        if USER_PF_VERBOSE {
+            let cr2 = Cr2::read_raw();
+            let rip = stack_frame.instruction_pointer.as_u64();
+            let ursp = stack_frame.stack_pointer.as_u64();
+            crate::println!(
+                "[user-pf] slot={} RIP=0x{:x} CR2=0x{:x} uRSP=0x{:x} err={:?}",
+                kernel_core::scheduler::current_task_index(),
+                rip, cr2, ursp, error_code,
+            );
+        } else {
+            let _ = (cs, error_code, Cr2::read_raw());
+        }
         kill_current_task();
         return;
     }
@@ -467,6 +485,12 @@ fn kill_current_task() {
     let _ = idx; // silenced "[kernel] reaped task N" — expected after exit
     unsafe {
         let tasks = &raw mut kernel_core::scheduler::TASKS;
+        // Sentinel exit code so SYS_THREAD_JOIN / DEMO pollers can
+        // distinguish a faulted task from one that called SYS_EXIT(0).
+        // Without this, a Ring-3 process that #PFs (e.g., user-stack
+        // overflow during a large stack frame) reads as "exited 0" to
+        // the parent, hiding the real failure. 0xFA01_FA17 == "fa01 fault".
+        (*tasks)[idx].exit_code = 0xFA01_FA17;
         (*tasks)[idx].state = kernel_core::scheduler::TaskState::Exited;
 
         // Reclaim the dying task's address space (frees subtable + PML4

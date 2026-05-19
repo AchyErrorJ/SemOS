@@ -146,6 +146,15 @@ pub trait Platform: Send + Sync + 'static {
     /// Returns 0 to mean "kernel boot page tables" (kernel-mode tasks).
     fn current_cr3(&self) -> u64 { 0 }
 
+    /// Map `size` bytes (rounded up to pages) of fresh, zeroed,
+    /// USER-accessible memory into address space `cr3` at virtual
+    /// `addr`. Returns true on success.
+    ///
+    /// Backs SYS_MMAP_ANON → the semos-std user-space heap allocator
+    /// (M25 Tier 2 #50). Pages are ReadWrite with the user bit set.
+    /// Default returns false so platforms without an MMU reject it.
+    fn map_user_region(&self, _cr3: u64, _addr: u64, _size: u64) -> bool { false }
+
     /// Phase 14 Tier 3 (#45) — Spawn a Ring-3 sibling task in an
     /// EXISTING address space.
     ///

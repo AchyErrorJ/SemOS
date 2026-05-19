@@ -1,0 +1,21 @@
+[package]
+name = "vec-demo"
+version = "0.1.0"
+edition = "2021"
+
+# Opt out of any parent workspace.
+[workspace]
+
+[[bin]]
+name = "vec-demo"
+path = "src/main.rs"
+
+[dependencies]
+semos-std = { path = "../std-shim" }
+
+[profile.release]
+panic = "abort"
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
