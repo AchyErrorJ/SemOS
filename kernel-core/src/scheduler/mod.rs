@@ -17,6 +17,25 @@ use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 /// Maximum number of tasks
 pub const MAX_TASKS: usize = 16;
 
+/// Scheduler tick rate (Hz). The platform's timer interrupt fires at
+/// this rate and calls `platform::schedule()` on each tick. The std
+/// shim divides `Duration` by this to get the integer ticks for
+/// `SYS_SLEEP` — Phase 14 Tier 3 #48, the `std::thread::sleep` lowering
+/// target.
+///
+/// Value is a best-effort estimate: on QEMU's LAPIC the bus clock is
+/// 1 GHz, divided by 16, with an init count of 1_000_000 → ~62.5 Hz.
+/// On real hardware the LAPIC bus clock varies and the actual rate
+/// may drift. For std::thread::sleep this is fine — Rust's contract
+/// is "at least the requested duration", not "exactly". Code that
+/// needs precise timing should use `platform::wall_clock()`.
+///
+/// Source of truth for the rate is `kernel-x86_64/src/apic.rs::init`
+/// (where the LAPIC timer is programmed). If that changes, this const
+/// must change too — they're not enforced linked because kernel-core
+/// has no platform-side counterpart to compute against.
+pub const SCHEDULER_TICK_HZ: u64 = 62;
+
 /// Task stack size (16KB per task).
 /// NOTE 2026-05-12: tried bumping to 32KB but it deterministically broke
 /// SYS_SPAWN's memcmp path (likely due to a layout-dependent bug elsewhere
