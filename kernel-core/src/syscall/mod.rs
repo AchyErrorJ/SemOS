@@ -287,12 +287,22 @@ fn handle_exit(code: u64) -> u64 {
         let tasks = &raw mut crate::scheduler::TASKS;
         (*tasks)[idx].state = crate::scheduler::TaskState::Exited;
     }
+    // Process-level Zombie transition is intentionally not done here.
+    // The kernel's current_pid() is never refreshed on context switch
+    // (it's a separate hygiene issue), so the syscall handler can't
+    // cheaply identify which Process owns this slot — and getting it
+    // wrong would mark the WRONG process Zombie. Until that's
+    // refactored, callers that need to observe a Ring-3 child's exit
+    // poll its scheduler slot via `scheduler::task_state` /
+    // `scheduler::task_exit_code` directly. SYS_WAIT's existing
+    // PROCESS_TABLE polling path remains functional for the cases
+    // where it was already working (kernel parents that hand the PID
+    // back, etc.).
     // Yield immediately so the scheduler picks something else
     // (including any join_block waiter). Without this, the caller
     // returns from dispatch and keeps executing kernel-mode code on
     // an Exited slot — and if IF was cleared by a prior schedule()
-    // call, a following `hlt` halts the CPU indefinitely. Task #45
-    // (#46-era follow-up).
+    // call, a following `hlt` halts the CPU indefinitely.
     crate::platform::schedule();
     // Returns 0; the syscall asm will SYSRET back to Ring 3, the user RIP
     // points at whatever follows the `syscall` instruction (usually
@@ -1441,6 +1451,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
                 "hello-rs" | "hello" => "hello-rs.elf",
                 "sem-demo" => "sem-demo.elf",
                 "exfil-demo" => "exfil-demo.elf",
+                "thread-demo" => "thread-demo.elf",
                 _ => return u64::MAX,
             }
         } else if fs.find(stripped).is_some() {

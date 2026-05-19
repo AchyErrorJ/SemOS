@@ -252,6 +252,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static EXFIL_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/exfil-demo/target/x86_64-unknown-none/release/exfil-demo"
     );
+    // Phase 14 Tier 3 #45 Ring-3 validation: spawns a sibling thread,
+    // round-trips through SYS_FUTEX_WAIT/WAKE/THREAD_JOIN, exits with
+    // a known code the kernel reads in DEMO 28.
+    static THREAD_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/thread-demo/target/x86_64-unknown-none/release/thread-demo"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -267,6 +273,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered exfil-demo.elf ({} bytes, adversarial exfil demo)", EXFIL_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register exfil-demo.elf");
+        }
+        if fs.add("thread-demo.elf", kernel_core::fs::ramfs::FileType::Executable, THREAD_DEMO_ELF) {
+            println!("    Registered thread-demo.elf ({} bytes, Ring 3 threading demo)", THREAD_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register thread-demo.elf");
         }
     }
 
@@ -668,6 +679,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 27: threading + futex + join (Phase 14 Tier 3)");
     println!("================================================================");
     threading_futex_test();
+
+    // DEMO 28: Ring-3 same-AS thread spawn end-to-end (#45 finish).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 28: Ring 3 thread_spawn (Phase 14 Tier 3 #45)");
+    println!("================================================================");
+    ring3_thread_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -2835,6 +2853,76 @@ fn threading_futex_test() {
     println!("  [DEMO 27] PASS: SYS_WAITNB non-blocking returned {}", if r == u64::MAX { "MAX (no children)" } else { "0 (no zombies)" });
 
     println!("  [DEMO 27] => Tier 3 scheduler-side primitives green; Ring 3 thread_spawn next");
+}
+
+/// DEMO 28: Ring 3 thread spawn end-to-end via thread-demo.elf.
+///
+/// Spawns the user-mode binary, which itself calls SYS_THREAD_SPAWN to
+/// fork a Ring-3 sibling sharing its address space, synchronises on a
+/// shared u32 with SYS_FUTEX_WAIT/WAKE, and reaps the sibling's exit
+/// code via SYS_THREAD_JOIN. The user program exits with 0x2700 on
+/// full pass; anything else is a stage-specific failure code (see
+/// thread-demo/src/main.rs for the table).
+///
+/// We harvest the exit status by polling the scheduler slot directly
+/// (state == Exited, then read scheduler::task_exit_code). SYS_WAIT
+/// can't be used here because its ProcessState bookkeeping was never
+/// wired to the user-mode SYS_EXIT path — that's a separate refactor.
+/// Looking the slot up by PID via the process table is the bridge.
+fn ring3_thread_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let path = "/bin/thread-demo";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 28] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 28] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    // Find the scheduler slot owned by this PID. Then poll until the
+    // slot transitions to Exited and harvest the published exit code.
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id) {
+        Some(p) => p.task_id,
+        None => {
+            println!("  [DEMO 28] FAIL: PID {} not in process table", pid);
+            return;
+        }
+    };
+    let slot = match slot {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 28] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+    println!("  [DEMO 28] PASS: PID {} occupies scheduler slot {}", pid, slot);
+
+    // Poll the slot's TaskState. The thread-demo binary takes ~30 ms of
+    // wall time once everything's hot; cap our wait at 500 ticks (~5 s
+    // at the default PIT rate) to fail fast on regression.
+    let mut polled = 0u64;
+    loop {
+        if kernel_core::scheduler::task_state(slot) == kernel_core::scheduler::TaskState::Exited {
+            break;
+        }
+        if polled > 500 {
+            println!("  [DEMO 28] FAIL: thread-demo didn't exit within 500 ticks");
+            return;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot);
+    let code32 = code as u32;
+    if code32 == 0x2700 {
+        println!("  [DEMO 28] PASS: thread-demo exited 0x2700 (full pass — Ring 3 thread_spawn + futex + join)");
+    } else {
+        println!("  [DEMO 28] FAIL: thread-demo exited 0x{:X} (table in user-programs/thread-demo/src/main.rs)", code32);
+        return;
+    }
+    println!("  [DEMO 28] => Ring 3 same-AS thread spawn fully unblocked; Tier 3 #45 closed");
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).

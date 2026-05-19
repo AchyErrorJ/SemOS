@@ -600,6 +600,26 @@ impl ProcessTable {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Process> {
         self.processes.iter_mut().filter_map(|p| p.as_mut())
     }
+
+    /// Find the process whose `task_id` matches `slot`. Used by
+    /// syscall handlers that know the scheduler slot (via
+    /// `current_task_index()`) but can't rely on `current_pid()`
+    /// (which doesn't update on context switch). Returns the PID.
+    pub fn find_pid_by_task(&self, slot: usize) -> Option<ProcessId> {
+        for p in self.iter() {
+            if p.task_id == Some(slot) {
+                return Some(p.pid);
+            }
+        }
+        None
+    }
+}
+
+/// Walk the process table looking up the PID owning scheduler slot `slot`.
+/// Bridges `scheduler::current_task_index()` to a ProcessId without
+/// going through the unreliable `current_pid()` global.
+pub fn pid_for_slot(slot: usize) -> Option<ProcessId> {
+    unsafe { PROCESS_TABLE.find_pid_by_task(slot) }
 }
 
 /// Global process table

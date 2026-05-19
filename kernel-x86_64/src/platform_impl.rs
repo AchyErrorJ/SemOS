@@ -317,25 +317,22 @@ impl Platform for X86Platform {
         arg: u64,
         max_tier: u8,
     ) -> Option<usize> {
-        // Kernel-mode (cr3==0 or matches boot_cr3) thread spawn: jump
-        // to a typed entry function via context::spawn_task. `arg` is
-        // not yet plumbed through the kernel ABI (entry signature is
-        // fn()) — fine for DEMO 27 which uses globals to communicate.
-        //
-        // Ring-3 same-AS thread spawn (real `pthread_create`-shaped
-        // path) is the remaining piece of task #45; this method will
-        // grow that branch when it lands. Until then, accept only
-        // kernel-mode requests.
-        let _ = arg;
-        if cr3 != 0 && cr3 != crate::paging::boot_cr3() {
-            return None;
+        // Kernel-mode (cr3==0 or matches boot_cr3): entry signature is
+        // `fn()` and runs in Ring 0. `arg` is unused; the kernel-side
+        // DEMO 27 uses module-level globals for cross-thread comm.
+        if cr3 == 0 || cr3 == crate::paging::boot_cr3() {
+            let _ = arg;
+            // SAFETY: caller asserts entry_va is a function pointer of
+            // the right type. Same trust the existing Ring 0 helpers use.
+            let entry: fn() = unsafe { core::mem::transmute(entry_va as usize) };
+            let _ = max_tier; // kernel-mode tasks always max_tier=3
+            return crate::context::spawn_task(name, entry);
         }
-        // SAFETY: caller asserts entry_va is a function pointer of
-        // the right type. The Platform trait doesn't enforce it; this
-        // is the same trust the existing Ring 0 helpers use.
-        let entry: fn() = unsafe { core::mem::transmute(entry_va as usize) };
-        let _ = max_tier; // kernel-mode tasks always max_tier=3
-        crate::context::spawn_task(name, entry)
+        // Ring 3 same-AS branch — pick a fresh user-stack region in the
+        // parent's CR3, map it, build a Ring 3 context that delivers
+        // `arg` in rdi. Closes the SYS_THREAD_SPAWN end-to-end story
+        // (Phase 14 Tier 3 #45 finish).
+        crate::context::spawn_ring3_thread_in_cr3(name, cr3, entry_va, arg, max_tier)
     }
 }
 

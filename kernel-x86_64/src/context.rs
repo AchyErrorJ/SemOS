@@ -371,6 +371,143 @@ extern "C" fn ring3_entry_trampoline() {
     );
 }
 
+/// Same as [`ring3_entry_trampoline`] but passes a single argument to
+/// the new thread via rdi (SysV AMD64 first-arg register). The caller
+/// stuffs the arg into `TaskContext.rbx` — context_switch restores
+/// rbx, this trampoline moves it into rdi, then zeros rbx itself
+/// before iretq so no kernel data lingers.
+///
+/// Used by Ring 3 `SYS_THREAD_SPAWN` (task #45) — the std-shim's
+/// `thread::spawn` lowers to "call entry(arg)" inside the new
+/// thread, which means the new thread must start with `arg` in rdi.
+#[unsafe(naked)]
+extern "C" fn ring3_thread_trampoline() {
+    core::arch::naked_asm!(
+        // Move the arg (placed in rbx by spawn) into rdi.
+        "mov rdi, rbx",
+        // Now zero everything else (including rbx, post-move).
+        "xor rax, rax",
+        "xor rbx, rbx",
+        "xor rcx, rcx",
+        "xor rdx, rdx",
+        "xor rsi, rsi",
+        "xor rbp, rbp",
+        "xor r8, r8",
+        "xor r9, r9",
+        "xor r10, r10",
+        // r11-r15 already zero from TaskContext init.
+        "iretq",
+    );
+}
+
+/// Build a Ring 3 context for a *thread* (same address space as the
+/// parent), entering at `user_rip` with `arg` in rdi.
+///
+/// Like [`create_ring3_context`] but stashes `arg` in rbx so
+/// [`ring3_thread_trampoline`] can hand it off via SysV ABI.
+fn create_ring3_thread_context(slot: usize, user_rip: u64, user_rsp: u64, arg: u64) -> TaskContext {
+    let selectors = crate::gdt::selectors();
+    let user_cs = selectors.user_code.0 as u64;
+    let user_ss = selectors.user_data.0 as u64;
+
+    let kstack_top = kernel_stack_top(slot);
+    let kstack_aligned = kstack_top & !0xF;
+    let frame_base = kstack_aligned - 40;
+    unsafe {
+        let p = frame_base as *mut u64;
+        *p.add(0) = user_rip;
+        *p.add(1) = user_cs;
+        *p.add(2) = 0x202;
+        *p.add(3) = user_rsp;
+        *p.add(4) = user_ss;
+    }
+
+    TaskContext {
+        rbx: arg, // ← will land in rdi via ring3_thread_trampoline
+        rbp: 0,
+        r12: 0,
+        r13: 0,
+        r14: 0,
+        r15: 0,
+        rsp: frame_base,
+        rip: ring3_thread_trampoline as *const () as u64,
+        rflags: 0x202,
+        cr3: 0, // Caller sets to parent's CR3.
+    }
+}
+
+/// Spawn a Ring 3 thread that shares its parent's address space.
+///
+/// Maps a fresh user stack inside the parent's CR3 (one virtual
+/// stack-region per scheduler slot, spaced `THREAD_STACK_VSTRIDE`
+/// apart so each thread's stack is unique without overlapping with
+/// the parent's `USER_STACK_TOP`), then constructs a Ring 3 context
+/// that enters `entry_va` with `arg` in rdi.
+///
+/// Phase 14 Tier 3 (#45) Ring 3 same-AS branch — the kernel-mode
+/// branch lives in `context::spawn_task`; the Platform `spawn_thread`
+/// trait method dispatches based on cr3.
+pub fn spawn_ring3_thread_in_cr3(
+    name: &'static str,
+    parent_cr3: u64,
+    entry_va: u64,
+    arg: u64,
+    max_tier: u8,
+) -> Option<usize> {
+    let slot = scheduler::alloc_task_slot(name, max_tier, false)?;
+
+    // Pick the new thread's user-stack virtual region: USER_STACK_TOP
+    // shifted down by slot * THREAD_STACK_VSTRIDE (1 MiB stride).
+    // With MAX_TASKS=16 slots, the highest-slot thread ends up at
+    // USER_STACK_TOP - ~16 MiB which is still well inside the lower
+    // half. The stride is far larger than USER_STACK_SIZE so threads
+    // can't accidentally walk into each other's stack.
+    const THREAD_STACK_VSTRIDE: u64 = 0x10_0000; // 1 MiB virtual spacing
+    let user_stack_size = crate::paging::user_layout::USER_STACK_SIZE;
+    let stack_pages = (user_stack_size / crate::paging::PAGE_SIZE_4K) as usize;
+    let user_stack_top = crate::paging::user_layout::USER_STACK_TOP
+        .saturating_sub((slot as u64) * THREAD_STACK_VSTRIDE);
+
+    // Physical backing comes from this slot's TASK_STACKS. Same
+    // strategy as spawn_user_task; safe because each slot gets its
+    // own TASK_STACKS region.
+    let stack_virt_base = unsafe {
+        let stacks = &raw const TASK_STACKS;
+        (*stacks)[slot].0.as_ptr() as u64
+    };
+    for i in 0..stack_pages {
+        let page_kvirt = stack_virt_base + (i as u64 * crate::paging::PAGE_SIZE_4K);
+        let page_phys = match crate::paging::walk_active_pml4(page_kvirt) {
+            Some(p) => p,
+            None => return None,
+        };
+        let page_virt = (user_stack_top - user_stack_size)
+            + (i as u64 * crate::paging::PAGE_SIZE_4K);
+        if !map_page_in_space(
+            parent_cr3,
+            page_virt,
+            page_phys,
+            crate::paging::PagePermission::ReadWrite,
+        ) {
+            return None;
+        }
+    }
+
+    // 16-byte align the user RSP per SysV ABI.
+    let user_rsp = user_stack_top & !0xF;
+
+    let mut ctx = create_ring3_thread_context(slot, entry_va, user_rsp, arg);
+    ctx.cr3 = parent_cr3;
+
+    unsafe {
+        let contexts = &raw mut CONTEXTS;
+        (*contexts)[slot] = ctx;
+    }
+    init_fxsave_for(slot);
+    scheduler::mark_ready(slot);
+    Some(slot)
+}
+
 /// Perform context switch between two tasks.
 ///
 /// Saves current registers into `old`, restores from `new`, and jumps
