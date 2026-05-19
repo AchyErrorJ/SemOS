@@ -661,6 +661,14 @@ fn init_loader_task() {
     println!("================================================================");
     large_file_fwrite_test();
 
+    // DEMO 27: kernel-mode threading + futex + join (Phase 14 Tier 3
+    // prereqs #45/#46/#47 scheduler-side).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 27: threading + futex + join (Phase 14 Tier 3)");
+    println!("================================================================");
+    threading_futex_test();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -2672,6 +2680,161 @@ fn large_file_fwrite_test() {
     let _ = dispatch(SYS_UNLINK, "/big".as_ptr() as u64, 4, 0, 0);
 
     println!("  [DEMO 26] => FWRITE up to MAX_FILE_CONTENT (64 KiB) works; #44 unblocked");
+}
+
+// DEMO 27 — kernel-mode threading + futex + join validation.
+//
+// We exercise the scheduler primitives end-to-end through the syscall
+// surface (so the std-shim path is on the hook):
+//   - SYS_THREAD_SPAWN to fork a kernel-mode sibling task (waiter or
+//     waker)
+//   - SYS_FUTEX_WAIT / SYS_FUTEX_WAKE to block + release on a shared
+//     u32 word
+//   - SYS_THREAD_JOIN to block on a sibling's exit + harvest its code
+//
+// The shared u32 lives in a static global because kernel-mode threads
+// here use the entry: fn() ABI (no arg slot through dispatch yet).
+// Ring 3 threads will get arg-via-rdi as part of task #45's Ring 3
+// branch — this commit lands the scheduler-side primitives only.
+
+/// Shared futex word for DEMO 27. The waiter polls this == 0; the
+/// waker writes 1 + FUTEX_WAKE. `repr(align(4))` makes the &raw cast
+/// well-formed; the static is in .bss, naturally 4-aligned anyway but
+/// being explicit documents the futex contract.
+#[repr(align(4))]
+struct FutexWord(core::sync::atomic::AtomicU32);
+
+static DEMO27_FUTEX: FutexWord = FutexWord(core::sync::atomic::AtomicU32::new(0));
+
+/// Set by the waiter thread on exit so the main thread can spot-check
+/// that the wait actually unblocked rather than returning early via
+/// the mismatch path.
+static DEMO27_WAITER_RESULT: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(u64::MAX);
+
+extern "C" fn demo27_waiter_entry() {
+    use kernel_core::syscall::dispatch;
+    use kernel_core::syscall::numbers::*;
+    use core::sync::atomic::Ordering;
+
+    // Wait for the word == 0 (the value it was initialised to). The
+    // syscall returns 0 once we're woken, 1 if main raced ahead and
+    // already changed the value. Both are "test passed if reached".
+    let addr = &DEMO27_FUTEX.0 as *const _ as u64;
+    let r = dispatch(SYS_FUTEX_WAIT, addr, 0, 0, 0);
+    DEMO27_WAITER_RESULT.store(r, Ordering::SeqCst);
+
+    // Exit code = 0xBEEF on a real wake, 0xCAFE if the FUTEX_WAIT path
+    // hit value mismatch (race), u64::MAX on syscall error. The main
+    // thread joins us and reads this back through scheduler exit_code.
+    let code = match r {
+        0 => 0xBEEFu64,
+        1 => 0xCAFE,
+        _ => u64::MAX,
+    };
+    dispatch(SYS_EXIT, code, 0, 0, 0);
+    // SYS_EXIT marks us Exited; the next timer tick will not reschedule
+    // us. A defensive halt loop covers the gap until then.
+    loop { unsafe { core::arch::asm!("hlt", options(nomem, nostack)); } }
+}
+
+/// DEMO 27: Phase 14 Tier 3 threading + sync prereqs.
+///
+/// What this proves:
+///   1. SYS_THREAD_SPAWN forks a kernel-mode sibling task
+///   2. SYS_FUTEX_WAIT correctly blocks the sibling on a u32 word
+///   3. SYS_FUTEX_WAKE unblocks exactly one waiter
+///   4. SYS_THREAD_JOIN blocks the main task until the sibling exits
+///   5. exit code flows through SYS_EXIT → scheduler::task_exit_code
+///   6. FUTEX_WAIT's value-mismatch fast path returns 1, not u64::MAX
+///   7. SYS_WAITNB returns u64::MAX with no children, 0 otherwise
+fn threading_futex_test() {
+    use kernel_core::syscall::dispatch;
+    use kernel_core::syscall::numbers::*;
+    use core::sync::atomic::Ordering;
+
+    // Step 0: value-mismatch fast path. Set word to 7, wait expecting
+    // 0 → must return 1 without blocking.
+    DEMO27_FUTEX.0.store(7, Ordering::SeqCst);
+    let addr = &DEMO27_FUTEX.0 as *const _ as u64;
+    let r = dispatch(SYS_FUTEX_WAIT, addr, 0, 0, 0);
+    if r != 1 {
+        println!("  [DEMO 27] FAIL: FUTEX_WAIT mismatch returned {} (want 1)", r);
+        return;
+    }
+    println!("  [DEMO 27] PASS: FUTEX_WAIT mismatch fast-path returns 1 (no block)");
+
+    // Reset to 0 so the waiter can take the slow path.
+    DEMO27_FUTEX.0.store(0, Ordering::SeqCst);
+    DEMO27_WAITER_RESULT.store(u64::MAX, Ordering::SeqCst);
+
+    // Step 1: spawn a sibling thread.
+    let tid = dispatch(SYS_THREAD_SPAWN, demo27_waiter_entry as u64, 0, 0, 0);
+    if tid == u64::MAX {
+        println!("  [DEMO 27] FAIL: SYS_THREAD_SPAWN returned MAX (kernel-mode path missing?)");
+        return;
+    }
+    println!("  [DEMO 27] PASS: SYS_THREAD_SPAWN forked tid={} (kernel-mode sibling)", tid);
+
+    // Step 2: give the waiter time to reach SYS_FUTEX_WAIT and block.
+    // SYS_SLEEP is the obvious knob: 5 ticks ≈ 50 ms at the default
+    // PIT rate, plenty for the sibling to make one syscall.
+    let _ = dispatch(SYS_SLEEP, 5, 0, 0, 0);
+
+    // Step 3: confirm the sibling is actually Blocked on Futex (not
+    // still Running or already Exited because of a bug above).
+    let st = kernel_core::scheduler::task_state(tid as usize);
+    if st != kernel_core::scheduler::TaskState::Blocked {
+        println!("  [DEMO 27] FAIL: sibling state {:?} after sleep, want Blocked", st);
+        return;
+    }
+    println!("  [DEMO 27] PASS: sibling Blocked on FUTEX_WAIT after spawn+sleep");
+
+    // Step 4: wake it. Returns count actually woken — exactly 1.
+    let woken = dispatch(SYS_FUTEX_WAKE, addr, 1, 0, 0);
+    if woken != 1 {
+        println!("  [DEMO 27] FAIL: SYS_FUTEX_WAKE woke {} (want 1)", woken);
+        return;
+    }
+    println!("  [DEMO 27] PASS: SYS_FUTEX_WAKE(addr, 1) returned 1");
+
+    // Step 5: join the sibling. Blocks until Exited; returns exit code.
+    let code = dispatch(SYS_THREAD_JOIN, tid, 0, 0, 0);
+    if code != 0xBEEF {
+        println!("  [DEMO 27] FAIL: SYS_THREAD_JOIN got exit_code 0x{:X} (want 0xBEEF)", code);
+        return;
+    }
+    let waiter_r = DEMO27_WAITER_RESULT.load(Ordering::SeqCst);
+    if waiter_r != 0 {
+        println!("  [DEMO 27] FAIL: waiter recorded FUTEX_WAIT result {} (want 0 = woken)", waiter_r);
+        return;
+    }
+    println!("  [DEMO 27] PASS: SYS_THREAD_JOIN got 0xBEEF; waiter FUTEX_WAIT returned 0");
+
+    // Step 6: FUTEX_WAKE on an address with no waiters returns 0 (not err).
+    let unused_addr = &DEMO27_WAITER_RESULT as *const _ as u64;
+    let zero = dispatch(SYS_FUTEX_WAKE, unused_addr, 8, 0, 0);
+    if zero != 0 {
+        println!("  [DEMO 27] FAIL: FUTEX_WAKE on quiet addr returned {} (want 0)", zero);
+        return;
+    }
+    println!("  [DEMO 27] PASS: FUTEX_WAKE on addr with no waiters returns 0");
+
+    // Step 7: SYS_WAITNB sanity. We don't know whether prior demos left
+    // living children of the kernel task hanging around, so we accept:
+    //   u64::MAX = "no children at all"
+    //   0        = "children exist but none have exited yet"
+    // The bad outcome would be any other value (a stray PID number from
+    // an already-reaped zombie still showing up), which would indicate
+    // child tracking is broken.
+    let r = dispatch(SYS_WAITNB, 0, 0, 0, 0);
+    if r != u64::MAX && r != 0 {
+        println!("  [DEMO 27] FAIL: SYS_WAITNB returned unexpected {} (want MAX or 0)", r);
+        return;
+    }
+    println!("  [DEMO 27] PASS: SYS_WAITNB non-blocking returned {}", if r == u64::MAX { "MAX (no children)" } else { "0 (no zombies)" });
+
+    println!("  [DEMO 27] => Tier 3 scheduler-side primitives green; Ring 3 thread_spawn next");
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).

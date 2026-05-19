@@ -65,6 +65,15 @@ pub enum BlockReason {
     PipeWrite(usize),
     /// Waiting for a child process to exit.
     WaitChild,
+    /// Tier 3.2 (task #46): blocked in `SYS_FUTEX_WAIT` on a u32 word
+    /// at this virtual address. Woken explicitly by `futex_wake` /
+    /// `SYS_FUTEX_WAKE`. Not auto-unblocked by pick_next — that would
+    /// race against the wake-side count semantics.
+    Futex(u64),
+    /// Tier 3.1 (task #45): blocked in `SYS_THREAD_JOIN` waiting for
+    /// the named scheduler slot to reach `TaskState::Exited`. pick_next
+    /// auto-unblocks once the target's state is Exited.
+    JoinTask(usize),
 }
 
 /// Platform-independent task metadata.
@@ -96,6 +105,10 @@ pub struct TaskInfo {
     /// was using the scheduler slot index as a proxy, which is wrong:
     /// slots get recycled, and one user can run many concurrent tasks.
     pub user_id: u8,
+    /// Tier 3 (task #45): exit code published when this task transitions
+    /// to `Exited`. Read by `SYS_THREAD_JOIN` once the join target is
+    /// observed Exited. Default 0 — overwritten by `SYS_EXIT(code)`.
+    pub exit_code: u64,
 }
 
 impl TaskInfo {
@@ -112,6 +125,7 @@ impl TaskInfo {
             // 255 == `security::user_ids::NOBODY`. We don't import the
             // constant here because TaskInfo::empty must stay `const`.
             user_id: 255,
+            exit_code: 0,
         }
     }
 }
@@ -193,9 +207,17 @@ pub fn pick_next() -> Option<(usize, usize)> {
                 BlockReason::PipeWrite(pipe_id) => {
                     crate::ipc::pipe::has_space(pipe_id)
                 }
-                BlockReason::WaitChild | BlockReason::None => {
-                    // WaitChild is woken explicitly by process::exit().
-                    // None blocks are woken externally.
+                BlockReason::JoinTask(target_slot) => {
+                    // Tier 3.1: unblock once the join target has exited.
+                    target_slot < MAX_TASKS
+                        && (*tasks)[target_slot].state == TaskState::Exited
+                }
+                BlockReason::Futex(_)
+                | BlockReason::WaitChild
+                | BlockReason::None => {
+                    // Futex is woken explicitly by `futex_wake`. WaitChild
+                    // is woken explicitly by process::exit(). None blocks
+                    // are woken externally.
                     false
                 }
             };
@@ -261,6 +283,7 @@ pub fn init_core() {
             // The bootstrap kernel task runs as SYSTEM. Spawned children
             // inherit this until something explicitly drops privilege.
             user_id: 0, // == security::user_ids::SYSTEM
+            exit_code: 0,
         };
     }
     CURRENT_TASK.store(0, Ordering::SeqCst);
@@ -327,6 +350,7 @@ pub fn alloc_task_slot_with_user(
                     // explicitly woken" — pick_next won't auto-unblock it.
                     block_reason: BlockReason::None,
                     user_id,
+                    exit_code: 0,
                 };
                 return Some(i);
             }
@@ -368,6 +392,90 @@ pub fn stats() -> (u64, usize) {
     let switches = CONTEXT_SWITCHES.load(Ordering::Relaxed);
     let current = CURRENT_TASK.load(Ordering::SeqCst);
     (switches, current)
+}
+
+/// Read a slot's current state (for join/wait callers).
+pub fn task_state(slot: usize) -> TaskState {
+    if slot >= MAX_TASKS { return TaskState::Empty; }
+    unsafe {
+        let tasks = &raw const TASKS;
+        (*tasks)[slot].state
+    }
+}
+
+/// Read a slot's exit code. Only meaningful when `task_state(slot)` is
+/// `Exited` — otherwise 0.
+pub fn task_exit_code(slot: usize) -> u64 {
+    if slot >= MAX_TASKS { return 0; }
+    unsafe {
+        let tasks = &raw const TASKS;
+        (*tasks)[slot].exit_code
+    }
+}
+
+/// Tier 3.2 (#46) — Futex wait. Block the current task on `addr` until
+/// a matching [`futex_wake`] fires (or another waker explicitly
+/// transitions this slot back to Ready). The caller is responsible for
+/// the compare-and-wait pattern: load `*addr`, decide if waiting is
+/// still warranted, then call this. Without preemption inside syscall
+/// handlers (single-CPU model), the load-then-block sequence in the
+/// SYS_FUTEX_WAIT handler is atomic against other tasks' wakes.
+///
+/// After this returns, the caller should call [`crate::platform::schedule`]
+/// to immediately yield to another task — `schedule()` is what actually
+/// suspends; this function only sets the state.
+pub fn futex_block(addr: u64) {
+    let idx = CURRENT_TASK.load(Ordering::SeqCst);
+    unsafe {
+        let tasks = &raw mut TASKS;
+        (*tasks)[idx].state = TaskState::Blocked;
+        (*tasks)[idx].block_reason = BlockReason::Futex(addr);
+        (*tasks)[idx].wake_at = 0;
+    }
+}
+
+/// Tier 3.2 (#46) — Futex wake. Transition up to `max` tasks blocked on
+/// `addr` back to Ready, returning the count woken. Caller's choice
+/// whether to yield afterwards (`crate::platform::schedule()`).
+pub fn futex_wake(addr: u64, max: usize) -> usize {
+    if max == 0 { return 0; }
+    let mut woken = 0usize;
+    unsafe {
+        let tasks = &raw mut TASKS;
+        for i in 0..MAX_TASKS {
+            if (*tasks)[i].state != TaskState::Blocked { continue; }
+            if (*tasks)[i].block_reason != BlockReason::Futex(addr) { continue; }
+            (*tasks)[i].state = TaskState::Ready;
+            (*tasks)[i].block_reason = BlockReason::None;
+            woken += 1;
+            if woken >= max { break; }
+        }
+    }
+    woken
+}
+
+/// Tier 3.1 (#45) — Block the current task waiting for `target_slot` to
+/// reach `Exited`. pick_next auto-unblocks once the target observed
+/// Exited. Caller follows up with `crate::platform::schedule()`.
+pub fn join_block(target_slot: usize) {
+    let idx = CURRENT_TASK.load(Ordering::SeqCst);
+    unsafe {
+        let tasks = &raw mut TASKS;
+        (*tasks)[idx].state = TaskState::Blocked;
+        (*tasks)[idx].block_reason = BlockReason::JoinTask(target_slot);
+        (*tasks)[idx].wake_at = 0;
+    }
+}
+
+/// Tier 3.1 (#45) — Set the exit code for the current task. Called by
+/// SYS_EXIT before it transitions the task to `Exited`. Published to
+/// any `join_block` waiters via [`task_exit_code`].
+pub fn set_current_exit_code(code: u64) {
+    let idx = CURRENT_TASK.load(Ordering::SeqCst);
+    unsafe {
+        let tasks = &raw mut TASKS;
+        (*tasks)[idx].exit_code = code;
+    }
 }
 
 /// Print scheduler status

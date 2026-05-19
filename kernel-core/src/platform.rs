@@ -140,6 +140,40 @@ pub trait Platform: Send + Sync + 'static {
         _envp: &[&[u8]],
     ) -> Option<u64> { Some(stack_top) }
 
+    /// Read the active CR3 (page-table root) of the currently-running
+    /// task. Used by SYS_THREAD_SPAWN to identify the parent's
+    /// address space — the new thread is mapped into the same one.
+    /// Returns 0 to mean "kernel boot page tables" (kernel-mode tasks).
+    fn current_cr3(&self) -> u64 { 0 }
+
+    /// Phase 14 Tier 3 (#45) — Spawn a Ring-3 sibling task in an
+    /// EXISTING address space.
+    ///
+    /// Unlike `spawn_user_task`, which assumes the caller already
+    /// allocated `cr3` and mapped the user code + stack, `spawn_thread`
+    /// owns the user-stack mapping: it picks a fresh virtual stack
+    /// region inside `cr3`, maps it from the new scheduler slot's
+    /// physical backing, builds a Ring-3 context that starts at
+    /// `entry_va` with `arg` in rdi, and marks the slot ready.
+    ///
+    /// `entry_va` must already be mapped executable in `cr3` (typically
+    /// it's a function in the parent's user image — both threads share
+    /// the same AS, so the parent's text is visible).
+    ///
+    /// Returns the scheduler slot index, or None on OOM / mapping
+    /// failure / no free slots.
+    ///
+    /// Default returns None — platforms without same-AS thread support
+    /// reject SYS_THREAD_SPAWN cleanly.
+    fn spawn_thread(
+        &self,
+        _name: &'static str,
+        _cr3: u64,
+        _entry_va: u64,
+        _arg: u64,
+        _max_tier: u8,
+    ) -> Option<usize> { None }
+
     /// Read absolute wall-clock time as seconds since the Unix epoch
     /// (1970-01-01 00:00:00 UTC). `None` if the platform has no
     /// real-time clock, or if the RTC read failed.

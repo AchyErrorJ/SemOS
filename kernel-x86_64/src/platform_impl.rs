@@ -301,6 +301,42 @@ impl Platform for X86Platform {
     fn destroy_address_space(&self, space: u64) {
         crate::context::destroy_address_space(space);
     }
+
+    fn current_cr3(&self) -> u64 {
+        // The active CR3 register reflects whichever task last ran.
+        // Same-AS thread spawn (task #45) calls this from a syscall
+        // handler running in the parent's AS, so this is what we want.
+        crate::paging::read_cr3()
+    }
+
+    fn spawn_thread(
+        &self,
+        name: &'static str,
+        cr3: u64,
+        entry_va: u64,
+        arg: u64,
+        max_tier: u8,
+    ) -> Option<usize> {
+        // Kernel-mode (cr3==0 or matches boot_cr3) thread spawn: jump
+        // to a typed entry function via context::spawn_task. `arg` is
+        // not yet plumbed through the kernel ABI (entry signature is
+        // fn()) — fine for DEMO 27 which uses globals to communicate.
+        //
+        // Ring-3 same-AS thread spawn (real `pthread_create`-shaped
+        // path) is the remaining piece of task #45; this method will
+        // grow that branch when it lands. Until then, accept only
+        // kernel-mode requests.
+        let _ = arg;
+        if cr3 != 0 && cr3 != crate::paging::boot_cr3() {
+            return None;
+        }
+        // SAFETY: caller asserts entry_va is a function pointer of
+        // the right type. The Platform trait doesn't enforce it; this
+        // is the same trust the existing Ring 0 helpers use.
+        let entry: fn() = unsafe { core::mem::transmute(entry_va as usize) };
+        let _ = max_tier; // kernel-mode tasks always max_tier=3
+        crate::context::spawn_task(name, entry)
+    }
 }
 
 /// Global platform instance (lives for the kernel's lifetime)

@@ -107,6 +107,13 @@ pub mod numbers {
     pub const SYS_SET_CWD: u64 = 75; // (path_ptr, path_len) -> 0 / err
     pub const SYS_GET_ENV: u64 = 76; // (key_ptr, key_len, buf_ptr, buf_len) -> bytes / 0=not-found / err
     pub const SYS_SET_ENV: u64 = 77; // (key_ptr, key_len, val_ptr, val_len) -> 0 / err
+
+    // Threading & sync (90-99). Phase 14 Tier 3 prereqs (#45, #46, #47).
+    pub const SYS_FUTEX_WAIT:   u64 = 90; // (u32_addr, expected) -> 0 woken / 1 mismatch / err
+    pub const SYS_FUTEX_WAKE:   u64 = 91; // (u32_addr, max_count) -> count_woken
+    pub const SYS_THREAD_SPAWN: u64 = 92; // (entry_va, arg) -> tid / err
+    pub const SYS_THREAD_JOIN:  u64 = 93; // (tid) -> exit_code / err
+    pub const SYS_WAITNB:       u64 = 94; // (pid_hint) -> child_pid / 0 (none yet) / err
 }
 
 /// Syscall dispatch — called by platform trap handler with
@@ -193,6 +200,13 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_CREATE_USER   => handle_create_user(arg0, arg1, arg2, arg3),
         SYS_LOOKUP_USER   => handle_lookup_user(arg0, arg1, arg2),
 
+        // Threading & sync (90-99) — Phase 14 Tier 3
+        SYS_FUTEX_WAIT    => handle_futex_wait(arg0, arg1),
+        SYS_FUTEX_WAKE    => handle_futex_wake(arg0, arg1),
+        SYS_THREAD_SPAWN  => handle_thread_spawn(arg0, arg1),
+        SYS_THREAD_JOIN   => handle_thread_join(arg0),
+        SYS_WAITNB        => handle_waitnb(arg0),
+
         _ => {
             crate::platform::log("[syscall] Unknown syscall: ");
             crate::platform::log_num(num);
@@ -263,13 +277,23 @@ fn handle_write(buf_ptr: u64, buf_len: u64) -> u64 {
 }
 
 fn handle_exit(code: u64) -> u64 {
-    let _ = code; // silenced "[syscall] Process exit with code N" — noisy in demos
+    // Publish the exit code before transitioning to Exited so any
+    // SYS_THREAD_JOIN waiter (task #45) can read it via
+    // scheduler::task_exit_code once pick_next unblocks it.
+    crate::scheduler::set_current_exit_code(code);
     // Mark task as exited so pick_next will skip it forever.
     let idx = crate::scheduler::current_task_index();
     unsafe {
         let tasks = &raw mut crate::scheduler::TASKS;
         (*tasks)[idx].state = crate::scheduler::TaskState::Exited;
     }
+    // Yield immediately so the scheduler picks something else
+    // (including any join_block waiter). Without this, the caller
+    // returns from dispatch and keeps executing kernel-mode code on
+    // an Exited slot — and if IF was cleared by a prior schedule()
+    // call, a following `hlt` halts the CPU indefinitely. Task #45
+    // (#46-era follow-up).
+    crate::platform::schedule();
     // Returns 0; the syscall asm will SYSRET back to Ring 3, the user RIP
     // points at whatever follows the `syscall` instruction (usually
     // padding/zeros) and the task will page-fault on its next instruction
@@ -1224,6 +1248,12 @@ fn handle_readdir(fd: u64, idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u6
 
 /// SYS_SLEEP(ticks) → 0
 /// Blocks the current task for the given number of timer ticks.
+///
+/// Yields immediately via `platform::schedule()` so the block takes
+/// effect right away rather than waiting for the next timer tick — the
+/// pre-#46 behaviour where the caller kept executing for a full slice
+/// after setting Blocked broke any test that needed a sibling to
+/// observably progress before we polled.
 fn handle_sleep(ticks: u64) -> u64 {
     if ticks == 0 { return 0; }
     let wake_at = crate::platform::ticks() + ticks;
@@ -1234,6 +1264,7 @@ fn handle_sleep(ticks: u64) -> u64 {
         (*tasks)[idx].wake_at = wake_at;
         (*tasks)[idx].block_reason = crate::scheduler::BlockReason::Sleep;
     }
+    crate::platform::schedule();
     0
 }
 
@@ -2482,4 +2513,134 @@ fn write_hex(dst: &mut [u8], n: u64) -> usize {
         dst[i] = tmp[k - 1 - i];
     }
     n_out
+}
+
+// ============================================================================
+// Phase 14 Tier 3 — threading + sync syscalls (#45, #46, #47)
+// ============================================================================
+
+/// SYS_FUTEX_WAIT(addr, expected) → 0 on wake, 1 on value mismatch,
+/// u64::MAX on bad pointer.
+///
+/// Atomically check `*(addr as *const u32) == expected`; if so, block
+/// the current task with `BlockReason::Futex(addr)` until a matching
+/// `SYS_FUTEX_WAKE(addr, _)` fires. The compare-and-block sequence is
+/// race-free against other tasks' wakes because syscall handlers run
+/// non-preemptively on this kernel (single CPU, no IRQ in handler).
+///
+/// The 1-return-value path matches Linux's EAGAIN — std::sync::Mutex
+/// retries on EAGAIN.
+fn handle_futex_wait(addr: u64, expected: u64) -> u64 {
+    if addr == 0 || addr & 0x3 != 0 { return u64::MAX; }
+    // SAFETY: caller-supplied pointer; in v1 we trust user-mode to pass
+    // a valid mapped u32. A proper version walks the AS for permission +
+    // mapping verification — tracked as task #41 follow-up (guard pages
+    // + general user-pointer hardening).
+    let observed = unsafe { core::ptr::read_volatile(addr as *const u32) };
+    if observed as u64 != expected { return 1; }
+
+    crate::scheduler::futex_block(addr);
+    // Yield immediately so the wait actually takes effect — without
+    // this the syscall returns and the task continues running until
+    // the next timer tick.
+    crate::platform::schedule();
+    0
+}
+
+/// SYS_FUTEX_WAKE(addr, max_count) → count actually woken.
+///
+/// Transitions up to `max_count` tasks blocked on `addr` back to Ready.
+/// max_count = u64::MAX wakes all; 0 wakes none and returns 0.
+fn handle_futex_wake(addr: u64, max_count: u64) -> u64 {
+    if addr == 0 { return 0; }
+    let max = if max_count > usize::MAX as u64 {
+        usize::MAX
+    } else {
+        max_count as usize
+    };
+    crate::scheduler::futex_wake(addr, max) as u64
+}
+
+/// SYS_THREAD_SPAWN(entry_va, arg) → tid (slot index) / u64::MAX.
+///
+/// Ring-3 same-AS thread spawn is task #45 — needs spawn_thread on the
+/// Platform with user-stack mapping in the parent's CR3. The handler is
+/// already wired into the dispatch table so the syscall surface stays
+/// stable; today it returns u64::MAX. The kernel-mode DEMO 27 exercises
+/// the underlying scheduler primitives directly via context::spawn_task.
+fn handle_thread_spawn(entry_va: u64, arg: u64) -> u64 {
+    // Look up current task's cr3 from the saved context (platform-side).
+    // Until task #45 lands the Ring-3 spawn path, we just reject.
+    let _ = (entry_va, arg);
+    let max_tier = crate::scheduler::current_task_max_tier();
+    let cr3 = crate::platform::get().current_cr3();
+    match crate::platform::get().spawn_thread("thread", cr3, entry_va, arg, max_tier) {
+        Some(slot) => slot as u64,
+        None => u64::MAX,
+    }
+}
+
+/// SYS_THREAD_JOIN(tid) → exit_code / u64::MAX on bad tid.
+///
+/// Block the current task until scheduler slot `tid` reaches Exited
+/// (pick_next auto-unblocks via `BlockReason::JoinTask`). When we
+/// resume, read the published exit code.
+///
+/// `tid` is the scheduler slot index returned by SYS_THREAD_SPAWN.
+fn handle_thread_join(tid: u64) -> u64 {
+    let slot = tid as usize;
+    if slot >= crate::scheduler::MAX_TASKS { return u64::MAX; }
+    if slot == crate::scheduler::current_task_index() { return u64::MAX; }
+
+    // Fast path: already exited.
+    use crate::scheduler::TaskState;
+    if crate::scheduler::task_state(slot) == TaskState::Exited {
+        return crate::scheduler::task_exit_code(slot);
+    }
+    // Reject joining slots that are Empty / never spawned — there's
+    // no "thread" to wait for. The caller probably has a stale tid.
+    if crate::scheduler::task_state(slot) == TaskState::Empty {
+        return u64::MAX;
+    }
+
+    crate::scheduler::join_block(slot);
+    crate::platform::schedule();
+    // On resume the slot should be Exited (pick_next's auto-unblock
+    // condition). Read the code.
+    crate::scheduler::task_exit_code(slot)
+}
+
+/// SYS_WAITNB(pid_hint) → child_pid (32-bit) on reap, 0 if no child
+/// has exited yet, u64::MAX if caller has no children at all.
+///
+/// Non-blocking variant of SYS_WAIT — matches Linux waitpid with
+/// WNOHANG. Cargo's parallel job manager polls this. `pid_hint` is
+/// ignored for now (we always reap any zombie); a future revision can
+/// honor it for targeted reaping.
+fn handle_waitnb(pid_hint: u64) -> u64 {
+    let _ = pid_hint;
+    let current = crate::process::current_pid();
+    unsafe {
+        // Check children's state directly via the process table — we
+        // can't just call wait() because that blocks; we need to peek.
+        let proc = match crate::process::get(current) {
+            Some(p) => p,
+            None => return u64::MAX,
+        };
+        if proc.child_count == 0 { return u64::MAX; }
+        // Look for a zombie among the children.
+        for &child_pid in proc.children.iter().filter_map(|c| c.as_ref()) {
+            if let Some(child) = crate::process::get(child_pid) {
+                if child.state == crate::process::ProcessState::Zombie {
+                    // Reap via the normal blocking wait — at this point
+                    // it's guaranteed to return immediately because the
+                    // child is already a zombie.
+                    let _ = crate::process::wait(child_pid);
+                    return child_pid.0 as u64;
+                }
+            }
+        }
+    }
+    // Children exist but none has exited yet.
+    0
 }
