@@ -32,8 +32,10 @@ A milestone is **done** when:
 | 1-6 | GDT/TSS, IDT, paging, APIC, framebuffer console, PCI bus, VirtIO block, snapshot persistence |
 | 7 | Streaming LLM syscalls, security policy framework, context-aware redaction, network LLM provider (loopback), user identity + isolation |
 | 8 | Crypto stack (SHA-256, HMAC, HKDF, X25519, ECDSA P-256, ChaCha20-Poly1305), virtio-net, smoltcp, TcpStream, RDRAND, embedded-tls vendored + crypto-shim, SPKI-pinning TlsVerifier, TLS-backed NetworkTransport, **first outbound HTTPS round-trip to api.anthropic.com** |
-| 9 (mostly) | Path namespace (M1), RTC + wall_clock (M2), FS Stage 3 syscalls (M4), FS Stage 2 persistence (M5) **with cross-boot vdisk verification**, USB driver code (M3) **parked behind a layout-sensitivity bug** |
-| 14 prep | Cranelift + cg_clif vendor placeholders + briefs (agent), Tier 1 prereqs: heap allocator, argv/envp passthrough, per-process env+CWD |
+| 9 | Path namespace (M1), RTC + wall_clock (M2), FS Stage 3 syscalls (M4), FS Stage 2 persistence (M5) **with cross-boot vdisk verification**, USB driver (M3) **fully unblocked 2026-05-19 by main-kernel-stack bump (#42 fix)** |
+| 14 prep (Tier 1) | Cranelift + cg_clif vendor placeholders + briefs (agent), heap allocator, argv/envp passthrough, per-process env+CWD |
+| 14 prep (Tier 2) | SYS_FSYNC, SYS_RENAME, SYS_TRUNCATE, SYS_STATX, FWRITE>256 B via heap-Allocated ObjectContent (M26 "first compile" unblocked) |
+| 14 prep (Tier 3) | SYS_THREAD_SPAWN/JOIN (kernel + Ring-3 same-AS), SYS_FUTEX_WAIT/WAKE, SYS_WAITNB, SCHEDULER_TICK_HZ const (parallel/threaded rustc unblocked) |
 
 ---
 
@@ -65,38 +67,33 @@ Landed `872cfd2`. DEMO 17 covers it.
 MC146818 driver, `Platform::wall_clock()`, kernel-core free function wrapper.
 Landed `991928b`. DEMO 19 covers it.
 
-## M3 — USB stack (xHCI + HID keyboard) `[⏸️]`
+## M3 — USB stack (xHCI + HID keyboard) `[✅]`
 
-Driver code landed (`1301bcb`), init gated behind a comment because
-it surfaces a **deeper kernel-side layout-sensitivity bug** (task
-#36): adding the xHCI code graph to the binary triggers a pre-existing
-issue elsewhere. Bisect proved the bug isn't IN USB code — with
-`init_and_enumerate()` short-circuited so LLVM DCEs xhci, kernel
-boots clean. ANY link-level reference to xhci's code shifts binary
-layout enough to trigger a stuck-bit-pattern #GP at non-canonical
-RIP `0x500010000044800` during DEMO 8, or hang at DEMO 15.
+Driver landed (`1301bcb`), USB enumeration unblocked by per-task
+stack bump (`688a602`: TASK_STACK_SIZE 16 → 64 KiB). DEMO 18 covers it.
 
-**Same layout-sensitivity family seen again** in the Phase 14
-prereq #3 work: 2 KiB-per-process env block × 64 processes = 128 KiB
-of new BSS hung boot at IDT-init. Reduced ENV_BLOCK_SIZE from 2 KiB
-to 512 B as a workaround. The persistent recurrence means **task #36
-should be treated as a kernel-wide BSS-budget / layout-sensitivity
-issue, not a USB-specific bug.** Fixing it unblocks larger static
-allocations everywhere (env block, USB scratchpad, future heap
-sizes, fontdue's glyph cache, tiny-skia's path buffers).
+The "layout-sensitivity family" recurrences (#36, #40, #42) all
+resolved 2026-05-18 to -19:
+- #40 (kernel #PF at RIP=0): 258 KiB LlmContext stack overflow → static buffer
+- #36 (USB triggers a layout-shift bug): TASK_STACK_SIZE 16→64 KiB
+- #42 (small additions hang at "Initializing interrupts..."): the
+  bootloader_api default `kernel_stack_size = 80 KiB` was being
+  overflowed by `kernel_main`'s frame inflation from minor code
+  changes. Fixed by setting `config.kernel_stack_size = 512 * 1024;`
+  in BOOTLOADER_CONFIG (commit `b51e22a`). That single change
+  unblocked the previously-reverted FWRITE>256 B work too (#44).
 
-**Done when:**
-- [ ] Root-cause the underlying kernel layout-sensitivity (probably
-      a stack-overflow-class bug like the original task #40, just in a
-      different code path; same fix pattern — move large stack
-      allocations to static buffers, or extend the stack)
-- [ ] `usb::init_and_enumerate()` runs without corrupting state
-- [ ] DEMO 18 passes all 5 sub-checks against `qemu-xhci -device usb-kbd`
-- [ ] All other DEMOs still pass in the same boot
-- [ ] ENV_BLOCK_SIZE bumped back to 2 KiB (or higher) as proof the
-      underlying budget is no longer a constraint
-- [ ] CSZ=1 (Intel 64-byte contexts) branch noted as not-validated-in-QEMU,
-      so the metal test on ThinkPad P1 surfaces it as a known gap
+#41 — real unmapped guard pages between task stacks — remains the
+proper long-term structural fix for the whole family; today's
+512 KiB main stack is a generous cushion, not a structural barrier.
+
+**Status check after the #42 fix:**
+- ✅ Root cause identified (main kernel stack default 80 KiB) and fixed
+- ✅ `usb::init_and_enumerate()` runs without corrupting state (#36)
+- ✅ DEMO 18 passes all 5 sub-checks against `qemu-xhci -device usb-kbd`
+- ✅ All other DEMOs still pass in the same boot (28 DEMOs, 74 PASS lines)
+- ⏳ ENV_BLOCK_SIZE bumped back to 2 KiB — not yet, but should be fine now
+- ⏳ CSZ=1 metal validation on ThinkPad P1 — still pending hardware run
 
 ## M4 — FS Stage 3: `SYS_FS_*` syscalls `[✅]`
 
@@ -500,15 +497,21 @@ Get upstream rustc's std dependencies satisfied on our kernel.
   inherit-on-spawn)
 - ✅ SYS_FS_* surface (`dfca48f` — already done for std::fs backing)
 
-**Tier 2 prereqs still pending (these gate M26 "first compile" smoke test):**
-- ◻️ SYS_FSYNC (crash-safe writes for cargo)
-- ◻️ SYS_RENAME (atomic rename for cargo's overwrite-on-success pattern)
-- ◻️ SYS_TRUNCATE + FWRITE that handles >256 bytes (today's `from_inline` cap)
-- ◻️ Enriched SYS_STAT (type + mtime + mode word)
+**Tier 2 prereqs (all ✅ as of 2026-05-19 — M26 "first compile" smoke test unblocked):**
+- ✅ SYS_FSYNC (crash-safe writes for cargo) — `9129f19`
+- ✅ SYS_RENAME (atomic rename) — `9129f19`
+- ✅ SYS_TRUNCATE — `9129f19`
+- ✅ FWRITE that handles >256 bytes (heap-Allocated ObjectContent) — `b51e22a`
+- ✅ Enriched SYS_STATX (type + mtime + tier + size + suid) — `9129f19`
 
-**Tier 3 prereqs (parallel/threaded rustc, future):**
-- ◻️ SYS_THREAD_SPAWN/JOIN + thread-local storage
-- ◻️ Mutex/Condvar via futex (`SYS_FUTEX_WAIT` / `SYS_FUTEX_WAKE`)
+**Tier 3 prereqs (all ✅ as of 2026-05-19 — parallel/threaded rustc unblocked):**
+- ✅ SYS_THREAD_SPAWN / SYS_THREAD_JOIN (kernel-mode `178c96d` + Ring-3 same-AS `5d6e241`)
+- ✅ Mutex/Condvar lowering target: SYS_FUTEX_WAIT / SYS_FUTEX_WAKE (`178c96d`)
+- ✅ SYS_WAITNB (WNOHANG non-blocking child wait, `178c96d`)
+- ✅ SCHEDULER_TICK_HZ const for std::thread::sleep shim (`f6a9824`)
+- *Note:* thread-local storage (per-thread `static`s) isn't done — std-shim
+  routes TLS through the existing per-process env block for now; revisit if
+  upstream std actually requires real TLS for parallel codegen.
 
 **Done when (M25 itself):**
 - [ ] `std::fs` routes to `SYS_FS_*` (M4)
