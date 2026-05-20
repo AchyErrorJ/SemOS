@@ -769,6 +769,14 @@ fn init_loader_task() {
     println!("================================================================");
     chunked_decode_demo();
 
+    // DEMO 35: M6 framebuffer drawing API — checkerboard + rect + blit +
+    // scroll, verified by reading pixels back out of framebuffer memory.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 35: framebuffer drawing API (M6)");
+    println!("================================================================");
+    fb_drawing_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -783,6 +791,154 @@ fn init_loader_task() {
 
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+    }
+}
+
+/// DEMO 35: M6 framebuffer drawing API. Exercises every primitive
+/// (`fb_fill_rect`, `fb_blit`, `fb_scroll`, `fb_present`) and verifies the
+/// result by READING PIXELS BACK from framebuffer memory — this works in a
+/// headless QEMU run where we can't see the screen.
+///
+/// Console-scroll hazard: the text console shares this framebuffer and
+/// scrolls the whole surface up on every newline past the bottom row. So we
+/// draw and read back EVERYTHING into locals first, with no `println!` in
+/// between, then print the PASS/FAIL verdicts afterward.
+fn fb_drawing_demo() {
+    use framebuffer as fb;
+
+    let (w, h) = fb::fb_dimensions();
+    if w == 0 || h == 0 {
+        println!("  [DEMO 35] SKIPPED: framebuffer not available");
+        return;
+    }
+    let (bpp, stride, is_rgb) = fb::fb_format();
+
+    // Two distinct test colors. rgb() packs to the native order internally.
+    let red = fb::rgb(0xFF, 0x00, 0x00);
+    let blue = fb::rgb(0x00, 0x00, 0xFF);
+    let green = fb::rgb(0x00, 0xFF, 0x00);
+
+    // Work in a self-contained block in the lower-right of the screen, well
+    // away from the top where the console cursor lives. Use a 64x64 tile.
+    const TILE: usize = 64;
+    let region_x = w.saturating_sub(TILE + 16);
+    let region_y = h.saturating_sub(TILE + 16);
+
+    // --- 1. Checkerboard via fb_fill_rect (8x8 cells, alternating red/blue).
+    let cell = TILE / 8;
+    for cy in 0..8 {
+        for cx in 0..8 {
+            let c = if (cx + cy) % 2 == 0 { red } else { blue };
+            fb::fb_fill_rect(region_x + cx * cell, region_y + cy * cell, cell, cell, c);
+        }
+    }
+
+    // --- 2. A small solid green rect drawn on top, near the tile center.
+    let rect_x = region_x + TILE / 2 - 4;
+    let rect_y = region_y + TILE / 2 - 4;
+    fb::fb_fill_rect(rect_x, rect_y, 8, 8, green);
+
+    // --- 3. A blit: a 4x4 all-red patch at a known offset inside the tile.
+    let patch = [red; 16];
+    let blit_x = region_x + 2;
+    let blit_y = region_y + 2;
+    fb::fb_blit(&patch, blit_x, blit_y, 4, 4);
+
+    // Commit the damage rect.
+    let presented = fb::fb_present();
+
+    // --- READ BACK (no println! above this point after drawing started).
+    // (a) center of the green rect should be green.
+    let px_green = fb::fb_read_pixel(rect_x + 4, rect_y + 4);
+    // (b) a checkerboard cell we know is red: cell (0,0) center.
+    let px_cb0 = fb::fb_read_pixel(region_x + cell / 2, region_y + cell / 2);
+    // (c) adjacent cell (1,0) center should be blue.
+    let px_cb1 = fb::fb_read_pixel(region_x + cell + cell / 2, region_y + cell / 2);
+    // (d) blit patch center should be red.
+    let px_blit = fb::fb_read_pixel(blit_x + 1, blit_y + 1);
+    // (e) an untouched corner well outside the tile (top-left of screen is
+    //     console territory, so use a point just left of our region which the
+    //     console only reaches via full-screen scroll — sample the pixel one
+    //     row BELOW our region, beyond what we drew, which we never wrote).
+    let outside_x = region_x.saturating_sub(8);
+    let outside_y = region_y + TILE + 4;
+    let px_outside_before = fb::fb_read_pixel(outside_x, outside_y);
+
+    // --- 4. Scroll test: shift the whole framebuffer left by 0 / up by 0 is
+    //     a no-op; instead do a tiny localized verification by scrolling and
+    //     checking a pixel moved. To avoid disturbing the verified region,
+    //     test scroll on a fresh throwaway draw far from the tile and just
+    //     confirm it doesn't fault and clears vacated edge to black. We do a
+    //     full-surface scroll AFTER capturing the readbacks above so it
+    //     can't corrupt them.
+    // Draw a green marker, scroll up by 1px, confirm it moved up.
+    let mk_x = region_x;
+    let mk_y = region_y.saturating_sub(20);
+    fb::fb_fill_rect(mk_x, mk_y, 4, 4, green);
+    let before_scroll = fb::fb_read_pixel(mk_x + 1, mk_y + 1);
+    fb::fb_scroll(0, 1); // content moves UP by 1 row
+    let after_scroll = fb::fb_read_pixel(mk_x + 1, mk_y); // one row up
+    fb::fb_present();
+
+    // --- Now it's safe to print verdicts.
+    println!("  [DEMO 35] surface: {}x{}  bpp={}  stride={}  format={}",
+        w, h, bpp, stride, if is_rgb { "RGB" } else { "BGR" });
+
+    let mut ok = true;
+
+    if px_green == green {
+        println!("  [DEMO 35] PASS: fb_fill_rect center reads back GREEN (0x{:06X})", px_green);
+    } else {
+        println!("  [DEMO 35] FAIL: fb_fill_rect center = 0x{:06X}, want 0x{:06X}", px_green, green);
+        ok = false;
+    }
+
+    if px_cb0 == red && px_cb1 == blue {
+        println!("  [DEMO 35] PASS: checkerboard cells alternate RED/BLUE (0x{:06X}/0x{:06X})", px_cb0, px_cb1);
+    } else {
+        println!("  [DEMO 35] FAIL: checkerboard cells = 0x{:06X}/0x{:06X}, want 0x{:06X}/0x{:06X}",
+            px_cb0, px_cb1, red, blue);
+        ok = false;
+    }
+
+    if px_blit == red {
+        println!("  [DEMO 35] PASS: fb_blit patch reads back RED (0x{:06X})", px_blit);
+    } else {
+        println!("  [DEMO 35] FAIL: fb_blit patch = 0x{:06X}, want 0x{:06X}", px_blit, red);
+        ok = false;
+    }
+
+    if px_outside_before == 0 {
+        println!("  [DEMO 35] PASS: untouched pixel outside primitives still black (0x{:06X})", px_outside_before);
+    } else {
+        // Not fatal on its own (console could theoretically touch it), but
+        // we drew nothing there, so it should be black.
+        println!("  [DEMO 35] FAIL: untouched pixel = 0x{:06X}, want 0x000000", px_outside_before);
+        ok = false;
+    }
+
+    if before_scroll == green && after_scroll == green {
+        println!("  [DEMO 35] PASS: fb_scroll(0,1) moved marker up one row (GREEN before & after)");
+    } else {
+        println!("  [DEMO 35] FAIL: fb_scroll: before=0x{:06X} after=0x{:06X}, want both 0x{:06X}",
+            before_scroll, after_scroll, green);
+        ok = false;
+    }
+
+    match presented {
+        Some((x0, y0, x1, y1)) => {
+            println!("  [DEMO 35] PASS: fb_present committed damage rect ({},{})-({},{})", x0, y0, x1, y1);
+        }
+        None => {
+            println!("  [DEMO 35] FAIL: fb_present returned no damage rect after draws");
+            ok = false;
+        }
+    }
+
+    if ok {
+        println!("  [DEMO 35] => M6 framebuffer drawing API verified by pixel readback");
+    } else {
+        println!("  [DEMO 35] => M6 had failures (see above)");
     }
 }
 

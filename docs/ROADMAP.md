@@ -129,20 +129,31 @@ loading earlier wipes the entries. Verified by the log line
       metadata only" cap; large-object content goes into a separate
       per-object stream when that becomes necessary
 
-## M6 — Framebuffer drawing API `[  ]`
+## M6 — Framebuffer drawing API `[~]`
 
 Promote raw `set_pixel` to a real drawing surface.
 
+Implemented in `kernel-x86_64/src/framebuffer.rs` (drawing API added to the
+existing console module). Detected live format on QEMU: BGR, 32 bpp, byte 3
+unused; stride read from `FrameBufferInfo` (never assumed). `rgb(r,g,b)`
+packs to the native order at write time.
+
 **Done when:**
-- [ ] `fb_fill_rect(x, y, w, h, color)`, `fb_blit(src, x, y, w, h)`,
-      `fb_scroll(dx, dy)`, `fb_present()` as kernel-side functions
-- [ ] Color format documented (BGR vs RGB; bootloader-0.11 framebuffers
-      vary by hardware)
+- [x] `fb_fill_rect(x, y, w, h, color)`, `fb_blit(src, x, y, w, h)`,
+      `fb_scroll(dx, dy)`, `fb_present()` as kernel-side functions — all clip
+      to framebuffer bounds (no OOB writes)
+- [x] Color format documented (BGR vs RGB) — derived from live
+      `FrameBufferInfo`, packer switches on `PixelFormat`
 - [ ] Shared-memory framebuffer region exposed to user space (mapped
-      read/write into the process's address space for direct draw)
-- [ ] Damage-rect / present model so apps don't tear writes
-- [ ] DEMO 22 draws a checkerboard + a moving rect proving each
-      primitive
+      read/write into the process's address space for direct draw) —
+      DEFERRED as follow-up to avoid scope creep; would use a new high
+      syscall number (e.g. 60). Core drawing API + DEMO landed first.
+- [x] Damage-rect / present model so apps don't tear writes — direct-render
+      with accumulated damage rect; `fb_present()` is the commit point
+      (back buffer skipped: ~3.5 MiB cost not justified for single surface;
+      every pixel write funnels through `FbSurface` so it can be retargeted)
+- [x] DEMO 35 draws a checkerboard + rect + blit + scroll, verified by
+      reading pixels back from framebuffer memory (headless-safe)
 
 ## M7 — Font rasterization (fontdue port) `[  ]`
 

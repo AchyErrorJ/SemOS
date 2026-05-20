@@ -57,6 +57,254 @@ unsafe impl Sync for FramebufferConsole {}
 static CONSOLE: Mutex<Option<FramebufferConsole>> = Mutex::new(None);
 
 // ============================================================================
+// M6 — Framebuffer drawing API
+// ============================================================================
+//
+// # Detected pixel format (live, from `FrameBufferInfo`)
+//
+// On QEMU's `-vga std` / bootloader-0.11 default the framebuffer reports:
+//   pixel_format = PixelFormat::Bgr   (blue in byte 0, green byte 1, red byte 2)
+//   bytes_per_pixel = 4               (32 bpp; byte 3 is unused padding/alpha)
+//   stride          = width (often == width, but we never assume; we read it)
+//
+// We DO NOT hard-code this — `init` records whatever the bootloader hands us
+// and the `Color`/`rgb()` packer + `FbSurface::write_pixel` switch on the
+// live `PixelFormat`. The constants above are just what we observe in QEMU.
+//
+// # Presentation model
+//
+// We draw DIRECTLY into the bootloader framebuffer (write-through). A full
+// shadow back buffer would cost width*height*4 bytes (~3.5 MiB at 1024x768)
+// of static BSS or heap; on this kernel that's heavier than the value it
+// buys for the current single-surface use, so we present directly and instead
+// track a *damage rectangle*. `fb_present()` is the commit point: it reads
+// back the union of all dirtied regions to flush write-combining-style
+// caches (a volatile read per dirty corner) and then clears the damage rect.
+// Apps that want tear-free updates call the primitives, then `fb_present()`.
+// If a true back buffer is later needed for compositing, `FbSurface` already
+// centralizes every pixel write so it can be retargeted in one place.
+
+/// A packed 32-bit color in the framebuffer's native byte order is produced
+/// on demand by `FbSurface::write_pixel`; callers pass logical 0x00RRGGBB
+/// values (this `Color`) and the surface packs per the detected format.
+pub type Color = u32;
+
+/// Pack an (r, g, b) triple into the logical 0x00RRGGBB color the drawing
+/// API consumes. The surface re-orders bytes to BGR/RGB as needed at write
+/// time, so callers always speak RGB here regardless of hardware order.
+#[inline]
+pub const fn rgb(r: u8, g: u8, b: u8) -> Color {
+    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+}
+
+/// Drawing surface: a thin view over the bootloader framebuffer bytes plus
+/// the geometry/format needed to address pixels. Cloned (by value) out of
+/// the global on each drawing call so we never hold the console lock while
+/// touching pixels.
+#[derive(Clone, Copy)]
+pub struct FbSurface {
+    addr: usize,
+    len: usize,
+    width: usize,
+    height: usize,
+    stride: usize,
+    bpp: usize,
+    format: PixelFormat,
+}
+
+// SAFETY: same contract as FramebufferConsole — pointer only dereferenced
+// while the SURFACE mutex is held, single-threaded boot path.
+unsafe impl Send for FbSurface {}
+unsafe impl Sync for FbSurface {}
+
+/// Global drawing surface. Populated by `init` alongside the console.
+static SURFACE: Mutex<Option<FbSurface>> = Mutex::new(None);
+
+/// Damage rectangle accumulated since the last `fb_present()`. Stored as
+/// (x0, y0, x1, y1) half-open; `None` means "nothing dirty".
+static DAMAGE: Mutex<Option<(usize, usize, usize, usize)>> = Mutex::new(None);
+
+impl FbSurface {
+    /// Framebuffer dimensions in pixels.
+    #[inline]
+    pub fn dimensions(&self) -> (usize, usize) { (self.width, self.height) }
+
+    /// Write one pixel, packing `color` (logical 0x00RRGGBB) into the
+    /// detected native byte order. Bounds-checked; OOB is a silent no-op so
+    /// every primitive can lean on this for clipping safety.
+    #[inline]
+    fn write_pixel(&self, x: usize, y: usize, color: Color) {
+        if x >= self.width || y >= self.height { return; }
+        let offset = (y * self.stride + x) * self.bpp;
+        if offset + self.bpp > self.len { return; }
+        unsafe {
+            let p = (self.addr + offset) as *mut u8;
+            match self.format {
+                PixelFormat::Rgb => {
+                    core::ptr::write_volatile(p.add(0), ((color >> 16) & 0xFF) as u8);
+                    core::ptr::write_volatile(p.add(1), ((color >> 8) & 0xFF) as u8);
+                    core::ptr::write_volatile(p.add(2), (color & 0xFF) as u8);
+                }
+                PixelFormat::Bgr => {
+                    core::ptr::write_volatile(p.add(0), (color & 0xFF) as u8);
+                    core::ptr::write_volatile(p.add(1), ((color >> 8) & 0xFF) as u8);
+                    core::ptr::write_volatile(p.add(2), ((color >> 16) & 0xFF) as u8);
+                }
+                _ => { /* unsupported format — skip */ }
+            }
+        }
+    }
+
+    /// Read one pixel back as a logical 0x00RRGGBB color. Used by the DEMO
+    /// to verify draws in a headless run. OOB reads return 0.
+    #[inline]
+    fn read_pixel(&self, x: usize, y: usize) -> Color {
+        if x >= self.width || y >= self.height { return 0; }
+        let offset = (y * self.stride + x) * self.bpp;
+        if offset + self.bpp > self.len { return 0; }
+        unsafe {
+            let p = (self.addr + offset) as *const u8;
+            let b0 = core::ptr::read_volatile(p.add(0)) as u32;
+            let b1 = core::ptr::read_volatile(p.add(1)) as u32;
+            let b2 = core::ptr::read_volatile(p.add(2)) as u32;
+            match self.format {
+                PixelFormat::Rgb => (b0 << 16) | (b1 << 8) | b2,
+                PixelFormat::Bgr => (b2 << 16) | (b1 << 8) | b0,
+                _ => 0,
+            }
+        }
+    }
+}
+
+/// Union `rect` (x, y, w, h) into the global damage rectangle, clipped to
+/// the surface bounds.
+fn mark_damage(s: &FbSurface, x: usize, y: usize, w: usize, h: usize) {
+    if w == 0 || h == 0 { return; }
+    let x0 = x.min(s.width);
+    let y0 = y.min(s.height);
+    let x1 = (x + w).min(s.width);
+    let y1 = (y + h).min(s.height);
+    if x0 >= x1 || y0 >= y1 { return; }
+    let mut d = DAMAGE.lock();
+    *d = Some(match *d {
+        None => (x0, y0, x1, y1),
+        Some((ox0, oy0, ox1, oy1)) => (
+            ox0.min(x0), oy0.min(y0), ox1.max(x1), oy1.max(y1),
+        ),
+    });
+}
+
+/// Snapshot the global surface, or `None` if the framebuffer isn't up.
+fn surface() -> Option<FbSurface> { *SURFACE.lock() }
+
+/// Fill an axis-aligned rectangle with a solid color. Clipped to the
+/// framebuffer; never writes out of bounds.
+pub fn fb_fill_rect(x: usize, y: usize, w: usize, h: usize, color: Color) {
+    let s = match surface() { Some(s) => s, None => return };
+    let x1 = (x + w).min(s.width);
+    let y1 = (y + h).min(s.height);
+    let x = x.min(s.width);
+    let y = y.min(s.height);
+    for py in y..y1 {
+        for px in x..x1 {
+            s.write_pixel(px, py, color);
+        }
+    }
+    mark_damage(&s, x, y, x1.saturating_sub(x), y1.saturating_sub(y));
+}
+
+/// Blit a row-major `src` image of size `w`x`h` (logical 0x00RRGGBB pixels)
+/// to (x, y). Clipped to the framebuffer; source pixels that would land OOB
+/// are skipped. `src` must have at least `w * h` entries (extra ignored).
+pub fn fb_blit(src: &[Color], x: usize, y: usize, w: usize, h: usize) {
+    let s = match surface() { Some(s) => s, None => return };
+    if src.len() < w * h { return; }
+    for row in 0..h {
+        let dy = y + row;
+        if dy >= s.height { break; }
+        for col in 0..w {
+            let dx = x + col;
+            if dx >= s.width { break; }
+            s.write_pixel(dx, dy, src[row * w + col]);
+        }
+    }
+    mark_damage(&s, x, y, w, h);
+}
+
+/// Scroll the whole framebuffer by (dx, dy) pixels. Positive dy scrolls
+/// content UP by dy (toward the origin); positive dx scrolls content LEFT.
+/// Vacated edges are filled black. Negative deltas scroll the other way.
+/// Whole surface is marked damaged.
+///
+/// Row direction is chosen to be overlap-safe for vertical scrolls (the
+/// common console/TTY case). Horizontal scrolls with `dx < 0` that overlap
+/// can read already-written source pixels within a row; vertical-only and
+/// `dx >= 0` scrolls are exact. Callers needing exact arbitrary 2D shifts
+/// should blit through a scratch buffer.
+pub fn fb_scroll(dx: isize, dy: isize) {
+    let s = match surface() { Some(s) => s, None => return };
+    let w = s.width as isize;
+    let h = s.height as isize;
+    // Iterate destination pixels; pull from (dst + delta) source. For dy>0
+    // (scroll up) iterate rows ascending so we never overwrite unread source;
+    // for dy<0 iterate descending. Vacated pixels are filled BG.
+    let copy_row = |dst_y: isize| {
+        let src_y = dst_y + dy;
+        for dst_x in 0..w {
+            let src_x = dst_x + dx;
+            let color = if src_x >= 0 && src_x < w && src_y >= 0 && src_y < h {
+                s.read_pixel(src_x as usize, src_y as usize)
+            } else {
+                BG
+            };
+            s.write_pixel(dst_x as usize, dst_y as usize, color);
+        }
+    };
+    if dy >= 0 {
+        for dst_y in 0..h { copy_row(dst_y); }
+    } else {
+        for dst_y in (0..h).rev() { copy_row(dst_y); }
+    }
+    mark_damage(&s, 0, 0, s.width, s.height);
+}
+
+/// Commit point for the damage model. With direct-to-framebuffer rendering
+/// there's no separate buffer to copy, so `fb_present` flushes the dirtied
+/// region (a volatile readback of its corners forces ordering against any
+/// write-combining the MMIO mapping might do) and then clears the damage
+/// rect. Returns the rect that was presented, if any.
+pub fn fb_present() -> Option<(usize, usize, usize, usize)> {
+    let s = surface()?;
+    let rect = DAMAGE.lock().take()?;
+    let (x0, y0, x1, y1) = rect;
+    // Touch the four corners of the damage rect to flush ordering.
+    let _ = s.read_pixel(x0, y0);
+    let _ = s.read_pixel(x1.saturating_sub(1), y0);
+    let _ = s.read_pixel(x0, y1.saturating_sub(1));
+    let _ = s.read_pixel(x1.saturating_sub(1), y1.saturating_sub(1));
+    Some(rect)
+}
+
+/// Read back a single pixel (logical 0x00RRGGBB). For verification/DEMO use.
+/// Returns 0 if the framebuffer isn't up or the coords are OOB.
+pub fn fb_read_pixel(x: usize, y: usize) -> Color {
+    match surface() { Some(s) => s.read_pixel(x, y), None => 0 }
+}
+
+/// Framebuffer dimensions in pixels, or (0, 0) if not initialized.
+pub fn fb_dimensions() -> (usize, usize) {
+    match surface() { Some(s) => s.dimensions(), None => (0, 0) }
+}
+
+/// Detected format descriptor for diagnostics: (bpp, stride, is_rgb).
+pub fn fb_format() -> (usize, usize, bool) {
+    match surface() {
+        Some(s) => (s.bpp, s.stride, matches!(s.format, PixelFormat::Rgb)),
+        None => (0, 0, false),
+    }
+}
+
+// ============================================================================
 // Scrollback ring buffer
 // ============================================================================
 //
@@ -169,6 +417,17 @@ pub fn init(fb: &mut FrameBuffer) {
         cols: width / FONT_WIDTH,
         rows: height / FONT_HEIGHT,
     };
+
+    // Publish the M6 drawing surface (independent view over the same bytes).
+    *SURFACE.lock() = Some(FbSurface {
+        addr: fb_addr,
+        len: fb_len,
+        width,
+        height,
+        stride,
+        bpp: bytes_per_pixel,
+        format,
+    });
 
     // Clear screen to background.
     console.clear_all();
