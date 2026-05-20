@@ -1,23 +1,28 @@
 //! User-space heap allocator backed by SYS_MMAP_ANON.
 //!
-//! Phase 14 M25 Tier 2 #50. The kernel's SYS_HEAP_ALLOC returns
-//! kernel-heap pointers that fault on a Ring-3 write, so the std-shim
-//! can't use it directly. Instead we mmap a USER-accessible region
-//! (SYS_MMAP_ANON maps fresh zeroed frames into our own address space)
-//! and run a first-fit free-list allocator over it.
+//! Phase 14 M25 #50. The kernel's SYS_HEAP_ALLOC returns kernel-heap
+//! pointers that fault on a Ring-3 write, so the std-shim runs its own
+//! allocator over USER-accessible memory mmap'd into the process's
+//! address space.
 //!
-//! The region grows on demand: when the free list can't satisfy a
-//! request, we mmap another 1 MiB chunk contiguous with the last and
-//! add it as a free block.
+//! ## Why a bump allocator
 //!
-//! Block layout. Every allocation is carved from a free block whose
-//! header (`BlockHeader`) sits at the block base. The returned payload
-//! pointer is alignment-adjusted, and the 8 bytes immediately before
-//! the payload always hold the block-base pointer so `dealloc` can
-//! recover the header unambiguously regardless of alignment padding.
+//! The first cut used a hand-rolled first-fit free list. It had a
+//! subtle corruption bug (a freed block's stored header back-pointer
+//! could read back as a stale value pointing into the code segment,
+//! so a later dealloc wrote through it and #PF'd). Rather than keep
+//! chasing it, this is a dead-simple bump allocator: alloc advances a
+//! pointer, dealloc is a no-op. No free list means nothing to corrupt.
 //!
-//! Single-threaded today; a spin flag guards the free list so a
-//! future threaded program won't corrupt it.
+//! Trade-off: freed memory is never reused, so long-running, heavily-
+//! allocating workloads (a real rustc compile) would exhaust the heap.
+//! That's fine for M25's current scope — short-lived programs whose
+//! whole heap is reclaimed by the kernel on exit. A reclaiming
+//! allocator (fixed free list, or a vendored `linked_list_allocator`)
+//! is a tracked follow-up for when we actually drive rustc.
+//!
+//! The region grows on demand: when the bump pointer would pass the
+//! mapped limit, we mmap another chunk contiguous with the last one.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
@@ -29,23 +34,11 @@ const USER_HEAP_BASE: u64 = 0x0000_0000_00C0_0000; // 12 MiB
 /// mmap granularity when growing (1 MiB).
 const GROW_CHUNK: u64 = 1024 * 1024;
 
-const HEADER_SIZE: usize = core::mem::size_of::<BlockHeader>();
-/// Back-pointer slot size stored just before each payload.
-const BACKPTR: usize = core::mem::size_of::<usize>();
-
-/// Free-list node / block header at each block's base.
-#[repr(C)]
-struct BlockHeader {
-    /// Payload capacity in bytes (everything after this header).
-    size: usize,
-    /// Next free block (only valid while on the free list).
-    next: *mut BlockHeader,
-}
-
 struct HeapState {
-    free_head: *mut BlockHeader,
-    /// Next virtual address to mmap on growth.
-    brk: u64,
+    /// Next address to hand out (bump pointer).
+    next: u64,
+    /// One past the last mapped byte. `next` may not exceed this.
+    end: u64,
 }
 
 pub struct SemosAllocator {
@@ -60,8 +53,8 @@ impl SemosAllocator {
     pub const fn new() -> Self {
         Self {
             state: UnsafeCell::new(HeapState {
-                free_head: core::ptr::null_mut(),
-                brk: USER_HEAP_BASE,
+                next: USER_HEAP_BASE,
+                end: USER_HEAP_BASE,
             }),
             lock: AtomicBool::new(false),
         }
@@ -83,111 +76,51 @@ impl SemosAllocator {
         self.lock.store(false, Ordering::Release);
     }
 
-    /// mmap a fresh chunk big enough for `min_payload` and prepend it
-    /// as one free block. Returns false on syscall OOM.
-    unsafe fn grow(&self, st: &mut HeapState, min_payload: usize) -> bool {
-        let need = (HEADER_SIZE + min_payload) as u64;
+    /// Ensure `[next, next+bytes)` is mapped, growing the region via
+    /// SYS_MMAP_ANON if needed. Returns false on syscall OOM.
+    unsafe fn ensure(&self, st: &mut HeapState, bytes: u64) -> bool {
+        if st.next + bytes <= st.end {
+            return true;
+        }
+        // Need to map from st.end upward enough to cover the request.
+        let need = st.next + bytes - st.end;
         let chunk = if need > GROW_CHUNK {
             (need + 0xFFF) & !0xFFF
         } else {
             GROW_CHUNK
         };
-        let addr = st.brk;
-        if syscall2(SYS_MMAP_ANON, addr, chunk) == u64::MAX {
+        if syscall2(SYS_MMAP_ANON, st.end, chunk) == u64::MAX {
             return false;
         }
-        st.brk += chunk;
-
-        let block = addr as *mut BlockHeader;
-        (*block).size = chunk as usize - HEADER_SIZE;
-        (*block).next = st.free_head;
-        st.free_head = block;
+        st.end += chunk;
         true
-    }
-
-    unsafe fn alloc_inner(&self, layout: Layout) -> *mut u8 {
-        self.acquire();
-        let st = &mut *self.state.get();
-        let align = layout.align().max(BACKPTR);
-        let want = layout.size().max(1);
-
-        let p = self.carve(st, want, align);
-        if !p.is_null() {
-            self.release();
-            return p;
-        }
-        // Grow + retry once. Reserve align + backptr slack on top of want.
-        if !self.grow(st, want + align + BACKPTR) {
-            self.release();
-            return core::ptr::null_mut();
-        }
-        let p = self.carve(st, want, align);
-        self.release();
-        p
-    }
-
-    /// First-fit scan. On success returns an `align`-aligned payload
-    /// pointer with the block base stored in the word before it.
-    unsafe fn carve(&self, st: &mut HeapState, want: usize, align: usize) -> *mut u8 {
-        let mut prev: *mut *mut BlockHeader = &mut st.free_head;
-        let mut cur = st.free_head;
-        while !cur.is_null() {
-            let block_base = cur as usize;
-            let block_end = block_base + HEADER_SIZE + (*cur).size;
-            // Earliest the payload can start: after the header, with room
-            // for the back-pointer slot, then aligned up.
-            let payload = align_up(block_base + HEADER_SIZE + BACKPTR, align);
-            if payload + want <= block_end {
-                let used_end = payload + want;
-                let remaining = block_end - used_end;
-                if remaining >= HEADER_SIZE + 16 {
-                    // Split a tail free block.
-                    (*cur).size = (used_end - (block_base + HEADER_SIZE)) as usize;
-                    let tail = used_end as *mut BlockHeader;
-                    (*tail).size = remaining - HEADER_SIZE;
-                    (*tail).next = (*cur).next;
-                    *prev = tail;
-                } else {
-                    *prev = (*cur).next;
-                }
-                // Stash block base in the word before the payload.
-                let slot = (payload - BACKPTR) as *mut usize;
-                *slot = block_base;
-                return payload as *mut u8;
-            }
-            prev = &mut (*cur).next;
-            cur = (*cur).next;
-        }
-        core::ptr::null_mut()
-    }
-
-    unsafe fn dealloc_inner(&self, ptr: *mut u8, _layout: Layout) {
-        if ptr.is_null() {
-            return;
-        }
-        self.acquire();
-        let st = &mut *self.state.get();
-        // Recover header from the back-pointer slot.
-        let slot = (ptr as usize - BACKPTR) as *const usize;
-        let header = *slot as *mut BlockHeader;
-        // Prepend to free list. No coalescing yet (acceptable for M25
-        // workloads; add a merge pass if rustc churn fragments badly).
-        (*header).next = st.free_head;
-        st.free_head = header;
-        self.release();
     }
 }
 
 #[inline]
-fn align_up(val: usize, align: usize) -> usize {
+fn align_up(val: u64, align: u64) -> u64 {
     (val + align - 1) & !(align - 1)
 }
 
 unsafe impl GlobalAlloc for SemosAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.alloc_inner(layout)
+        self.acquire();
+        let st = &mut *self.state.get();
+        let align = layout.align().max(1) as u64;
+        let size = (layout.size().max(1) as u64 + 7) & !7; // round to 8
+
+        let addr = align_up(st.next, align);
+        if !self.ensure(st, (addr - st.next) + size) {
+            self.release();
+            return core::ptr::null_mut();
+        }
+        st.next = addr + size;
+        self.release();
+        addr as *mut u8
     }
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.dealloc_inner(ptr, layout)
+
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+        // Bump allocator: no per-allocation free. Memory is reclaimed
+        // wholesale by the kernel when the process exits.
     }
 }

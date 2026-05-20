@@ -921,7 +921,7 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
 
     // Path-namespace FD: read from the SemanticObject at the cursor.
     if let Some(entry) = lookup_path_fd(fd_num) {
-        if entry.is_directory { return u64::MAX; }  // use SYS_READDIR instead
+        if entry.is_directory { return u64::MAX; }  // use SYS_READDIR
         let registry = unsafe { crate::semantic::registry::global_registry() };
         let obj = match registry.get(&entry.suid) {
             Some(o) => o,

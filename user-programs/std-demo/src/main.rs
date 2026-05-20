@@ -1,22 +1,22 @@
-//! std-demo.elf — Phase 14 M25 #51/#52 acceptance test.
+//! std-demo.elf — Phase 14 M25 #52 acceptance test.
 //!
-//! Validates the std-shim's thread::spawn + JoinHandle<T> path (#52),
-//! which returns a typed value from a spawned thread. This is the
-//! load-bearing piece of #52 — it exercises the boxed-closure payload,
-//! the SYS_THREAD_SPAWN/JOIN round-trip, and result delivery.
+//! Validates the load-bearing piece of the std-shim's threading: a
+//! `thread::spawn` whose closure computes and *returns* a value, then
+//! `JoinHandle<T>::join` recovers it. This exercises the boxed-closure
+//! payload on the bump-allocator heap (SYS_MMAP_ANON), the
+//! SYS_THREAD_SPAWN/JOIN round-trip, and typed result delivery.
 //!
-//! The shim also provides (compiled + logic-validated, exercised in
-//! development builds): sync::{Mutex, Once} over the kernel futex,
-//! fs::{File, OpenOptions} + io::{Read, Write}, and env::{args, var}.
-//! Those are kept out of the always-on demo because std-demo-class
-//! binaries currently trip a layout-sensitivity fault in the ELF
-//! loader (task #53): adding/removing code shifts link addresses
-//! enough that an unrelated block faults on a mis-resolved static
-//! address. Once #53 is fixed, the fuller battery folds back in here.
+//! The shim also provides (compiled + dev-build-validated) sync::
+//! {Mutex, Once} over the kernel futex, fs::{File, OpenOptions} +
+//! io::{Read, Write}, env::{args, var}. Those, plus number formatting,
+//! are held out of the always-on demo: std-shim binaries past a
+//! certain size trip a Ring-3 stack/loader memory-corruption bug
+//! (task #53, same structural family as #41) that shifts with link
+//! layout. The single-thread path is robust across every layout.
 //!
 //! Exit codes (read by the kernel in DEMO 31):
 //!   0     — pass
-//!   0x43  — thread join returned wrong value
+//!   0x43  — thread join returned the wrong value
 
 #![no_std]
 #![no_main]
@@ -34,7 +34,7 @@ main!(fn main() {
         sum
     });
     match h.join() {
-        Ok(5050) => println!("std-demo: PASS thread::spawn + join returned 5050"),
+        Ok(5050) => println!("std-demo: PASS thread::spawn + JoinHandle<u64>::join returned 5050"),
         _ => {
             println!("std-demo: FAIL thread join");
             semos_std::process::exit(0x43);
