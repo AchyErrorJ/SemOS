@@ -15,7 +15,12 @@ semos-std = { path = "../std-shim" }
 
 [profile.release]
 panic = "abort"
-opt-level = "z"
+# opt-level=0, NOT "z"/1/2 (task #54). Optimization miscompiles the
+# std-shim syscall path: at -Oz the File.fd / Mutex / Once paths corrupt;
+# at -O1 those recover but SYS_FREAD (read_to_end) still returns garbage.
+# Only -O0 passes the whole surface. Root cause is an unresolved codegen
+# /residual-UB bug in the syscall wrappers; revisit when minimized.
+opt-level = 0
 lto = true
 strip = true
 codegen-units = 1
