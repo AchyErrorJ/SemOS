@@ -36,6 +36,8 @@ A milestone is **done** when:
 | 14 prep (Tier 1) | Cranelift + cg_clif vendor placeholders + briefs (agent), heap allocator, argv/envp passthrough, per-process env+CWD |
 | 14 prep (Tier 2) | SYS_FSYNC, SYS_RENAME, SYS_TRUNCATE, SYS_STATX, FWRITE>256 B via heap-Allocated ObjectContent (M26 "first compile" unblocked) |
 | 14 prep (Tier 3) | SYS_THREAD_SPAWN/JOIN (kernel + Ring-3 same-AS), SYS_FUTEX_WAIT/WAKE, SYS_WAITNB, SCHEDULER_TICK_HZ const (parallel/threaded rustc unblocked) |
+| 14 (M25 substantial) | `semos-std` crate: `#[global_allocator]` (Vec/String/Box), `io::{Read,Write}`, `fs::File`/`OpenOptions`, `env`, `sync::{Mutex,Once}`, `thread::spawn`+`JoinHandle<T>`, argv. hello-std/vec-demo/std-demo run Ring 3 (DEMO 29–31). **Build at `opt-level=0` only** — any optimization miscompiles the syscall path (#54). Still missing: `process::Command`, `net`, full `path`/`time` |
+| Structural | #41 real guard pages between all task stacks (layout-sensitivity family closed); #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn |
 
 ---
 
@@ -83,9 +85,15 @@ resolved 2026-05-18 to -19:
   in BOOTLOADER_CONFIG (commit `b51e22a`). That single change
   unblocked the previously-reverted FWRITE>256 B work too (#44).
 
-#41 — real unmapped guard pages between task stacks — remains the
-proper long-term structural fix for the whole family; today's
-512 KiB main stack is a generous cushion, not a structural barrier.
+#41 — real unmapped guard pages between task stacks — **DONE 2026-05-20**
+(`a9fa7d1`). Every TASK_STACK + per-task kernel stack now has an unmapped
+guard page below it (2 MiB kernel PDE split into 4 KiB + PTE cleared +
+`invlpg`; visible under all CR3s since process address spaces share the
+kernel PML4). The whole layout-sensitivity family is now structurally
+fixed: an overflow faults precisely instead of smashing the neighbour.
+The guard immediately exposed two real latent overflows (per-task kernel
+stack 8→64 KiB across #41/#55; TASK_STACK_SIZE 64→128 KiB). #55 (sequential
+Ring-3 thread spawn / slot reuse) closed on the same fix (`e750ee8`).
 
 **Status check after the #42 fix:**
 - ✅ Root cause identified (main kernel stack default 80 KiB) and fixed
@@ -484,9 +492,13 @@ want the full optimizer.
 native Rust port?** Node.js + V8 is ~5M LOC of C++. The native
 Rust agent (M22) is ~4K LOC, ships with Phase 13.
 
-## M25 — std shim over Semantic OS syscalls `[  ]`
+## M25 — std shim over Semantic OS syscalls `[🔨 substantial — `semos-std` lands the core surface]`
 
 Get upstream rustc's std dependencies satisfied on our kernel.
+`user-programs/std-shim` (crate `semos-std`) is the implementation;
+hello-std / vec-demo / std-demo exercise it as DEMO 29–31.
+**Caveat (#54):** shim programs MUST build at `opt-level=0` — any
+optimization miscompiles the `asm!`-based syscall wrappers.
 
 **Tier 1 prereqs (all ✅ as of 2026-05-18 — M25 unblocked to start):**
 - ✅ Real general-purpose allocator (heap alloc, `9a5850e` — `SYS_HEAP_ALLOC`/`SYS_HEAP_FREE`)
@@ -514,13 +526,12 @@ Get upstream rustc's std dependencies satisfied on our kernel.
   upstream std actually requires real TLS for parallel codegen.
 
 **Done when (M25 itself):**
-- [ ] `std::fs` routes to `SYS_FS_*` (M4)
-- [ ] `std::process::Command` calls `SYS_SPAWN` / `SYS_WAIT`
-- [ ] `std::thread` over a preemptive scheduler with
-      `std::sync::{Mutex, Condvar, RwLock}` primitives (needs Tier 3)
-- [ ] `std::net::{TcpStream, UdpSocket}` over kernel-core::net
-- [ ] `std::env`, `std::path`, `std::time` (env + wall_clock backings already done)
-- [ ] A "hello world" program built against this std runs on Semantic OS
+- [✅] `std::fs` routes to `SYS_FS_*` (M4) — `fs::File`/`OpenOptions` + `io::{Read,Write}`, DEMO 31 round-trip
+- [ ] `std::process::Command` calls `SYS_SPAWN` / `SYS_WAIT` — NOT yet
+- [🔨] `std::thread` over a preemptive scheduler with `std::sync::{Mutex, Condvar, RwLock}` — `thread::spawn`+`JoinHandle<T>`, `Mutex`, `Once` done (DEMO 31); `Condvar`/`RwLock` not yet
+- [ ] `std::net::{TcpStream, UdpSocket}` over kernel-core::net — NOT yet
+- [🔨] `std::env`, `std::path`, `std::time` — `env` done; `path`/`time` minimal
+- [✅] A "hello world" program built against this std runs on Semantic OS — hello-std/vec-demo/std-demo (DEMO 29–31)
 
 ## M26 — Cranelift backend integration `[🔨 prep done]`
 
