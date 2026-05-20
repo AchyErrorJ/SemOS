@@ -55,10 +55,17 @@ pub const SCHEDULER_TICK_HZ: u64 = 62;
 /// RIP (stuck-bit pattern, bits 56+58 set) during user-program
 /// execution.
 ///
-/// At 64 KiB × MAX_TASKS = 1 MiB of BSS, comfortable against our
-/// 16 MiB heap budget. If the same bug returns we bump again — but
-/// the right long-term fix is real guard pages (unmapped, fault-on-touch).
-pub const TASK_STACK_SIZE: usize = 64 * 1024;
+/// **Bumped 64 KiB → 128 KiB on 2026-05-20 (task #41).** Real unmapped
+/// guard pages now sit below every task stack (`init_stack_guard_pages`),
+/// so an overflow faults precisely instead of smashing the neighbour. The
+/// guard immediately exposed that the demo-runner task (`init_loader`)
+/// actually uses just over 64 KiB during the FS-snapshot demo — it had
+/// been silently spilling into the unused top of the adjacent slot. 128 KiB
+/// restores headroom above that real watermark.
+///
+/// At 128 KiB × MAX_TASKS = 2 MiB of BSS, still comfortable against the
+/// 16 MiB heap budget. Overflow is now a hard fault, not silent corruption.
+pub const TASK_STACK_SIZE: usize = 128 * 1024;
 
 /// Task state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

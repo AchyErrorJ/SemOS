@@ -384,6 +384,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // Stack-overflow canaries at the bottom of every TASK_STACK — checked
     // from the PF handler. Cheap detection before metal bring-up.
     context::init_stack_canaries();
+    // Real unmapped guard pages below every task / per-task kernel stack
+    // (task #41) — turns a silent neighbour-smashing overflow into an
+    // immediate, precisely-addressed #PF. The canaries above remain as a
+    // secondary net for any slot whose guard couldn't be installed.
+    context::init_stack_guard_pages();
 
     println!("[*] Spawning background tasks...");
     if let Some(slot) = context::spawn_task("task_a", task_a) {

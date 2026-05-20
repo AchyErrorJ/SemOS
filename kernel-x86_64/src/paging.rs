@@ -351,6 +351,74 @@ unsafe fn table_at_phys(phys: u64) -> &'static mut PageTable {
     &mut *(virt as *mut PageTable)
 }
 
+/// Turn a single 4 KiB page in the ACTIVE (kernel/boot) address space into
+/// an unmapped guard page — clears its PRESENT bit so any access faults.
+///
+/// The kernel image is mapped with 2 MiB huge pages, so if `virt` lands in a
+/// huge mapping this first *splits* that 2 MiB page into a fresh 512-entry
+/// 4 KiB page table reproducing the existing mapping (flags preserved), then
+/// installs it at the PD level. Only then is the target PTE cleared, so all
+/// neighbouring kernel data in the same 2 MiB region stays mapped.
+///
+/// Because every process address space byte-copies the kernel PML4 (see
+/// `AddressSpace::new`), it shares these lower page tables — so the unmap is
+/// visible under *all* CR3s, not just the boot one. Idempotent: a second
+/// guard page in an already-split 2 MiB region just clears its own PTE.
+///
+/// Operates through raw `u64` pointers (not typed `&mut PageTable`) to avoid
+/// the overlapping-`&mut` aliasing hazard documented on `AddressSpace::new`.
+/// Returns false if the path isn't mapped or a PT frame can't be allocated.
+pub fn install_guard_page(virt: u64) -> bool {
+    let virt = virt & !(PAGE_SIZE_4K - 1);
+    let cr3 = read_cr3();
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+    let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
+
+    unsafe {
+        let pml4 = phys_to_virt(cr3) as *const u64;
+        let pml4e = *pml4.add(pml4_idx);
+        if pml4e & flags::PRESENT == 0 { return false; }
+
+        let pdpt = phys_to_virt(pml4e & flags::ADDR_MASK) as *const u64;
+        let pdpte = *pdpt.add(pdpt_idx);
+        if pdpte & flags::PRESENT == 0 || pdpte & flags::HUGE_PAGE != 0 { return false; }
+
+        let pd = phys_to_virt(pdpte & flags::ADDR_MASK) as *mut u64;
+        let pde = *pd.add(pd_idx);
+        if pde & flags::PRESENT == 0 { return false; }
+
+        // Split a 2 MiB huge page into 512 × 4 KiB, preserving its flags.
+        if pde & flags::HUGE_PAGE != 0 {
+            let base_2m = pde & 0x000F_FFFF_FFE0_0000;
+            // Carry over the mapping's protection bits (W/U/global/NX); drop PS.
+            let carry = pde & (flags::WRITABLE | flags::USER | flags::GLOBAL | flags::NO_EXECUTE);
+            let pt_phys = match alloc_pt_frame() { Some(p) => p, None => return false };
+            let pt = phys_to_virt(pt_phys) as *mut u64;
+            for i in 0..ENTRIES {
+                let page_phys = base_2m + (i as u64) * PAGE_SIZE_4K;
+                *pt.add(i) = page_phys | flags::PRESENT | carry;
+            }
+            // Point the PD entry at the new table (present + writable; user bit
+            // mirrors the original so kernel-only stays kernel-only).
+            *pd.add(pd_idx) = pt_phys | flags::PRESENT | flags::WRITABLE | (pde & flags::USER);
+        }
+
+        // Clear PRESENT on the target 4 KiB page → guard page.
+        let pt_phys = *pd.add(pd_idx) & flags::ADDR_MASK;
+        let pt = phys_to_virt(pt_phys) as *mut u64;
+        *pt.add(pt_idx) &= !flags::PRESENT;
+    }
+
+    // Evict any cached translation for this page. `invlpg` (unlike a CR3
+    // reload) invalidates the *2 MiB* entry that the split replaced even
+    // when it's GLOBAL — kernel pages are global, so a CR3 reload alone
+    // would leave the guard readable through a stale huge-page TLB entry.
+    invlpg(virt);
+    true
+}
+
 // ============================================================================
 // Per-Process Address Space
 // ============================================================================

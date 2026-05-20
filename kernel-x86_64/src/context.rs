@@ -111,14 +111,45 @@ pub fn init_fxsave_for(slot: usize) {
     }
 }
 
-/// Task stacks (16KB each, 16-byte aligned) — used as the primary stack
-/// for kernel-mode tasks, and as the user-mode stack for Ring 3 tasks.
-#[repr(C, align(16))]
+/// Size of the unmapped guard page placed at the LOWEST address of every
+/// task stack (task #41). One 4 KiB page is reserved below the usable
+/// region; `init_stack_guard_pages()` clears its PRESENT bit in the active
+/// kernel page tables so a downward stack overflow faults immediately on a
+/// precise address instead of silently smashing the adjacent slot. The
+/// usable stack lives at `[base + STACK_GUARD_SIZE, base + STACK_GUARD_SIZE + N)`.
+const STACK_GUARD_SIZE: usize = crate::paging::PAGE_SIZE_4K as usize;
+
+/// Task stacks — used as the primary stack for kernel-mode tasks, and as the
+/// physical backing for the Ring 3 user stack. Page-aligned with a leading
+/// guard page (see `STACK_GUARD_SIZE`); usable size is `TASK_STACK_SIZE`.
+#[repr(C, align(4096))]
 #[derive(Copy, Clone)]
-struct TaskStack([u8; scheduler::TASK_STACK_SIZE]);
+struct TaskStack([u8; STACK_GUARD_SIZE + scheduler::TASK_STACK_SIZE]);
 
 static mut TASK_STACKS: [TaskStack; MAX_TASKS] =
-    [TaskStack([0; scheduler::TASK_STACK_SIZE]); MAX_TASKS];
+    [TaskStack([0; STACK_GUARD_SIZE + scheduler::TASK_STACK_SIZE]); MAX_TASKS];
+
+/// Lowest *usable* address of a task stack (just above its guard page).
+/// Also the canary slot and the base used to back the Ring 3 user stack.
+fn task_stack_base(slot: usize) -> u64 {
+    unsafe {
+        let stacks = &raw const TASK_STACKS;
+        (*stacks)[slot].0.as_ptr() as u64 + STACK_GUARD_SIZE as u64
+    }
+}
+
+/// Highest address (top) of a task stack's usable region.
+fn task_stack_top(slot: usize) -> u64 {
+    task_stack_base(slot) + scheduler::TASK_STACK_SIZE as u64
+}
+
+/// Virtual address of a task stack's guard page (the page to unmap).
+fn task_stack_guard(slot: usize) -> u64 {
+    unsafe {
+        let stacks = &raw const TASK_STACKS;
+        (*stacks)[slot].0.as_ptr() as u64
+    }
+}
 
 /// Stack-overflow canary written at the LOWEST address of each TASK_STACK
 /// at boot. If a task overflows its stack downward, it'll smash this value.
@@ -139,27 +170,43 @@ pub const IRET_RIP_SENTINEL: u64 = 0xCAFE_BABE_F00D_BEEF;
 /// Call once after init, before any task is scheduled.
 pub fn init_stack_canaries() {
     unsafe {
-        let stacks = &raw mut TASK_STACKS;
         for slot in 0..MAX_TASKS {
-            let bottom = (*stacks)[slot].0.as_mut_ptr() as *mut u64;
+            let bottom = task_stack_base(slot) as *mut u64;
             *bottom = STACK_CANARY;
             if slot >= 1 && slot <= 3 {
-                let top = (*stacks)[slot].0.as_mut_ptr() as u64
-                    + scheduler::TASK_STACK_SIZE as u64;
-                let iret_rip_slot = (top - 56) as *mut u64;
+                let iret_rip_slot = (task_stack_top(slot) - 56) as *mut u64;
                 *iret_rip_slot = IRET_RIP_SENTINEL;
             }
         }
     }
 }
 
+/// Install the unmapped guard page below every task stack and per-task
+/// kernel stack (task #41). Call once at boot, after `init_stack_canaries`
+/// and before any task is scheduled — at this point we're still on the
+/// bootloader stack, so none of these regions is live.
+///
+/// A failure to install a guard (e.g. PT-frame pool exhausted) is logged
+/// but non-fatal: the slot simply falls back to the canary-only detection.
+pub fn init_stack_guard_pages() {
+    let mut installed = 0usize;
+    for slot in 0..MAX_TASKS {
+        if crate::paging::install_guard_page(task_stack_guard(slot)) { installed += 1; }
+        if crate::paging::install_guard_page(kernel_stack_guard(slot)) { installed += 1; }
+    }
+    crate::println!(
+        "    [guard] installed {}/{} stack guard pages (task #41) — \
+         overflow now faults instead of smashing the neighbour slot",
+        installed, MAX_TASKS * 2
+    );
+}
+
 /// Check every TASK_STACK's bottom canary. Returns the first slot whose
 /// canary has been smashed, or None if all are intact.
 pub fn check_stack_canaries() -> Option<usize> {
     unsafe {
-        let stacks = &raw const TASK_STACKS;
         for slot in 0..MAX_TASKS {
-            let bottom = (*stacks)[slot].0.as_ptr() as *const u64;
+            let bottom = task_stack_base(slot) as *const u64;
             if core::ptr::read_volatile(bottom) != STACK_CANARY {
                 return Some(slot);
             }
@@ -171,24 +218,37 @@ pub fn check_stack_canaries() -> Option<usize> {
 /// Address of the stack-bottom canary for a given slot. Used by PF handler
 /// to print what the canary was clobbered TO.
 pub fn stack_bottom_addr(slot: usize) -> u64 {
-    unsafe {
-        let stacks = &raw const TASK_STACKS;
-        (*stacks)[slot].0.as_ptr() as u64
-    }
+    task_stack_base(slot)
 }
 
 
 /// Per-task kernel stacks (8KB each) — used for Ring 3 → Ring 0 transitions.
 /// When an interrupt or SYSCALL fires while a Ring 3 task is running,
 /// the CPU loads RSP from TSS.RSP0, which points to this task's kernel stack.
-const KERNEL_STACK_PER_TASK: usize = 8 * 1024;
+// 32 KiB. Was 8 KiB, which the guard page (task #41) immediately exposed as
+// too small: a Ring 3 task taking a timer interrupt enters the kernel on this
+// stack and runs schedule → context_switch → diagnostic `println!`, a path
+// that overflows 8 KiB. Pre-guard that overflow silently smashed the adjacent
+// slot's kernel stack and limped on; the guard turned it into a #DF. 32 KiB
+// gives the formatted-print interrupt path real headroom.
+const KERNEL_STACK_PER_TASK: usize = 32 * 1024;
 
-#[repr(C, align(16))]
+/// Page-aligned with a leading guard page (task #41), same scheme as
+/// `TaskStack`. Usable size is `KERNEL_STACK_PER_TASK`.
+#[repr(C, align(4096))]
 #[derive(Copy, Clone)]
-struct PerTaskKernelStack([u8; KERNEL_STACK_PER_TASK]);
+struct PerTaskKernelStack([u8; STACK_GUARD_SIZE + KERNEL_STACK_PER_TASK]);
 
 static mut PER_TASK_KERNEL_STACKS: [PerTaskKernelStack; MAX_TASKS] =
-    [PerTaskKernelStack([0; KERNEL_STACK_PER_TASK]); MAX_TASKS];
+    [PerTaskKernelStack([0; STACK_GUARD_SIZE + KERNEL_STACK_PER_TASK]); MAX_TASKS];
+
+/// Virtual address of a per-task kernel stack's guard page (the page to unmap).
+fn kernel_stack_guard(slot: usize) -> u64 {
+    unsafe {
+        let stacks = &raw const PER_TASK_KERNEL_STACKS;
+        (*stacks)[slot].0.as_ptr() as u64
+    }
+}
 
 /// Public debug accessor — same as kernel_stack_top.
 pub fn debug_kstack_top(slot: usize) -> u64 { kernel_stack_top(slot) }
@@ -233,7 +293,7 @@ pub static mut CTX_LOG_IDX: u64 = 0;
 fn kernel_stack_top(slot: usize) -> u64 {
     unsafe {
         let stacks = &raw const PER_TASK_KERNEL_STACKS;
-        (*stacks)[slot].0.as_ptr().add(KERNEL_STACK_PER_TASK) as u64
+        (*stacks)[slot].0.as_ptr().add(STACK_GUARD_SIZE + KERNEL_STACK_PER_TASK) as u64
     }
 }
 
@@ -241,10 +301,7 @@ fn kernel_stack_top(slot: usize) -> u64 {
 /// Returns the initialized context with a fresh stack.
 pub fn create_context(slot: usize, entry: fn()) -> TaskContext {
     // Stack grows downward on x86_64; start at the top, 16-byte aligned
-    let stack_top = unsafe {
-        let stacks = &raw mut TASK_STACKS;
-        (*stacks)[slot].0.as_ptr().add(scheduler::TASK_STACK_SIZE) as u64
-    };
+    let stack_top = task_stack_top(slot);
 
     // The fix to context_switch (pop return address before save, jmp on
     // restore) makes the resume path equivalent to `ret`. So a fresh task
@@ -468,13 +525,11 @@ pub fn spawn_ring3_thread_in_cr3(
     let user_stack_top = crate::paging::user_layout::USER_STACK_TOP
         .saturating_sub((slot as u64) * THREAD_STACK_VSTRIDE);
 
-    // Physical backing comes from this slot's TASK_STACKS. Same
-    // strategy as spawn_user_task; safe because each slot gets its
-    // own TASK_STACKS region.
-    let stack_virt_base = unsafe {
-        let stacks = &raw const TASK_STACKS;
-        (*stacks)[slot].0.as_ptr() as u64
-    };
+    // Physical backing comes from this slot's TASK_STACKS, starting above
+    // the guard page (task #41) — the guard's kernel PTE is unmapped, so a
+    // walk of offset 0 would fail. Same strategy as spawn_user_task; safe
+    // because each slot gets its own TASK_STACKS region.
+    let stack_virt_base = task_stack_base(slot);
     for i in 0..stack_pages {
         let page_kvirt = stack_virt_base + (i as u64 * crate::paging::PAGE_SIZE_4K);
         let page_phys = match crate::paging::walk_active_pml4(page_kvirt) {
@@ -662,10 +717,7 @@ pub fn schedule() {
             //   0        → something zeroed the slot AFTER the push
             //   kernel   → normal: timer pushed a valid RIP, iretq will work
             if next >= 1 && next <= 3 {
-                let stacks_ptr = &raw const TASK_STACKS;
-                let stack_top = (*stacks_ptr)[next].0.as_ptr() as u64
-                    + scheduler::TASK_STACK_SIZE as u64;
-                let iret_rip_pos = stack_top - 56;
+                let iret_rip_pos = task_stack_top(next) - 56;
                 let iret_rip_val = core::ptr::read_volatile(iret_rip_pos as *const u64);
                 let class = if iret_rip_val == IRET_RIP_SENTINEL {
                     "SENTINEL"
@@ -870,11 +922,10 @@ pub fn spawn_user_task(
     // We must walk the page tables per-page to get each stack page's real
     // physical backing. (If TASK_STACKS happens to span a page boundary
     // mid-allocation that's fine — page-by-page translation handles it.)
+    // Start above the guard page (task #41): offset 0 is an unmapped guard,
+    // so its kernel PTE no longer translates and would fail the walk below.
     let stack_pages = (user_stack_size / crate::paging::PAGE_SIZE_4K) as usize;
-    let stack_virt_base = unsafe {
-        let stacks = &raw const TASK_STACKS;
-        (*stacks)[slot].0.as_ptr() as u64
-    };
+    let stack_virt_base = task_stack_base(slot);
 
     for i in 0..stack_pages {
         let page_kvirt = stack_virt_base + (i as u64 * crate::paging::PAGE_SIZE_4K);
