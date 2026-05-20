@@ -1518,6 +1518,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
                 "hello-std" => "hello-std.elf",
                 "vec-demo"  => "vec-demo.elf",
                 "std-demo"  => "std-demo.elf",
+                "spawn-demo" => "spawn-demo.elf",
                 _ => return u64::MAX,
             }
         } else if fs.find(stripped).is_some() {
@@ -1624,19 +1625,51 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
 ///
 /// Waits for a child process to exit and returns its exit code.
 /// If pid == 0, waits for any child.
+///
+/// Ring-3 children (the `std::process::Command` case) never reach the
+/// PROCESS_TABLE Zombie state — see the `handle_exit` note: current_pid()
+/// isn't refreshed on context switch, so exit can't mark the right
+/// Process as Zombie. The exit code DOES land on the scheduler slot
+/// (`set_current_exit_code`). So when the child has a scheduler `task_id`
+/// we block on that slot via the same `join_block` path SYS_THREAD_JOIN
+/// uses, which is reliable for Ring-3 children. We fall back to the
+/// PROCESS_TABLE `wait()` path only when there's no task_id (the legacy
+/// kernel-parent case that already worked).
 fn handle_wait(pid: u64) -> u64 {
+    use crate::scheduler::TaskState;
+
     if pid == 0 {
-        // Wait for any child
-        match crate::process::waitpid_any() {
+        // Wait for any child.
+        return match crate::process::waitpid_any() {
             Some((_child_pid, status)) => status.code as u64,
             None => u64::MAX,
+        };
+    }
+
+    let child_pid = crate::process::ProcessId(pid as u32);
+
+    // Preferred path: block on the child's scheduler slot.
+    if let Some(slot) = crate::process::get(child_pid).and_then(|p| p.task_id) {
+        if slot < crate::scheduler::MAX_TASKS
+            && slot != crate::scheduler::current_task_index()
+        {
+            // Fast path: already exited.
+            if crate::scheduler::task_state(slot) == TaskState::Exited {
+                return crate::scheduler::task_exit_code(slot);
+            }
+            // Empty slot → nothing to wait for (stale pid).
+            if crate::scheduler::task_state(slot) != TaskState::Empty {
+                crate::scheduler::join_block(slot);
+                crate::platform::schedule();
+                return crate::scheduler::task_exit_code(slot);
+            }
         }
-    } else {
-        let child_pid = crate::process::ProcessId(pid as u32);
-        match crate::process::wait(child_pid) {
-            Some(status) => status.code as u64,
-            None => u64::MAX,
-        }
+    }
+
+    // Legacy fallback: PROCESS_TABLE-based wait (kernel-parent case).
+    match crate::process::wait(child_pid) {
+        Some(status) => status.code as u64,
+        None => u64::MAX,
     }
 }
 

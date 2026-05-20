@@ -473,20 +473,30 @@ impl AddressSpace {
     /// The bootloader_api crate places the kernel and the physical-memory
     /// map at *low* virtual addresses (e.g. 0x10000000000 ≈ PML4 index 2),
     /// not in the classical higher half — so we copy *every* populated
-    /// PML4 entry from the active page tables. No user-space mappings exist
-    /// at this point, so this only inherits kernel mappings.
+    /// PML4 entry to inherit the kernel mappings.
+    ///
+    /// CRITICAL: copy from **`boot_cr3()`** (the clean kernel PML4), NOT
+    /// the *live* CR3. When SYS_SPAWN is invoked by a Ring-3 process (e.g.
+    /// `std::process::Command`), the live CR3 is the *caller's* address
+    /// space, whose lower-half PML4 entries point at the caller's user
+    /// page tables. Copying those would make the child SHARE the parent's
+    /// lower tables — so mapping the child's ELF segments would scribble
+    /// on the parent's address space and crash it (observed: parent SYSRETs
+    /// to a corrupted RIP). The boot PML4 has only kernel mappings and no
+    /// user entries, so it's the correct base for every new process
+    /// regardless of who spawned it.
     pub fn new(max_tier: u8) -> Option<Self> {
         let pml4_phys = alloc_pt_frame()?;
-        let current_cr3 = read_cr3();
+        let kernel_cr3 = boot_cr3();
 
-        // Raw memcpy the entire bootloader PML4 (4KB) into the new PML4
+        // Raw memcpy the entire kernel PML4 (4KB) into the new PML4
         // frame. Going through the typed entry/entry_mut accessors creates
         // overlapping `&'static mut` references to two PageTables and is UB
         // even though we read from one and write to the other; LTO has been
         // observed to elide the writes. A byte-level copy through raw
         // pointers sidesteps the aliasing issue.
         unsafe {
-            let src = phys_to_virt(current_cr3) as *const u8;
+            let src = phys_to_virt(kernel_cr3) as *const u8;
             let dst = phys_to_virt(pml4_phys) as *mut u8;
             core::ptr::copy_nonoverlapping(src, dst, PAGE_SIZE_4K as usize);
         }

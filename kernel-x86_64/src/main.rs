@@ -275,6 +275,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static STD_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/std-demo/target/x86_64-unknown-none/release/std-demo"
     );
+    // M25 std::process::Command validation: a Ring-3 parent spawns /bin
+    // children and waits on their exit codes via SYS_SPAWN + SYS_WAIT.
+    static SPAWN_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/spawn-demo/target/x86_64-unknown-none/release/spawn-demo"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -310,6 +315,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered std-demo.elf ({} bytes, semos-std M25 #51/#52 demo)", STD_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register std-demo.elf");
+        }
+        if fs.add("spawn-demo.elf", kernel_core::fs::ramfs::FileType::Executable, SPAWN_DEMO_ELF) {
+            println!("    Registered spawn-demo.elf ({} bytes, semos-std M25 process::Command demo)", SPAWN_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register spawn-demo.elf");
         }
     }
 
@@ -744,6 +754,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 31: semos-std fs/io/env/sync/thread — M25 #51/#52");
     println!("================================================================");
     std_demo();
+
+    // DEMO 32: spawn-demo.elf — std::process::Command from a Ring-3 parent.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 32: semos-std process::Command (SYS_SPAWN/WAIT) — M25");
+    println!("================================================================");
+    spawn_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -3124,6 +3141,56 @@ fn std_demo() {
     }
     println!("  [DEMO 31] PASS: std-demo exited 0 (fs/io/env + Mutex/Once + thread join)");
     println!("  [DEMO 31] => M25 #51/#52 closed — std-shim has files, args, sync, threads");
+}
+
+/// DEMO 32: spawn-demo.elf — Phase 14 M25 `std::process::Command`.
+///
+/// Spawns `/bin/spawn-demo`, which is itself a Ring-3 program that uses
+/// `Command` to spawn `/bin/hello-std` (twice — once with an arg) and
+/// `/bin/thread-demo`, blocking on each via SYS_WAIT. This proves a
+/// Ring-3 *parent* can spawn+wait children and that exit codes (0 and the
+/// non-zero 0x2700 from thread-demo) propagate back. spawn-demo exits 0
+/// only if all three child waits returned the expected codes.
+fn spawn_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let path = "/bin/spawn-demo";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 32] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 32] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 32] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+    // spawn-demo spawns + joins three children (one of which spawns its
+    // own threads) — give it a generous budget.
+    let mut polled = 0u64;
+    loop {
+        if kernel_core::scheduler::task_state(slot) == kernel_core::scheduler::TaskState::Exited {
+            break;
+        }
+        if polled > 5000 {
+            println!("  [DEMO 32] FAIL: spawn-demo didn't exit within 5000 ticks");
+            return;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot);
+    if code != 0 {
+        println!("  [DEMO 32] FAIL: spawn-demo exit code = 0x{:X} (want 0)", code);
+        return;
+    }
+    println!("  [DEMO 32] PASS: spawn-demo exited 0 (Command spawn+wait, exit codes propagate)");
+    println!("  [DEMO 32] => M25 std::process::Command works from a Ring-3 parent");
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).
