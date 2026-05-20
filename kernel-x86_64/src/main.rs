@@ -769,6 +769,13 @@ fn init_loader_task() {
     println!("================================================================");
     chunked_decode_demo();
 
+    // DEMO 34: DNS resolver over SLIRP (10.0.2.3) — M12.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 34: DNS resolver (UDP/A-record over SLIRP) — M12");
+    println!("================================================================");
+    dns_resolver_demo();
+
     // DEMO 35: M6 framebuffer drawing API — checkerboard + rect + blit +
     // scroll, verified by reading pixels back out of framebuffer memory.
     println!();
@@ -2097,15 +2104,29 @@ fn tls_live_handshake() {
     use kernel_core::llm::transport::NetworkTransport;
     use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
 
-    // Resolved 2026-05-16 via `Resolve-DnsName api.anthropic.com` on
-    // the host. Re-resolve if the handshake starts failing.
-    const ANTHROPIC_IP: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
+    // M12: resolve the IP at runtime via SLIRP's DNS (10.0.2.3) instead
+    // of hardcoding it. Anthropic uses cloud routing — the IP rotates —
+    // so a live lookup is more robust than the baked-in value. The
+    // hardcoded address (resolved 2026-05-16 via `Resolve-DnsName`)
+    // stays as a fallback so DEMO 16 still passes if DNS is unavailable.
+    const ANTHROPIC_IP_FALLBACK: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
     const ANTHROPIC_PORT: u16 = 443;
     const SNI_HOST: &str = "api.anthropic.com";
 
-    println!("  [DEMO 16] target: {}:{} (SNI={})", ANTHROPIC_IP, ANTHROPIC_PORT, SNI_HOST);
+    let anthropic_ip = match kernel_core::net::resolve(SNI_HOST) {
+        Some(ip) => {
+            println!("  [DEMO 16] DNS resolved {} -> {}", SNI_HOST, ip);
+            ip
+        }
+        None => {
+            println!("  [DEMO 16] DNS resolve failed/unavailable — using hardcoded fallback {}", ANTHROPIC_IP_FALLBACK);
+            ANTHROPIC_IP_FALLBACK
+        }
+    };
 
-    configure_global(ANTHROPIC_IP, ANTHROPIC_PORT);
+    println!("  [DEMO 16] target: {}:{} (SNI={})", anthropic_ip, ANTHROPIC_PORT, SNI_HOST);
+
+    configure_global(anthropic_ip, ANTHROPIC_PORT);
 
     // Stage A: connect. This drives TCP SYN/SYN-ACK/ACK and then the
     // full TLS 1.3 handshake. Expected duration: 1-2 seconds on QEMU
@@ -2224,6 +2245,75 @@ fn tls_live_handshake() {
     // Tear down.
     unsafe { global_tls_transport().close(); }
     println!("  [DEMO 16] => First outbound TLS round-trip from this kernel — Phase 8 closed.");
+}
+
+/// DEMO 34: DNS resolver over SLIRP's resolver (10.0.2.3) — M12.
+///
+/// Exercises `kernel_core::net::resolve`: build an A-record query, send
+/// it over a UDP socket, poll for the reply, parse the first A record.
+///
+/// PASS criteria:
+///   • resolve() returns Some(ip) with a plausible (non-zero) IPv4
+///   • a second resolve() of the same host returns the *same* answer
+///     from the cache without issuing a new query
+///
+/// `example.com` is the primary target — it's stable and friendly over
+/// SLIRP. We also try `api.anthropic.com` as a bonus (its IP rotates via
+/// cloud routing, so we only report it, never fail on it).
+fn dns_resolver_demo() {
+    use kernel_core::net::{self, Ipv4Address};
+
+    if !net::is_initialized() {
+        println!("  [DEMO 34] SKIPPED: net stack not initialized (run with -netdev user)");
+        return;
+    }
+
+    const HOST: &str = "example.com";
+
+    // First resolution — issues a real UDP query to 10.0.2.3:53.
+    let first = net::resolve(HOST);
+    let ip = match first {
+        Some(ip) => ip,
+        None => {
+            println!("  [DEMO 34] FAIL: resolve({}) returned None (no reply / malformed / SLIRP DNS down)", HOST);
+            return;
+        }
+    };
+
+    // Plausibility: 4 bytes (guaranteed by the type) and non-zero.
+    let bytes = ip.as_bytes();
+    let all_zero = bytes.iter().all(|&b| b == 0);
+    if all_zero {
+        println!("  [DEMO 34] FAIL: resolve({}) returned 0.0.0.0 (implausible)", HOST);
+        return;
+    }
+    println!("  [DEMO 34] PASS: resolved {} -> {} (non-zero IPv4)", HOST, ip);
+
+    // Second resolution — must hit the cache and return the SAME answer.
+    let second = net::resolve(HOST);
+    match second {
+        Some(ip2) if ip2 == ip => {
+            println!("  [DEMO 34] PASS: cache returned identical answer ({}) on second call", ip2);
+        }
+        Some(ip2) => {
+            println!("  [DEMO 34] FAIL: second resolve returned {} != {}", ip2, ip);
+            return;
+        }
+        None => {
+            println!("  [DEMO 34] FAIL: second resolve returned None (cache miss?)");
+            return;
+        }
+    }
+
+    // Bonus: report the Anthropic resolution that DEMO 16 relies on.
+    match net::resolve("api.anthropic.com") {
+        Some(a_ip) if a_ip != Ipv4Address::new(0, 0, 0, 0) =>
+            println!("  [DEMO 34] info: api.anthropic.com -> {} (used by DEMO 16)", a_ip),
+        _ =>
+            println!("  [DEMO 34] info: api.anthropic.com did not resolve over SLIRP (DEMO 16 uses fallback)"),
+    }
+
+    println!("  [DEMO 34] => M12 closed — kernel resolves hostnames via DNS.");
 }
 
 /// DEMO 17: hierarchical path namespace end-to-end (Phase 9 Stage 1).

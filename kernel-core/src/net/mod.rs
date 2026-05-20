@@ -35,6 +35,7 @@
 
 pub mod adapter;
 pub mod clock;
+pub mod dns;
 pub mod http;
 pub mod state;
 pub mod tcp;
@@ -43,6 +44,7 @@ pub use http::{decode_chunked, is_chunked, ChunkedError};
 
 pub use state::{init, poll, is_initialized};
 pub use tcp::{TcpStream, TcpError};
+pub use dns::resolve;
 
 // Re-export smoltcp address / state types the user-facing demos need,
 // so platform crates (e.g. kernel-x86_64) don't have to pull smoltcp
