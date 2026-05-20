@@ -43,9 +43,13 @@ impl Platform for X86Platform {
         argv: &[&[u8]],
         envp: &[&[u8]],
     ) -> Option<u64> {
-        if argv.is_empty() && envp.is_empty() {
-            return Some(stack_top);
-        }
+        // NOTE: we no longer early-return for empty argv/envp. Always
+        // emit at least a minimal SysV layout (argc=0, argv NULL, envp
+        // NULL) so the user runtime can unconditionally read argc at
+        // [rsp] without first having to prove a layout exists. The
+        // empty layout is 24 bytes (argc + argv-NULL + envp-NULL), well
+        // inside the top stack page. M25 #51 (argv parsing) depends on
+        // this guarantee.
         // Cap individual lengths so a runaway request can't trash the
         // whole page. The whole layout has to fit comfortably under the
         // 4 KiB top stack page; bound by sane-defaults rather than try
@@ -156,16 +160,44 @@ impl Platform for X86Platform {
     fn reap_slot(&self, slot: usize) {
         // Free the slot's AddressSpace (PML4 + subtables) and zero its
         // saved cr3. Called from alloc_task_slot at the moment of
-        // reusing an Exited slot — by this point no kernel code is
-        // running on the dying CR3, so we can safely free its frames.
+        // reusing an Exited slot.
+        //
+        // CRITICAL (M25 #45/#52): a Ring-3 *thread* shares its parent's
+        // cr3. If we blindly destroy this slot's cr3 we'd free the page
+        // tables out from under the still-running parent (or sibling
+        // threads). So only destroy the address space when NO other
+        // live slot still uses this cr3 — i.e. this is the last task in
+        // the address space. Otherwise just detach this slot's cr3.
         unsafe {
             let contexts = &raw mut crate::context::CONTEXTS;
-            if slot < crate::context::CONTEXTS.len() {
-                let dying_cr3 = (*contexts)[slot].cr3;
-                if dying_cr3 != 0 {
-                    crate::context::destroy_address_space(dying_cr3);
-                    (*contexts)[slot].cr3 = 0;
+            if slot >= crate::context::CONTEXTS.len() {
+                return;
+            }
+            let dying_cr3 = (*contexts)[slot].cr3;
+            if dying_cr3 == 0 {
+                return;
+            }
+            // Scan for any OTHER slot that is alive and shares this cr3.
+            let tasks = &raw const kernel_core::scheduler::TASKS;
+            let mut shared = false;
+            for i in 0..kernel_core::scheduler::MAX_TASKS {
+                if i == slot {
+                    continue;
                 }
+                let st = (*tasks)[i].state;
+                let alive = !matches!(
+                    st,
+                    kernel_core::scheduler::TaskState::Empty
+                        | kernel_core::scheduler::TaskState::Exited
+                );
+                if alive && (*contexts)[i].cr3 == dying_cr3 {
+                    shared = true;
+                    break;
+                }
+            }
+            (*contexts)[slot].cr3 = 0; // detach regardless
+            if !shared {
+                crate::context::destroy_address_space(dying_cr3);
             }
         }
     }
@@ -340,7 +372,13 @@ impl Platform for X86Platform {
             // but those are ~1 per 2 MiB.
             let frame = match crate::memory::alloc(SecurityTier::Public) {
                 Some(f) => f,
-                None => return false, // pool OOM
+                None => {
+                    let free = crate::memory::free_frames(SecurityTier::Public);
+                    crate::serial::_print(format_args!(
+                        "[map_user_region] Public pool OOM at page 0x{:x} (free={})\n",
+                        page, free));
+                    return false; // pool OOM
+                }
             };
             // Zero the frame before exposing it to user space (no info leak).
             unsafe {

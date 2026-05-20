@@ -23,8 +23,15 @@ pub use kernel_core::memory::SecurityTier;
 /// Frame size (4KB)
 pub const FRAME_SIZE: usize = 4096;
 
-/// Maximum frames per pool
-const MAX_FRAMES: usize = 256;
+/// Maximum frames a pool's bitmap can track. Each tier pool is ~54 MB
+/// (≈13570 × 4 KiB frames); the bitmap MUST cover that or `alloc`
+/// silently caps at the bitmap size while `stats().free` keeps
+/// reporting `frame_count - allocated` (a lie). This bit the M25
+/// user-heap (SYS_MMAP_ANON) — the first caller to pull >256 frames
+/// from a tier pool — as a spurious OOM with 13310 frames "free".
+/// 16384 covers a 64 MiB pool with headroom; cost is
+/// 16384/64 × 8 B = 2 KiB bitmap per pool × 4 pools = 8 KiB BSS.
+const MAX_FRAMES: usize = 16384;
 
 /// A memory pool for a specific security tier
 pub struct MemoryPool {
@@ -58,7 +65,11 @@ impl MemoryPool {
     pub fn init(&mut self, base: u64, size: usize) {
         self.base = base;
         self.size = size;
-        self.frame_count = size / FRAME_SIZE;
+        // Never let frame_count exceed what the bitmap can track, or
+        // alloc would hand out frames it can't record (and stats would
+        // over-report capacity). If a pool is physically larger than
+        // MAX_FRAMES allows, we simply don't use the tail.
+        self.frame_count = (size / FRAME_SIZE).min(MAX_FRAMES);
         self.allocated = 0;
 
         // Clear bitmap
@@ -225,6 +236,13 @@ pub fn can_access(addr: u64, max_tier: u8) -> bool {
         Some(tier) => (tier as u8) <= max_tier,
         None => false,
     }
+}
+
+/// Free-frame count for a tier (debug/diagnostics).
+pub fn free_frames(tier: SecurityTier) -> usize {
+    let pools = POOLS.lock();
+    let (_, _, free) = pools[tier as usize].stats();
+    free
 }
 
 /// Print memory pool statistics

@@ -41,9 +41,9 @@ extern crate alloc as core_alloc;
 
 // Re-export the `alloc` crate's surface so downstream programs can do
 // `use semos_std::vec::Vec` exactly as they'd `use std::vec::Vec`.
-// `alloc` reuses the same module names std does (vec, string, boxed,
-// collections, sync), so this is enough for a transparent rename.
-pub use core_alloc::{boxed, collections, format, rc, string, sync, vec};
+// NOTE: alloc's `sync` (Arc) is re-exported from inside our own `sync`
+// module (which also adds Mutex/Once), so it's not listed here.
+pub use core_alloc::{boxed, collections, format, rc, string, vec};
 
 // Re-export core surface so downstream programs can do `use semos_std::fmt`
 // the way they'd `use std::fmt`. Keeps the migration cost from raw-syscall
@@ -58,6 +58,8 @@ pub mod env;
 pub mod fs;
 pub mod io;
 pub mod process;
+pub mod rt;
+pub mod sync;
 pub mod thread;
 
 #[doc(hidden)]
@@ -83,20 +85,32 @@ static SEMOS_ALLOCATOR: alloc_impl::SemosAllocator = alloc_impl::SemosAllocator:
 #[macro_export]
 macro_rules! main {
     (fn main() $body:block) => {
+        fn __semos_user_main() $body
+
+        // Naked _start so we capture the SysV initial stack pointer
+        // (rsp → argc) before the compiler emits any prologue. The
+        // kernel's setup_user_argv always writes at least an argc=0
+        // layout there (M25 #51), so reading [rsp] is always valid.
         #[no_mangle]
-        #[link_section = ".text._start"]
+        #[unsafe(naked)]
         pub extern "C" fn _start() -> ! {
-            // Run the user's main, then exit cleanly. main() can call
-            // process::exit() itself for non-zero codes.
-            fn __semos_user_main() $body
+            core::arch::naked_asm!(
+                "mov rdi, rsp",   // arg0 = initial stack pointer
+                "and rsp, -16",   // 16-byte align before the call
+                "call {trampoline}",
+                trampoline = sym __semos_start_trampoline,
+            );
+        }
+
+        extern "C" fn __semos_start_trampoline(sp: u64) -> ! {
+            $crate::rt::init(sp);
             __semos_user_main();
             $crate::process::exit(0);
         }
 
         #[panic_handler]
-        fn __semos_panic(_info: &$crate::__core::panic::PanicInfo) -> ! {
-            // TODO: write panic_info to stderr once that's wired.
-            $crate::process::exit(1);
+        fn __semos_panic(info: &$crate::__core::panic::PanicInfo) -> ! {
+            $crate::rt::handle_panic(info)
         }
     };
 }

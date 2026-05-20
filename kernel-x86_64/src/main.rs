@@ -270,6 +270,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static VEC_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/vec-demo/target/x86_64-unknown-none/release/vec-demo"
     );
+    // M25 #51/#52 validation: fs::File + io::Read/Write, env::args/var,
+    // sync::{Mutex,Once}, thread::spawn/join.
+    static STD_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/std-demo/target/x86_64-unknown-none/release/std-demo"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -300,6 +305,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered vec-demo.elf ({} bytes, semos-std M25 Tier 2 alloc demo)", VEC_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register vec-demo.elf");
+        }
+        if fs.add("std-demo.elf", kernel_core::fs::ramfs::FileType::Executable, STD_DEMO_ELF) {
+            println!("    Registered std-demo.elf ({} bytes, semos-std M25 #51/#52 demo)", STD_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register std-demo.elf");
         }
     }
 
@@ -722,6 +732,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 30: semos-std alloc (Vec/String/Box) — M25 Tier 2 #50");
     println!("================================================================");
     vec_demo();
+
+    // DEMO 31: std-demo.elf — fs/io/env + Mutex/Once + thread (M25 #51/#52).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 31: semos-std fs/io/env/sync/thread — M25 #51/#52");
+    println!("================================================================");
+    std_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -3055,6 +3072,53 @@ fn vec_demo() {
     }
     println!("  [DEMO 30] PASS: vec-demo exited 0 (GlobalAlloc + Vec/String/Box working)");
     println!("  [DEMO 30] => M25 Tier 2 #50 closed — alloc-crate downstream is live");
+}
+
+/// DEMO 31: std-demo.elf — Phase 14 M25 #51/#52 acceptance.
+///
+/// Spawns `/bin/std-demo`, which exercises fs::File + io::Read/Write,
+/// env::args/var, sync::{Mutex,Once}, and thread::spawn/join. Pass
+/// criterion: exit code 0 (a failed check exits 0x41-0x45).
+fn std_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let path = "/bin/std-demo";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 31] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 31] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 31] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+    // std-demo does thread spawn/join + 2000 Mutex lock cycles — give it
+    // a generous budget.
+    let mut polled = 0u64;
+    loop {
+        if kernel_core::scheduler::task_state(slot) == kernel_core::scheduler::TaskState::Exited {
+            break;
+        }
+        if polled > 3000 {
+            println!("  [DEMO 31] FAIL: std-demo didn't exit within 3000 ticks");
+            return;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot);
+    if code != 0 {
+        println!("  [DEMO 31] FAIL: std-demo exit code = 0x{:X} (want 0)", code);
+        return;
+    }
+    println!("  [DEMO 31] PASS: std-demo exited 0 (fs/io/env + Mutex/Once + thread join)");
+    println!("  [DEMO 31] => M25 #51/#52 closed — std-shim has files, args, sync, threads");
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).

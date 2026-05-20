@@ -528,6 +528,7 @@ fn handle_mmap_anon(addr: u64, size: u64) -> u64 {
     if crate::platform::get().map_user_region(cr3, addr, size) {
         addr
     } else {
+        crate::platform::log("[mmap] map_user_region FAILED (pool exhausted?)\n");
         u64::MAX
     }
 }
@@ -722,10 +723,27 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
             };
             match Namespace::create_file(path, tier, &[]) {
                 Ok(s) => s,
-                Err(_) => return u64::MAX,
+                Err(_) => {
+                    crate::platform::log("[open] create_file failed: ");
+                    crate::platform::log(path);
+                    crate::platform::log("\n");
+                    return u64::MAX;
+                }
             }
         }
-        Err(_) => return u64::MAX,
+        Err(e) => {
+            crate::platform::log("[open] resolve failed (");
+            crate::platform::log(match e {
+                FsError::NotFound => "NotFound",
+                FsError::NotADirectory => "NotADirectory",
+                FsError::NotAbsolute => "NotAbsolute",
+                _ => "other",
+            });
+            crate::platform::log(") for ");
+            crate::platform::log(path);
+            crate::platform::log("\n");
+            return u64::MAX;
+        }
     };
 
     // Security: caller's max_tier must cover the object's tier. The
@@ -738,7 +756,12 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
         let registry = unsafe { crate::semantic::registry::global_registry() };
         match registry.get(&suid) {
             Some(o) => o.tier,
-            None => return u64::MAX,
+            None => {
+                crate::platform::log("[open] DANGLING entry (resolve ok, object missing) for ");
+                crate::platform::log(path);
+                crate::platform::log("\n");
+                return u64::MAX;
+            }
         }
     };
     if caller_tier < (obj_tier as u8) {
@@ -762,7 +785,12 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
 
     match alloc_path_fd_slot(suid, is_dir) {
         Some(fd) => fd as u64,
-        None => u64::MAX,
+        None => {
+            crate::platform::log("[open] path FD table full for ");
+            crate::platform::log(path);
+            crate::platform::log("\n");
+            u64::MAX
+        }
     }
 }
 
@@ -1489,6 +1517,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
                 "thread-demo" => "thread-demo.elf",
                 "hello-std" => "hello-std.elf",
                 "vec-demo"  => "vec-demo.elf",
+                "std-demo"  => "std-demo.elf",
                 _ => return u64::MAX,
             }
         } else if fs.find(stripped).is_some() {
