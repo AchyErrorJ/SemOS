@@ -35,8 +35,11 @@
 
 pub mod adapter;
 pub mod clock;
+pub mod http;
 pub mod state;
 pub mod tcp;
+
+pub use http::{decode_chunked, is_chunked, ChunkedError};
 
 pub use state::{init, poll, is_initialized};
 pub use tcp::{TcpStream, TcpError};

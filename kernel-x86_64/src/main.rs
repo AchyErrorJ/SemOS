@@ -762,6 +762,13 @@ fn init_loader_task() {
     println!("================================================================");
     spawn_demo();
 
+    // DEMO 33: HTTP chunked-transfer-encoding decoder (M13).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 33: HTTP chunked-transfer decoder — M13");
+    println!("================================================================");
+    chunked_decode_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -3191,6 +3198,91 @@ fn spawn_demo() {
     }
     println!("  [DEMO 32] PASS: spawn-demo exited 0 (Command spawn+wait, exit codes propagate)");
     println!("  [DEMO 32] => M25 std::process::Command works from a Ring-3 parent");
+}
+
+/// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).
+///
+/// Feeds hardcoded chunked byte streams into `kernel_core::net::decode_chunked`
+/// and asserts the reassembled body matches. No network needed — this is the
+/// unit-level acceptance for the decoder that the NetworkLlmProvider response
+/// path now uses. Three sub-checks:
+///   1. normal multi-chunk body reassembles correctly
+///   2. an empty body (`0\r\n\r\n`) decodes to zero bytes
+///   3. a truncated chunk errors cleanly (no panic / no over-read)
+/// Plus a bonus check that hex sizes and trailing headers are handled.
+fn chunked_decode_demo() {
+    use kernel_core::net::decode_chunked;
+    let mut all_ok = true;
+    let mut out = [0u8; 256];
+
+    // --- check 1: normal multi-chunk ---------------------------------------
+    // "4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n" -> "Wikipedia"
+    let input1: &[u8] = b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
+    match decode_chunked(input1, &mut out) {
+        Ok(n) if &out[..n] == b"Wikipedia" => {
+            println!("  [DEMO 33] PASS: multi-chunk decoded {} bytes -> \"Wikipedia\"", n);
+        }
+        Ok(n) => {
+            println!("  [DEMO 33] FAIL: multi-chunk wrong output ({} bytes)", n);
+            all_ok = false;
+        }
+        Err(e) => {
+            println!("  [DEMO 33] FAIL: multi-chunk errored: {:?}", e);
+            all_ok = false;
+        }
+    }
+
+    // --- check 2: empty body -----------------------------------------------
+    let input2: &[u8] = b"0\r\n\r\n";
+    match decode_chunked(input2, &mut out) {
+        Ok(0) => println!("  [DEMO 33] PASS: empty body decoded to 0 bytes"),
+        Ok(n) => {
+            println!("  [DEMO 33] FAIL: empty body decoded {} bytes (want 0)", n);
+            all_ok = false;
+        }
+        Err(e) => {
+            println!("  [DEMO 33] FAIL: empty body errored: {:?}", e);
+            all_ok = false;
+        }
+    }
+
+    // --- check 3: truncated input must error cleanly -----------------------
+    // declares 9 bytes but only 4 are present, no terminator.
+    let input3: &[u8] = b"9\r\nWiki";
+    match decode_chunked(input3, &mut out) {
+        Err(e) => println!("  [DEMO 33] PASS: truncated input errored cleanly: {:?}", e),
+        Ok(n) => {
+            println!("  [DEMO 33] FAIL: truncated input decoded {} bytes (want error)", n);
+            all_ok = false;
+        }
+    }
+
+    // --- check 4: hex sizes + trailing headers -----------------------------
+    // 0xC = 12 data bytes ("Hello, world"), then CRLF, then a trailer header
+    // after the final chunk. (The data must be exactly 12 bytes followed by
+    // CRLF — a 13-byte "Hello, world!" here would be malformed framing.)
+    let input4: &[u8] = b"C\r\nHello, world\r\n0\r\nX-Trailer: ok\r\n\r\n";
+    match decode_chunked(input4, &mut out) {
+        Ok(n) if &out[..n] == b"Hello, world" => {
+            println!("  [DEMO 33] PASS: hex size + trailer decoded -> \"Hello, world\"");
+        }
+        Ok(n) => {
+            println!("  [DEMO 33] FAIL: hex/trailer wrong output ({} bytes): {:?}",
+                n, core::str::from_utf8(&out[..n]).unwrap_or("<non-utf8>"));
+            all_ok = false;
+        }
+        Err(e) => {
+            println!("  [DEMO 33] FAIL: hex/trailer errored: {:?}", e);
+            all_ok = false;
+        }
+    }
+
+    if all_ok {
+        println!("  [DEMO 33] PASS: all chunked-decoder sub-checks green");
+        println!("  [DEMO 33] => M13 closed — chunked bodies de-framed before JSON extract");
+    } else {
+        println!("  [DEMO 33] FAIL: one or more chunked-decoder sub-checks failed");
+    }
 }
 
 /// DEMO 24: per-process env + CWD via the 4 new syscalls (Phase 14 prereq #3).

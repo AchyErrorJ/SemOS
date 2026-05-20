@@ -170,6 +170,9 @@ pub struct NetworkLlmProvider {
     req_buf: [u8; MAX_REQUEST_SIZE],
     /// Scratch for the raw response. Reused across calls.
     resp_buf: [u8; MAX_RESPONSE_SIZE],
+    /// Scratch for a de-chunked body (M13). Only used when the response
+    /// carries `Transfer-Encoding: chunked`; otherwise untouched.
+    chunk_buf: [u8; MAX_RESPONSE_SIZE],
     /// Last extracted completion text. Held so callers can inspect it after
     /// a `complete()` returns — useful for logging and the demo.
     last_completion: [u8; MAX_RESPONSE_BODY],
@@ -187,6 +190,7 @@ impl NetworkLlmProvider {
             endpoint: Endpoint::empty(),
             req_buf: [0u8; MAX_REQUEST_SIZE],
             resp_buf: [0u8; MAX_RESPONSE_SIZE],
+            chunk_buf: [0u8; MAX_RESPONSE_SIZE],
             last_completion: [0u8; MAX_RESPONSE_BODY],
             last_completion_len: 0,
             success_count: 0,
@@ -296,15 +300,39 @@ impl NetworkLlmProvider {
         }
 
         // 4. Parse the HTTP response, then the JSON body.
-        let body = match parse_http_body(&self.resp_buf[..total_resp]) {
-            Some(b) => b,
-            None => return self.fail(LlmError::InternalError),
+        //
+        // M13: if the server framed the body with chunked transfer encoding
+        // we must de-chunk before the JSON extractor sees it — otherwise the
+        // hex chunk-length lines (e.g. "8d\r\n") leak into the parsed body.
+        // De-chunk into `chunk_buf` and point `body` at the reassembled
+        // bytes. All of this happens inside one borrow scope that touches
+        // only `resp_buf`, `chunk_buf` and the caller's `response_out`, so we
+        // can re-borrow `self` mutably afterward to update stats.
+        let format = self.endpoint.format;
+        let extract_result = {
+            let Self { resp_buf, chunk_buf, .. } = self;
+            let raw = &resp_buf[..total_resp];
+            let body = match parse_http_body(raw) {
+                Some(b) => {
+                    // `b` is the body slice; the bytes before it are headers.
+                    let header_len = raw.len() - b.len();
+                    if crate::net::is_chunked(&raw[..header_len]) {
+                        match crate::net::decode_chunked(b, &mut chunk_buf[..]) {
+                            Ok(n) => Some(&chunk_buf[..n]),
+                            Err(_) => None,
+                        }
+                    } else {
+                        Some(b)
+                    }
+                }
+                None => None,
+            };
+            body.and_then(|body| match format {
+                ApiFormat::Anthropic => extract_anthropic_completion(body, response_out),
+                ApiFormat::OpenAi => extract_openai_completion(body, response_out),
+            })
         };
-        let completion_len = match self.endpoint.format {
-            ApiFormat::Anthropic => extract_anthropic_completion(body, response_out),
-            ApiFormat::OpenAi => extract_openai_completion(body, response_out),
-        };
-        let completion_len = match completion_len {
+        let completion_len = match extract_result {
             Some(n) => n,
             None => return self.fail(LlmError::InternalError),
         };
