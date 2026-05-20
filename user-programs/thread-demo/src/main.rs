@@ -6,12 +6,20 @@
 //! sibling's exit code. The kernel runs this as DEMO 28 by spawning it
 //! via SYS_SPAWN and reading the parent's exit status with SYS_WAIT.
 //!
+//! Task #55: after the first sibling exits + joins, it spawns a SECOND
+//! sibling. That forces the scheduler to reuse the first thread's now-
+//! Exited slot and re-map its slot-keyed user stack — the path that used
+//! to fault. So this doubles as the sequential-reuse regression test.
+//!
 //! Exit codes (read by the kernel via SYS_WAIT in DEMO 28):
-//!   0x2700 — full pass (thread spawned, futex woke, join returned 0x55)
-//!   0x2701 — thread spawn failed
+//!   0x2700 — full pass (both sibling rounds spawned, woke, joined)
+//!   0x2701 — 1st thread spawn failed
 //!   0x2702 — value-mismatch FUTEX_WAIT didn't return 1
-//!   0x2703 — FUTEX_WAKE didn't wake exactly one waiter
-//!   0x2704 — join returned wrong code
+//!   0x2703 — 1st FUTEX_WAKE didn't wake exactly one waiter
+//!   0x2704 — 1st join returned wrong code
+//!   0x2705 — 2nd thread spawn failed (slot reuse)
+//!   0x2706 — 2nd FUTEX_WAKE didn't wake exactly one waiter
+//!   0x2707 — 2nd join returned wrong code
 //!   0x27ff — generic fail (catch-all)
 
 #![no_std]
@@ -73,7 +81,29 @@ pub extern "C" fn _start() -> ! {
             sys_exit(0x2704);
         }
 
-        sys_write(b"thread-demo: PASS\n".as_ptr(), 18);
+        // Step 5 (task #55): spawn a SECOND sibling after the first has
+        // exited+joined. This forces the scheduler to reuse the first
+        // thread's now-Exited slot and re-map its slot-keyed user stack —
+        // the exact path that used to fail.
+        FUTEX.0.store(0, Ordering::SeqCst);
+        let tid2 = sys(SYS_THREAD_SPAWN, thread_entry as u64, 0x56, 0);
+        if tid2 == u64::MAX {
+            sys_write(b"thread-demo: 2nd spawn FAIL\n".as_ptr(), 28);
+            sys_exit(0x2705);
+        }
+        sys(SYS_SLEEP, 10, 0, 0);
+        let woken2 = sys(SYS_FUTEX_WAKE, &FUTEX.0 as *const _ as u64, 1, 0);
+        if woken2 != 1 {
+            sys_write(b"thread-demo: 2nd wake FAIL\n".as_ptr(), 27);
+            sys_exit(0x2706);
+        }
+        let code2 = sys(SYS_THREAD_JOIN, tid2, 0, 0);
+        if code2 != 0x56 {
+            sys_write(b"thread-demo: 2nd join wrong code\n".as_ptr(), 33);
+            sys_exit(0x2707);
+        }
+
+        sys_write(b"thread-demo: PASS (2 sequential threads)\n".as_ptr(), 41);
         sys_exit(0x2700);
     }
 }

@@ -225,13 +225,16 @@ pub fn stack_bottom_addr(slot: usize) -> u64 {
 /// Per-task kernel stacks (8KB each) — used for Ring 3 → Ring 0 transitions.
 /// When an interrupt or SYSCALL fires while a Ring 3 task is running,
 /// the CPU loads RSP from TSS.RSP0, which points to this task's kernel stack.
-// 32 KiB. Was 8 KiB, which the guard page (task #41) immediately exposed as
-// too small: a Ring 3 task taking a timer interrupt enters the kernel on this
-// stack and runs schedule → context_switch → diagnostic `println!`, a path
-// that overflows 8 KiB. Pre-guard that overflow silently smashed the adjacent
-// slot's kernel stack and limped on; the guard turned it into a #DF. 32 KiB
-// gives the formatted-print interrupt path real headroom.
-const KERNEL_STACK_PER_TASK: usize = 32 * 1024;
+// 64 KiB. Was 8 KiB (→32 in #41, →64 in #55). A Ring 3 task taking a timer
+// interrupt enters the kernel on this stack and runs schedule →
+// context_switch → diagnostic `println!`; that formatted-print path is both
+// stack-hungry and *layout-sensitive* — at 32 KiB a slightly larger embedded
+// user binary tipped its peak to 32 KiB + ~160 B and the guard (#41) turned
+// the overflow into a clean #DF (surfaced by #55's two-sequential-threads
+// repro). 64 KiB puts comfortable headroom above the observed watermark so
+// codegen jitter can't tip it over. (The obsolete task#40 PRE-RESUME
+// diagnostic in the switch path is the bulk of the cost; see context_switch.)
+const KERNEL_STACK_PER_TASK: usize = 64 * 1024;
 
 /// Page-aligned with a leading guard page (task #41), same scheme as
 /// `TaskStack`. Usable size is `KERNEL_STACK_PER_TASK`.
@@ -682,55 +685,22 @@ pub fn schedule() {
             };
             *idx_ptr = (*idx_ptr).wrapping_add(1);
 
-            // Task #40 diagnostic: re-read CONTEXTS[next].rip *immediately*
-            // before context_switch's `jmp [rsi+0x38]`. If this is 0 here but
-            // CTX_LOG (8 instructions earlier) saw non-zero, something wrote 0
-            // between the two reads. If non-zero here AND context_switch still
-            // jumps to 0, it's the CPU/compiler reordering the load past the
-            // function call. The volatile_read + compiler_fence rules out the
-            // latter; the print rules out the former.
+            // Task #40 tripwire (closed; kept silent-unless-corrupt). Re-read
+            // CONTEXTS[next].rip immediately before context_switch's
+            // `jmp [rsi+0x38]`. The bug manifested as a 0 RIP at switch-in;
+            // if that ever recurs, this prints and the PF handler dumps
+            // CTX_LOG. The per-switch SW / PRE-RESUME *trace* prints were
+            // removed in #55 — they fired every switch for slots 1..3 and
+            // were the bulk of the Ring-3 interrupt path's kernel-stack cost
+            // (and all the serial noise). The cheap volatile read + the
+            // ring-buffer write above are retained.
             core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
             let ctx_ptr = &(*contexts)[next] as *const TaskContext;
-            let rip_addr = ctx_ptr as u64 + 0x38; // .rip offset
-            let rsp_addr = ctx_ptr as u64 + 0x30; // .rsp offset
-            let rip_check = core::ptr::read_volatile(rip_addr as *const u64);
-            let rsp_check = core::ptr::read_volatile(rsp_addr as *const u64);
-            if next >= 1 && next <= 3 {
-                crate::println!(
-                    "[task#40] SW cur={} next={} ctx=0x{:x} rip_at_0x{:x}=0x{:x} rsp=0x{:x}",
-                    current, next, ctx_ptr as u64, rip_addr, rip_check, rsp_check,
-                );
-            }
+            let rip_check = core::ptr::read_volatile((ctx_ptr as u64 + 0x38) as *const u64);
             if rip_check == 0 {
                 crate::println!(
                     "[task#40] PRE-SWITCH rip=0! cur={} next={} ctx_addr=0x{:x}",
-                    current, next,
-                    &(*contexts)[next] as *const TaskContext as u64,
-                );
-            }
-
-            // Task #40 pre-resume sentinel probe (2026-05-13):
-            // Read [TASK_STACK[N].top - 56] (the timer-iret-RIP slot) and
-            // classify each resume of slots 1/2/3. The sentinel was seeded at
-            // boot by init_stack_canaries(); the value at PRE-RESUME tells us:
-            //   SENTINEL → slot has never been timer-preempted (no iret push)
-            //   0        → something zeroed the slot AFTER the push
-            //   kernel   → normal: timer pushed a valid RIP, iretq will work
-            if next >= 1 && next <= 3 {
-                let iret_rip_pos = task_stack_top(next) - 56;
-                let iret_rip_val = core::ptr::read_volatile(iret_rip_pos as *const u64);
-                let class = if iret_rip_val == IRET_RIP_SENTINEL {
-                    "SENTINEL"
-                } else if iret_rip_val == 0 {
-                    "ZERO"
-                } else if iret_rip_val >= 0x1000_0000_0000 && iret_rip_val < 0x1100_0000_0000 {
-                    "KERNEL"
-                } else {
-                    "OTHER"
-                };
-                crate::println!(
-                    "[task#40] PRE-RESUME slot {} cur={} iret_rip[0x{:x}]=0x{:x} [{}]",
-                    next, current, iret_rip_pos, iret_rip_val, class,
+                    current, next, ctx_ptr as u64,
                 );
             }
 
