@@ -234,7 +234,7 @@ pub fn stack_bottom_addr(slot: usize) -> u64 {
 // repro). 64 KiB puts comfortable headroom above the observed watermark so
 // codegen jitter can't tip it over. (The obsolete task#40 PRE-RESUME
 // diagnostic in the switch path is the bulk of the cost; see context_switch.)
-const KERNEL_STACK_PER_TASK: usize = 64 * 1024;
+const KERNEL_STACK_PER_TASK: usize = 128 * 1024;
 
 /// Page-aligned with a leading guard page (task #41), same scheme as
 /// `TaskStack`. Usable size is `KERNEL_STACK_PER_TASK`.
