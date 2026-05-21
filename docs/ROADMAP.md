@@ -568,7 +568,16 @@ optimization miscompiles the `asm!`-based syscall wrappers.
       the child's scheduler slot (Ring-3 children never hit PROCESS_TABLE
       Zombie). `spawn-demo` validates exit codes 0 and 0x2700 propagate.
 - [🔨] `std::thread` over a preemptive scheduler with `std::sync::{Mutex, Condvar, RwLock}` — `thread::spawn`+`JoinHandle<T>`, `Mutex`, `Once` done (DEMO 31); `Condvar`/`RwLock` not yet
-- [ ] `std::net::{TcpStream, UdpSocket}` over kernel-core::net — NOT yet
+- [🔨] `std::net::{TcpStream, UdpSocket}` over kernel-core::net — `b332cf0`.
+      Kernel syscalls SYS_DNS_RESOLVE + SYS_TCP_{CONNECT,READ,WRITE,CLOSE}
+      (100-104, one TCP socket at a time) + `semos-std::net` (Ipv4Addr,
+      resolve, TcpStream impl io::Read/Write). DNS half live (DEMO 34).
+      **Open:** net-demo (Ring-3 TCP HTTP round-trip) is built+wired but
+      DEMO 36 doesn't spawn it — doing so triggers a kernel #DF in the net
+      poll path (CR2 in a neighbouring slot's kernel-stack guard page; root
+      cause open). UdpSocket not exposed (DNS offered as one-shot resolve).
+      Also fixed en route: address-space GC in store_address_space, and the
+      user stack decoupled from the (128 KiB) kernel TASK_STACK_SIZE → 64 KiB.
 - [🔨] `std::env`, `std::path`, `std::time` — `env` done; `path`/`time` minimal
 - [✅] A "hello world" program built against this std runs on Semantic OS — hello-std/vec-demo/std-demo (DEMO 29–31)
 
