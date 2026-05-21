@@ -37,7 +37,7 @@ A milestone is **done** when:
 | 14 prep (Tier 2) | SYS_FSYNC, SYS_RENAME, SYS_TRUNCATE, SYS_STATX, FWRITE>256 B via heap-Allocated ObjectContent (M26 "first compile" unblocked) |
 | 14 prep (Tier 3) | SYS_THREAD_SPAWN/JOIN (kernel + Ring-3 same-AS), SYS_FUTEX_WAIT/WAKE, SYS_WAITNB, SCHEDULER_TICK_HZ const (parallel/threaded rustc unblocked) |
 | 14 (M25 substantial) | `semos-std` crate: `#[global_allocator]` (Vec/String/Box), `io::{Read,Write}`, `fs::File`/`OpenOptions`, `env`, `sync::{Mutex,Once}`, `thread::spawn`+`JoinHandle<T>`, `process::Command` (spawn+wait), argv. hello-std/vec-demo/std-demo/spawn-demo run Ring 3 (DEMO 29–32). **Build at `opt-level=0` only** — any optimization miscompiles the syscall path (#54). Still missing: `net`, full `path`/`time` |
-| 9/10 graphics+net | M6 framebuffer drawing API (DEMO 35); M13 HTTP chunked decoder (DEMO 33). M12 DNS code-complete on a branch, runtime debug pending |
+| 9/10 graphics+net | M6 framebuffer drawing API (DEMO 35); M13 HTTP chunked decoder (DEMO 33); M12 DNS resolver (DEMO 34, wall-clock wait + retransmit) |
 | Structural | #41 real guard pages between all task stacks (layout-sensitivity family closed); #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn; per-task kernel stack → 128 KiB for layout margin |
 
 ---
@@ -237,28 +237,31 @@ the first real-hardware session.
 - [ ] DEMO 26 associates to a hardcoded SSID, gets DHCP, repeats
       DEMO 16's handshake to api.anthropic.com over real Wi-Fi
 
-## M12 — DNS resolver `[🔨 on branch — code complete, runtime debug pending]`
+## M12 — DNS resolver `[✅]`
 
 Replace the hardcoded Anthropic IP in DEMO 16.
 
-Implementation (agent) lives on branch `worktree-agent-ab1e9f156bc0729c4`
-(`aa15490`): `kernel-core/src/net/dns.rs` — A-record query builder + response
-parser (name-compression aware) + `resolve()` with an 8-entry cache, UDP over
-smoltcp, DEMO 34. **NOT merged**: at runtime `resolve("example.com")` returns
-`None` (DEMO 34 FAIL) — the query gets no reply. Prime suspect: the UDP socket
-isn't added to the shared smoltcp `SocketSet` that `net::poll()` services, so
-it never transmits — compare against how `tcp.rs` registers its socket. Also
-exposed a fragile timing assertion in DEMO 27 ("sibling Blocked after sleep")
-that flakes once `-netdev` adds latency. Both are follow-up debug tasks.
+Landed `f19da16` (agent resolver + integration fix). `kernel-core/src/net/dns.rs`:
+A-record query builder, compression-aware response parser, 8-entry cache, UDP
+over the shared smoltcp `SocketSet`. The fix that made it work: **wait on
+wall-clock (`platform::ticks()`, ~3s) not iteration count, and retransmit
+~4×/s** — the agent's 4000-poll loop spent only a few ms, so a warm name
+resolved but a cold SLIRP→host lookup timed out; UDP also has no retransmit, so
+a datagram dropped pending the 10.0.2.3 ARP was lost. DEMO 34 resolves
+example.com + checks the cache; DEMO 16 resolves api.anthropic.com (hardcoded
+IP kept as fallback). Skips cleanly without `-netdev`. With network: 121 PASS.
 
 **Done when:**
-- [x] UDP socket on top of smoltcp — written
-- [x] DNS request builder (A record, ID + flags + question) — written
-- [x] Response parser — written (compression pointers handled)
-- [~] `dns::resolve(host) -> Option<Ipv4Address>` with cache — code present;
-      returns None at runtime, needs the SocketSet-registration fix
-- [x] DEMO 16 calls `dns::resolve` first (falls back to hardcoded IP) — wired
-- [ ] DEMO 34 actually resolves over SLIRP (10.0.2.3) — blocked on the above
+- [x] UDP socket on top of smoltcp
+- [x] DNS request builder (A record, ID + flags + question)
+- [x] Response parser (compression pointers handled)
+- [x] `dns::resolve(host) -> Option<Ipv4Address>` with cache
+- [x] DEMO 16 calls `dns::resolve` first (falls back to hardcoded IP)
+- [x] DEMO 34 resolves example.com over SLIRP (10.0.2.3) + cache check
+
+*Known intermittent (not M12):* DEMO 27's "sibling Blocked after sleep"
+assertion is a fragile timing race that occasionally flakes under `-netdev`
+latency; passed in the validation run. Tighten or de-flake separately.
 
 ## M13 — Chunked-transfer-encoding parser `[✅]`
 
