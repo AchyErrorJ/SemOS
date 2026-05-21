@@ -125,11 +125,23 @@ pub mod numbers {
     // stack lives in kernel-core::net; these expose a small blocking socket
     // surface to user space. DNS is offered as a one-shot resolve rather
     // than raw UDP sockets (the only UDP need today).
+    // All non-blocking: each does a single net::poll() + one attempt and
+    // returns immediately. The std-shim drives the wait loop in *user* space
+    // (yield/sleep between tries) so the kernel never runs a long
+    // interrupts-enabled poll loop in a Ring-3 task's context — which would
+    // get the timer preempting into context_switch thousands of times and
+    // trip the task#40 resume race (#56).
     pub const SYS_DNS_RESOLVE:  u64 = 100; // (host_ptr, host_len) -> ipv4 (u32 BE) / u64::MAX
-    pub const SYS_TCP_CONNECT:  u64 = 101; // (ipv4_be, port) -> fd / u64::MAX
-    pub const SYS_TCP_READ:     u64 = 102; // (fd, buf_ptr, buf_len) -> n (0=peer closed) / u64::MAX
-    pub const SYS_TCP_WRITE:    u64 = 103; // (fd, buf_ptr, buf_len) -> n / u64::MAX
+    pub const SYS_TCP_CONNECT:  u64 = 101; // (ipv4_be, port) -> fd / u64::MAX (SYN queued, not yet established)
+    pub const SYS_TCP_READ:     u64 = 102; // (fd, buf_ptr, buf_len) -> n (0=EOF) / WOULDBLOCK / u64::MAX
+    pub const SYS_TCP_WRITE:    u64 = 103; // (fd, buf_ptr, buf_len) -> n / WOULDBLOCK / u64::MAX
     pub const SYS_TCP_CLOSE:    u64 = 104; // (fd) -> 0 / u64::MAX
+    pub const SYS_TCP_STATE:    u64 = 105; // (fd) -> 0 closed / 1 connecting / 2 established / u64::MAX
+
+    /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
+    /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
+    /// (hard error). The shim retries after yielding.
+    pub const NET_WOULDBLOCK: u64 = u64::MAX - 1;
 }
 
 /// Syscall dispatch — called by platform trap handler with
@@ -230,6 +242,7 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_TCP_READ      => handle_tcp_read(arg0, arg1, arg2),
         SYS_TCP_WRITE     => handle_tcp_write(arg0, arg1, arg2),
         SYS_TCP_CLOSE     => handle_tcp_close(arg0),
+        SYS_TCP_STATE     => handle_tcp_state(arg0),
 
         _ => {
             crate::platform::log("[syscall] Unknown syscall: ");
@@ -2774,34 +2787,31 @@ fn handle_waitnb(pid_hint: u64) -> u64 {
 }
 
 // ============================================================================
-// Networking for Ring 3 (100-104) — M25 std::net backing
+// Networking for Ring 3 (100-105) — M25 std::net backing
 // ============================================================================
 //
 // The smoltcp stack (kernel-core::net) has a single static TCP socket, so we
 // expose exactly one TCP connection at a time to user space. `NET_TCP` holds
 // it; the user-visible fd is the constant `NET_FD`. DNS is a one-shot resolve
-// (no raw UDP sockets exposed). Blocking ops wrap the net's non-blocking
-// primitives in a wall-clock poll loop — see `project_semos_net_wallclock_wait`:
-// SLIRP forwards to the host, so RTT is real; iteration counts don't cut it.
+// (no raw UDP sockets exposed).
+//
+// **All of these are non-blocking (#56).** Each does exactly ONE
+// `net::poll()` + one attempt and returns. The std-shim drives the wait loop
+// in user space (yield/sleep between tries). This is deliberate: the earlier
+// design ran a multi-second interrupts-enabled poll loop *inside* the syscall,
+// in a Ring-3 task's kernel context — the timer preempted into
+// `schedule()`/`context_switch` thousands of times and tripped the task#40
+// resume race (#PF in schedule's epilogue → #DF). Short syscalls keep the
+// in-kernel, interrupts-enabled window tiny, like every other syscall.
 
 /// The single user-visible TCP fd. Nonzero so 0 can't be mistaken for it.
 const NET_FD: u64 = 3;
 static mut NET_TCP: Option<crate::net::TcpStream> = None;
 
-/// Pace one poll cycle: advance the stack, then spin briefly so the loop
-/// spends real wall-clock (lets the host/device make progress).
-fn net_poll_tick() {
-    crate::net::poll();
-    for _ in 0..20_000 { core::hint::spin_loop(); }
-}
-
-/// Ticks marking "give up" `secs` seconds from now.
-fn net_deadline(secs: u64) -> u64 {
-    crate::platform::ticks() + crate::scheduler::SCHEDULER_TICK_HZ * secs
-}
-
 /// SYS_DNS_RESOLVE(host_ptr, host_len) → IPv4 packed big-endian (first
-/// octet in the high byte) or u64::MAX on failure.
+/// octet in the high byte) or u64::MAX on failure. (DNS resolve internally
+/// bounds its own poll loop on the boot/caller context — fine; it's the
+/// long-lived TCP path that needed the non-blocking split.)
 fn handle_dns_resolve(host_ptr: u64, host_len: u64) -> u64 {
     if host_len == 0 || host_len > 255 { return u64::MAX; }
     let host = unsafe {
@@ -2817,7 +2827,8 @@ fn handle_dns_resolve(host_ptr: u64, host_len: u64) -> u64 {
     }
 }
 
-/// SYS_TCP_CONNECT(ipv4_be, port) → NET_FD once ESTABLISHED, else u64::MAX.
+/// SYS_TCP_CONNECT(ipv4_be, port) → NET_FD with the SYN queued (NOT yet
+/// established — the shim polls SYS_TCP_STATE), or u64::MAX on error.
 fn handle_tcp_connect(ipv4_be: u64, port: u64) -> u64 {
     use crate::net::{TcpStream, Ipv4Address};
     if !crate::net::is_initialized() { return u64::MAX; }
@@ -2828,72 +2839,77 @@ fn handle_tcp_connect(ipv4_be: u64, port: u64) -> u64 {
             (ipv4_be >> 24) as u8, (ipv4_be >> 16) as u8,
             (ipv4_be >> 8) as u8, ipv4_be as u8,
         );
-        let stream = match TcpStream::connect(ip, port as u16) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        };
-        // Drive the handshake to completion (or failure/timeout).
-        let deadline = net_deadline(5);
-        loop {
-            net_poll_tick();
-            if stream.is_established() { (*net_tcp) = Some(stream); return NET_FD; }
-            if stream.is_closed() { stream.release(); return u64::MAX; }
-            if crate::platform::ticks() >= deadline { stream.release(); return u64::MAX; }
+        match TcpStream::connect(ip, port as u16) {
+            Ok(stream) => {
+                crate::net::poll(); // one poll to emit the SYN
+                (*net_tcp) = Some(stream);
+                NET_FD
+            }
+            Err(_) => u64::MAX,
         }
     }
 }
 
-/// SYS_TCP_READ(fd, buf_ptr, buf_len) → bytes read (0 = peer closed / no
-/// data before timeout), u64::MAX on error.
+/// SYS_TCP_STATE(fd) → 0 closed / 1 connecting / 2 established / u64::MAX.
+/// One poll, then report the socket state — lets the shim drive the
+/// handshake from user space.
+fn handle_tcp_state(fd: u64) -> u64 {
+    if fd != NET_FD { return u64::MAX; }
+    unsafe {
+        let net_tcp = &raw mut NET_TCP;
+        let stream = match (*net_tcp).as_ref() { Some(s) => s, None => return u64::MAX };
+        crate::net::poll();
+        if stream.is_established() { 2 }
+        else if stream.is_closed() { 0 }
+        else { 1 }
+    }
+}
+
+/// SYS_TCP_READ(fd, buf_ptr, buf_len) → n (0=peer closed) / NET_WOULDBLOCK
+/// (nothing ready) / u64::MAX. Single poll + one recv attempt.
 fn handle_tcp_read(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     use crate::net::TcpError;
     if fd != NET_FD || buf_len == 0 { return u64::MAX; }
     unsafe {
         let net_tcp = &raw mut NET_TCP;
         let stream = match (*net_tcp).as_mut() { Some(s) => s, None => return u64::MAX };
+        crate::net::poll();
         let buf = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len as usize);
-        let deadline = net_deadline(5);
-        loop {
-            net_poll_tick();
-            match stream.read(buf) {
-                Ok(n) if n > 0 => return n as u64,
-                Ok(_) => {}                       // nothing ready yet — keep polling
-                Err(TcpError::Eof) => return 0,   // peer closed cleanly
-                Err(_) => return u64::MAX,
-            }
-            if crate::platform::ticks() >= deadline { return 0; }
+        match stream.read(buf) {
+            Ok(n) if n > 0 => n as u64,
+            Ok(_) => numbers::NET_WOULDBLOCK,   // connected but nothing ready
+            Err(TcpError::Eof) => 0,            // peer closed cleanly
+            Err(_) => u64::MAX,
         }
     }
 }
 
-/// SYS_TCP_WRITE(fd, buf_ptr, buf_len) → bytes written, u64::MAX on error.
+/// SYS_TCP_WRITE(fd, buf_ptr, buf_len) → n / NET_WOULDBLOCK / u64::MAX.
+/// Single send attempt + one poll to push it onto the wire.
 fn handle_tcp_write(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     if fd != NET_FD || buf_len == 0 { return u64::MAX; }
     unsafe {
         let net_tcp = &raw mut NET_TCP;
         let stream = match (*net_tcp).as_mut() { Some(s) => s, None => return u64::MAX };
         let buf = core::slice::from_raw_parts(buf_ptr as *const u8, buf_len as usize);
-        let deadline = net_deadline(5);
-        loop {
-            net_poll_tick();
-            match stream.write(buf) {
-                Ok(n) if n > 0 => { crate::net::poll(); return n as u64; }
-                Ok(_) => {}                       // tx ring full — keep polling
-                Err(_) => return u64::MAX,
-            }
-            if crate::platform::ticks() >= deadline { return u64::MAX; }
-        }
+        let r = match stream.write(buf) {
+            Ok(n) if n > 0 => n as u64,
+            Ok(_) => numbers::NET_WOULDBLOCK,   // tx ring full
+            Err(_) => u64::MAX,
+        };
+        crate::net::poll(); // emit whatever was just queued
+        r
     }
 }
 
-/// SYS_TCP_CLOSE(fd) → 0. Sends FIN, drains briefly, frees the slot.
+/// SYS_TCP_CLOSE(fd) → 0. Sends FIN, polls a couple of times to flush, frees.
 fn handle_tcp_close(fd: u64) -> u64 {
     if fd != NET_FD { return u64::MAX; }
     unsafe {
         let net_tcp = &raw mut NET_TCP;
         if let Some(mut stream) = (*net_tcp).take() {
             stream.close();
-            for _ in 0..16 { net_poll_tick(); }
+            for _ in 0..8 { crate::net::poll(); }
             stream.release();
         }
     }

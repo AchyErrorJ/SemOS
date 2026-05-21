@@ -3470,19 +3470,22 @@ fn spawn_demo() {
 /// SYS_DNS_RESOLVE + SYS_TCP_* syscalls over the kernel smoltcp stack.
 /// Skips cleanly when the net stack isn't up (run with `-netdev user`).
 fn net_demo() {
-    // DEFERRED. The std::net syscalls (SYS_DNS_RESOLVE + SYS_TCP_{CONNECT,
-    // READ,WRITE,CLOSE}) and the semos-std `net` module (Ipv4Addr, resolve,
-    // TcpStream) are landed and wired, and net-demo.elf is registered and
-    // spawnable. But spawning net-demo to drive the TCP path end-to-end
-    // currently triggers a kernel #DF: a stack-boundary fault whose CR2
-    // lands in a *neighbouring* task's per-task-kernel-stack guard page
-    // during the in-kernel net poll activity (not net-demo's own stack).
-    // Root cause is still open, so net-demo is not spawned — no boot config
-    // crashes. The DNS half (SYS_DNS_RESOLVE) is already exercised live by
-    // DEMO 34, and the kernel TcpStream by DEMO 12/16.
-    println!("  [DEMO 36] DEFERRED: std::net syscalls + semos-std::net landed and");
-    println!("  [DEMO 36]   wired; the Ring-3 net-demo spawn is withheld pending a");
-    println!("  [DEMO 36]   kernel #DF in the net poll path. DNS is live in DEMO 34.");
+    // DEFERRED — blocked on the task#40 context-switch race (#56), not on the
+    // net code. The std::net syscalls are now NON-BLOCKING (one net::poll +
+    // one try; the shim drives the wait in user space) — the right
+    // architecture, and it removes the long in-kernel poll loop that first
+    // drew suspicion. But spawning net-demo still #DFs: the faulting RIP is in
+    // `schedule()`'s epilogue (first `pop` after `context_switch` returns) on
+    // a *different* slot, and net-demo never even reaches its first println —
+    // so its own code never runs. This is the long-standing task#40
+    // context-switch resume corruption (unconfirmed root cause; "can't be
+    // observed under instrumentation"), tripped here by the system state when
+    // net-demo is added as the 16th task under this binary layout. Fixing it
+    // means resolving task#40 itself. net-demo stays unspawned so no config
+    // crashes. DNS is live in DEMO 34; kernel TCP in 12/16.
+    println!("  [DEMO 36] DEFERRED: std::net syscalls (now non-blocking, #56) +");
+    println!("  [DEMO 36]   semos-std::net landed; net-demo spawn withheld — it trips");
+    println!("  [DEMO 36]   the task#40 context-switch race (#56). DNS live in DEMO 34.");
 }
 
 /// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).
