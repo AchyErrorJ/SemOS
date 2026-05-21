@@ -36,8 +36,9 @@ A milestone is **done** when:
 | 14 prep (Tier 1) | Cranelift + cg_clif vendor placeholders + briefs (agent), heap allocator, argv/envp passthrough, per-process env+CWD |
 | 14 prep (Tier 2) | SYS_FSYNC, SYS_RENAME, SYS_TRUNCATE, SYS_STATX, FWRITE>256 B via heap-Allocated ObjectContent (M26 "first compile" unblocked) |
 | 14 prep (Tier 3) | SYS_THREAD_SPAWN/JOIN (kernel + Ring-3 same-AS), SYS_FUTEX_WAIT/WAKE, SYS_WAITNB, SCHEDULER_TICK_HZ const (parallel/threaded rustc unblocked) |
-| 14 (M25 substantial) | `semos-std` crate: `#[global_allocator]` (Vec/String/Box), `io::{Read,Write}`, `fs::File`/`OpenOptions`, `env`, `sync::{Mutex,Once}`, `thread::spawn`+`JoinHandle<T>`, argv. hello-std/vec-demo/std-demo run Ring 3 (DEMO 29–31). **Build at `opt-level=0` only** — any optimization miscompiles the syscall path (#54). Still missing: `process::Command`, `net`, full `path`/`time` |
-| Structural | #41 real guard pages between all task stacks (layout-sensitivity family closed); #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn |
+| 14 (M25 substantial) | `semos-std` crate: `#[global_allocator]` (Vec/String/Box), `io::{Read,Write}`, `fs::File`/`OpenOptions`, `env`, `sync::{Mutex,Once}`, `thread::spawn`+`JoinHandle<T>`, `process::Command` (spawn+wait), argv. hello-std/vec-demo/std-demo/spawn-demo run Ring 3 (DEMO 29–32). **Build at `opt-level=0` only** — any optimization miscompiles the syscall path (#54). Still missing: `net`, full `path`/`time` |
+| 9/10 graphics+net | M6 framebuffer drawing API (DEMO 35); M13 HTTP chunked decoder (DEMO 33). M12 DNS code-complete on a branch, runtime debug pending |
+| Structural | #41 real guard pages between all task stacks (layout-sensitivity family closed); #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn; per-task kernel stack → 128 KiB for layout margin |
 
 ---
 
@@ -129,14 +130,16 @@ loading earlier wipes the entries. Verified by the log line
       metadata only" cap; large-object content goes into a separate
       per-object stream when that becomes necessary
 
-## M6 — Framebuffer drawing API `[~]`
+## M6 — Framebuffer drawing API `[✅]`
 
 Promote raw `set_pixel` to a real drawing surface.
 
-Implemented in `kernel-x86_64/src/framebuffer.rs` (drawing API added to the
-existing console module). Detected live format on QEMU: BGR, 32 bpp, byte 3
-unused; stride read from `FrameBufferInfo` (never assumed). `rgb(r,g,b)`
-packs to the native order at write time.
+Landed `6e972a2` (agent). DEMO 35 verified by pixel readback (111 PASS / 0
+FAIL combined image). Implemented in `kernel-x86_64/src/framebuffer.rs`
+(drawing API added to the existing console module). Detected live format on
+QEMU: BGR, stride read from `FrameBufferInfo` (never assumed). `rgb(r,g,b)`
+packs to the native order at write time. Only the user-mapped FB region is
+deferred (a follow-up syscall) — core API + DEMO are done.
 
 **Done when:**
 - [x] `fb_fill_rect(x, y, w, h, color)`, `fb_blit(src, x, y, w, h)`,
@@ -234,27 +237,44 @@ the first real-hardware session.
 - [ ] DEMO 26 associates to a hardcoded SSID, gets DHCP, repeats
       DEMO 16's handshake to api.anthropic.com over real Wi-Fi
 
-## M12 — DNS resolver `[  ]`
+## M12 — DNS resolver `[🔨 on branch — code complete, runtime debug pending]`
 
 Replace the hardcoded Anthropic IP in DEMO 16.
 
-**Done when:**
-- [ ] UDP socket on top of smoltcp
-- [ ] DNS request builder (A record, ID + flags + question)
-- [ ] Response parser
-- [ ] `dns::resolve(host: &str) -> Option<Ipv4Address>` with a small
-      cache
-- [ ] DEMO 16 stops hardcoding the IP and calls `dns::resolve` first
-
-## M13 — Chunked-transfer-encoding parser `[  ]`
-
-DEMO 16's body preview today shows `8d` (the chunk length header).
-Once apps actually consume the response we need real chunked parsing.
+Implementation (agent) lives on branch `worktree-agent-ab1e9f156bc0729c4`
+(`aa15490`): `kernel-core/src/net/dns.rs` — A-record query builder + response
+parser (name-compression aware) + `resolve()` with an 8-entry cache, UDP over
+smoltcp, DEMO 34. **NOT merged**: at runtime `resolve("example.com")` returns
+`None` (DEMO 34 FAIL) — the query gets no reply. Prime suspect: the UDP socket
+isn't added to the shared smoltcp `SocketSet` that `net::poll()` services, so
+it never transmits — compare against how `tcp.rs` registers its socket. Also
+exposed a fragile timing assertion in DEMO 27 ("sibling Blocked after sleep")
+that flakes once `-netdev` adds latency. Both are follow-up debug tasks.
 
 **Done when:**
-- [ ] `http::ChunkedBody` decoder that produces the unchunked bytes
-- [ ] NetworkLlmProvider uses it for Anthropic responses
-- [ ] DEMO 16's body preview shows actual JSON, not the chunk header
+- [x] UDP socket on top of smoltcp — written
+- [x] DNS request builder (A record, ID + flags + question) — written
+- [x] Response parser — written (compression pointers handled)
+- [~] `dns::resolve(host) -> Option<Ipv4Address>` with cache — code present;
+      returns None at runtime, needs the SocketSet-registration fix
+- [x] DEMO 16 calls `dns::resolve` first (falls back to hardcoded IP) — wired
+- [ ] DEMO 34 actually resolves over SLIRP (10.0.2.3) — blocked on the above
+
+## M13 — Chunked-transfer-encoding parser `[✅]`
+
+DEMO 16's body preview showed `8d` (the chunk length header) before this.
+
+Landed `d748556` (agent + integration). `kernel-core/src/net/http.rs`:
+`decode_chunked(input, out)` (slice-in/slice-out — kernel-core has no
+allocator) + `is_chunked(headers)`. Handles multi-chunk, hex/mixed-case
+sizes, chunk extensions, trailing headers; errors cleanly on truncated
+input. DEMO 33 (4 sub-checks, all green) validates it.
+
+**Done when:**
+- [x] `decode_chunked` decoder that produces the unchunked bytes
+- [x] NetworkLlmProvider de-chunks the body before JSON extraction
+- [x] DEMO 33 validates the decoder against crafted vectors (DEMO 16's live
+      body preview will show JSON once a real authenticated call is made)
 
 ---
 
@@ -538,7 +558,12 @@ optimization miscompiles the `asm!`-based syscall wrappers.
 
 **Done when (M25 itself):**
 - [✅] `std::fs` routes to `SYS_FS_*` (M4) — `fs::File`/`OpenOptions` + `io::{Read,Write}`, DEMO 31 round-trip
-- [ ] `std::process::Command` calls `SYS_SPAWN` / `SYS_WAIT` — NOT yet
+- [✅] `std::process::Command` calls `SYS_SPAWN` / `SYS_WAIT` — `92ccbb5`,
+      DEMO 32. Unblocked a broad bug: `AddressSpace::new` now copies the PML4
+      from `boot_cr3()` not the live CR3, so a Ring-3 parent spawning a child
+      no longer shares (and corrupts) its own page tables. `SYS_WAIT` joins
+      the child's scheduler slot (Ring-3 children never hit PROCESS_TABLE
+      Zombie). `spawn-demo` validates exit codes 0 and 0x2700 propagate.
 - [🔨] `std::thread` over a preemptive scheduler with `std::sync::{Mutex, Condvar, RwLock}` — `thread::spawn`+`JoinHandle<T>`, `Mutex`, `Once` done (DEMO 31); `Condvar`/`RwLock` not yet
 - [ ] `std::net::{TcpStream, UdpSocket}` over kernel-core::net — NOT yet
 - [🔨] `std::env`, `std::path`, `std::time` — `env` done; `path`/`time` minimal
