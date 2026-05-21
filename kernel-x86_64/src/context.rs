@@ -740,18 +740,57 @@ static mut ADDRESS_SPACES: [Option<crate::paging::AddressSpace>; MAX_TASKS] = [
     None, None, None, None, None, None, None, None,
 ];
 
+/// Is `cr3` the address space of any *live* (non-Exited, non-Empty) task?
+/// A stored AddressSpace whose cr3 has no live owner is garbage left by an
+/// exited process whose scheduler slot hasn't been reused/reaped yet.
+fn cr3_has_live_task(cr3: u64) -> bool {
+    if cr3 == 0 { return true; } // boot/kernel cr3 — never collect
+    unsafe {
+        let tasks = &raw const scheduler::TASKS;
+        let contexts = &raw const CONTEXTS;
+        for i in 0..MAX_TASKS {
+            let st = (*tasks)[i].state;
+            let live = !matches!(
+                st,
+                scheduler::TaskState::Empty | scheduler::TaskState::Exited
+            );
+            if live && (*contexts)[i].cr3 == cr3 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Store an AddressSpace so it can be cleaned up later.
 /// Called by platform_impl when creating address spaces for ELF processes.
 pub fn store_address_space(space: crate::paging::AddressSpace) {
     unsafe {
         let spaces = &raw mut ADDRESS_SPACES;
+        // First pass: take any genuinely-free slot.
         for slot in (*spaces).iter_mut() {
             if slot.is_none() {
                 *slot = Some(space);
                 return;
             }
         }
-        // No slot available — leak it (better than crashing)
+        // Table full. Garbage-collect entries whose cr3 has no live task —
+        // exited processes whose slot hasn't been reaped yet. Without this,
+        // cumulative spawns leak (mem::forget) their page-table frames AND,
+        // worse, the leaked space isn't in the table so map_page_in_space
+        // can't find its cr3 → the next ELF spawn silently fails to map.
+        for slot in (*spaces).iter_mut() {
+            let dead = matches!(slot, Some(s) if !cr3_has_live_task(s.cr3));
+            if dead {
+                if let Some(mut victim) = slot.take() {
+                    victim.destroy(); // free its PT frames back to the pool
+                }
+                *slot = Some(space);
+                return;
+            }
+        }
+        // Every slot belongs to a live task — genuinely out of room. Leak
+        // rather than crash (shouldn't happen: ≤ MAX_TASKS live spaces).
         core::mem::forget(space);
     }
 }

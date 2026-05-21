@@ -44,6 +44,12 @@ pub const SYS_THREAD_SPAWN: u64 = 92;
 pub const SYS_THREAD_JOIN:  u64 = 93;
 pub const SYS_WAITNB:       u64 = 94;
 
+pub const SYS_DNS_RESOLVE:  u64 = 100;
+pub const SYS_TCP_CONNECT:  u64 = 101;
+pub const SYS_TCP_READ:     u64 = 102;
+pub const SYS_TCP_WRITE:    u64 = 103;
+pub const SYS_TCP_CLOSE:    u64 = 104;
+
 /// 4-arg syscall. Returns the kernel's u64 return value.
 #[inline(always)]
 pub unsafe fn syscall4(num: u64, a: u64, b: u64, c: u64, d: u64) -> u64 {

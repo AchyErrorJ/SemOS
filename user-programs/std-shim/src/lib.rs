@@ -57,6 +57,7 @@ pub mod arch;
 pub mod env;
 pub mod fs;
 pub mod io;
+pub mod net;
 pub mod process;
 pub mod rt;
 pub mod sync;

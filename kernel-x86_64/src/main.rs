@@ -280,6 +280,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static SPAWN_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/spawn-demo/target/x86_64-unknown-none/release/spawn-demo"
     );
+    // M25 std::net validation: a Ring-3 program resolves a host, TCP-connects,
+    // and round-trips an HTTP request over the kernel's smoltcp stack.
+    static NET_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/net-demo/target/x86_64-unknown-none/release/net-demo"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -320,6 +325,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered spawn-demo.elf ({} bytes, semos-std M25 process::Command demo)", SPAWN_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register spawn-demo.elf");
+        }
+        if fs.add("net-demo.elf", kernel_core::fs::ramfs::FileType::Executable, NET_DEMO_ELF) {
+            println!("    Registered net-demo.elf ({} bytes, semos-std M25 std::net demo)", NET_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register net-demo.elf");
         }
     }
 
@@ -783,6 +793,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 35: framebuffer drawing API (M6)");
     println!("================================================================");
     fb_drawing_demo();
+
+    // DEMO 36: net-demo.elf — std::net from Ring 3 (resolve + TCP + HTTP).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 36: semos-std std::net (resolve + TcpStream) — M25");
+    println!("================================================================");
+    net_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -3444,6 +3461,28 @@ fn spawn_demo() {
     }
     println!("  [DEMO 32] PASS: spawn-demo exited 0 (Command spawn+wait, exit codes propagate)");
     println!("  [DEMO 32] => M25 std::process::Command works from a Ring-3 parent");
+}
+
+/// DEMO 36: net-demo.elf — Phase 14 M25 `std::net`.
+///
+/// Spawns `/bin/net-demo`, a Ring-3 program that resolves example.com,
+/// TCP-connects, sends an HTTP GET, and reads the response — all via the
+/// SYS_DNS_RESOLVE + SYS_TCP_* syscalls over the kernel smoltcp stack.
+/// Skips cleanly when the net stack isn't up (run with `-netdev user`).
+fn net_demo() {
+    // DEFERRED. The std::net syscalls (SYS_DNS_RESOLVE + SYS_TCP_{CONNECT,
+    // READ,WRITE,CLOSE}) and the semos-std `net` module (Ipv4Addr, resolve,
+    // TcpStream) are landed and wired, and net-demo.elf is registered and
+    // spawnable. But spawning net-demo to drive the TCP path end-to-end
+    // currently triggers a kernel #DF: a stack-boundary fault whose CR2
+    // lands in a *neighbouring* task's per-task-kernel-stack guard page
+    // during the in-kernel net poll activity (not net-demo's own stack).
+    // Root cause is still open, so net-demo is not spawned — no boot config
+    // crashes. The DNS half (SYS_DNS_RESOLVE) is already exercised live by
+    // DEMO 34, and the kernel TcpStream by DEMO 12/16.
+    println!("  [DEMO 36] DEFERRED: std::net syscalls + semos-std::net landed and");
+    println!("  [DEMO 36]   wired; the Ring-3 net-demo spawn is withheld pending a");
+    println!("  [DEMO 36]   kernel #DF in the net poll path. DNS is live in DEMO 34.");
 }
 
 /// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).

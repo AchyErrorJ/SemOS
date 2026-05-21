@@ -829,15 +829,21 @@ pub fn spawn_from_elf_with_args(
         }
     }
 
-    // 4. Map a user stack
+    // 4. Map a user stack.
+    //
+    // This path's `map_user_stack` backs the stack with `alloc_pt_frame`
+    // frames (NOT the TASK_STACKS slot — that's the separate spawn_user_task
+    // path), so the size directly consumes the PT-frame pool: size/4K frames
+    // per process. It used to track `scheduler::TASK_STACK_SIZE`, but that
+    // constant is the *kernel* per-task stack and was bumped to 128 KiB for
+    // the #41/#55 guard-page work — which doubled every user process's frame
+    // cost (32 frames) and exhausted the pool partway through the demo
+    // cascade ("Failed to map user stack" at the last spawn). The user stack
+    // is decoupled here: 64 KiB is ample for the std-shim programs (their
+    // threads get their own stacks) at 16 frames each.
     let stack_top = elf_info.stack_top as u64;
-    // User stack size — must NOT exceed crate::scheduler::TASK_STACK_SIZE
-    // on the platform crate, because we reuse the TASK_STACKS slot as
-    // physical backing. Currently 64 KiB (was 16 KiB before task #36's
-    // fix); larger sizes would alias adjacent slots' TASK_STACKS and
-    // corrupt their iret-RIP slot at [top-56] (original task #40 family).
-    // Long-term: allocate from a separate pool, not from TASK_STACKS.
-    let stack_size = crate::scheduler::TASK_STACK_SIZE as u64;
+    const USER_PROC_STACK_SIZE: u64 = 64 * 1024;
+    let stack_size = USER_PROC_STACK_SIZE;
     let user_rsp = match platform.map_user_stack(cr3, stack_top, stack_size) {
         Some(rsp) => rsp,
         None => {

@@ -229,6 +229,9 @@ extern "x86-interrupt" fn double_fault_handler(
     _error_code: u64,
 ) -> ! {
     println!("EXCEPTION: DOUBLE FAULT");
+    let cr2 = x86_64::registers::control::Cr2::read_raw();
+    let slot = kernel_core::scheduler::current_task_index();
+    println!("  CR2=0x{:x} (orig-fault addr if #PF)  current_slot={}", cr2, slot);
     println!("{:#?}", stack_frame);
     loop { x86_64::instructions::hlt(); }
 }
