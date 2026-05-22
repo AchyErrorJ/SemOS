@@ -27,6 +27,10 @@ bitflags = "2.4"
 # Shared kernel core (platform-independent)
 kernel-core = { path = "../kernel-core" }
 
+# TTF/OTF font parser (M7) — zero-allocation, no_std. We disable the std
+# default and rasterize glyph outlines ourselves into the M6 framebuffer.
+ttf-parser = { version = "0.25", default-features = false, features = ["no-std-float"] }
+
 [profile.dev]
 panic = "abort"
 

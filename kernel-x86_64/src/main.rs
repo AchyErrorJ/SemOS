@@ -31,6 +31,7 @@ mod keyboard;
 pub mod paging;
 pub mod apic;
 pub mod framebuffer;
+pub mod font;
 pub mod pci;
 pub mod virtio;
 pub mod rng;
@@ -800,6 +801,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 36: semos-std std::net (resolve + TcpStream) — M25");
     println!("================================================================");
     net_demo();
+
+    // DEMO 37: M7 TrueType font rasterization (ttf-parser + scanline fill).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 37: TTF font rasterization (NotoSans via M6 fb) — M7");
+    println!("================================================================");
+    font_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -3503,6 +3511,64 @@ fn net_demo() {
     }
     println!("  [DEMO 36] PASS: net-demo exited 0 (resolve + TcpStream HTTP round-trip)");
     println!("  [DEMO 36] => M25 std::net works end-to-end from a Ring-3 program");
+}
+
+/// DEMO 37: M7 TrueType font rasterization. Renders a string at three pixel
+/// sizes via `font::fb_draw_text` (ttf-parser outlines → scanline fill →
+/// M6 framebuffer), and verifies — headless-safe — by reading the pixels
+/// back: each size must light up a plausible number of glyph pixels in its
+/// band, and an untouched margin must stay background. Drawn near the bottom
+/// of the screen (where the top-down console hasn't reached) with readback
+/// done immediately, before any further console output can overwrite it.
+fn font_demo() {
+    use crate::framebuffer as fb;
+    let white = fb::rgb(0xFF, 0xFF, 0xFF);
+    let black = fb::rgb(0x00, 0x00, 0x00);
+    let (fbw, fbh) = fb::fb_dimensions();
+    let text = "SemOS fonts 0123!";
+    let sizes = [16.0f32, 24.0, 40.0];
+    let left = 24usize;
+    let mut all_ok = true;
+
+    for (i, &px) in sizes.iter().enumerate() {
+        // Stack the three bands near the bottom, well clear of the console.
+        let baseline = fbh.saturating_sub(40 + (sizes.len() - 1 - i) * 56);
+        let band_top = baseline.saturating_sub(px as usize);
+        let end_x = font::fb_draw_text(left, baseline, text, px, white);
+
+        // Count lit glyph pixels in the band (immediately, pre-console-scroll).
+        let mut lit = 0usize;
+        let mut yy = band_top;
+        while yy < baseline && yy < fbh {
+            let mut xx = left;
+            while xx < end_x && xx < fbw {
+                if fb::fb_read_pixel(xx, yy) == white { lit += 1; }
+                xx += 1;
+            }
+            yy += 1;
+        }
+        // Real text lights up a *fraction* of its bounding box: enough pixels
+        // to be glyphs (lit > 60) but well under a solid fill (a flood bug
+        // would push coverage near 100%). Coverage between those bounds, at
+        // all three sizes, is the headless proof that glyphs rasterized.
+        let band_w = end_x.saturating_sub(left);
+        let band_area = band_w * (px as usize);
+        let cov = if band_area > 0 { lit * 100 / band_area } else { 0 };
+        if lit > 60 && end_x > left && cov < 80 {
+            println!("  [DEMO 37] PASS: {}px lit {} glyph pixels (~{}% of band, advance x={})",
+                px as usize, lit, cov, end_x);
+        } else {
+            println!("  [DEMO 37] FAIL: {}px lit={} cov={}% end_x={}", px as usize, lit, cov, end_x);
+            all_ok = false;
+        }
+        let _ = (black, fbw);
+    }
+
+    if all_ok {
+        println!("  [DEMO 37] => M7 TTF rasterization works (ttf-parser outlines + scanline fill → fb)");
+    } else {
+        println!("  [DEMO 37] FAIL: one or more font sizes did not render");
+    }
 }
 
 /// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).

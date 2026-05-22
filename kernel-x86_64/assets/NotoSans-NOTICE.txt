@@ -1,0 +1,18 @@
+NotoSans-Regular.ttf
+====================
+
+Font:      Noto Sans Regular
+Copyright: Copyright The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
+License:   SIL Open Font License, Version 1.1
+
+This font is embedded in the kernel (via include_bytes! in
+kernel-x86_64/src/font.rs) solely to demonstrate TrueType glyph
+rasterization (milestone M7). It is redistributed under the SIL Open Font
+License v1.1, which permits bundling and embedding.
+
+The full text of the SIL Open Font License 1.1 is available at:
+    https://openfontlicense.org/open-font-license-official-text/
+
+NOTE: to be fully OFL-compliant when distributing this repository, drop the
+canonical `OFL.txt` (the full license text) alongside this NOTICE. It is
+intentionally not reproduced here to avoid transcription errors in legal text.
