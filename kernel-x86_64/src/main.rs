@@ -43,6 +43,7 @@ unsafe impl core::alloc::GlobalAlloc for KernelGlobalAlloc {
 static KERNEL_ALLOCATOR: KernelGlobalAlloc = KernelGlobalAlloc;
 
 mod serial;
+pub mod tty;
 pub mod gdt;
 mod interrupts;
 mod memory;
@@ -838,6 +839,14 @@ fn init_loader_task() {
     println!("  SemOS DEMO 38: anti-aliased 2D vector (tiny-skia) — M8");
     println!("================================================================");
     gfx2d_demo();
+
+    // DEMO 39: M7/M8 TTY console — TrueType + AA text through a cursor-managed
+    // console (newline, wrap, region scroll), verified by pixel readback.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 39: TTF/AA TTY console (M7 sharp + M8 smooth)");
+    println!("================================================================");
+    tty_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -3177,19 +3186,28 @@ fn threading_futex_test() {
     }
     println!("  [DEMO 27] PASS: SYS_THREAD_SPAWN forked tid={} (kernel-mode sibling)", tid);
 
-    // Step 2: give the waiter time to reach SYS_FUTEX_WAIT and block.
-    // SYS_SLEEP is the obvious knob: 5 ticks ≈ 50 ms at the default
-    // PIT rate, plenty for the sibling to make one syscall.
-    let _ = dispatch(SYS_SLEEP, 5, 0, 0, 0);
-
-    // Step 3: confirm the sibling is actually Blocked on Futex (not
-    // still Running or already Exited because of a bug above).
-    let st = kernel_core::scheduler::task_state(tid as usize);
+    // Step 2+3: wait for the sibling to reach SYS_FUTEX_WAIT and block,
+    // then confirm it's actually Blocked (not still Running, or already
+    // Exited because of a bug above). A single fixed SYS_SLEEP used to
+    // flake here: under -netdev the extra interrupt load can delay the
+    // sibling getting scheduled to its first syscall past the deadline,
+    // leaving it still Running on the one-shot check. So we POLL — sleep
+    // a tick, re-read the state — up to a generous cap, and succeed the
+    // instant we observe Blocked. This mirrors DEMO 28's slot-poll and
+    // keeps the assertion's intent intact (the sibling must really
+    // block) while being robust to scheduling latency.
+    let mut st = kernel_core::scheduler::task_state(tid as usize);
+    let mut waited = 0u64;
+    while st != kernel_core::scheduler::TaskState::Blocked && waited < 200 {
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0); // ~10 ms/tick
+        waited += 1;
+        st = kernel_core::scheduler::task_state(tid as usize);
+    }
     if st != kernel_core::scheduler::TaskState::Blocked {
-        println!("  [DEMO 27] FAIL: sibling state {:?} after sleep, want Blocked", st);
+        println!("  [DEMO 27] FAIL: sibling state {:?} after {} ticks, want Blocked", st, waited);
         return;
     }
-    println!("  [DEMO 27] PASS: sibling Blocked on FUTEX_WAIT after spawn+sleep");
+    println!("  [DEMO 27] PASS: sibling Blocked on FUTEX_WAIT after {} tick(s)", waited);
 
     // Step 4: wake it. Returns count actually woken — exactly 1.
     let woken = dispatch(SYS_FUTEX_WAKE, addr, 1, 0, 0);
@@ -3631,6 +3649,121 @@ fn gfx2d_demo() {
         println!("  [DEMO 38] => M8: tiny-skia AA vector rendering over the M6 framebuffer");
     } else {
         println!("  [DEMO 38] FAIL: lit={} aa={} center_white={}", lit, aa, center_white);
+    }
+}
+
+/// DEMO 39: M7/M8 TTY console. Drives `tty::TtyConsole` through both render
+/// modes and verifies headlessly by reading the framebuffer back:
+///   - Sharp (M7): writes several lines (forcing newline + a region scroll),
+///     then confirms a plausible count of crisp white glyph pixels spread over
+///     ≥2 text rows, at a coverage that's glyphs-not-flood.
+///   - Smooth (M8): writes a white AA line, then confirms blended edge pixels
+///     (neither pure black nor pure white) exist — the signature AA ran.
+/// All readback happens before any further `println!`, so the bitmap console's
+/// own scrolling can't disturb the region under test.
+fn tty_demo() {
+    use crate::framebuffer as fb;
+    use crate::tty::{Aa, TtyConsole};
+
+    let white = fb::rgb(0xFF, 0xFF, 0xFF);
+    let black = fb::rgb(0x00, 0x00, 0x00);
+    let (fbw, fbh) = fb::fb_dimensions();
+    if fbw == 0 || fbh == 0 {
+        println!("  [DEMO 39] SKIPPED: no framebuffer");
+        return;
+    }
+
+    let px = 20.0f32;
+    let lh = font::line_height(px).max(px as usize + 2);
+    let x0 = 16usize;
+    let w = fbw.saturating_sub(32).min(720);
+    let h_a = lh * 4; // Sharp region: 4 text lines tall (so 8 lines → scroll)
+    let h_b = lh * 2; // Smooth region
+    // Pin both regions to the lower screen with a margin; cosmetic only
+    // (headless), but keeps them off the very top where the bitmap console
+    // is actively writing.
+    let y_a = fbh.saturating_sub(h_a + h_b + 48);
+    let y_b = y_a + h_a + 16;
+
+    // ---- Sharp (M7): multi-line write that overflows the region → scroll ----
+    let mut con = TtyConsole::new(x0, y_a, w, h_a, px, white, black);
+    con.write(Aa::Sharp, "M7 sharp TTF console.\n");
+    for i in 0..8u32 {
+        // Per-line content + newline; 8 lines into a 4-line region forces the
+        // region-scroll path to run.
+        con.write(Aa::Sharp, "line ");
+        let mut buf = [0u8; 2];
+        buf[0] = b'0' + (i % 10) as u8;
+        buf[1] = b'\n';
+        con.write(Aa::Sharp, core::str::from_utf8(&buf).unwrap_or("?\n"));
+    }
+
+    // Readback region A: count white pixels and the number of rows containing
+    // any white pixel (≥2 ⇒ newline worked).
+    let mut lit_a = 0usize;
+    let mut rows_with_text = 0usize;
+    let ay1 = (y_a + h_a).min(fbh);
+    let ax1 = (x0 + w).min(fbw);
+    let mut yy = y_a;
+    while yy < ay1 {
+        let mut row_lit = false;
+        let mut xx = x0;
+        while xx < ax1 {
+            if fb::fb_read_pixel(xx, yy) == white {
+                lit_a += 1;
+                row_lit = true;
+            }
+            xx += 1;
+        }
+        if row_lit {
+            rows_with_text += 1;
+        }
+        yy += 1;
+    }
+    let area_a = w * h_a;
+    let cov_a = if area_a > 0 { lit_a * 100 / area_a } else { 0 };
+
+    // ---- Smooth (M8): one AA line; look for blended edge pixels ----
+    let mut con_b = TtyConsole::new(x0, y_b, w, h_b, px, white, black);
+    con_b.write(Aa::Smooth, "M8 smooth (anti-aliased) TTF console 0123");
+
+    let mut lit_b = 0usize;
+    let mut aa_edge = 0usize;
+    let by1 = (y_b + h_b).min(fbh);
+    let bx1 = (x0 + w).min(fbw);
+    let mut yy = y_b;
+    while yy < by1 {
+        let mut xx = x0;
+        while xx < bx1 {
+            let p = fb::fb_read_pixel(xx, yy);
+            if p != black {
+                lit_b += 1;
+                if p != white {
+                    aa_edge += 1; // blended (gray) → anti-aliasing ran
+                }
+            }
+            xx += 1;
+        }
+        yy += 1;
+    }
+
+    // ---- Verdict (all readback done; safe to print now) ----
+    let sharp_ok = lit_a > 200 && rows_with_text >= 2 && cov_a < 80;
+    let smooth_ok = lit_b > 100 && aa_edge > 30;
+
+    if sharp_ok {
+        println!("  [DEMO 39] PASS: Sharp (M7) — {} white px over {} rows ({}% cov, multi-line+scroll)",
+            lit_a, rows_with_text, cov_a);
+    } else {
+        println!("  [DEMO 39] FAIL: Sharp lit={} rows={} cov={}%", lit_a, rows_with_text, cov_a);
+    }
+    if smooth_ok {
+        println!("  [DEMO 39] PASS: Smooth (M8) — {} lit px, {} anti-aliased edge px", lit_b, aa_edge);
+    } else {
+        println!("  [DEMO 39] FAIL: Smooth lit={} aa_edge={}", lit_b, aa_edge);
+    }
+    if sharp_ok && smooth_ok {
+        println!("  [DEMO 39] => M7/M8 wired into a cursor-managed console (newline, wrap, region scroll)");
     }
 }
 

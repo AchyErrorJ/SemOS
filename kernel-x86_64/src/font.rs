@@ -276,3 +276,68 @@ pub fn line_height(px: f32) -> usize {
     let h = face.height() as f32;
     (h / upem * px) as usize
 }
+
+// ============================================================================
+// Cached-face API for the TTY console (M7 path)
+// ============================================================================
+//
+// `fb_draw_text` re-parses the whole TTF on every call — fine for the handful
+// of strings DEMO 37 draws, but a per-glyph console wants to parse once and
+// then render many glyphs. `with_face` parses the embedded face a single time
+// and hands a `FaceCtx` to a closure; the console uses it to lay out and draw
+// characters one at a time (so it can wrap and scroll), all on one parse.
+
+/// A parsed face plus the px→font-unit scale, exposing the per-glyph
+/// primitives the TTY console needs. Lives only for the `with_face` closure.
+pub struct FaceCtx<'a> {
+    face: Face<'a>,
+    scale: f32,
+    upem: f32,
+}
+
+impl FaceCtx<'_> {
+    /// Horizontal advance of `ch` in pixels (0 if the font has no such glyph).
+    pub fn advance(&self, ch: char) -> f32 {
+        match self.face.glyph_index(ch) {
+            Some(gid) => self
+                .face
+                .glyph_hor_advance(gid)
+                .map(|a| a as f32 * self.scale)
+                .unwrap_or(0.0),
+            None => 0.0,
+        }
+    }
+
+    /// Draw `ch` with its left edge at `pen_x` on `baseline` (both in pixels),
+    /// using M7's 1-bit scanline fill. Returns the pen advance in pixels.
+    pub fn draw_char(&self, pen_x: f32, baseline: f32, ch: char, color: Color) -> f32 {
+        let gid = match self.face.glyph_index(ch) {
+            Some(g) => g,
+            None => return 0.0,
+        };
+        let mut r = GlyphRaster::new(self.scale, pen_x, baseline);
+        let _ = self.face.outline_glyph(gid, &mut r);
+        fill_glyph(&r, color);
+        self.face
+            .glyph_hor_advance(gid)
+            .map(|a| a as f32 * self.scale)
+            .unwrap_or(0.0)
+    }
+
+    /// Recommended line height in pixels (font ascent+descent+gap scaled).
+    pub fn line_height(&self) -> f32 {
+        self.face.height() as f32 * self.scale
+    }
+}
+
+/// Parse the embedded face once and run `f` with a `FaceCtx` for size `px`
+/// (em height). Returns `None` (closure not run) if the font fails to parse.
+pub fn with_face<R>(px: f32, f: impl FnOnce(&FaceCtx) -> R) -> Option<R> {
+    let face = Face::parse(FONT_DATA, 0).ok()?;
+    let upem = face.units_per_em() as f32;
+    if upem <= 0.0 {
+        return None;
+    }
+    let ctx = FaceCtx { face, scale: px / upem, upem };
+    Some(f(&ctx))
+}

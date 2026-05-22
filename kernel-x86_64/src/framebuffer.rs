@@ -268,6 +268,36 @@ pub fn fb_scroll(dx: isize, dy: isize) {
     mark_damage(&s, 0, 0, s.width, s.height);
 }
 
+/// Scroll a sub-rectangle `(x, y, w, h)` UP by `dy` pixels: kept content moves
+/// toward the region's top and the vacated bottom `dy` rows are filled `bg`.
+/// Clipped to the framebuffer. Used by the TTY console so advancing one text
+/// line leaves the rest of the screen untouched (unlike whole-screen `fb_scroll`).
+pub fn fb_scroll_region(x: usize, y: usize, w: usize, h: usize, dy: usize, bg: Color) {
+    let s = match surface() { Some(s) => s, None => return };
+    let x1 = (x + w).min(s.width);
+    let y1 = (y + h).min(s.height);
+    if x >= x1 || y >= y1 { return; }
+    let xw = x1 - x;
+    // If we'd scroll out everything we keep, just clear the region.
+    let kept_end = y1.saturating_sub(dy);
+    if dy == 0 || kept_end <= y {
+        fb_fill_rect(x, y, xw, y1 - y, bg);
+        mark_damage(&s, x, y, xw, y1 - y);
+        return;
+    }
+    // Move rows up: dst row r ← src row r + dy (ascending: never overwrite
+    // a source row before it's read, since dst < src).
+    for r in y..kept_end {
+        let src = r + dy;
+        for c in x..x1 {
+            s.write_pixel(c, r, s.read_pixel(c, src));
+        }
+    }
+    // Clear the vacated bottom dy rows.
+    fb_fill_rect(x, kept_end, xw, y1 - kept_end, bg);
+    mark_damage(&s, x, y, xw, y1 - y);
+}
+
 /// Commit point for the damage model. With direct-to-framebuffer rendering
 /// there's no separate buffer to copy, so `fb_present` flushes the dirtied
 /// region (a volatile readback of its corners forces ordering against any
