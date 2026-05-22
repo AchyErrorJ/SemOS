@@ -17,8 +17,30 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
+extern crate alloc;
+
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use core::panic::PanicInfo;
+
+/// Kernel global allocator — wraps the 16 MiB free-list heap arena
+/// (`kernel_core::memory::heap`, initialised at boot before any allocation).
+/// Enables `alloc` (Box/Vec/String) inside the kernel, used by tiny-skia for
+/// 2D vector rendering (M8) and available for later kernel work. The same
+/// arena already backs ObjectContent and FWRITE via direct heap calls; the
+/// GlobalAlloc path shares it.
+struct KernelGlobalAlloc;
+
+unsafe impl core::alloc::GlobalAlloc for KernelGlobalAlloc {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+        kernel_core::memory::heap::allocate(layout.size(), layout.align())
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+        kernel_core::memory::heap::deallocate(ptr, layout.size(), layout.align());
+    }
+}
+
+#[global_allocator]
+static KERNEL_ALLOCATOR: KernelGlobalAlloc = KernelGlobalAlloc;
 
 mod serial;
 pub mod gdt;
@@ -32,6 +54,7 @@ pub mod paging;
 pub mod apic;
 pub mod framebuffer;
 pub mod font;
+pub mod gfx2d;
 pub mod pci;
 pub mod virtio;
 pub mod rng;
@@ -808,6 +831,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 37: TTF font rasterization (NotoSans via M6 fb) — M7");
     println!("================================================================");
     font_demo();
+
+    // DEMO 38: M8 anti-aliased 2D vector rendering (tiny-skia → M6 fb).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 38: anti-aliased 2D vector (tiny-skia) — M8");
+    println!("================================================================");
+    gfx2d_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -3568,6 +3598,39 @@ fn font_demo() {
         println!("  [DEMO 37] => M7 TTF rasterization works (ttf-parser outlines + scanline fill → fb)");
     } else {
         println!("  [DEMO 37] FAIL: one or more font sizes did not render");
+    }
+}
+
+/// DEMO 38: M8 anti-aliased 2D vector rendering. Renders a filled circle and
+/// a stroked cubic Bézier with tiny-skia into an in-heap pixmap, blits it to
+/// the framebuffer, and verifies headlessly: the scene must light a plausible
+/// number of pixels AND contain blended AA-edge pixels (neither pure
+/// background nor pure source color) — the signature that anti-aliasing ran
+/// (vs M7's 1-bit fill). Also exercises the new kernel global allocator.
+fn gfx2d_demo() {
+    use crate::framebuffer as fb;
+    let (fbw, fbh) = fb::fb_dimensions();
+    let w = 320usize.min(fbw);
+    let h = 240usize.min(fbh);
+    // Bottom-right-ish, clear of the top-down console.
+    let ox = fbw.saturating_sub(w + 16);
+    let oy = fbh.saturating_sub(h + 16);
+
+    let (lit, aa) = gfx2d::aa_scene(ox, oy, w, h);
+
+    // Confirm the blit reached the framebuffer: the circle center should be
+    // (near) white. Circle center ≈ (ox + 0.30w, oy + 0.50h).
+    let cx = ox + (w * 30 / 100);
+    let cy = oy + (h * 50 / 100);
+    let center = fb::fb_read_pixel(cx, cy);
+    let center_white = center == fb::rgb(0xFF, 0xFF, 0xFF);
+
+    if lit > 200 && aa > 50 && center_white {
+        println!("  [DEMO 38] PASS: AA scene — {} lit px, {} anti-aliased edge px", lit, aa);
+        println!("  [DEMO 38] PASS: pixmap blitted to fb (circle center reads white)");
+        println!("  [DEMO 38] => M8: tiny-skia AA vector rendering over the M6 framebuffer");
+    } else {
+        println!("  [DEMO 38] FAIL: lit={} aa={} center_white={}", lit, aa, center_white);
     }
 }
 

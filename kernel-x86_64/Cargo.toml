@@ -31,6 +31,11 @@ kernel-core = { path = "../kernel-core" }
 # default and rasterize glyph outlines ourselves into the M6 framebuffer.
 ttf-parser = { version = "0.25", default-features = false, features = ["no-std-float"] }
 
+# 2D anti-aliased vector rasterizer (M8). no_std + alloc (kernel global
+# allocator); std/PNG features off. Renders to an in-heap Pixmap which we
+# blit to the M6 framebuffer.
+tiny-skia = { version = "0.11", default-features = false, features = ["no-std-float"] }
+
 [profile.dev]
 panic = "abort"
 
