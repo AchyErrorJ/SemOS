@@ -158,19 +158,26 @@ deferred (a follow-up syscall) — core API + DEMO are done.
 - [x] DEMO 35 draws a checkerboard + rect + blit + scroll, verified by
       reading pixels back from framebuffer memory (headless-safe)
 
-## M7 — Font rasterization (fontdue port) `[  ]`
+## M7 — Font rasterization `[✅]`
 
-Render text in real fonts, not just the 8x16 bitmap console.
+Render text in real fonts, not just the 8x16 bitmap console. Landed
+`b059960`. **Used `ttf-parser` instead of fontdue:** fontdue needs an
+allocator and isn't available offline, and the kernel has no global
+allocator. `ttf-parser` (cached, zero-allocation, no_std) gives glyph
+outlines; we rasterize them ourselves.
 
 **Done when:**
-- [ ] `fontdue` (MIT, ~7k LOC) vendored under `kernel-core/vendor/`
-      with no_std + no_alloc cuts
-- [ ] A TTF/OTF font file embedded in the kernel ramfs (start with one
-      open-source font, e.g. Inter or Source Sans 3)
-- [ ] `fb_draw_text(x, y, str, size, color)` rasterizes glyphs via
-      fontdue and blits them through M6's API
-- [ ] DEMO 23 renders text at 3 different sizes; visible in the QEMU
-      framebuffer
+- [✅] Outline source: `ttf-parser` 0.25 (`default-features=false`,
+      `no-std-float`) — zero-alloc, no_std. (fontdue substituted; see above.)
+- [✅] A TTF embedded in the kernel: Noto Sans Regular (SIL OFL 1.1),
+      `include_bytes!` in `kernel-x86_64/src/font.rs` (`assets/`).
+- [✅] `fb_draw_text(x, baseline_y, str, px, color)` flattens outlines
+      (lines + quad/cubic Béziers) into a fixed stack edge buffer and
+      scanline-fills (even-odd, 1-bit; AA deferred to M8) via M6's fb_fill_rect.
+- [✅] DEMO 37 renders a string at 16/24/40px, verified by pixel readback
+      (60+ glyph px, <80% coverage, proportional to size). 114 PASS / 0 DF.
+- [ ] Follow-ups: anti-aliasing (M8), kerning/shaping, a glyph cache, and
+      routing the framebuffer *console* through this (currently still 8x16).
 
 ## M8 — 2D vector rasterizer (tiny-skia port) `[  ]`
 
