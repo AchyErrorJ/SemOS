@@ -38,7 +38,7 @@ A milestone is **done** when:
 | 14 prep (Tier 3) | SYS_THREAD_SPAWN/JOIN (kernel + Ring-3 same-AS), SYS_FUTEX_WAIT/WAKE, SYS_WAITNB, SCHEDULER_TICK_HZ const (parallel/threaded rustc unblocked) |
 | 14 (M25 substantial) | `semos-std` crate: `#[global_allocator]` (Vec/String/Box), `io::{Read,Write}`, `fs::File`/`OpenOptions`, `env`, `sync::{Mutex,Once}`, `thread::spawn`+`JoinHandle<T>`, `process::Command` (spawn+wait), argv. hello-std/vec-demo/std-demo/spawn-demo run Ring 3 (DEMO 29–32). **Build at `opt-level=0` only** — any optimization miscompiles the syscall path (#54). Still missing: `net`, full `path`/`time` |
 | 9/10 graphics+net | M6 framebuffer drawing API (DEMO 35); M13 HTTP chunked decoder (DEMO 33); M12 DNS resolver (DEMO 34, wall-clock wait + retransmit) |
-| Structural | #41 real guard pages between all task stacks (layout-sensitivity family closed); #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn; per-task kernel stack → 128 KiB for layout margin |
+| Structural | #41 real guard pages between all task stacks; #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn; per-task kernel stack → 128 KiB. **task#40 / #56 FIXED (`8c2cb21`): context_switch was a *torn control transfer* (`popfq; jmp` window where a timer preempted mid-switch) — now an atomic IRETQ. Closes the whole layout-sensitivity / iret-RIP-corruption family.** |
 
 ---
 
@@ -568,19 +568,18 @@ optimization miscompiles the `asm!`-based syscall wrappers.
       the child's scheduler slot (Ring-3 children never hit PROCESS_TABLE
       Zombie). `spawn-demo` validates exit codes 0 and 0x2700 propagate.
 - [🔨] `std::thread` over a preemptive scheduler with `std::sync::{Mutex, Condvar, RwLock}` — `thread::spawn`+`JoinHandle<T>`, `Mutex`, `Once` done (DEMO 31); `Condvar`/`RwLock` not yet
-- [🔨] `std::net::{TcpStream, UdpSocket}` over kernel-core::net — `b332cf0`,
-      `f548688`. Kernel syscalls SYS_DNS_RESOLVE + SYS_TCP_{CONNECT,READ,
-      WRITE,CLOSE,STATE} (100-105, one TCP socket at a time, **non-blocking**:
-      one net::poll + one try, NET_WOULDBLOCK sentinel) + `semos-std::net`
-      (Ipv4Addr, resolve, TcpStream impl io::Read/Write that drives the wait
-      in user space). DNS half live (DEMO 34). UdpSocket not exposed.
-      **Open (#56):** net-demo (Ring-3 TCP HTTP round-trip) is built+wired but
-      DEMO 36 doesn't spawn it — doing so #DFs in `schedule()`'s epilogue on a
-      *different* slot before net-demo runs any code: the long-standing
-      **task#40 context-switch race**, tripped by spawning the 16th task under
-      this layout, NOT the net path. Blocked on resolving task#40 itself.
-      Fixed en route: address-space GC in store_address_space; user stack
-      decoupled from the (128 KiB) kernel TASK_STACK_SIZE → 64 KiB.
+- [✅] `std::net::{TcpStream}` over kernel-core::net — `b332cf0`, `f548688`,
+      `8c2cb21`, `a708bc8`. Kernel syscalls SYS_DNS_RESOLVE + SYS_TCP_{CONNECT,
+      READ,WRITE,CLOSE,STATE} (100-105, one TCP socket at a time,
+      **non-blocking**: one net::poll + one try, NET_WOULDBLOCK sentinel) +
+      `semos-std::net` (Ipv4Addr, resolve, TcpStream impl io::Read/Write that
+      drives the wait in user space). **DEMO 36: net-demo resolves
+      example.com, opens a TcpStream, sends an HTTP GET and reads the response
+      end-to-end from Ring 3** (125 PASS with -netdev). Unblocked once the
+      **task#40 torn-context-switch #DF was fixed (#56, `8c2cb21`)** — that
+      was the real blocker, not the net path. UdpSocket not exposed (DNS is a
+      one-shot resolve). Fixed en route: address-space GC in
+      store_address_space; user stack decoupled from kernel TASK_STACK_SIZE.
 - [🔨] `std::env`, `std::path`, `std::time` — `env` done; `path`/`time` minimal
 - [✅] A "hello world" program built against this std runs on Semantic OS — hello-std/vec-demo/std-demo (DEMO 29–31)
 
