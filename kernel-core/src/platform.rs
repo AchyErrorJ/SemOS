@@ -20,6 +20,12 @@ pub trait Platform: Send + Sync + 'static {
     /// Halt the CPU (wait for interrupt / low-power idle).
     fn halt(&self);
 
+    /// Read available cooked-mode stdin bytes into `buf` (non-blocking).
+    /// Returns the number of bytes written (0 if no complete input is ready).
+    /// The platform's TTY line discipline owns the buffering + echo; this is
+    /// the drain the SYS_READ(fd=0) path calls. Default: no input source.
+    fn stdin_read(&self, _buf: &mut [u8]) -> usize { 0 }
+
     /// Allocate a 4KB physical frame from the given security tier's pool.
     /// Returns the physical address, or None if the pool is exhausted.
     fn alloc_frame(&self, _tier: u8) -> Option<u64> { None }
@@ -241,6 +247,13 @@ pub fn log(s: &str) {
 #[inline]
 pub fn ticks() -> u64 {
     get().ticks()
+}
+
+/// Drain available cooked-mode stdin bytes (non-blocking). See
+/// [`Platform::stdin_read`]. Returns bytes written into `buf`.
+#[inline]
+pub fn stdin_read(buf: &mut [u8]) -> usize {
+    get().stdin_read(buf)
 }
 
 /// Voluntarily yield the CPU to the scheduler.

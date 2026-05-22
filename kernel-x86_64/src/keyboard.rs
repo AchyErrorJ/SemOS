@@ -178,8 +178,10 @@ pub fn handle_scancode(scancode: u8) {
 
     if c != 0 {
         kb.push(c);
-        // Echo to serial for visibility
-        crate::serial::Serial::put_char(c as char);
+        // Feed the TTY line discipline (M19); it echoes to serial itself, so
+        // drop the lock first to avoid holding KEYBOARD across the STDIN lock.
+        drop(kb);
+        crate::tty::input_push(c);
     }
 }
 

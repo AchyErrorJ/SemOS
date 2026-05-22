@@ -20,6 +20,7 @@
 
 use crate::framebuffer::{self as fb, Color};
 use crate::{font, gfx2d};
+use spin::Mutex;
 
 /// Glyph rendering mode for a `write`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -40,6 +41,7 @@ pub struct TtyConsole {
     h: usize,
     px: f32,
     line_h: usize,
+    col_w: usize, // nominal cell width (space advance) for ANSI cursor moves
     fg: Color,
     bg: Color,
     pen_x: usize,
@@ -51,8 +53,39 @@ impl TtyConsole {
     /// foreground `fg` on background `bg`. Clears the region to `bg`.
     pub fn new(x0: usize, y0: usize, w: usize, h: usize, px: f32, fg: Color, bg: Color) -> Self {
         let line_h = font::line_height(px).max(px as usize + 2);
+        let col_w = font::with_face(px, |f| f.advance(' ') as usize)
+            .unwrap_or((px / 2.0) as usize)
+            .max(1);
         fb::fb_fill_rect(x0, y0, w, h, bg);
-        Self { x0, y0, w, h, px, line_h, fg, bg, pen_x: x0, line_top: y0 }
+        Self { x0, y0, w, h, px, line_h, col_w, fg, bg, pen_x: x0, line_top: y0 }
+    }
+
+    /// Set the foreground color used for subsequent glyphs (ANSI SGR).
+    pub fn set_fg(&mut self, fg: Color) {
+        self.fg = fg;
+    }
+
+    /// Clear the whole region to background and home the cursor (ANSI 2J + H).
+    pub fn clear(&mut self) {
+        fb::fb_fill_rect(self.x0, self.y0, self.w, self.h, self.bg);
+        self.pen_x = self.x0;
+        self.line_top = self.y0;
+    }
+
+    /// Clear from the cursor to the end of the current line (ANSI K).
+    pub fn clear_eol(&mut self) {
+        let x = self.pen_x.min(self.x0 + self.w);
+        fb::fb_fill_rect(x, self.line_top, (self.x0 + self.w).saturating_sub(x), self.line_h, self.bg);
+    }
+
+    /// Move the cursor to 1-based `(row, col)` in nominal cells (ANSI H/f),
+    /// clamped to the region.
+    pub fn move_cursor(&mut self, row: usize, col: usize) {
+        let r = row.saturating_sub(1);
+        let c = col.saturating_sub(1);
+        let max_top = self.y0 + self.h.saturating_sub(self.line_h);
+        self.line_top = (self.y0 + r * self.line_h).min(max_top);
+        self.pen_x = (self.x0 + c * self.col_w).min(self.x0 + self.w);
     }
 
     /// Current line's baseline (≈80% down the line box — leaves room for
@@ -118,5 +151,277 @@ impl TtyConsole {
                 }
             }
         }
+    }
+}
+
+// ============================================================================
+// stdin — cooked-mode line discipline
+// ============================================================================
+//
+// Keystrokes (from the PS/2 ISR or the USB HID poll) feed `input_push`. In
+// cooked mode the line accumulates in `pend`; Backspace edits it and Enter
+// commits the whole line + '\n' into the readable ring `q`. `drain` (behind
+// the SYS_READ → platform::stdin_read path) pulls committed bytes out. Each
+// keystroke is echoed to serial immediately so on-metal typing is visible
+// even before a reader consumes it; colored/visual echo is the reader's job.
+
+const PEND_MAX: usize = 256;
+const QUEUE_MAX: usize = 1024;
+
+struct LineState {
+    pend: [u8; PEND_MAX],
+    pend_n: usize,
+    q: [u8; QUEUE_MAX],
+    head: usize, // write index
+    tail: usize, // read index
+    count: usize,
+}
+
+impl LineState {
+    const fn new() -> Self {
+        Self { pend: [0; PEND_MAX], pend_n: 0, q: [0; QUEUE_MAX], head: 0, tail: 0, count: 0 }
+    }
+
+    fn commit_push(&mut self, b: u8) {
+        if self.count == QUEUE_MAX {
+            return; // queue full — drop (reader is too slow)
+        }
+        self.q[self.head] = b;
+        self.head = (self.head + 1) % QUEUE_MAX;
+        self.count += 1;
+    }
+
+    fn commit_pop(&mut self) -> Option<u8> {
+        if self.count == 0 {
+            return None;
+        }
+        let b = self.q[self.tail];
+        self.tail = (self.tail + 1) % QUEUE_MAX;
+        self.count -= 1;
+        Some(b)
+    }
+}
+
+static STDIN: Mutex<LineState> = Mutex::new(LineState::new());
+
+/// Feed one input byte through the line discipline. Call from the keyboard
+/// ISR / HID poll. Backspace edits the pending line, Enter commits it.
+/// `without_interrupts` guards against a keyboard IRQ deadlocking against a
+/// concurrent `drain` (both take the STDIN lock).
+pub fn input_push(b: u8) {
+    x86_64::instructions::interrupts::without_interrupts(|| input_push_locked(b));
+}
+
+fn input_push_locked(b: u8) {
+    let mut s = STDIN.lock();
+    match b {
+        b'\n' | b'\r' => {
+            for i in 0..s.pend_n {
+                let c = s.pend[i];
+                s.commit_push(c);
+            }
+            s.commit_push(b'\n');
+            s.pend_n = 0;
+            crate::serial::Serial::put_char('\n');
+        }
+        0x08 | 0x7F => {
+            if s.pend_n > 0 {
+                s.pend_n -= 1;
+                // Erase the echoed glyph on a terminal: BS, space, BS.
+                crate::serial::Serial::put_char('\u{8}');
+                crate::serial::Serial::put_char(' ');
+                crate::serial::Serial::put_char('\u{8}');
+            }
+        }
+        0x20..=0x7E | b'\t' => {
+            if s.pend_n < PEND_MAX {
+                let n = s.pend_n;
+                s.pend[n] = b;
+                s.pend_n = n + 1;
+                crate::serial::Serial::put_char(b as char);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Drain committed stdin bytes into `buf` (non-blocking). Returns the count.
+/// This backs `platform::stdin_read` → SYS_READ(fd 0).
+pub fn drain(buf: &mut [u8]) -> usize {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut s = STDIN.lock();
+        let mut n = 0;
+        while n < buf.len() {
+            match s.commit_pop() {
+                Some(c) => {
+                    buf[n] = c;
+                    n += 1;
+                }
+                None => break,
+            }
+        }
+        n
+    })
+}
+
+// ============================================================================
+// AnsiTty — ANSI escape-sequence handler over a TtyConsole
+// ============================================================================
+//
+// Parses the minimal CSI subset a TUI program assumes, in the output stream:
+//   - SGR `\x1b[<n>m`     color (30-37, 90-97 bright, 39 default, 0 reset)
+//   - `\x1b[2J`           clear screen
+//   - `\x1b[K`            clear to end of line
+//   - `\x1b[<r>;<c>H`/`f` cursor position (1-based cells; H with no args = home)
+// Everything else is rendered as text through the wrapped console.
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AnsiState {
+    Normal,
+    Esc,
+    Csi,
+}
+
+/// A console with an ANSI escape-sequence front-end.
+pub struct AnsiTty {
+    con: TtyConsole,
+    mode: Aa,
+    default_fg: Color,
+    state: AnsiState,
+    params: [u32; 8],
+    nparam: usize,
+    have_digit: bool,
+}
+
+impl AnsiTty {
+    /// Wrap `con`, rendering glyphs in `mode`; `default_fg` is restored by
+    /// SGR reset (`0`) and default-foreground (`39`).
+    pub fn new(con: TtyConsole, mode: Aa, default_fg: Color) -> Self {
+        Self {
+            con,
+            mode,
+            default_fg,
+            state: AnsiState::Normal,
+            params: [0; 8],
+            nparam: 0,
+            have_digit: false,
+        }
+    }
+
+    /// Map an SGR foreground code to a logical 0x00RRGGBB color.
+    fn sgr_color(&self, code: u32) -> Option<Color> {
+        Some(match code {
+            0 | 39 => self.default_fg,
+            30 => fb::rgb(0x00, 0x00, 0x00),
+            31 => fb::rgb(0xCC, 0x00, 0x00),
+            32 => fb::rgb(0x00, 0xCC, 0x00),
+            33 => fb::rgb(0xCC, 0xCC, 0x00),
+            34 => fb::rgb(0x40, 0x60, 0xFF),
+            35 => fb::rgb(0xCC, 0x00, 0xCC),
+            36 => fb::rgb(0x00, 0xCC, 0xCC),
+            37 => fb::rgb(0xC0, 0xC0, 0xC0),
+            90 => fb::rgb(0x80, 0x80, 0x80),
+            91 => fb::rgb(0xFF, 0x40, 0x40),
+            92 => fb::rgb(0x40, 0xFF, 0x40),
+            93 => fb::rgb(0xFF, 0xFF, 0x40),
+            94 => fb::rgb(0x60, 0x90, 0xFF),
+            95 => fb::rgb(0xFF, 0x40, 0xFF),
+            96 => fb::rgb(0x40, 0xFF, 0xFF),
+            97 => fb::rgb(0xFF, 0xFF, 0xFF),
+            _ => return None,
+        })
+    }
+
+    /// Dispatch a completed CSI sequence whose final byte is `final_b`.
+    fn csi(&mut self, final_b: u8) {
+        let count = self.nparam + if self.have_digit { 1 } else { 0 };
+        let p0 = self.params[0];
+        let p1 = self.params[1];
+        match final_b {
+            b'm' => {
+                if count == 0 {
+                    self.con.set_fg(self.default_fg); // bare ESC[m == reset
+                } else {
+                    for i in 0..count {
+                        if let Some(c) = self.sgr_color(self.params[i]) {
+                            self.con.set_fg(c);
+                        }
+                    }
+                }
+            }
+            b'J' => {
+                if p0 == 2 {
+                    self.con.clear();
+                }
+            }
+            b'K' => self.con.clear_eol(),
+            b'H' | b'f' => {
+                let row = if count >= 1 { (p0.max(1)) as usize } else { 1 };
+                let col = if count >= 2 { (p1.max(1)) as usize } else { 1 };
+                self.con.move_cursor(row, col);
+            }
+            _ => {}
+        }
+    }
+
+    fn flush_run(&mut self, run: &[u8]) {
+        if !run.is_empty() {
+            if let Ok(s) = core::str::from_utf8(run) {
+                self.con.write(self.mode, s);
+            }
+        }
+    }
+
+    /// Write `text`, interpreting ANSI escape sequences.
+    pub fn write_str(&mut self, text: &str) {
+        let mut run = [0u8; 128];
+        let mut rn = 0usize;
+        for &b in text.as_bytes() {
+            match self.state {
+                AnsiState::Normal => {
+                    if b == 0x1B {
+                        self.flush_run(&run[..rn]);
+                        rn = 0;
+                        self.state = AnsiState::Esc;
+                    } else {
+                        run[rn] = b;
+                        rn += 1;
+                        if rn == run.len() {
+                            self.flush_run(&run[..rn]);
+                            rn = 0;
+                        }
+                    }
+                }
+                AnsiState::Esc => {
+                    if b == b'[' {
+                        self.state = AnsiState::Csi;
+                        self.params = [0; 8];
+                        self.nparam = 0;
+                        self.have_digit = false;
+                    } else {
+                        // Not a CSI we handle — drop the escape, resume text.
+                        self.state = AnsiState::Normal;
+                    }
+                }
+                AnsiState::Csi => {
+                    if b.is_ascii_digit() {
+                        if self.nparam < self.params.len() {
+                            self.params[self.nparam] =
+                                self.params[self.nparam].saturating_mul(10) + (b - b'0') as u32;
+                        }
+                        self.have_digit = true;
+                    } else if b == b';' {
+                        if self.nparam < self.params.len() - 1 {
+                            self.nparam += 1;
+                        }
+                        self.have_digit = false;
+                    } else {
+                        self.csi(b);
+                        self.state = AnsiState::Normal;
+                    }
+                }
+            }
+        }
+        self.flush_run(&run[..rn]);
     }
 }

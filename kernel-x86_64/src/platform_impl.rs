@@ -24,6 +24,10 @@ impl Platform for X86Platform {
         x86_64::instructions::hlt();
     }
 
+    fn stdin_read(&self, buf: &mut [u8]) -> usize {
+        crate::tty::drain(buf)
+    }
+
     fn schedule(&self) {
         crate::context::schedule();
     }

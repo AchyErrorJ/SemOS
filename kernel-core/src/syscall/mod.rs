@@ -153,6 +153,7 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match num {
         // Core (0-9)
         SYS_WRITE => handle_write(arg0, arg1),
+        SYS_READ => handle_read(arg0, arg1, arg2),
         SYS_EXIT => handle_exit(arg0),
         SYS_YIELD => { handle_yield(); 0 },
         SYS_GETPID => handle_getpid(),
@@ -311,6 +312,27 @@ fn handle_write(buf_ptr: u64, buf_len: u64) -> u64 {
         }
     }
     buf_len
+}
+
+/// SYS_READ(fd, buf_ptr, buf_len) → bytes read, or u64::MAX on bad fd.
+///
+/// Only fd 0 (stdin) is wired today: it drains the platform TTY line
+/// discipline (cooked mode — bytes appear a line at a time on Enter).
+/// Non-blocking: returns 0 when no complete line is ready, so a Ring-3
+/// reader yields and retries (same contract as the net syscalls). Per-fd
+/// stdin/stdout/stderr routing through the process FD table is a follow-up.
+fn handle_read(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
+    if fd != 0 {
+        return u64::MAX;
+    }
+    let len = buf_len as usize;
+    if len == 0 || len > 4096 {
+        return if len == 0 { 0 } else { u64::MAX };
+    }
+    unsafe {
+        let slice = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len);
+        crate::platform::stdin_read(slice) as u64
+    }
 }
 
 fn handle_exit(code: u64) -> u64 {

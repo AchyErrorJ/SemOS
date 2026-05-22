@@ -848,6 +848,13 @@ fn init_loader_task() {
     println!("================================================================");
     tty_demo();
 
+    // DEMO 40: M19 TTY — line-discipline stdin (SYS_READ fd 0) + ANSI output.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 40: TTY line discipline + ANSI (M19)");
+    println!("================================================================");
+    tty_m19_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1056,6 +1063,9 @@ fn usb_hid_demo() {
             let shift = rep.shift_held();
             for k in rep.pressed_keys() {
                 if let Some(c) = usb::hid::keycode_to_ascii(k, shift) {
+                    // Feed the TTY line discipline (M19) so USB keystrokes
+                    // reach stdin / SYS_READ, same as the PS/2 path.
+                    tty::input_push(c);
                     if c.is_ascii_graphic() || c == b' ' {
                         print!("{}", c as char);
                     } else if c == b'\n' {
@@ -3764,6 +3774,117 @@ fn tty_demo() {
     }
     if sharp_ok && smooth_ok {
         println!("  [DEMO 39] => M7/M8 wired into a cursor-managed console (newline, wrap, region scroll)");
+    }
+}
+
+/// DEMO 40: M19 TTY layer. Two halves, both headless-verifiable:
+///   A. Line-discipline stdin: synthetic keystrokes (incl. Backspace + Enter)
+///      are pushed through `tty::input_push`; cooked mode must edit the line
+///      and commit it, and `SYS_READ(fd 0)` must return the assembled bytes.
+///   B. ANSI output: an `AnsiTty` interprets SGR color + clear-screen in its
+///      write stream; we echo the read line in green, confirm green glyph
+///      pixels rendered, then `ESC[2J` and confirm the region went background.
+fn tty_m19_demo() {
+    use crate::framebuffer as fb;
+    use crate::tty::{Aa, AnsiTty, TtyConsole};
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    // ---- Part A: line discipline + SYS_READ ----
+    // Type "hi", Backspace (drop 'i'), 'o', Enter  → commits "ho\n".
+    for &b in b"hi" {
+        tty::input_push(b);
+    }
+    tty::input_push(0x08); // Backspace
+    tty::input_push(b'o');
+    tty::input_push(b'\n');
+    for &b in b"bye\n" {
+        tty::input_push(b);
+    }
+
+    let mut rbuf = [0u8; 64];
+    let got = dispatch(SYS_READ, 0, rbuf.as_mut_ptr() as u64, rbuf.len() as u64, 0) as usize;
+    let read_slice = &rbuf[..got.min(rbuf.len())];
+    let line_ok = read_slice == b"ho\nbye\n";
+    if line_ok {
+        println!("  [DEMO 40] PASS: cooked stdin — SYS_READ returned {} bytes \"ho\\nbye\\n\" (Backspace applied)", got);
+    } else {
+        println!("  [DEMO 40] FAIL: stdin read {} bytes = {:?}", got, read_slice);
+    }
+
+    // ---- Part B: ANSI color + clear over a TtyConsole ----
+    let (fbw, fbh) = fb::fb_dimensions();
+    let color_ok;
+    let clear_ok;
+    if fbw == 0 || fbh == 0 {
+        println!("  [DEMO 40] SKIPPED: no framebuffer for ANSI half");
+        color_ok = false;
+        clear_ok = false;
+    } else {
+        let px = 20.0f32;
+        let lh = font::line_height(px).max(px as usize + 2);
+        let x0 = 16usize;
+        let w = fbw.saturating_sub(32).min(500);
+        let h = lh * 3;
+        let y0 = fbh.saturating_sub(h + 40);
+        let white = fb::rgb(0xFF, 0xFF, 0xFF);
+        let green = fb::rgb(0x00, 0xCC, 0x00);
+        let black = fb::rgb(0x00, 0x00, 0x00);
+
+        let con = TtyConsole::new(x0, y0, w, h, px, white, black);
+        let mut ansi = AnsiTty::new(con, Aa::Sharp, white);
+        // Clear, switch to green (SGR 32), echo the read line, reset (SGR 0).
+        ansi.write_str("\x1b[2J\x1b[32m");
+        if let Ok(s) = core::str::from_utf8(read_slice) {
+            ansi.write_str(s);
+        }
+        ansi.write_str("\x1b[0m");
+
+        // Count green glyph pixels (SGR routed the color through to the fill).
+        let (x1, y1) = ((x0 + w).min(fbw), (y0 + h).min(fbh));
+        let mut green_px = 0usize;
+        let mut yy = y0;
+        while yy < y1 {
+            let mut xx = x0;
+            while xx < x1 {
+                if fb::fb_read_pixel(xx, yy) == green {
+                    green_px += 1;
+                }
+                xx += 1;
+            }
+            yy += 1;
+        }
+        color_ok = green_px > 60;
+
+        // ESC[2J must clear the whole region back to background.
+        ansi.write_str("\x1b[2J");
+        let mut nonbg = 0usize;
+        let mut yy = y0;
+        while yy < y1 {
+            let mut xx = x0;
+            while xx < x1 {
+                if fb::fb_read_pixel(xx, yy) != black {
+                    nonbg += 1;
+                }
+                xx += 1;
+            }
+            yy += 1;
+        }
+        clear_ok = nonbg == 0;
+
+        if color_ok {
+            println!("  [DEMO 40] PASS: ANSI SGR — {} green glyph px (ESC[32m routed color)", green_px);
+        } else {
+            println!("  [DEMO 40] FAIL: ANSI SGR green_px={}", green_px);
+        }
+        if clear_ok {
+            println!("  [DEMO 40] PASS: ANSI ESC[2J cleared the region to background");
+        } else {
+            println!("  [DEMO 40] FAIL: ESC[2J left {} non-bg px", nonbg);
+        }
+    }
+
+    if line_ok && color_ok && clear_ok {
+        println!("  [DEMO 40] => M19 slice 1: cooked stdin + SYS_READ + ANSI (color/clear) over the TTF console");
     }
 }
 
