@@ -2,6 +2,8 @@
 
 **No dates here.** This document tracks **what must happen** and **what unblocks what**. Time is a side effect of doing things in the right order, not a thing to plan in.
 
+> **Next agent:** start with the latest handoff — [`HANDOFF_2026-05-22.md`](HANDOFF_2026-05-22.md) — for current state, build/test gotchas, and suggested next steps.
+
 When you finish a milestone, flip its checkbox in this file and update the [Project memory file](../../../Users/jerro/.claude/projects/F--Software-ArmKernel3/memory/project_semantic_os_kernel.md). When a milestone reveals new sub-work, add it to that milestone's checklist or split it into a follow-up milestone.
 
 Phase 8 (network → first remote LLM call) is closed. See [`PHASE_8_ROADMAP.md`](PHASE_8_ROADMAP.md) for that phase's historical detail. The current frontier is Phase 9.
@@ -179,15 +181,30 @@ outlines; we rasterize them ourselves.
 - [ ] Follow-ups: anti-aliasing (M8), kerning/shaping, a glyph cache, and
       routing the framebuffer *console* through this (currently still 8x16).
 
-## M8 — 2D vector rasterizer (tiny-skia port) `[  ]`
+## M8 — 2D vector rasterizer (tiny-skia) `[✅]`
 
-Anti-aliased lines/curves/fills for the design apps.
+Anti-aliased lines/curves/fills for the design apps. Landed `cb6c726`.
+
+**Two things landed together:**
+- **Kernel global allocator** — the existing 16 MiB free-list heap arena
+  (`kernel_core::memory::heap`, init'd at boot) is now wired as
+  `#[global_allocator]` in kernel-x86_64 + `extern crate alloc`. The kernel
+  has `Box`/`Vec`/`String` (kernel-core itself stays no-alloc — this is
+  binary-side). Unblocks tiny-skia and future kernel work (TTY/shell/agent).
+- **tiny-skia 0.11** (cached; `default-features=false` + `no-std-float` →
+  no_std + alloc, Apache-2.0). `kernel-x86_64/src/gfx2d.rs` rasterizes paths
+  with real AA into an in-heap `Pixmap`, then blits to the M6 framebuffer.
 
 **Done when:**
-- [ ] `tiny-skia` (Apache-2.0, ~25k LOC) vendored under
-      `kernel-core/vendor/` with no_std + no_alloc cuts
-- [ ] `fb_stroke_path` / `fb_fill_path` over M6
-- [ ] DEMO 24 draws a few anti-aliased Bézier curves; visible in QEMU
+- [✅] `tiny-skia` as a no_std + alloc dependency (NOT vendored/no_alloc —
+      the kernel-allocator route is cleaner and unblocks alloc generally).
+- [✅] `gfx2d::aa_scene` (fill + stroke) over M6's `fb_blit`. (Generic
+      `fb_stroke_path`/`fb_fill_path` wrappers are the obvious next step.)
+- [✅] DEMO 38 draws a filled circle + a stroked cubic Bézier; verified by
+      pixel readback — 19748 lit px incl. 974 *blended* AA-edge px (the AA
+      signature M7's 1-bit fill lacked). 116 PASS standard / 130 with -netdev.
+- [ ] Follow-ups: grow a real drawing API; gradients/clips; route M7 font
+      fill through tiny-skia for anti-aliased text.
 
 ## M9 — NVMe driver `[  ]`
 
