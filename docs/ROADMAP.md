@@ -42,6 +42,7 @@ A milestone is **done** when:
 | 9/10 graphics+net | M6 framebuffer drawing API (DEMO 35); M13 HTTP chunked decoder (DEMO 33); M12 DNS resolver (DEMO 34, wall-clock wait + retransmit) |
 | Structural | #41 real guard pages between all task stacks; #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn; per-task kernel stack → 128 KiB. **task#40 / #56 FIXED (`8c2cb21`): context_switch was a *torn control transfer* (`popfq; jmp` window where a timer preempted mid-switch) — now an atomic IRETQ. Closes the whole layout-sensitivity / iret-RIP-corruption family.** |
 | Cleanup 2026-05-22 | All HANDOFF open issues closed: **#55 re-verified** (`72a002f`, DEMO 28 → 0x2700); **DEMO 27 timing flake de-flaked** (`78ae59e`, poll-not-sleep); **M7/M8 wired into `tty::TtyConsole`** (`78ae59e`, DEMO 39 — the M19 renderer). Suite **132 PASS / 0 FAIL / 0 #DF** with `-netdev`. |
+| M19 slice 1 2026-05-22 | **TTY stdin + ANSI** (`716eafd`, DEMO 40): cooked-mode line discipline (`SYS_READ` fd 0, Backspace), `AnsiTty` (SGR color / 2J / K / H) over the TTF console. Suite **135 PASS**. Remaining M19: per-process stdio, arrow-key editing, scrollback wiring. |
 
 ---
 
@@ -393,29 +394,32 @@ Depends on: Phase 9 done (FS + paths + syscalls), Phase 10 done
 (Wi-Fi + DNS, so the agent can reach Anthropic). Framebuffer +
 fonts (M6 + M7) are visual prerequisites.
 
-## M19 — TTY layer `[🔨 renderer landed]`
+## M19 — TTY layer `[🔨 slice 1 landed — stdin + ANSI]`
 
 The framebuffer console is write-only today. A shell needs bidirectional.
 
-**Already in hand (`78ae59e`, DEMO 39):** `tty::TtyConsole` is the output-side
-renderer this milestone needs — a cursor-managed console with newline, right-
-edge wrap, region scroll, fg/bg color, and M7-sharp / M8-AA glyph modes. A
-64 KB scrollback ring also already exists in `framebuffer.rs` (currently used
-by the bitmap console's post-fault replay). M19 is now mostly the *input* +
-*ANSI* + *per-process stdio* work on top of that renderer.
+**Renderer (`78ae59e`, DEMO 39):** `tty::TtyConsole` — cursor-managed console
+with newline, wrap, region scroll, fg/bg color, M7-sharp / M8-AA glyph modes.
+
+**Slice 1 (`716eafd`, DEMO 40):** cooked-mode stdin + ANSI output. Validated
+135 PASS / 0 FAIL / 0 #DF with `-netdev`.
 
 **Done when:**
-- [ ] Buffered stdin sourced from the USB keyboard driver (M3) with
-      line-editing primitives (Backspace, arrow keys)
-- [ ] ANSI escape sequence handler in the framebuffer output path
-      (cursor positioning, color, screen clear, scroll region) — the
-      minimum subset any TUI program assumes
+- [~] Buffered stdin sourced from the keyboard with line-editing —
+      cooked-mode line discipline done (`tty::input_push`/`drain`, **Backspace**
+      + Enter commit), fed by both PS/2 and USB HID; surfaced as **`SYS_READ`
+      fd 0** (non-blocking). **Arrow-key editing still TODO.**
+- [✅] ANSI escape sequence handler (`tty::AnsiTty`): SGR color
+      (30-37/90-97/39/0), clear screen (`2J`), clear-to-eol (`K`), cursor
+      position (`H`/`f`). Cursor positioning uses a nominal cell width (font
+      is proportional). Scroll-region escapes not yet parsed.
 - [~] Scrollback buffer (~100 lines) — a 64 KB byte ring exists
       (`framebuffer.rs`); needs wiring into the `TtyConsole` render path
-- [ ] Per-process stdin/stdout/stderr (today there's just one global
-      println!) so multiple programs can read/write independently
-- [ ] DEMO 40 echoes typed characters back through ANSI-coloured output
-      (note: DEMO 39 is now the TTF/AA console; next free DEMO is 40)
+- [ ] Per-process stdin/stdout/stderr — **still global** (stdin is one shared
+      line discipline; `SYS_WRITE` still logs globally). Needs FD-table routing.
+- [✅] DEMO 40 — injects `hi`+BS+`o`+Enter+`bye`+Enter, `SYS_READ`s back
+      `"ho\nbye\n"`, echoes it green via `ESC[32m` (365 green px), `ESC[2J`
+      clears the region. (Next free DEMO is 41.)
 
 ## M20 — Native shell (`sem-sh` or similar) `[  ]`
 
