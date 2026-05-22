@@ -41,6 +41,7 @@ A milestone is **done** when:
 | 14 (M25 substantial) | `semos-std` crate: `#[global_allocator]` (Vec/String/Box), `io::{Read,Write}`, `fs::File`/`OpenOptions`, `env`, `sync::{Mutex,Once}`, `thread::spawn`+`JoinHandle<T>`, `process::Command` (spawn+wait), argv. hello-std/vec-demo/std-demo/spawn-demo run Ring 3 (DEMO 29–32). **Build at `opt-level=0` only** — any optimization miscompiles the syscall path (#54). Still missing: `net`, full `path`/`time` |
 | 9/10 graphics+net | M6 framebuffer drawing API (DEMO 35); M13 HTTP chunked decoder (DEMO 33); M12 DNS resolver (DEMO 34, wall-clock wait + retransmit) |
 | Structural | #41 real guard pages between all task stacks; #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn; per-task kernel stack → 128 KiB. **task#40 / #56 FIXED (`8c2cb21`): context_switch was a *torn control transfer* (`popfq; jmp` window where a timer preempted mid-switch) — now an atomic IRETQ. Closes the whole layout-sensitivity / iret-RIP-corruption family.** |
+| Cleanup 2026-05-22 | All HANDOFF open issues closed: **#55 re-verified** (`72a002f`, DEMO 28 → 0x2700); **DEMO 27 timing flake de-flaked** (`78ae59e`, poll-not-sleep); **M7/M8 wired into `tty::TtyConsole`** (`78ae59e`, DEMO 39 — the M19 renderer). Suite **132 PASS / 0 FAIL / 0 #DF** with `-netdev`. |
 
 ---
 
@@ -178,8 +179,14 @@ outlines; we rasterize them ourselves.
       scanline-fills (even-odd, 1-bit; AA deferred to M8) via M6's fb_fill_rect.
 - [✅] DEMO 37 renders a string at 16/24/40px, verified by pixel readback
       (60+ glyph px, <80% coverage, proportional to size). 114 PASS / 0 DF.
-- [ ] Follow-ups: anti-aliasing (M8), kerning/shaping, a glyph cache, and
-      routing the framebuffer *console* through this (currently still 8x16).
+- [✅] Follow-up — routing a *console* through this: `tty::TtyConsole`
+      (`78ae59e`, DEMO 39) renders a cursor-managed console (newline, wrap,
+      region scroll) via `font::with_face`/`FaceCtx`. NOTE: it's a *region*
+      console, not the default `print!` sink (the bitmap stays the boot sink —
+      serial is grep truth + the ~16 KiB glyph-raster frame must not run on the
+      #41/#55-sensitive interrupt/syscall print path). It's the M19 renderer.
+- [ ] Follow-ups still open: kerning/shaping, a glyph cache (re-parses the
+      face per `with_face` call today).
 
 ## M8 — 2D vector rasterizer (tiny-skia) `[✅]`
 
@@ -203,8 +210,10 @@ Anti-aliased lines/curves/fills for the design apps. Landed `cb6c726`.
 - [✅] DEMO 38 draws a filled circle + a stroked cubic Bézier; verified by
       pixel readback — 19748 lit px incl. 974 *blended* AA-edge px (the AA
       signature M7's 1-bit fill lacked). 116 PASS standard / 130 with -netdev.
-- [ ] Follow-ups: grow a real drawing API; gradients/clips; route M7 font
-      fill through tiny-skia for anti-aliased text.
+- [✅] Follow-up — AA text: `gfx2d::aa_draw_text` (`78ae59e`) rasterizes TTF
+      glyph outlines through tiny-skia with `anti_alias = true` and blits;
+      it's the `Aa::Smooth` mode of `tty::TtyConsole` (DEMO 39: 1661 AA-edge px).
+- [ ] Follow-ups still open: grow a real drawing API; gradients/clips.
 
 ## M9 — NVMe driver `[  ]`
 
@@ -283,9 +292,10 @@ IP kept as fallback). Skips cleanly without `-netdev`. With network: 121 PASS.
 - [x] DEMO 16 calls `dns::resolve` first (falls back to hardcoded IP)
 - [x] DEMO 34 resolves example.com over SLIRP (10.0.2.3) + cache check
 
-*Known intermittent (not M12):* DEMO 27's "sibling Blocked after sleep"
-assertion is a fragile timing race that occasionally flakes under `-netdev`
-latency; passed in the validation run. Tighten or de-flake separately.
+*De-flaked (was "known intermittent, not M12"):* DEMO 27's "sibling Blocked
+after sleep" assertion is **FIXED 2026-05-22 (`78ae59e`)** — the fixed-sleep
+one-shot now polls (1 tick × up to 200) and succeeds the instant Blocked is
+seen ("Blocked after 1 tick").
 
 ## M13 — Chunked-transfer-encoding parser `[✅]`
 
@@ -383,9 +393,16 @@ Depends on: Phase 9 done (FS + paths + syscalls), Phase 10 done
 (Wi-Fi + DNS, so the agent can reach Anthropic). Framebuffer +
 fonts (M6 + M7) are visual prerequisites.
 
-## M19 — TTY layer `[  ]`
+## M19 — TTY layer `[🔨 renderer landed]`
 
 The framebuffer console is write-only today. A shell needs bidirectional.
+
+**Already in hand (`78ae59e`, DEMO 39):** `tty::TtyConsole` is the output-side
+renderer this milestone needs — a cursor-managed console with newline, right-
+edge wrap, region scroll, fg/bg color, and M7-sharp / M8-AA glyph modes. A
+64 KB scrollback ring also already exists in `framebuffer.rs` (currently used
+by the bitmap console's post-fault replay). M19 is now mostly the *input* +
+*ANSI* + *per-process stdio* work on top of that renderer.
 
 **Done when:**
 - [ ] Buffered stdin sourced from the USB keyboard driver (M3) with
@@ -393,10 +410,12 @@ The framebuffer console is write-only today. A shell needs bidirectional.
 - [ ] ANSI escape sequence handler in the framebuffer output path
       (cursor positioning, color, screen clear, scroll region) — the
       minimum subset any TUI program assumes
-- [ ] Scrollback buffer (~100 lines) so output isn't lost on scroll
+- [~] Scrollback buffer (~100 lines) — a 64 KB byte ring exists
+      (`framebuffer.rs`); needs wiring into the `TtyConsole` render path
 - [ ] Per-process stdin/stdout/stderr (today there's just one global
       println!) so multiple programs can read/write independently
-- [ ] DEMO 32 echoes typed characters back through ANSI-coloured output
+- [ ] DEMO 40 echoes typed characters back through ANSI-coloured output
+      (note: DEMO 39 is now the TTF/AA console; next free DEMO is 40)
 
 ## M20 — Native shell (`sem-sh` or similar) `[  ]`
 
