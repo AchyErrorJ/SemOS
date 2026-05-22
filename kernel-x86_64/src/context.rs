@@ -256,6 +256,7 @@ fn kernel_stack_guard(slot: usize) -> u64 {
 /// Public debug accessor — same as kernel_stack_top.
 pub fn debug_kstack_top(slot: usize) -> u64 { kernel_stack_top(slot) }
 
+
 // ============================================================================
 // Task #40 diagnostic: context-switch ring buffer
 // ============================================================================
@@ -602,20 +603,36 @@ pub unsafe extern "C" fn context_switch(old: *mut TaskContext, new: *const TaskC
         "pop rax",
         "mov [rdi + 64], rax",
 
-        // Restore new context from new (rsi)
+        // Restore new context from new (rsi).
         "mov rbx, [rsi + 0]",
         "mov rbp, [rsi + 8]",
         "mov r12, [rsi + 16]",
         "mov r13, [rsi + 24]",
         "mov r14, [rsi + 32]",
         "mov r15, [rsi + 40]",
-        "mov rsp, [rsi + 48]",
-        // Restore rflags
-        "mov rax, [rsi + 64]",
-        "push rax",
-        "popfq",
-        // Jump to the new task's saved RIP — equivalent to `ret` minus the pop.
-        "jmp [rsi + 56]",
+        // Transfer to the new task ATOMICALLY via IRETQ instead of
+        // `popfq; jmp`. The old sequence had a one-instruction window after
+        // `popfq` (IF re-enabled) before the `jmp [rsi+56]`, with the new
+        // rsp already loaded: a timer firing there would push a frame onto
+        // the new stack and reschedule mid-switch; on resume context_switch
+        // re-ran `jmp [rsi+56]` with a now-stale rsi → garbage jump / stack
+        // overshoot → #DF. That was the long-unconfirmed task#40 / #56 root
+        // cause (a *torn context switch* — found via a timer iret frame whose
+        // saved RIP landed inside context_switch). `schedule()` already cli'd,
+        // so IF stays 0 right up to the IRETQ, which then restores rip, the
+        // new task's rflags (real IF), and rsp together in one uninterruptible
+        // step. context_switch always resumes Ring-0 code (schedule epilogue,
+        // a trampoline, or a kernel-task entry), so CS/SS are the kernel
+        // selectors; the eventual drop to Ring 3 happens later via a
+        // trampoline's own IRETQ. In long mode IRETQ always pops all five
+        // words even without a privilege change.
+        "mov rsp, [rsi + 48]",   // switch to the new task's stack
+        "push 0x10",             // SS  = kernel data
+        "push [rsi + 48]",       // RSP = new task rsp
+        "push [rsi + 64]",       // RFLAGS (new task's, IF as saved)
+        "push 0x8",              // CS  = kernel code
+        "push [rsi + 56]",       // RIP = new task rip
+        "iretq",
     );
 }
 
