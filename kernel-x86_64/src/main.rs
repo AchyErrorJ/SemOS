@@ -3470,22 +3470,39 @@ fn spawn_demo() {
 /// SYS_DNS_RESOLVE + SYS_TCP_* syscalls over the kernel smoltcp stack.
 /// Skips cleanly when the net stack isn't up (run with `-netdev user`).
 fn net_demo() {
-    // DEFERRED — blocked on the task#40 context-switch race (#56), not on the
-    // net code. The std::net syscalls are now NON-BLOCKING (one net::poll +
-    // one try; the shim drives the wait in user space) — the right
-    // architecture, and it removes the long in-kernel poll loop that first
-    // drew suspicion. But spawning net-demo still #DFs: the faulting RIP is in
-    // `schedule()`'s epilogue (first `pop` after `context_switch` returns) on
-    // a *different* slot, and net-demo never even reaches its first println —
-    // so its own code never runs. This is the long-standing task#40
-    // context-switch resume corruption (unconfirmed root cause; "can't be
-    // observed under instrumentation"), tripped here by the system state when
-    // net-demo is added as the 16th task under this binary layout. Fixing it
-    // means resolving task#40 itself. net-demo stays unspawned so no config
-    // crashes. DNS is live in DEMO 34; kernel TCP in 12/16.
-    println!("  [DEMO 36] DEFERRED: std::net syscalls (now non-blocking, #56) +");
-    println!("  [DEMO 36]   semos-std::net landed; net-demo spawn withheld — it trips");
-    println!("  [DEMO 36]   the task#40 context-switch race (#56). DNS live in DEMO 34.");
+    use kernel_core::syscall::{dispatch, numbers::*};
+    if !kernel_core::net::is_initialized() {
+        println!("  [DEMO 36] SKIPPED: net stack not initialized (run with -netdev user)");
+        return;
+    }
+    let path = "/bin/net-demo";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 36] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 36] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => { println!("  [DEMO 36] FAIL: PID {} has no task_id", pid); return; }
+    };
+    // net-demo: resolve + TCP HTTP round-trip via the non-blocking net
+    // syscalls (#56) — generous budget for the user-space poll loop.
+    let mut polled = 0u64;
+    loop {
+        if kernel_core::scheduler::task_state(slot) == kernel_core::scheduler::TaskState::Exited { break; }
+        if polled > 30000 { println!("  [DEMO 36] FAIL: net-demo didn't exit within budget"); return; }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot);
+    if code != 0 {
+        println!("  [DEMO 36] FAIL: net-demo exit code = 0x{:X} (want 0)", code);
+        return;
+    }
+    println!("  [DEMO 36] PASS: net-demo exited 0 (resolve + TcpStream HTTP round-trip)");
+    println!("  [DEMO 36] => M25 std::net works end-to-end from a Ring-3 program");
 }
 
 /// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).
