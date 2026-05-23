@@ -49,7 +49,7 @@ A milestone is **done** when:
 | -netdev DEMO 15 hang FIXED 2026-05-23 | `ad540dd`: embedded-io TcpStream read/write now bounded by a 10 s idle deadline. The TLS handshake's ServerHello read spun forever when SLIRP raced port 1 to ESTABLISHED then went silent — hung the boot 350 s+. 4 consecutive -netdev boots clean after. |
 | M20 stage B 2026-05-23 | **sem-sh fs builtins + $VAR** (`b81251d`, DEMO 45): cat/ls/which/env builtins + `$VAR` expansion (inherited env). Suite **148 PASS**. |
 | M20 DONE 2026-05-23 | **sem-sh redirection + pipes** (`96fbaf9`, DEMO 46): `>`/`<` redirection + `|` pipelines (sequential v1). Kernel: SYS_WRITE→handle_fwrite routing + positional Path writes. Suite **150 PASS / 0 FAIL / 0 #DF**. M20 ✅ — shell complete. |
-| M19/M20 hardening 2026-05-23 | **pipe-end refcounting** (`0b4a6bb`) + **true `>>` append** (`763188a`). Suite **151 PASS / 0 FAIL / 0 #DF**. Concurrent pipes deferred (needs exit-time FD cleanup). Next: M21 editor / M22 agent. |
+| M19/M20 hardening 2026-05-23 | **pipe-end refcounting** (`0b4a6bb`) + **true `>>` append** (`763188a`) + **concurrent pipes** (`9d89dbb`: WOULDBLOCK reads + spawn-inherit refcount + exit-time FD cleanup + concurrent shell spawn). Suite **152 PASS / 0 FAIL / 0 #DF**. M19/M20 hardening done. Next: M21 editor / M22 agent. |
 
 ---
 
@@ -468,12 +468,11 @@ built on `semos-std`. **Done 2026-05-23** across stages A (`5398720`), B
       close-ordering dependency.
 - [✅] `>>` true-append (`763188a`) — `>` truncates, `>>` seeks to EOF; relies
       on the positional Path writes from stage C.
-- [ ] **concurrent pipes** (current is sequential, bounded by the 4 KiB pipe
-      buffer). Needs: balanced refcounting across spawn-inherit + **exit-time
-      FD cleanup** (process exit must decrement the pipe refs its FDs hold,
-      else an inherited write end never closes → reader hangs), plus a shell
-      change to spawn pipeline stages concurrently. Moderate kernel change;
-      deferred until a real >4 KiB streaming case (e.g. M22 `bash` tools) needs it.
+- [✅] **concurrent pipes** (`9d89dbb`) — external producer stages spawn
+      concurrently (Command::spawn, no wait); the consumer blocks in user space
+      on a WOULDBLOCK sentinel until EOF. Built on: spawn-inherit pipe
+      refcount increment + **exit-time FD cleanup** (a producer's exit drops
+      its write-end ref → consumer sees EOF). DEMO 46 `/bin/hello-std | cat`.
 - [ ] bare `env` enumeration (needs an enumerate syscall).
 
 **Gotcha (cost time in stage A):** a new user crate builds as PIE (ET_DYN)
