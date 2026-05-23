@@ -862,6 +862,13 @@ fn init_loader_task() {
     println!("================================================================");
     fd_redirect_demo();
 
+    // DEMO 42: FD inheritance across spawn — child inherits redirected stdout.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 42: FD inheritance on spawn (M19)");
+    println!("================================================================");
+    fd_inherit_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -3977,6 +3984,108 @@ fn fd_redirect_demo() {
 
     if cap_ok && restore_ok {
         println!("  [DEMO 41] => per-process FD table: stdio is routable (pipe redirect + restore)");
+    }
+}
+
+/// DEMO 42: FD inheritance across spawn. The parent redirects its own stdout
+/// (fd 1) to a pipe, then spawns `/bin/hello-std`. The child inherits a copy
+/// of the parent's FD table, so its fd 1 is the same pipe write end — its
+/// `println!` (SYS_WRITE → fd 1) lands in the pipe instead of the console. We
+/// verify two ways: (1) the child PCB's fd 1 is a pipe write end (inheritance),
+/// and (2) the child's stdout text is recovered from the pipe read end.
+fn fd_inherit_demo() {
+    use kernel_core::process::{FdEntry, ProcessId};
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    // Pin the kernel process (PID 0) to the live scheduler slot so our own FD
+    // syscalls resolve to the kernel FD table. The boot/demo task's slot index
+    // drifts across SYS_SLEEP context switches and may land on a slot owned by
+    // a stale (exited) process; find_pid_by_task returns PID 0 first, so this
+    // pin wins regardless. We re-pin after the poll loop (slot drifts again).
+    let saved_kernel_task = kernel_core::process::kernel_task_id();
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+
+    // Parent sets up a pipe and redirects its stdout (fd 1) to the write end.
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        println!("  [DEMO 42] FAIL: SYS_PIPE failed");
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+
+    // Spawn the child; it inherits a copy of our (redirected) FD table.
+    // Keep fd 1 pointing at the pipe for now — kernel `println!` (the verdict
+    // lines) writes to serial directly, not via fd 1, so leaving the redirect
+    // in place doesn't disturb them, and restoring early would close the
+    // pipe's write end before the child gets to use it.
+    let path = "/bin/hello-std";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+
+    if pid == u64::MAX {
+        println!("  [DEMO 42] FAIL: SYS_SPAWN({}) returned MAX", path);
+        dispatch(SYS_DUP2, 0, 1, 0, 0);
+        dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+        dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+
+    // (1) Inheritance check: the child PCB's fd 1 is the pipe write end.
+    let child = ProcessId(pid as u32);
+    let inherited = matches!(
+        kernel_core::process::get(child).map(|p| p.fds.get(1).copied()),
+        Some(Some(FdEntry::Pipe { is_read_end: false, .. }))
+    );
+    if inherited {
+        println!("  [DEMO 42] PASS: child PID {} inherited fd1 = pipe write end", pid);
+    } else {
+        println!("  [DEMO 42] FAIL: child fd1 is not the inherited pipe");
+    }
+
+    // (2) Let the child run to exit (poll its slot only — no reads in the
+    // loop, which would churn our own task's block state). Its ~22-byte line
+    // fits the 4 KiB pipe buffer, so it won't block on the write.
+    let slot_child = kernel_core::process::get(child).and_then(|p| p.task_id);
+    if let Some(cs) = slot_child {
+        let mut polled = 0u64;
+        while kernel_core::scheduler::task_state(cs) != kernel_core::scheduler::TaskState::Exited
+            && polled < 500
+        {
+            let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+            polled += 1;
+        }
+    }
+
+    // Re-pin: the poll loop's SYS_SLEEPs drifted our slot, so re-establish the
+    // kernel process as the owner of the live slot before reading the pipe.
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+
+    // (3) Drain the child's stdout from the pipe read end (data is buffered).
+    let mut captured = [0u8; 256];
+    let clen = {
+        let n = dispatch(SYS_READ, read_fd, captured.as_mut_ptr() as u64, captured.len() as u64, 0);
+        if n == u64::MAX { 0 } else { (n as usize).min(captured.len()) }
+    };
+
+    let cap = &captured[..clen];
+    let needle = b"Hello from semos-std!";
+    let found = cap.windows(needle.len()).any(|w| w == needle);
+    if found {
+        println!("  [DEMO 42] PASS: child stdout captured via inherited pipe ({} bytes)", clen);
+    } else {
+        println!("  [DEMO 42] FAIL: child stdout not found in pipe ({} bytes)", clen);
+    }
+
+    // Restore our stdout to the console and clean up the pipe FDs.
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+    kernel_core::process::set_kernel_task_id(saved_kernel_task);
+
+    if inherited && found {
+        println!("  [DEMO 42] => spawn inherits the parent FD table — child stdio redirect works");
     }
 }
 

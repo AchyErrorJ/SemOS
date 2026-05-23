@@ -127,6 +127,7 @@ pub mod fd_flags {
 pub const MAX_FDS: usize = 64;
 
 /// File descriptor table
+#[derive(Clone, Copy)]
 pub struct FdTable {
     entries: [FdEntry; MAX_FDS],
     next_fd: usize,
@@ -933,6 +934,27 @@ pub fn spawn_from_elf_with_args(
             proc.cwd_len = parent_snap.1;
             proc.env = parent_snap.2;
             proc.env_len = parent_snap.3;
+        }
+        // Inherit the parent's FD table (fork/exec semantics): the child gets
+        // a copy, so any redirection the parent set up (e.g. dup2 of a pipe
+        // end onto fd 1) carries into the child. The real parent is the owner
+        // of the running scheduler slot (current_pid() isn't refreshed on
+        // switch); fall back to the kernel process. FdTable is Copy.
+        let fd_parent =
+            pid_for_slot(crate::scheduler::current_task_index()).unwrap_or(ProcessId::KERNEL);
+        if let Some(parent) = PROCESS_TABLE.get(fd_parent) {
+            proc.fds = parent.fds;
+        }
+        // The scheduler reuses task slots from exited processes, whose PCBs
+        // can linger with a stale `task_id`. Two PCBs sharing a task_id makes
+        // `pid_for_slot` (find_pid_by_task) ambiguous — it returns the lowest
+        // PID, which would route the new process's slot-keyed lookups (incl.
+        // its FD table) to the stale process. Clear any stale association on
+        // the slot we're about to take so it resolves uniquely to this child.
+        for p in PROCESS_TABLE.iter_mut() {
+            if p.task_id == Some(task_slot) {
+                p.task_id = None;
+            }
         }
         // The tier was already applied to the scheduler task by
         // `platform.spawn_user_task(...max_tier)` above; the PCB used to
