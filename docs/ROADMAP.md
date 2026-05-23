@@ -48,7 +48,8 @@ A milestone is **done** when:
 | M20 stage A 2026-05-23 | **sem-sh native shell** (`5398720`, DEMO 45): REPL reading cooked stdin (M19) + script mode, quote-aware parser, builtins (echo/pwd/cd/exit), external ELF exec via Command. Suite **147 PASS**. Gotcha: new user crate must be non-PIE (build.rs+link.ld) or println crashes — see feedback memory. |
 | -netdev DEMO 15 hang FIXED 2026-05-23 | `ad540dd`: embedded-io TcpStream read/write now bounded by a 10 s idle deadline. The TLS handshake's ServerHello read spun forever when SLIRP raced port 1 to ESTABLISHED then went silent — hung the boot 350 s+. 4 consecutive -netdev boots clean after. |
 | M20 stage B 2026-05-23 | **sem-sh fs builtins + $VAR** (`b81251d`, DEMO 45): cat/ls/which/env builtins + `$VAR` expansion (inherited env). Suite **148 PASS**. |
-| M20 DONE 2026-05-23 | **sem-sh redirection + pipes** (`96fbaf9`, DEMO 46): `>`/`<` redirection + `|` pipelines (sequential v1). Kernel: SYS_WRITE→handle_fwrite routing + positional Path writes. Suite **150 PASS / 0 FAIL / 0 #DF**. M20 ✅ — shell complete. Next: M21 editor / M22 agent. |
+| M20 DONE 2026-05-23 | **sem-sh redirection + pipes** (`96fbaf9`, DEMO 46): `>`/`<` redirection + `|` pipelines (sequential v1). Kernel: SYS_WRITE→handle_fwrite routing + positional Path writes. Suite **150 PASS / 0 FAIL / 0 #DF**. M20 ✅ — shell complete. |
+| M19/M20 hardening 2026-05-23 | **pipe-end refcounting** (`0b4a6bb`) + **true `>>` append** (`763188a`). Suite **151 PASS / 0 FAIL / 0 #DF**. Concurrent pipes deferred (needs exit-time FD cleanup). Next: M21 editor / M22 agent. |
 
 ---
 
@@ -461,10 +462,19 @@ built on `semos-std`. **Done 2026-05-23** across stages A (`5398720`), B
 - [ ] Job control deferred to a follow-up; not in v1.
 - [✅] DEMO 45 (REPL/builtins) + DEMO 46 (`echo > file; cat file; echo | cat`).
 
-**Follow-ups (not blocking):** concurrent pipes (current is sequential, bounded
-by the 4 KiB pipe buffer); `>>` true-append (currently same as `>`); per-fd
-pipe-end refcounting (the shell works around its absence by careful close
-ordering); bare `env` enumeration (needs a syscall).
+**Follow-ups:**
+- [✅] per-fd pipe-end refcounting (`0b4a6bb`) — readers/writers counts; dup
+      increments, close decrements, EOF at 0. Removed the shell's fragile
+      close-ordering dependency.
+- [✅] `>>` true-append (`763188a`) — `>` truncates, `>>` seeks to EOF; relies
+      on the positional Path writes from stage C.
+- [ ] **concurrent pipes** (current is sequential, bounded by the 4 KiB pipe
+      buffer). Needs: balanced refcounting across spawn-inherit + **exit-time
+      FD cleanup** (process exit must decrement the pipe refs its FDs hold,
+      else an inherited write end never closes → reader hangs), plus a shell
+      change to spawn pipeline stages concurrently. Moderate kernel change;
+      deferred until a real >4 KiB streaming case (e.g. M22 `bash` tools) needs it.
+- [ ] bare `env` enumeration (needs an enumerate syscall).
 
 **Gotcha (cost time in stage A):** a new user crate builds as PIE (ET_DYN)
 unless it copies `build.rs` + `link.ld` + `.cargo/config` (non-PIE EXEC at
