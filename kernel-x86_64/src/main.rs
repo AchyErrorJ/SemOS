@@ -4001,9 +4001,14 @@ fn fd_redirect_demo() {
     let msg = b"per-process-stdout\n";
     let w = dispatch(SYS_WRITE, msg.as_ptr() as u64, msg.len() as u64, 0, 0);
 
-    // 4. Read it back from the pipe read end.
+    // 4. Read it back from the pipe read end. (A pipe read returns
+    // u64::MAX-1 = WOULDBLOCK when empty-but-open; treat that and errors as 0.)
+    let read_pipe = |rfd: u64, buf: &mut [u8]| -> usize {
+        let r = dispatch(SYS_READ, rfd, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+        if r == u64::MAX || r == u64::MAX - 1 { 0 } else { (r as usize).min(buf.len()) }
+    };
     let mut rbuf = [0u8; 64];
-    let got = dispatch(SYS_READ, read_fd, rbuf.as_mut_ptr() as u64, rbuf.len() as u64, 0) as usize;
+    let got = read_pipe(read_fd, &mut rbuf);
     let captured = &rbuf[..got.min(rbuf.len())];
     let cap_ok = redirect_ok && w == msg.len() as u64 && captured == msg;
     if cap_ok {
@@ -4017,7 +4022,7 @@ fn fd_redirect_demo() {
     dispatch(SYS_DUP2, 0, 1, 0, 0);
     let after = b"this-goes-to-console\n";
     dispatch(SYS_WRITE, after.as_ptr() as u64, after.len() as u64, 0, 0);
-    let got2 = dispatch(SYS_READ, read_fd, rbuf.as_mut_ptr() as u64, rbuf.len() as u64, 0) as usize;
+    let got2 = read_pipe(read_fd, &mut rbuf);
     let restore_ok = got2 == 0;
     if restore_ok {
         println!("  [DEMO 41] PASS: after restore, fd1 writes go to console (pipe got 0 more bytes)");
@@ -4115,10 +4120,11 @@ fn fd_inherit_demo() {
     kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
 
     // (3) Drain the child's stdout from the pipe read end (data is buffered).
+    // WOULDBLOCK (u64::MAX-1) / error → 0.
     let mut captured = [0u8; 256];
     let clen = {
         let n = dispatch(SYS_READ, read_fd, captured.as_mut_ptr() as u64, captured.len() as u64, 0);
-        if n == u64::MAX { 0 } else { (n as usize).min(captured.len()) }
+        if n == u64::MAX || n == u64::MAX - 1 { 0 } else { (n as usize).min(captured.len()) }
     };
 
     let cap = &captured[..clen];
@@ -4366,7 +4372,7 @@ fn shell_demo() {
     let mut cap = [0u8; 512];
     let n = {
         let r = dispatch(SYS_READ, read_fd, cap.as_mut_ptr() as u64, cap.len() as u64, 0);
-        if r == u64::MAX { 0 } else { (r as usize).min(cap.len()) }
+        if r == u64::MAX || r == u64::MAX - 1 { 0 } else { (r as usize).min(cap.len()) }
     };
     let out = &cap[..n];
     let has = |needle: &[u8]| out.windows(needle.len()).any(|w| w == needle);
@@ -4427,7 +4433,7 @@ fn shell_pipe_demo() {
         return;
     }
 
-    for &b in b"echo redir-out > /shc2\ncat /shc2\necho via-pipe | cat\necho AA > /shc3\necho BB >> /shc3\ncat /shc3\nexit\n" {
+    for &b in b"echo redir-out > /shc2\ncat /shc2\necho via-pipe | cat\necho AA > /shc3\necho BB >> /shc3\ncat /shc3\n/bin/hello-std | cat\nexit\n" {
         tty::input_push(b);
     }
 
@@ -4447,11 +4453,18 @@ fn shell_pipe_demo() {
     let mut cap = [0u8; 512];
     let mut clen = 0usize;
     let mut empties = 0;
-    while clen < cap.len() && empties < 3 {
+    while clen < cap.len() && empties < 5 {
         let r = dispatch(SYS_READ, read_fd, cap[clen..].as_mut_ptr() as u64, (cap.len() - clen) as u64, 0);
         if r == u64::MAX { break; }
+        // WOULDBLOCK (u64::MAX-1) or 0 → no data right now.
+        if r == u64::MAX - 1 || r == 0 {
+            empties += 1;
+            let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+            continue;
+        }
         let n = (r as usize).min(cap.len() - clen);
-        if n == 0 { empties += 1; } else { clen += n; empties = 0; }
+        clen += n;
+        empties = 0;
     }
     let out = &cap[..clen];
     let has = |needle: &[u8]| out.windows(needle.len()).any(|w| w == needle);
@@ -4459,6 +4472,7 @@ fn shell_pipe_demo() {
     let redir_ok = has(b"redir-out"); // echo > file, then cat file → stdout
     let pipe_ok = has(b"via-pipe"); // echo | cat → stdout
     let append_ok = has(b"AA") && has(b"BB"); // > then >> kept both lines
+    let conc_ok = has(b"Hello from semos-std!"); // external producer | cat (concurrent)
     if redir_ok {
         println!("  [DEMO 46] PASS: `echo > /shc2` + `cat /shc2` round-tripped via file redirection");
     } else {
@@ -4471,9 +4485,14 @@ fn shell_pipe_demo() {
     }
     if append_ok {
         println!("  [DEMO 46] PASS: `> AA` then `>> BB` — append kept both lines (cat → AA+BB)");
-        println!("  [DEMO 46] => M20 stage C: redirection (>, >>) + pipes (FD inheritance + SYS_PIPE/DUP2)");
     } else {
         println!("  [DEMO 46] FAIL: append — {} bytes {:?}", clen, out);
+    }
+    if conc_ok {
+        println!("  [DEMO 46] PASS: `/bin/hello-std | cat` — concurrent external producer → consumer");
+        println!("  [DEMO 46] => M20 stage C: redirection (>, >>) + pipes (sequential + concurrent)");
+    } else {
+        println!("  [DEMO 46] FAIL: concurrent pipe — {} bytes {:?}", clen, out);
     }
 
     dispatch(SYS_DUP2, 0, 1, 0, 0);

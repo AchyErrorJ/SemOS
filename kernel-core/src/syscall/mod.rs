@@ -355,9 +355,16 @@ fn pipe_write_blocking(pipe_id: usize, buf_ptr: u64, buf_len: u64) -> u64 {
     }
 }
 
-/// Read from pipe `pipe_id` (read end) into the user buffer. Mirrors the old
-/// fread pipe branch: blocks (BlockReason::PipeRead) when empty + write end
-/// open; returns the byte count (0 = nothing yet / EOF semantics per ipc).
+/// Read from pipe `pipe_id` (read end) into the user buffer (non-blocking).
+///
+/// Returns: `n>0` = bytes read; `0` = true EOF (no writers left); and
+/// `NET_WOULDBLOCK` = empty but a writer is still open (try again later).
+/// The distinct would-block sentinel — vs. collapsing both empty cases to 0 —
+/// is what lets a consumer like `cat` block in user space until real EOF,
+/// which concurrent pipelines need (the producer writes while the consumer
+/// reads). Kernel-context readers that just poll treat WOULDBLOCK as "nothing
+/// right now". For a sequential pipe the writer is already closed, so this
+/// returns EOF (0) immediately.
 fn pipe_read_blocking(pipe_id: usize, buf_ptr: u64, buf_len: u64) -> u64 {
     let len = (buf_len as usize).min(4096);
     let mut tmp = [0u8; 4096];
@@ -370,17 +377,9 @@ fn pipe_read_blocking(pipe_id: usize, buf_ptr: u64, buf_len: u64) -> u64 {
                     dest.copy_from_slice(&read_buf[..n]);
                 }
             }
-            n as u64
+            n as u64 // n>0 = data, n==0 = EOF (no writers left)
         }
-        None => {
-            let idx = crate::scheduler::current_task_index();
-            unsafe {
-                let tasks = &raw mut crate::scheduler::TASKS;
-                (*tasks)[idx].state = crate::scheduler::TaskState::Blocked;
-                (*tasks)[idx].block_reason = crate::scheduler::BlockReason::PipeRead(pipe_id);
-            }
-            0
-        }
+        None => numbers::NET_WOULDBLOCK, // empty, writer still open
     }
 }
 
@@ -420,6 +419,11 @@ fn stdin_drain(buf_ptr: u64, len: usize) -> u64 {
 }
 
 fn handle_exit(code: u64) -> u64 {
+    // Release any pipe-end FDs this process held so the other end of a pipe
+    // sees EOF / broken-pipe (a producer exiting closes its write end → the
+    // downstream reader's blocking read returns EOF). Must run before we mark
+    // the task Exited.
+    crate::process::release_pipe_fds();
     // Publish the exit code before transitioning to Exited so any
     // SYS_THREAD_JOIN waiter (task #45) can read it via
     // scheduler::task_exit_code once pick_next unblocks it.

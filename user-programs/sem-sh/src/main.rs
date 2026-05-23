@@ -264,111 +264,136 @@ fn run_command(line: &str) -> i32 {
     }
 }
 
-/// Run a single pipeline stage, applying `>`/`>>`/`<` redirections to the
-/// shell's own fd 0/1 around the command (saved via dup, restored after) so
-/// both builtins and external programs (which inherit on spawn) are redirected.
-fn run_with_redirects(seg: &[String]) -> i32 {
-    const O_CREATE: u64 = 1 << 0;
-    const O_RDONLY: u64 = 0;
-    let mut argv: Vec<String> = Vec::new();
-    let mut out_file: Option<(String, bool)> = None; // (path, append?)
-    let mut in_file: Option<String> = None; // `<`
+/// Split a stage's tokens into (argv, out-redirect (path, append), in-redirect).
+fn parse_redirects(seg: &[String]) -> (Vec<String>, Option<(String, bool)>, Option<String>) {
+    let mut argv = Vec::new();
+    let mut out_file = None;
+    let mut in_file = None;
     let mut i = 0;
     while i < seg.len() {
         match seg[i].as_str() {
-            ">" => {
-                i += 1;
-                if i < seg.len() {
-                    out_file = Some((seg[i].clone(), false));
-                }
-            }
-            ">>" => {
-                i += 1;
-                if i < seg.len() {
-                    out_file = Some((seg[i].clone(), true));
-                }
-            }
-            "<" => {
-                i += 1;
-                if i < seg.len() {
-                    in_file = Some(seg[i].clone());
-                }
-            }
+            ">" => { i += 1; if i < seg.len() { out_file = Some((seg[i].clone(), false)); } }
+            ">>" => { i += 1; if i < seg.len() { out_file = Some((seg[i].clone(), true)); } }
+            "<" => { i += 1; if i < seg.len() { in_file = Some(seg[i].clone()); } }
             _ => argv.push(seg[i].clone()),
         }
         i += 1;
     }
+    (argv, out_file, in_file)
+}
+
+/// Redirect fd 1 to `path` (saving the old fd 1 via dup). `>` truncates,
+/// `>>` seeks to EOF. Returns the saved fd to restore, or None if open failed.
+fn redirect_out(path: &str, append: bool) -> Option<u64> {
+    let fd = fd_open(path, 1 /*CREATE*/);
+    if fd == u64::MAX {
+        return None;
+    }
+    if append {
+        let size = unsafe { syscall2(SYS_STAT, path.as_ptr() as u64, path.len() as u64) };
+        if size != u64::MAX {
+            unsafe { syscall2(SYS_SEEK, fd, size) };
+        }
+    } else {
+        unsafe { syscall3(SYS_TRUNCATE, path.as_ptr() as u64, path.len() as u64, 0) };
+    }
+    let saved = fd_dup(1);
+    fd_dup2(fd, 1);
+    fd_close(fd);
+    Some(saved)
+}
+
+/// Redirect fd 0 from `path` (saving the old fd 0). Returns saved fd or None.
+fn redirect_in(path: &str) -> Option<u64> {
+    let fd = fd_open(path, 0 /*RDONLY*/);
+    if fd == u64::MAX {
+        return None;
+    }
+    let saved = fd_dup(0);
+    fd_dup2(fd, 0);
+    fd_close(fd);
+    Some(saved)
+}
+
+/// Restore a saved fd onto `which` (fd 0 or 1), if any.
+fn restore_fd(saved: Option<u64>, which: u64) {
+    if let Some(s) = saved {
+        fd_dup2(s, which);
+        fd_close(s);
+    }
+}
+
+/// Build a `Command` for an external program (`name` → `/bin/name`).
+fn build_command(argv: &[String]) -> process::Command {
+    let prog = &argv[0];
+    let path = if prog.starts_with('/') {
+        prog.clone()
+    } else {
+        format!("/bin/{}", prog)
+    };
+    let mut cmd = process::Command::new(&path);
+    for a in &argv[1..] {
+        cmd.arg(a.as_str());
+    }
+    cmd
+}
+
+/// Run a single command (no pipe), applying its `>`/`>>`/`<` redirections to
+/// the shell's own fd 0/1 (saved via dup, restored after) so both builtins and
+/// external programs (which inherit on spawn) are redirected.
+fn run_with_redirects(seg: &[String]) -> i32 {
+    let (argv, out_file, in_file) = parse_redirects(seg);
     if argv.is_empty() {
         return 0;
     }
-
-    let mut saved_out: Option<u64> = None;
-    let mut saved_in: Option<u64> = None;
-    if let Some((path, append)) = &out_file {
-        let fd = fd_open(path, O_CREATE);
-        if fd != u64::MAX {
-            if *append {
-                // Seek the FD cursor to EOF so writes append.
-                let size = unsafe { syscall2(SYS_STAT, path.as_ptr() as u64, path.len() as u64) };
-                if size != u64::MAX {
-                    unsafe { syscall2(SYS_SEEK, fd, size) };
-                }
-            } else {
-                // `>` truncates: clear existing content, write from offset 0.
-                unsafe { syscall3(SYS_TRUNCATE, path.as_ptr() as u64, path.len() as u64, 0) };
+    let saved_out = match &out_file {
+        Some((p, ap)) => match redirect_out(p, *ap) {
+            s @ Some(_) => s,
+            None => {
+                println!("sem-sh: {}: cannot open for writing", p);
+                return 1;
             }
-            saved_out = Some(fd_dup(1));
-            fd_dup2(fd, 1);
-            fd_close(fd);
-        } else {
-            println!("sem-sh: {}: cannot open for writing", path);
-            return 1;
-        }
-    }
-    if let Some(path) = &in_file {
-        let fd = fd_open(path, O_RDONLY);
-        if fd != u64::MAX {
-            saved_in = Some(fd_dup(0));
-            fd_dup2(fd, 0);
-            fd_close(fd);
-        } else {
-            if let Some(s) = saved_out {
-                fd_dup2(s, 1);
-                fd_close(s);
+        },
+        None => None,
+    };
+    let saved_in = match &in_file {
+        Some(p) => match redirect_in(p) {
+            s @ Some(_) => s,
+            None => {
+                restore_fd(saved_out, 1);
+                println!("sem-sh: {}: cannot open for reading", p);
+                return 1;
             }
-            println!("sem-sh: {}: cannot open for reading", path);
-            return 1;
-        }
-    }
-
+        },
+        None => None,
+    };
     let status = dispatch_argv(&argv);
-
-    // Restore. Overwriting fd1/fd0 closes the redirect target's FD entry.
-    if let Some(s) = saved_out {
-        fd_dup2(s, 1);
-        fd_close(s);
-    }
-    if let Some(s) = saved_in {
-        fd_dup2(s, 0);
-        fd_close(s);
-    }
+    restore_fd(saved_out, 1);
+    restore_fd(saved_in, 0);
     status
 }
 
-/// Run a `a | b | c` pipeline. v1 is sequential: each stage runs to
-/// completion with its stdout on the pipe, then we close the write end so the
-/// next stage's stdin sees EOF and reads the buffered data. Works for
-/// intermediate data up to the kernel pipe buffer (4 KiB); true concurrent
-/// pipes are a follow-up.
+/// Run a `a | b | c` pipeline. Non-last *external* stages are spawned
+/// concurrently (they inherit the wired stdin/stdout and run under the
+/// scheduler); builtins and the final stage run synchronously in the shell.
+/// Concurrency relies on the kernel machinery: a blocking-read consumer waits
+/// on WOULDBLOCK while the producer fills the pipe, and the producer's exit
+/// (exit-time FD cleanup) drops its write-end ref → the consumer sees EOF.
 fn run_pipeline(segments: &[Vec<String>]) -> i32 {
+    let mut children: Vec<process::Child> = Vec::new();
     let mut prev_read: Option<u64> = None;
     let mut status = 0;
     let last = segments.len() - 1;
     for (idx, seg) in segments.iter().enumerate() {
-        // stdin ← previous stage's pipe read end. Note: dup2 copies the entry
-        // (pipe ends aren't fd-refcounted), so we must NOT close the original
-        // `r` until after the stage runs — closing it now would shut the
-        // pipe's read end and deactivate it before the reader drains it.
+        let (argv, out_file, in_file) = parse_redirects(seg);
+        if argv.is_empty() {
+            if let Some(r) = prev_read {
+                fd_close(r);
+            }
+            prev_read = None;
+            continue;
+        }
+        // Wire stdin ← previous stage's pipe read end.
         let mut saved_in: Option<u64> = None;
         let mut consumed_read: Option<u64> = None;
         if let Some(r) = prev_read {
@@ -376,7 +401,7 @@ fn run_pipeline(segments: &[Vec<String>]) -> i32 {
             fd_dup2(r, 0);
             consumed_read = Some(r);
         }
-        // stdout → a fresh pipe write end (unless this is the last stage).
+        // Wire stdout → a fresh pipe write end (unless this is the last stage).
         let mut saved_out: Option<u64> = None;
         let mut next_read: Option<u64> = None;
         if idx != last {
@@ -387,21 +412,26 @@ fn run_pipeline(segments: &[Vec<String>]) -> i32 {
                 next_read = Some(r);
             }
         }
+        // Within-stage redirects override the pipe fds for this stage.
+        let r_out = out_file.as_ref().and_then(|(p, ap)| redirect_out(p, *ap));
+        let r_in = in_file.as_ref().and_then(|p| redirect_in(p));
 
-        status = run_with_redirects(seg);
+        if is_builtin(&argv[0]) || idx == last {
+            // Builtin (any position) or the final stage: run synchronously.
+            status = dispatch_argv(&argv);
+        } else {
+            // External producer: spawn concurrently (inherits the wired fds).
+            match build_command(&argv).spawn() {
+                Ok(c) => children.push(c),
+                Err(_) => println!("sem-sh: command not found: {}", argv[0]),
+            }
+        }
 
-        // Restore stdout — overwriting fd 1 closes this stage's pipe write
-        // end, so the next stage reading stdin sees EOF after the buffered data.
-        if let Some(s) = saved_out {
-            fd_dup2(s, 1);
-            fd_close(s);
-        }
-        if let Some(s) = saved_in {
-            fd_dup2(s, 0);
-            fd_close(s);
-        }
-        // Now safe to drop the consumed read end (restore above already shut
-        // fd 0's copy; this close is idempotent on the now-inactive pipe).
+        // Restore within-stage redirects, then the pipe fds.
+        restore_fd(r_out, 1);
+        restore_fd(r_in, 0);
+        restore_fd(saved_out, 1);
+        restore_fd(saved_in, 0);
         if let Some(r) = consumed_read {
             fd_close(r);
         }
@@ -409,6 +439,10 @@ fn run_pipeline(segments: &[Vec<String>]) -> i32 {
     }
     if let Some(r) = prev_read {
         fd_close(r);
+    }
+    // Wait for all concurrently-spawned producers.
+    for c in children.iter_mut() {
+        let _ = c.wait();
     }
     status
 }
@@ -457,15 +491,25 @@ fn dispatch_argv(argv: &[String]) -> i32 {
         "cat" => {
             if argv.len() == 1 {
                 // No files → copy stdin to stdout to EOF (used as a pipe
-                // filter). A pipe read returns 0 once the write end closes;
-                // the shell closes it before running the reader, so 0 = EOF.
+                // filter). SYS_READ returns n>0 for data, 0 for true EOF
+                // (all writers gone), or WOULDBLOCK (u64::MAX-1) while the
+                // pipe is empty but a writer is still open — block in user
+                // space on that so a concurrent producer can fill the pipe.
+                const WOULDBLOCK: u64 = u64::MAX - 1;
                 let mut buf = [0u8; 512];
                 loop {
                     let n = unsafe {
                         syscall3(SYS_READ, 0, buf.as_mut_ptr() as u64, buf.len() as u64)
                     };
-                    if n == 0 || n == u64::MAX {
-                        break;
+                    if n == u64::MAX {
+                        break; // read error
+                    }
+                    if n == WOULDBLOCK {
+                        unsafe { syscall1(SYS_SLEEP, 1) }; // wait for the producer
+                        continue;
+                    }
+                    if n == 0 {
+                        break; // EOF
                     }
                     let s = String::from_utf8_lossy(&buf[..n as usize]);
                     print!("{}", s);

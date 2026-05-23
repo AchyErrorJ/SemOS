@@ -674,6 +674,34 @@ pub fn current_mut() -> Option<&'static mut Process> {
     unsafe { PROCESS_TABLE.get_mut(current_pid()) }
 }
 
+/// Release all pipe-end FDs held by the process on the running scheduler slot
+/// (call when the process exits). Decrements each pipe end's ipc refcount so
+/// the other side sees EOF / broken-pipe once the last reference is gone, and
+/// clears the entries. Only pipe FDs matter for inter-process signalling;
+/// Console/Path/Ramfs FDs carry no cross-process ipc state. Never touches the
+/// kernel process (PID 0) — it doesn't exit.
+pub fn release_pipe_fds() {
+    let slot = crate::scheduler::current_task_index();
+    let pid = match pid_for_slot(slot) {
+        Some(p) if p != ProcessId::KERNEL => p,
+        _ => return,
+    };
+    unsafe {
+        if let Some(proc) = PROCESS_TABLE.get_mut(pid) {
+            for e in proc.fds.entries.iter_mut() {
+                if let FdEntry::Pipe { pipe_id, is_read_end } = *e {
+                    if is_read_end {
+                        crate::ipc::close_read_end(pipe_id as usize);
+                    } else {
+                        crate::ipc::close_write_end(pipe_id as usize);
+                    }
+                    *e = FdEntry::Empty;
+                }
+            }
+        }
+    }
+}
+
 /// Read the kernel process's current `task_id` (scheduler slot).
 pub fn kernel_task_id() -> Option<TaskId> {
     unsafe { PROCESS_TABLE.get(ProcessId::KERNEL).and_then(|p| p.task_id) }
@@ -944,6 +972,20 @@ pub fn spawn_from_elf_with_args(
             pid_for_slot(crate::scheduler::current_task_index()).unwrap_or(ProcessId::KERNEL);
         if let Some(parent) = PROCESS_TABLE.get(fd_parent) {
             proc.fds = parent.fds;
+        }
+        // Each inherited pipe-end FD is a new reference — bump the ipc
+        // refcounts so an inherited write end keeps the pipe open until this
+        // child closes it (on exit, see `release_pipe_fds`). Balances the
+        // exit-time release; without it concurrent producer→consumer pipes
+        // would EOF as soon as the parent dropped its own ref.
+        for e in proc.fds.entries.iter() {
+            if let FdEntry::Pipe { pipe_id, is_read_end } = *e {
+                if is_read_end {
+                    crate::ipc::dup_read_end(pipe_id as usize);
+                } else {
+                    crate::ipc::dup_write_end(pipe_id as usize);
+                }
+            }
         }
         // The scheduler reuses task slots from exited processes, whose PCBs
         // can linger with a stale `task_id`. Two PCBs sharing a task_id makes
