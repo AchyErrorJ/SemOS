@@ -50,7 +50,8 @@ A milestone is **done** when:
 | M20 stage B 2026-05-23 | **sem-sh fs builtins + $VAR** (`b81251d`, DEMO 45): cat/ls/which/env builtins + `$VAR` expansion (inherited env). Suite **148 PASS**. |
 | M20 DONE 2026-05-23 | **sem-sh redirection + pipes** (`96fbaf9`, DEMO 46): `>`/`<` redirection + `|` pipelines (sequential v1). Kernel: SYS_WRITE→handle_fwrite routing + positional Path writes. Suite **150 PASS / 0 FAIL / 0 #DF**. M20 ✅ — shell complete. |
 | M19/M20 hardening 2026-05-23 | **pipe-end refcounting** (`0b4a6bb`) + **true `>>` append** (`763188a`) + **concurrent pipes** (`9d89dbb`: WOULDBLOCK reads + spawn-inherit refcount + exit-time FD cleanup + concurrent shell spawn). Suite **152 PASS / 0 FAIL / 0 #DF**. |
-| M22 stage A 2026-05-23 | **Claude agent core** (`34ef9ee`, DEMO 47): `agent.rs` — Messages-API request framing + response parse (text + tool_use) + tool dispatch (read_file/write_file). No network. Suite **157 PASS / 0 FAIL / 0 #DF**. Stage B: live TLS round-trip. Stage C: loop + TUI + key + live demo. *(Note: -netdev DEMO 15 TLS stall recurred intermittently — passes on retry.)* |
+| M22 stage A 2026-05-23 | **Claude agent core** (`34ef9ee`, DEMO 47): `agent.rs` — Messages-API request framing + response parse (text + tool_use) + tool dispatch (read_file/write_file). No network. Suite **157 PASS**. |
+| M22 stage B + net fix 2026-05-23 | **agent live TLS round-trip** (`9da1f51`, DEMO 48): build_http_request + send_over_tls → HTTP 401 from api.anthropic.com (proves framing+TLS send/recv). Required **TcpStream reconnect fix** (`efd8c3c`: free smoltcp socket on Drop — a successful connection's close leaked it, hanging the next connect). Also: DEMO 15 stall DIAGNOSED — timeout mechanism sound (ticks advances), residual flake is in net::poll for the bogus port-1 target only; real TLS (16/48) reliable. Suite **158 PASS / 0 FAIL / 0 #DF**. Stage C: key + loop + bash/grep/glob + TUI. |
 
 ---
 
@@ -495,7 +496,7 @@ Edit source files in-place. Not vim-compatible, just usable.
 - [ ] Multi-file open (tabs or buffers)
 - [ ] DEMO 34 opens a file, edits a line, saves, re-reads to verify
 
-## M22 — Claude agent client (native Rust port) `[🔨 stage A: core landed]`
+## M22 — Claude agent client (native Rust port) `[🔨 stages A+B landed]`
 
 The reason for all of the above. A TUI agent like Claude Code but
 written for this kernel, talking to the Anthropic API over the
@@ -504,11 +505,15 @@ TLS stack from Phase 8 + Wi-Fi from Phase 10.
 **Stage A (`34ef9ee`, DEMO 47):** the agent *core*, no network — lives in
 `kernel-x86_64/src/agent.rs` (alloc + kernel syscall/TLS surface; the native
 TUI Ring-3 wrapper is a later refactor, needs TLS exposed to Ring-3).
+**Stage B (`9da1f51`, DEMO 48):** request over **live TLS** to api.anthropic
+.com — `build_http_request` + `send_over_tls` → HTTP 401 round-trip (no key).
+Required the TcpStream reconnect fix (`efd8c3c`: free the smoltcp socket on
+Drop) so the agent can open a fresh connection per call.
 
 **Done when:**
 - [ ] TUI render loop on M19/M20 (split panes, status line, scrollback) — stage C.
-- [~] Agent message loop — request framing (`build_request`) + response parse
-      (`parse_response`: text + tool_use) done; the live send + loop is stage B/C.
+- [~] Agent message loop — request framing + response parse + **live TLS
+      round-trip** done (stage B); the full send→parse→tools→resend loop is stage C.
 - [~] Tool use: `read_file`/`write_file` dispatch done (SYS_OPEN/FREAD/FWRITE);
       `bash` (via M20 sem-sh), `grep`, `glob` are stage C.
 - [ ] Multi-turn conversation with context management — message model + multi-
