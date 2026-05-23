@@ -4,4 +4,7 @@
 
 pub mod pipe;
 
-pub use pipe::{create_pipe, pipe_read, pipe_write, close_read_end, close_write_end, PipeId};
+pub use pipe::{
+    close_read_end, close_write_end, create_pipe, dup_read_end, dup_write_end, pipe_read,
+    pipe_write, PipeId,
+};

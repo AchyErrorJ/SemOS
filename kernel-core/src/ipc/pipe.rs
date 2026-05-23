@@ -30,10 +30,12 @@ struct Pipe {
     write_pos: usize,
     /// Number of bytes currently in the buffer.
     count: usize,
-    /// Is the read end still open?
-    read_open: bool,
-    /// Is the write end still open?
-    write_open: bool,
+    /// Open file descriptors referencing the read end (FDs are duplicated by
+    /// dup/dup2 and by FD-table inheritance on spawn). The read end is "closed"
+    /// when this hits 0.
+    readers: u32,
+    /// Open file descriptors referencing the write end.
+    writers: u32,
     /// Is this pipe slot allocated?
     active: bool,
 }
@@ -45,8 +47,8 @@ impl Pipe {
             read_pos: 0,
             write_pos: 0,
             count: 0,
-            read_open: false,
-            write_open: false,
+            readers: 0,
+            writers: 0,
             active: false,
         }
     }
@@ -101,8 +103,8 @@ pub fn create_pipe() -> Option<PipeId> {
                     read_pos: 0,
                     write_pos: 0,
                     count: 0,
-                    read_open: true,
-                    write_open: true,
+                    readers: 1,
+                    writers: 1,
                     active: true,
                 };
                 return Some(i);
@@ -126,8 +128,8 @@ pub fn pipe_read(id: PipeId, dst: &mut [u8]) -> Option<usize> {
 
         if pipe.count > 0 {
             Some(pipe.read(dst))
-        } else if !pipe.write_open {
-            Some(0) // EOF
+        } else if pipe.writers == 0 {
+            Some(0) // EOF — no writers left
         } else {
             None // Should block
         }
@@ -146,8 +148,8 @@ pub fn pipe_write(id: PipeId, src: &[u8]) -> Option<usize> {
         }
         let pipe = &mut (*pipes)[id];
 
-        if !pipe.read_open {
-            return Some(0); // Broken pipe
+        if pipe.readers == 0 {
+            return Some(0); // Broken pipe — no readers left
         }
 
         if pipe.free_space() > 0 {
@@ -158,27 +160,51 @@ pub fn pipe_write(id: PipeId, src: &[u8]) -> Option<usize> {
     }
 }
 
-/// Close the read end of a pipe.
+/// Increment the reader count (a read-end FD was duplicated).
+pub fn dup_read_end(id: PipeId) {
+    unsafe {
+        let pipes = &raw mut PIPES;
+        if id < MAX_PIPES && (*pipes)[id].active {
+            (*pipes)[id].readers += 1;
+        }
+    }
+}
+
+/// Increment the writer count (a write-end FD was duplicated).
+pub fn dup_write_end(id: PipeId) {
+    unsafe {
+        let pipes = &raw mut PIPES;
+        if id < MAX_PIPES && (*pipes)[id].active {
+            (*pipes)[id].writers += 1;
+        }
+    }
+}
+
+/// Close one reference to the read end. The end is "closed" (EOF to writers)
+/// only when the last reader FD goes away; the slot is freed when both ends
+/// have no references.
 pub fn close_read_end(id: PipeId) {
     unsafe {
         let pipes = &raw mut PIPES;
         if id < MAX_PIPES && (*pipes)[id].active {
-            (*pipes)[id].read_open = false;
-            if !(*pipes)[id].write_open {
-                (*pipes)[id].active = false;
+            let p = &mut (*pipes)[id];
+            p.readers = p.readers.saturating_sub(1);
+            if p.readers == 0 && p.writers == 0 {
+                p.active = false;
             }
         }
     }
 }
 
-/// Close the write end of a pipe.
+/// Close one reference to the write end (last writer → EOF to readers).
 pub fn close_write_end(id: PipeId) {
     unsafe {
         let pipes = &raw mut PIPES;
         if id < MAX_PIPES && (*pipes)[id].active {
-            (*pipes)[id].write_open = false;
-            if !(*pipes)[id].read_open {
-                (*pipes)[id].active = false;
+            let p = &mut (*pipes)[id];
+            p.writers = p.writers.saturating_sub(1);
+            if p.readers == 0 && p.writers == 0 {
+                p.active = false;
             }
         }
     }
@@ -189,7 +215,7 @@ pub fn has_data(id: PipeId) -> bool {
     unsafe {
         let pipes = &raw const PIPES;
         if id < MAX_PIPES && (*pipes)[id].active {
-            (*pipes)[id].count > 0 || !(*pipes)[id].write_open
+            (*pipes)[id].count > 0 || (*pipes)[id].writers == 0
         } else {
             true // Pipe gone → unblock so reader gets EOF/error
         }
@@ -201,7 +227,7 @@ pub fn has_space(id: PipeId) -> bool {
     unsafe {
         let pipes = &raw const PIPES;
         if id < MAX_PIPES && (*pipes)[id].active {
-            (*pipes)[id].free_space() > 0 || !(*pipes)[id].read_open
+            (*pipes)[id].free_space() > 0 || (*pipes)[id].readers == 0
         } else {
             true // Pipe gone → unblock so writer gets broken-pipe
         }

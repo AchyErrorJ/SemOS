@@ -1352,7 +1352,22 @@ fn handle_pipe(out_ptr: u64) -> u64 {
 /// duplicated by mapping only — the ipc endpoint refcount is unchanged, so
 /// the first close releases it (matches the prior behavior).
 fn handle_dup(old_fd: u64) -> u64 {
-    match crate::process::with_current_fds_mut(|t| t.dup(old_fd as i32)).flatten() {
+    let result = crate::process::with_current_fds_mut(|t| {
+        let new = t.dup(old_fd as i32)?;
+        // A duplicated pipe end is a new reference — bump the ipc refcount.
+        if let Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end }) =
+            t.get(new).copied()
+        {
+            if is_read_end {
+                crate::ipc::dup_read_end(pipe_id as usize);
+            } else {
+                crate::ipc::dup_write_end(pipe_id as usize);
+            }
+        }
+        Some(new)
+    })
+    .flatten();
+    match result {
         Some(new) => new as u64,
         None => u64::MAX,
     }
@@ -1376,7 +1391,20 @@ fn handle_dup2(old_fd: u64, new_fd: u64) -> u64 {
                 crate::ipc::close_write_end(pipe_id as usize);
             }
         }
-        t.dup2(old_fd as i32, new as i32)
+        let r = t.dup2(old_fd as i32, new as i32);
+        // If we copied a pipe end onto new_fd, that's a new reference.
+        if r.is_some() {
+            if let Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end }) =
+                t.get(new as i32).copied()
+            {
+                if is_read_end {
+                    crate::ipc::dup_read_end(pipe_id as usize);
+                } else {
+                    crate::ipc::dup_write_end(pipe_id as usize);
+                }
+            }
+        }
+        r
     })
     .flatten()
     .map(|n| n as u64)
