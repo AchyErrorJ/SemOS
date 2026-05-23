@@ -43,7 +43,8 @@ A milestone is **done** when:
 | Structural | #41 real guard pages between all task stacks; #54 std-shim opt-level workaround; #55 sequential Ring-3 spawn; per-task kernel stack → 128 KiB. **task#40 / #56 FIXED (`8c2cb21`): context_switch was a *torn control transfer* (`popfq; jmp` window where a timer preempted mid-switch) — now an atomic IRETQ. Closes the whole layout-sensitivity / iret-RIP-corruption family.** |
 | Cleanup 2026-05-22 | All HANDOFF open issues closed: **#55 re-verified** (`72a002f`, DEMO 28 → 0x2700); **DEMO 27 timing flake de-flaked** (`78ae59e`, poll-not-sleep); **M7/M8 wired into `tty::TtyConsole`** (`78ae59e`, DEMO 39 — the M19 renderer). Suite **132 PASS / 0 FAIL / 0 #DF** with `-netdev`. |
 | M19 slice 1 2026-05-22 | **TTY stdin + ANSI** (`716eafd`, DEMO 40): cooked-mode line discipline (`SYS_READ` fd 0, Backspace), `AnsiTty` (SGR color / 2J / K / H) over the TTF console. Suite **135 PASS**. |
-| M19 per-process stdio 2026-05-22 | **Full per-process FD-table refactor** (`673d948`+`efd444e`+`21dbd8f`, DEMO 41/42): all FDs (console/pipe/path/ramfs) live in the process `FdTable`; global PATH_FDS/PIPE_FDS deleted; stdio routable (dup2→pipe) + inherited on spawn; slot-keyed resolution + stale-task_id fix. Suite **140 PASS**. Remaining M19: arrow-key editing, scrollback wiring. |
+| M19 per-process stdio 2026-05-22 | **Full per-process FD-table refactor** (`673d948`+`efd444e`+`21dbd8f`, DEMO 41/42): all FDs (console/pipe/path/ramfs) live in the process `FdTable`; global PATH_FDS/PIPE_FDS deleted; stdio routable (dup2→pipe) + inherited on spawn; slot-keyed resolution + stale-task_id fix. Suite **140 PASS**. |
+| M19 DONE 2026-05-22 | **TTY complete** (`9787cb7` line editing + history, `93ca47c` scrollback; DEMO 43/44): in-line cursor + arrow keys (PS/2 0xE0 + USB HID → ESC[ABCD) + 8-line history; TtyConsole scrollback ring. Suite **145 PASS / 0 FAIL / 0 #DF**. M19 ✅ — next is M20 native shell. |
 
 ---
 
@@ -395,9 +396,13 @@ Depends on: Phase 9 done (FS + paths + syscalls), Phase 10 done
 (Wi-Fi + DNS, so the agent can reach Anthropic). Framebuffer +
 fonts (M6 + M7) are visual prerequisites.
 
-## M19 — TTY layer `[🔨 stdin + ANSI + per-process stdio done; line-editing/scrollback left]`
+## M19 — TTY layer `[✅]`
 
 The framebuffer console is write-only today. A shell needs bidirectional.
+**Done 2026-05-22** — renderer + stdin line-editing/history + ANSI output +
+per-process stdio + scrollback all landed and boot-validated (DEMO 39–44,
+145 PASS). Remaining nice-to-haves (ANSI scroll-region escapes, raw/cbreak
+mode) deferred to when M20/M22 actually need them.
 
 **Renderer (`78ae59e`, DEMO 39):** `tty::TtyConsole` — cursor-managed console
 with newline, wrap, region scroll, fg/bg color, M7-sharp / M8-AA glyph modes.
@@ -413,26 +418,22 @@ parent can redirect a child's stdio. Resolved via the live scheduler slot
 Validated 140 PASS / 0 FAIL / 0 #DF.
 
 **Done when:**
-- [~] Buffered stdin sourced from the keyboard with line-editing —
-      cooked-mode line discipline done (`tty::input_push`/`drain`, **Backspace**
-      + Enter commit), fed by both PS/2 and USB HID; surfaced as **`SYS_READ`
-      fd 0** (non-blocking). **Arrow-key editing still TODO.**
+- [✅] Buffered stdin with line-editing — cooked-mode line discipline
+      (`tty::input_push`/`drain`) with an in-line cursor, mid-line insert/
+      Backspace, **arrow keys** (`ESC[A/B/C/D`, emitted by PS/2 0xE0 + USB HID)
+      and **8-entry command history** (Up/Down). Surfaced as `SYS_READ` fd 0.
+      DEMO 43.
 - [✅] ANSI escape sequence handler (`tty::AnsiTty`): SGR color
       (30-37/90-97/39/0), clear screen (`2J`), clear-to-eol (`K`), cursor
       position (`H`/`f`). Cursor positioning uses a nominal cell width (font
       is proportional). Scroll-region escapes not yet parsed.
-- [~] Scrollback buffer (~100 lines) — a 64 KB byte ring exists
-      (`framebuffer.rs`); needs wiring into the `TtyConsole` render path
+- [✅] Scrollback — `TtyConsole` line-oriented scrollback ring (64 lines);
+      `show_scrollback(top)` re-renders scrolled-off output. DEMO 44.
 - [✅] Per-process stdin/stdout/stderr — done via the full per-process
       `FdTable` refactor (DEMO 41 routable stdout, DEMO 42 inherited-on-spawn).
-- [✅] DEMO 40 — injects `hi`+BS+`o`+Enter+`bye`+Enter, `SYS_READ`s back
-      `"ho\nbye\n"`, echoes it green via `ESC[32m` (365 green px), `ESC[2J`
-      clears the region. DEMO 41 = pipe-redirected stdout; DEMO 42 = FD
-      inheritance across spawn. (Next free DEMO is 43.)
-
-**Remaining for M19:** arrow-key line editing (needs the keyboard to deliver
-escape sequences for arrows), and wiring the 64 KB scrollback ring into the
-`TtyConsole` render path. Both small; the heavy lifting (stdio model) is done.
+- [✅] DEMOs 40–44: stdin+ANSI (40), pipe-redirected stdout (41), FD
+      inheritance across spawn (42), line editing + history (43), scrollback
+      (44). (Next free DEMO is 45.)
 
 ## M20 — Native shell (`sem-sh` or similar) `[  ]`
 
