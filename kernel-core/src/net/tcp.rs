@@ -210,25 +210,29 @@ impl TcpStream {
 
     /// Forcibly tear down the socket and release the buffer reservation.
     /// Use when you've reached a terminal state (CLOSED, the peer RST'd,
-    /// etc.) and want the slot free for the next connect.
+    /// etc.) and want the slot free for the next connect. The actual
+    /// removal happens in `Drop` when `self` falls out of scope here, so
+    /// the socket is never removed twice.
     pub fn release(self) {
+        // Drop does the work.
+    }
+}
+
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        // Fully remove the smoltcp socket from the SocketSet (not just the
+        // SOCKET_IN_USE reservation). Leaving it behind leaked a socket bound
+        // to the fixed LOCAL_PORT, so a *second* connect (e.g. the agent
+        // reconnecting after DEMO 16) added a colliding socket and never
+        // established — the connect hung. Removing it gives the next connect a
+        // clean slate. Single-socket model: exactly one TcpStream owns `handle`,
+        // so this removes it exactly once.
         unsafe {
             if let Some(sockets) = super::state::sockets_mut() {
                 sockets.remove(self.handle);
             }
             SOCKET_IN_USE = false;
         }
-    }
-}
-
-impl Drop for TcpStream {
-    fn drop(&mut self) {
-        // If a TcpStream is dropped without explicit `release()`, free
-        // the socket reservation so the next connect doesn't see
-        // SocketBusy. The smoltcp socket itself stays in the SocketSet
-        // until cleaned up — that's a small leak we'll fix when we
-        // implement a proper socket-reuse pool.
-        unsafe { SOCKET_IN_USE = false; }
     }
 }
 
