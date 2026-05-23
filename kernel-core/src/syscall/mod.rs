@@ -301,7 +301,10 @@ unsafe fn write_to_user(ptr: u64, data: &[u8]) -> bool {
 
 // --- Handler implementations ---
 
-fn handle_write(buf_ptr: u64, buf_len: u64) -> u64 {
+/// Write `buf` to the TTY console (the Console FD sink). This is the old
+/// global `handle_write` body, now reachable both as the default stdout
+/// path and as the `FdEntry::Console` action.
+fn console_write(buf_ptr: u64, buf_len: u64) -> u64 {
     let len = buf_len as usize;
     if len > 4096 { return u64::MAX; }
     unsafe {
@@ -314,21 +317,117 @@ fn handle_write(buf_ptr: u64, buf_len: u64) -> u64 {
     buf_len
 }
 
+/// SYS_WRITE(buf, len) — write to stdout, i.e. the running process's FD 1.
+/// Per-process: if the process redirected FD 1 (e.g. to a pipe), the bytes
+/// follow the redirect; otherwise (Console, or no process) they hit the TTY.
+fn handle_write(buf_ptr: u64, buf_len: u64) -> u64 {
+    write_to_fd(1, buf_ptr, buf_len)
+}
+
+/// Route a write to whatever the running process's FD `fd` points at.
+/// Console (and the no-process fallback) → TTY; pipe write-end → pipe.
+/// Returns u64::MAX for a non-writable target (e.g. a pipe read end).
+/// File targets (Path/Ramfs) are not reachable via SYS_WRITE today; they
+/// go through SYS_FWRITE — see `handle_fwrite`.
+fn write_to_fd(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
+    match current_fd_entry(fd) {
+        Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end: false }) => {
+            pipe_write_blocking(pipe_id as usize, buf_ptr, buf_len)
+        }
+        Some(crate::process::FdEntry::Pipe { is_read_end: true, .. }) => u64::MAX,
+        // Console, or no per-process entry → TTY (today's behavior).
+        _ => console_write(buf_ptr, buf_len),
+    }
+}
+
+/// Copy out the running process's FD entry at `fd`, or None if there's no
+/// process for the live slot or the slot is Empty.
+fn current_fd_entry(fd: u64) -> Option<crate::process::FdEntry> {
+    crate::process::with_current_fds_mut(|fds| fds.get(fd as i32).copied()).flatten()
+}
+
+/// Write `buf` into pipe `pipe_id` (write end). Mirrors the old fwrite pipe
+/// branch: blocks the task (BlockReason::PipeWrite) when the pipe is full,
+/// returns u64::MAX on a broken pipe, else the byte count.
+fn pipe_write_blocking(pipe_id: usize, buf_ptr: u64, buf_len: u64) -> u64 {
+    let len = (buf_len as usize).min(4096);
+    let data = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, len) };
+    match crate::ipc::pipe_write(pipe_id, data) {
+        Some(0) => {
+            crate::platform::log("[syscall] write: broken pipe\n");
+            u64::MAX
+        }
+        Some(n) => n as u64,
+        None => {
+            let idx = crate::scheduler::current_task_index();
+            unsafe {
+                let tasks = &raw mut crate::scheduler::TASKS;
+                (*tasks)[idx].state = crate::scheduler::TaskState::Blocked;
+                (*tasks)[idx].block_reason = crate::scheduler::BlockReason::PipeWrite(pipe_id);
+            }
+            0
+        }
+    }
+}
+
+/// Read from pipe `pipe_id` (read end) into the user buffer. Mirrors the old
+/// fread pipe branch: blocks (BlockReason::PipeRead) when empty + write end
+/// open; returns the byte count (0 = nothing yet / EOF semantics per ipc).
+fn pipe_read_blocking(pipe_id: usize, buf_ptr: u64, buf_len: u64) -> u64 {
+    let len = (buf_len as usize).min(4096);
+    let mut tmp = [0u8; 4096];
+    let read_buf = &mut tmp[..len];
+    match crate::ipc::pipe_read(pipe_id, read_buf) {
+        Some(n) => {
+            if n > 0 {
+                unsafe {
+                    let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
+                    dest.copy_from_slice(&read_buf[..n]);
+                }
+            }
+            n as u64
+        }
+        None => {
+            let idx = crate::scheduler::current_task_index();
+            unsafe {
+                let tasks = &raw mut crate::scheduler::TASKS;
+                (*tasks)[idx].state = crate::scheduler::TaskState::Blocked;
+                (*tasks)[idx].block_reason = crate::scheduler::BlockReason::PipeRead(pipe_id);
+            }
+            0
+        }
+    }
+}
+
 /// SYS_READ(fd, buf_ptr, buf_len) → bytes read, or u64::MAX on bad fd.
 ///
-/// Only fd 0 (stdin) is wired today: it drains the platform TTY line
-/// discipline (cooked mode — bytes appear a line at a time on Enter).
-/// Non-blocking: returns 0 when no complete line is ready, so a Ring-3
-/// reader yields and retries (same contract as the net syscalls). Per-fd
-/// stdin/stdout/stderr routing through the process FD table is a follow-up.
+/// Per-process routing via the FD table: a pipe read-end reads the pipe; a
+/// Console fd (or fd 0 with no per-process entry) drains the TTY line
+/// discipline (cooked mode — bytes appear a line at a time on Enter,
+/// non-blocking, 0 = nothing ready). File reads go through SYS_FREAD.
 fn handle_read(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
-    if fd != 0 {
+    let len = buf_len as usize;
+    if len == 0 {
+        return 0;
+    }
+    if len > 4096 {
         return u64::MAX;
     }
-    let len = buf_len as usize;
-    if len == 0 || len > 4096 {
-        return if len == 0 { 0 } else { u64::MAX };
+    match current_fd_entry(fd) {
+        Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end: true }) => {
+            pipe_read_blocking(pipe_id as usize, buf_ptr, buf_len)
+        }
+        Some(crate::process::FdEntry::Pipe { is_read_end: false, .. }) => u64::MAX,
+        Some(crate::process::FdEntry::Console) => stdin_drain(buf_ptr, len),
+        // No per-process entry: fd 0 still means stdin (kernel-context demos,
+        // processes whose slot we can't resolve). Other fds are bad here.
+        None if fd == 0 => stdin_drain(buf_ptr, len),
+        _ => u64::MAX,
     }
+}
+
+/// Drain the TTY line discipline into the user buffer.
+fn stdin_drain(buf_ptr: u64, len: usize) -> u64 {
     unsafe {
         let slice = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len);
         crate::platform::stdin_read(slice) as u64
@@ -942,18 +1041,31 @@ fn alloc_fd_number() -> Option<usize> {
 fn handle_close(fd: u64) -> u64 {
     let fd_num = fd as usize;
 
-    // Path-namespace FD (range PATH_FD_BASE..)
-    if free_path_fd(fd_num) { return 0; }
-
-    // Check if it's a pipe FD
-    if let Some((pipe_id, is_read_end)) = unregister_pipe_fd(fd_num) {
-        if is_read_end {
-            crate::ipc::close_read_end(pipe_id);
-        } else {
-            crate::ipc::close_write_end(pipe_id);
+    // Per-process FD first (Console / Pipe). Closing a pipe end also
+    // releases the underlying ipc endpoint.
+    let closed = crate::process::with_current_fds_mut(|t| {
+        match t.get(fd as i32).copied() {
+            Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end }) => {
+                if is_read_end {
+                    crate::ipc::close_read_end(pipe_id as usize);
+                } else {
+                    crate::ipc::close_write_end(pipe_id as usize);
+                }
+                t.close(fd as i32);
+                true
+            }
+            Some(crate::process::FdEntry::Console) => {
+                t.close(fd as i32);
+                true
+            }
+            _ => false, // Empty / Path / Ramfs → handled below (Stage 2)
         }
-        return 0;
-    }
+    })
+    .unwrap_or(false);
+    if closed { return 0; }
+
+    // Path-namespace FD (global, Stage 2 migrates this)
+    if free_path_fd(fd_num) { return 0; }
 
     // Otherwise try ramfs
     let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
@@ -970,6 +1082,16 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     // Match the path-FD FWRITE upper bound (task #44). Pipe/ramfs
     // paths below still use stack tmp buffers — 4 KiB ceiling there.
     if len == 0 || len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
+
+    // Per-process FD first: pipes (and a Console read = stdin) live here now.
+    match current_fd_entry(fd) {
+        Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end: true }) => {
+            return pipe_read_blocking(pipe_id as usize, buf_ptr, buf_len)
+        }
+        Some(crate::process::FdEntry::Pipe { is_read_end: false, .. }) => return u64::MAX,
+        Some(crate::process::FdEntry::Console) => return stdin_drain(buf_ptr, len),
+        _ => {} // Path / Ramfs / Empty → existing logic below (Stage 2 migrates)
+    }
 
     // Path-namespace FD: read from the SemanticObject at the cursor.
     if let Some(entry) = lookup_path_fd(fd_num) {
@@ -994,67 +1116,33 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         return n as u64;
     }
 
-    // Check if it's a pipe FD
-    if let Some((pipe_id, true)) = lookup_pipe_fd(fd_num) {
-        // Pipe path uses a 4 KiB stack tmp; cap per-call here regardless
-        // of the outer MAX_FILE_CONTENT (which is for path FDs).
-        let tmp_cap = 4096usize;
-        let mut tmp = [0u8; 4096];
-        let read_len = len.min(tmp_cap);
-        let read_buf = &mut tmp[..read_len];
-        match crate::ipc::pipe_read(pipe_id, read_buf) {
-            Some(n) => {
-                if n > 0 {
-                    unsafe {
-                        let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
-                        dest.copy_from_slice(&read_buf[..n]);
-                    }
-                }
-                n as u64
-            }
-            None => {
-                // Block: pipe empty, write end still open
-                let idx = crate::scheduler::current_task_index();
+    // Ramfs file read (pipes were handled above via the FD table).
+    let fs = match crate::fs::ramfs::get_fs() {
+        Some(fs) => fs,
+        None => return u64::MAX,
+    };
+    let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
+        Some(t) => t,
+        None => return u64::MAX,
+    };
+
+    // Ramfs path uses a 4 KiB stack tmp.
+    let tmp_cap = 4096usize;
+    let mut tmp = [0u8; 4096];
+    let read_len = len.min(tmp_cap);
+    let read_buf = &mut tmp[..read_len];
+
+    match fd_table.read(fs, fd_num, read_buf) {
+        Some(n) => {
+            if n > 0 {
                 unsafe {
-                    let tasks = &raw mut crate::scheduler::TASKS;
-                    (*tasks)[idx].state = crate::scheduler::TaskState::Blocked;
-                    (*tasks)[idx].block_reason =
-                        crate::scheduler::BlockReason::PipeRead(pipe_id);
+                    let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
+                    dest.copy_from_slice(&read_buf[..n]);
                 }
-                // Return a sentinel; the task will retry after unblock.
-                // In practice the syscall will be re-entered after the task is scheduled.
-                0
             }
+            n as u64
         }
-    } else {
-        // Ramfs file read
-        let fs = match crate::fs::ramfs::get_fs() {
-            Some(fs) => fs,
-            None => return u64::MAX,
-        };
-        let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
-            Some(t) => t,
-            None => return u64::MAX,
-        };
-
-        // Ramfs path also uses a 4 KiB stack tmp.
-        let tmp_cap = 4096usize;
-        let mut tmp = [0u8; 4096];
-        let read_len = len.min(tmp_cap);
-        let read_buf = &mut tmp[..read_len];
-
-        match fd_table.read(fs, fd_num, read_buf) {
-            Some(n) => {
-                if n > 0 {
-                    unsafe {
-                        let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
-                        dest.copy_from_slice(&read_buf[..n]);
-                    }
-                }
-                n as u64
-            }
-            None => u64::MAX,
-        }
+        None => u64::MAX,
     }
 }
 
@@ -1062,9 +1150,15 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
 fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     let fd_num = fd as usize;
 
-    // Console output
-    if fd_num == 1 || fd_num == 2 {
-        return handle_write(buf_ptr, buf_len);
+    // Per-process FD first: Console (incl. stdout/stderr 1/2) and pipes
+    // now live in the process FD table.
+    match current_fd_entry(fd) {
+        Some(crate::process::FdEntry::Console) => return console_write(buf_ptr, buf_len),
+        Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end: false }) => {
+            return pipe_write_blocking(pipe_id as usize, buf_ptr, buf_len)
+        }
+        Some(crate::process::FdEntry::Pipe { is_read_end: true, .. }) => return u64::MAX,
+        _ => {} // Path / Ramfs / Empty → existing logic below (Stage 2 migrates)
     }
 
     // Path-namespace FD: overwrite the SemanticObject's content with
@@ -1097,36 +1191,9 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         return len as u64;
     }
 
-    // Check if it's a pipe FD (write end)
-    if let Some((pipe_id, false)) = lookup_pipe_fd(fd_num) {
-        let len = (buf_len as usize).min(4096);
-        let data = unsafe {
-            core::slice::from_raw_parts(buf_ptr as *const u8, len)
-        };
-        match crate::ipc::pipe_write(pipe_id, data) {
-            Some(0) => {
-                // Broken pipe (read end closed)
-                crate::platform::log("[syscall] fwrite: broken pipe\n");
-                u64::MAX
-            }
-            Some(n) => n as u64,
-            None => {
-                // Block: pipe full, read end still open
-                let idx = crate::scheduler::current_task_index();
-                unsafe {
-                    let tasks = &raw mut crate::scheduler::TASKS;
-                    (*tasks)[idx].state = crate::scheduler::TaskState::Blocked;
-                    (*tasks)[idx].block_reason =
-                        crate::scheduler::BlockReason::PipeWrite(pipe_id);
-                }
-                0
-            }
-        }
-    } else {
-        // ramfs is read-only
-        crate::platform::log("[syscall] fwrite: read-only filesystem\n");
-        u64::MAX
-    }
+    // ramfs is read-only (and pipes were handled above via the FD table).
+    crate::platform::log("[syscall] fwrite: read-only filesystem\n");
+    u64::MAX
 }
 
 /// SYS_SEEK(fd, position) → 0 on success, u64::MAX on error
@@ -1399,6 +1466,7 @@ fn handle_sleep(ticks: u64) -> u64 {
 ///
 /// Creates a pipe and writes [read_fd, write_fd] (two u64s) to `out_ptr`.
 fn handle_pipe(out_ptr: u64) -> u64 {
+    use crate::process::FdEntry;
     let pipe_id = match crate::ipc::create_pipe() {
         Some(id) => id,
         None => {
@@ -1407,23 +1475,27 @@ fn handle_pipe(out_ptr: u64) -> u64 {
         }
     };
 
-    // Allocate two FD numbers
-    let read_fd = match alloc_fd_number() {
-        Some(fd) => fd,
-        None => return u64::MAX,
-    };
-    register_pipe_fd(read_fd, pipe_id, true);
+    // Allocate the two FDs in the CURRENT process's table.
+    let fds = crate::process::with_current_fds_mut(|t| {
+        let read_fd = t.alloc(FdEntry::Pipe { pipe_id: pipe_id as u32, is_read_end: true })?;
+        match t.alloc(FdEntry::Pipe { pipe_id: pipe_id as u32, is_read_end: false }) {
+            Some(write_fd) => Some((read_fd, write_fd)),
+            None => {
+                t.close(read_fd);
+                None
+            }
+        }
+    })
+    .flatten();
 
-    let write_fd = match alloc_fd_number() {
-        Some(fd) => fd,
+    let (read_fd, write_fd) = match fds {
+        Some(p) => p,
         None => {
-            unregister_pipe_fd(read_fd);
             crate::ipc::close_read_end(pipe_id);
             crate::ipc::close_write_end(pipe_id);
             return u64::MAX;
         }
     };
-    register_pipe_fd(write_fd, pipe_id, false);
 
     // Write the two FDs to user space
     unsafe {
@@ -1435,49 +1507,40 @@ fn handle_pipe(out_ptr: u64) -> u64 {
     0
 }
 
-/// SYS_DUP(old_fd) → new_fd or u64::MAX
+/// SYS_DUP(old_fd) → new_fd or u64::MAX. Duplicates the entry into the
+/// lowest free slot of the running process's FD table. Note: pipe ends are
+/// duplicated by mapping only — the ipc endpoint refcount is unchanged, so
+/// the first close releases it (matches the prior behavior).
 fn handle_dup(old_fd: u64) -> u64 {
-    let old = old_fd as usize;
-
-    // If it's a pipe FD, duplicate the pipe binding
-    if let Some((pipe_id, is_read_end)) = lookup_pipe_fd(old) {
-        let new_fd = match alloc_fd_number() {
-            Some(fd) => fd,
-            None => return u64::MAX,
-        };
-        register_pipe_fd(new_fd, pipe_id, is_read_end);
-        return new_fd as u64;
+    match crate::process::with_current_fds_mut(|t| t.dup(old_fd as i32)).flatten() {
+        Some(new) => new as u64,
+        None => u64::MAX,
     }
-
-    // Otherwise try ramfs FD duplication (not currently supported — return error)
-    u64::MAX
 }
 
-/// SYS_DUP2(old_fd, new_fd) → new_fd or u64::MAX
+/// SYS_DUP2(old_fd, new_fd) → new_fd or u64::MAX. Used for stdio redirection
+/// (e.g. `dup2(pipe_write_fd, 1)` to send a process's stdout to a pipe).
 fn handle_dup2(old_fd: u64, new_fd: u64) -> u64 {
-    let old = old_fd as usize;
     let new = new_fd as usize;
-    if new >= 64 { return u64::MAX; }
+    if new >= crate::process::MAX_FDS { return u64::MAX; }
 
-    // Close the target FD if it's open
-    if lookup_pipe_fd(new).is_some() {
-        // Close existing pipe binding on new_fd
-        if let Some((pipe_id, is_read_end)) = unregister_pipe_fd(new) {
+    crate::process::with_current_fds_mut(|t| {
+        // If the target FD currently holds a pipe end, release that ipc
+        // endpoint before overwriting it.
+        if let Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end }) =
+            t.get(new as i32).copied()
+        {
             if is_read_end {
-                crate::ipc::close_read_end(pipe_id);
+                crate::ipc::close_read_end(pipe_id as usize);
             } else {
-                crate::ipc::close_write_end(pipe_id);
+                crate::ipc::close_write_end(pipe_id as usize);
             }
         }
-    }
-
-    // Copy the old FD to the new slot
-    if let Some((pipe_id, is_read_end)) = lookup_pipe_fd(old) {
-        register_pipe_fd(new, pipe_id, is_read_end);
-        return new as u64;
-    }
-
-    u64::MAX
+        t.dup2(old_fd as i32, new as i32)
+    })
+    .flatten()
+    .map(|n| n as u64)
+    .unwrap_or(u64::MAX)
 }
 
 // --- Process management handlers ---

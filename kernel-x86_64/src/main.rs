@@ -855,6 +855,13 @@ fn init_loader_task() {
     println!("================================================================");
     tty_m19_demo();
 
+    // DEMO 41: per-process FD table — redirect stdout (fd 1) to a pipe.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 41: per-process stdio — pipe-redirected stdout (M19)");
+    println!("================================================================");
+    fd_redirect_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -3885,6 +3892,91 @@ fn tty_m19_demo() {
 
     if line_ok && color_ok && clear_ok {
         println!("  [DEMO 40] => M19 slice 1: cooked stdin + SYS_READ + ANSI (color/clear) over the TTF console");
+    }
+}
+
+/// DEMO 41: per-process FD table — stdout redirection through a pipe.
+///
+/// Proves stdio is now per-process and routable: we create a pipe, `dup2`
+/// its write end onto fd 1 (stdout), then `SYS_WRITE` — and read the exact
+/// bytes back from the pipe's read end. Because `console_write` never touches
+/// a pipe, recovering the bytes from the pipe is proof the write followed the
+/// process's FD-1 redirect rather than going to the TTY. We then restore fd 1
+/// to Console and confirm a subsequent write does NOT reach the pipe.
+fn fd_redirect_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    // This routes through the running process's FD table. The boot/demo task
+    // isn't a managed scheduler slot, so its index drifts (it's whatever the
+    // last context switch left CURRENT_TASK at). If no process owns the live
+    // slot, temporarily bind the kernel process (PID 0) to it so the slot-keyed
+    // FD lookup resolves; restore afterward. (A real spawned shell will own
+    // its slot, so this rebind is only for the kernel-context demo.)
+    let slot = kernel_core::scheduler::current_task_index();
+    let saved_kernel_task = kernel_core::process::kernel_task_id();
+    let rebound = if kernel_core::process::pid_for_slot(slot).is_none() {
+        kernel_core::process::set_kernel_task_id(Some(slot));
+        true
+    } else {
+        false
+    };
+    if kernel_core::process::pid_for_slot(slot).is_none() {
+        println!("  [DEMO 41] SKIPPED: no process for slot {} (and rebind failed)", slot);
+        return;
+    }
+
+    // 1. Create a pipe → [read_fd, write_fd] in our FD table.
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        println!("  [DEMO 41] FAIL: SYS_PIPE failed");
+        return;
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    println!("  [DEMO 41] PASS: SYS_PIPE → read_fd={} write_fd={} (in our FD table)", read_fd, write_fd);
+
+    // 2. Redirect stdout (fd 1) to the pipe write end.
+    let d = dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+    let redirect_ok = d == 1;
+
+    // 3. Write to stdout — should land in the pipe, not the console.
+    let msg = b"per-process-stdout\n";
+    let w = dispatch(SYS_WRITE, msg.as_ptr() as u64, msg.len() as u64, 0, 0);
+
+    // 4. Read it back from the pipe read end.
+    let mut rbuf = [0u8; 64];
+    let got = dispatch(SYS_READ, read_fd, rbuf.as_mut_ptr() as u64, rbuf.len() as u64, 0) as usize;
+    let captured = &rbuf[..got.min(rbuf.len())];
+    let cap_ok = redirect_ok && w == msg.len() as u64 && captured == msg;
+    if cap_ok {
+        println!("  [DEMO 41] PASS: SYS_WRITE → fd1 captured by pipe ({} bytes \"per-process-stdout\")", got);
+    } else {
+        println!("  [DEMO 41] FAIL: redirect={} w={} got={} bytes", redirect_ok, w, got);
+    }
+
+    // 5. Restore stdout to the console (dup2 from fd0=Console), then a write
+    //    must NOT reach the pipe anymore.
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+    let after = b"this-goes-to-console\n";
+    dispatch(SYS_WRITE, after.as_ptr() as u64, after.len() as u64, 0, 0);
+    let got2 = dispatch(SYS_READ, read_fd, rbuf.as_mut_ptr() as u64, rbuf.len() as u64, 0) as usize;
+    let restore_ok = got2 == 0;
+    if restore_ok {
+        println!("  [DEMO 41] PASS: after restore, fd1 writes go to console (pipe got 0 more bytes)");
+    } else {
+        println!("  [DEMO 41] FAIL: after restore, pipe still received {} bytes", got2);
+    }
+
+    // 6. Clean up our FD table entries.
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+
+    // Restore the kernel process's task_id if we rebound it for the test.
+    if rebound {
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+    }
+
+    if cap_ok && restore_ok {
+        println!("  [DEMO 41] => per-process FD table: stdio is routable (pipe redirect + restore)");
     }
 }
 

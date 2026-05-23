@@ -87,27 +87,28 @@ impl ExitStatus {
     }
 }
 
-/// File descriptor entry
+/// File descriptor entry. This is the single per-process FD model the
+/// syscall layer consults (replacing the former global PATH_FDS/PIPE_FDS
+/// statics). Each open FD in a process maps to one of these.
 #[derive(Debug, Clone, Copy)]
 pub enum FdEntry {
     /// Empty slot
     Empty,
-    /// Serial console (stdin/stdout/stderr)
+    /// TTY console (the default stdin/stdout/stderr sink/source)
     Console,
-    /// File in the filesystem
-    File {
-        /// Path or inode reference
-        inode: u32,
-        /// Current position
-        position: usize,
-        /// Flags (read, write, append)
-        flags: u32,
+    /// Path-namespace file: a SemanticObject addressed by SUID, with a
+    /// read/write cursor. `is_directory` gates SYS_READDIR vs SYS_FREAD.
+    Path {
+        suid: crate::semantic::suid::SUID,
+        position: u32,
+        is_directory: bool,
     },
-    /// Pipe endpoint
+    /// Legacy ramfs embedded file — handle into the ramfs fd table, which
+    /// remains the backing store for the read-only embedded-files store.
+    Ramfs { handle: u32 },
+    /// Pipe endpoint.
     Pipe {
-        /// Pipe ID
         pipe_id: u32,
-        /// Read or write end
         is_read_end: bool,
     },
 }
@@ -634,8 +635,12 @@ static CURRENT_PID: AtomicU32 = AtomicU32::new(0);
 /// Initialize the process subsystem
 pub fn init() {
     unsafe {
-        // Create kernel process (PID 0)
-        let kernel_proc = Process::kernel();
+        // Create kernel process (PID 0). It runs on scheduler slot 0, so
+        // record that — the slot-keyed FD lookup (`with_current_fds_mut`)
+        // and `pid_for_slot` rely on task_id being set, and kernel-context
+        // syscalls run on slot 0.
+        let mut kernel_proc = Process::kernel();
+        kernel_proc.task_id = Some(0);
         PROCESS_TABLE.insert(kernel_proc);
 
         // Create init process (PID 1)
@@ -666,6 +671,34 @@ pub fn current() -> Option<&'static Process> {
 /// Get current process mutably
 pub fn current_mut() -> Option<&'static mut Process> {
     unsafe { PROCESS_TABLE.get_mut(current_pid()) }
+}
+
+/// Read the kernel process's current `task_id` (scheduler slot).
+pub fn kernel_task_id() -> Option<TaskId> {
+    unsafe { PROCESS_TABLE.get(ProcessId::KERNEL).and_then(|p| p.task_id) }
+}
+
+/// Set the kernel process's `task_id`. Used by kernel-context code that needs
+/// the slot-keyed FD lookup to resolve to PID 0 for the live scheduler slot
+/// (the boot/demo task isn't a managed scheduler slot, so its index drifts).
+/// Save the prior value with [`kernel_task_id`] and restore it afterward.
+pub fn set_kernel_task_id(t: Option<TaskId>) {
+    unsafe {
+        if let Some(k) = PROCESS_TABLE.get_mut(ProcessId::KERNEL) {
+            k.task_id = t;
+        }
+    }
+}
+
+/// Run `f` with the **running** process's FD table. Keyed by the live
+/// scheduler slot (`current_task_index`) → `pid_for_slot`, NOT the stale
+/// `current_pid()` global (which isn't refreshed on context switch). This
+/// is the single entry point syscall handlers use to reach per-process FDs.
+/// Returns `None` (closure not run) if the slot has no associated process.
+pub fn with_current_fds_mut<R>(f: impl FnOnce(&mut FdTable) -> R) -> Option<R> {
+    let slot = crate::scheduler::current_task_index();
+    let pid = pid_for_slot(slot)?;
+    unsafe { PROCESS_TABLE.get_mut(pid).map(|p| f(&mut p.fds)) }
 }
 
 /// Get a process by PID
