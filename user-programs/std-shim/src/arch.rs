@@ -8,6 +8,7 @@ use core::arch::asm;
 
 // --- Syscall numbers (mirror of kernel-core::syscall::numbers) ---
 pub const SYS_WRITE:        u64 = 0;
+pub const SYS_READ:         u64 = 1;
 pub const SYS_EXIT:         u64 = 2;
 pub const SYS_YIELD:        u64 = 3;
 pub const SYS_GETPID:       u64 = 4;
@@ -32,6 +33,10 @@ pub const SYS_MMAP_ANON:    u64 = 39;
 
 pub const SYS_SPAWN:        u64 = 40;
 pub const SYS_WAIT:         u64 = 41;
+pub const SYS_KILL:         u64 = 42;
+pub const SYS_DUP:          u64 = 44;
+pub const SYS_DUP2:         u64 = 45;
+pub const SYS_PIPE:         u64 = 46;
 
 pub const SYS_GET_CWD:      u64 = 74;
 pub const SYS_SET_CWD:      u64 = 75;

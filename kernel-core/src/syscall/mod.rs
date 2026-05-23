@@ -1470,6 +1470,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
                 "std-demo"  => "std-demo.elf",
                 "spawn-demo" => "spawn-demo.elf",
                 "net-demo"  => "net-demo.elf",
+                "sem-sh"    => "sem-sh.elf",
                 _ => return u64::MAX,
             }
         } else if fs.find(stripped).is_some() {

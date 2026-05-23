@@ -310,6 +310,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static NET_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/net-demo/target/x86_64-unknown-none/release/net-demo"
     );
+    // M20 native shell: parses + runs commands, spawns ELF children.
+    static SEM_SH_ELF: &[u8] = include_bytes!(
+        "../../user-programs/sem-sh/target/x86_64-unknown-none/release/sem-sh"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -355,6 +359,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered net-demo.elf ({} bytes, semos-std M25 std::net demo)", NET_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register net-demo.elf");
+        }
+        if fs.add("sem-sh.elf", kernel_core::fs::ramfs::FileType::Executable, SEM_SH_ELF) {
+            println!("    Registered sem-sh.elf ({} bytes, M20 native shell)", SEM_SH_ELF.len());
+        } else {
+            println!("    [WARN] failed to register sem-sh.elf");
         }
     }
 
@@ -882,6 +891,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 44: TTY scrollback (M19)");
     println!("================================================================");
     scrollback_demo();
+
+    // DEMO 45: M20 native shell — run a script, capture its stdout.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 45: sem-sh native shell (M20 stage A)");
+    println!("================================================================");
+    shell_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4268,6 +4284,83 @@ fn scrollback_demo() {
     if total_ok && scroll_ok {
         println!("  [DEMO 44] => TtyConsole scrollback recovers scrolled-off output");
     }
+}
+
+/// DEMO 45: M20 native shell. Spawns `/bin/sem-sh -c "echo …; echo …"` with
+/// the shell's stdout redirected (via FD inheritance) into a pipe, then reads
+/// the captured output back: proof the shell parses a multi-command script,
+/// runs the `echo` builtin, and writes to its (inherited) stdout. Reuses the
+/// DEMO 42 pipe-capture pattern plus a kernel-built argv blob.
+fn shell_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let saved_kernel_task = kernel_core::process::kernel_task_id();
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+
+    // Pipe + redirect our stdout (fd 1) so the spawned shell inherits it.
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        println!("  [DEMO 45] FAIL: SYS_PIPE failed");
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+
+    // Spawn the shell with no args → interactive REPL. It inherits our FD
+    // table, so its stdout is the pipe and its stdin is the Console (the M19
+    // line discipline). We then "type" commands into the line discipline.
+    let path = "/bin/sem-sh";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 3, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 45] FAIL: SYS_SPAWN(/bin/sem-sh) returned MAX");
+        dispatch(SYS_DUP2, 0, 1, 0, 0);
+        dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+        dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    println!("  [DEMO 45] PASS: SYS_SPAWN(/bin/sem-sh) → PID {} (interactive)", pid);
+
+    // "Type" a script into the TTY line discipline: an echo, then exit. The
+    // shell's SYS_READ(fd 0) drains these committed lines.
+    for &b in b"echo SHELL_OK_45\nexit\n" {
+        tty::input_push(b);
+    }
+
+    // Let the shell read, run both commands, and exit.
+    let child = kernel_core::process::ProcessId(pid as u32);
+    if let Some(cs) = kernel_core::process::get(child).and_then(|p| p.task_id) {
+        let mut polled = 0u64;
+        while kernel_core::scheduler::task_state(cs) != kernel_core::scheduler::TaskState::Exited
+            && polled < 800
+        {
+            let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+            polled += 1;
+        }
+    }
+
+    // Re-pin (slot drifted during the sleeps) and drain the shell's stdout.
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+    let mut cap = [0u8; 256];
+    let n = {
+        let r = dispatch(SYS_READ, read_fd, cap.as_mut_ptr() as u64, cap.len() as u64, 0);
+        if r == u64::MAX { 0 } else { (r as usize).min(cap.len()) }
+    };
+    let out = &cap[..n];
+
+    let ok = out.windows(b"SHELL_OK_45".len()).any(|w| w == b"SHELL_OK_45");
+    if ok {
+        println!("  [DEMO 45] PASS: shell read stdin, ran echo → \"SHELL_OK_45\" via inherited pipe ({} bytes)", n);
+        println!("  [DEMO 45] => M20 stage A: sem-sh REPL — stdin (M19) → parse → builtin → stdout");
+    } else {
+        println!("  [DEMO 45] FAIL: captured {} bytes = {:?}", n, out);
+    }
+
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+    kernel_core::process::set_kernel_task_id(saved_kernel_task);
 }
 
 /// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).
