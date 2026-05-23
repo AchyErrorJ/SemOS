@@ -47,7 +47,8 @@ A milestone is **done** when:
 | M19 DONE 2026-05-22 | **TTY complete** (`9787cb7` line editing + history, `93ca47c` scrollback; DEMO 43/44): in-line cursor + arrow keys (PS/2 0xE0 + USB HID → ESC[ABCD) + 8-line history; TtyConsole scrollback ring. Suite **145 PASS / 0 FAIL / 0 #DF**. M19 ✅ — next is M20 native shell. |
 | M20 stage A 2026-05-23 | **sem-sh native shell** (`5398720`, DEMO 45): REPL reading cooked stdin (M19) + script mode, quote-aware parser, builtins (echo/pwd/cd/exit), external ELF exec via Command. Suite **147 PASS**. Gotcha: new user crate must be non-PIE (build.rs+link.ld) or println crashes — see feedback memory. |
 | -netdev DEMO 15 hang FIXED 2026-05-23 | `ad540dd`: embedded-io TcpStream read/write now bounded by a 10 s idle deadline. The TLS handshake's ServerHello read spun forever when SLIRP raced port 1 to ESTABLISHED then went silent — hung the boot 350 s+. 4 consecutive -netdev boots clean after. |
-| M20 stage B 2026-05-23 | **sem-sh fs builtins + $VAR** (`b81251d`, DEMO 45): cat/ls/which/env builtins + `$VAR` expansion (inherited env). Suite **148 PASS**. Stage C (pipes `|` + redirection `>`/`<`) remains. |
+| M20 stage B 2026-05-23 | **sem-sh fs builtins + $VAR** (`b81251d`, DEMO 45): cat/ls/which/env builtins + `$VAR` expansion (inherited env). Suite **148 PASS**. |
+| M20 DONE 2026-05-23 | **sem-sh redirection + pipes** (`96fbaf9`, DEMO 46): `>`/`<` redirection + `|` pipelines (sequential v1). Kernel: SYS_WRITE→handle_fwrite routing + positional Path writes. Suite **150 PASS / 0 FAIL / 0 #DF**. M20 ✅ — shell complete. Next: M21 editor / M22 agent. |
 
 ---
 
@@ -438,30 +439,34 @@ Validated 140 PASS / 0 FAIL / 0 #DF.
       inheritance across spawn (42), line editing + history (43), scrollback
       (44). (Next free DEMO is 45.)
 
-## M20 — Native shell (`sem-sh` or similar) `[🔨 stage A+B landed; pipes/redir left]`
+## M20 — Native shell (`sem-sh`) `[✅]`
 
 Rust shell — no bash compatibility, just what we need. `user-programs/sem-sh`,
-built on `semos-std`. **Stage A (`5398720`) + B (`b81251d`), DEMO 45, 148 PASS.**
+built on `semos-std`. **Done 2026-05-23** across stages A (`5398720`), B
+(`b81251d`), C (`96fbaf9`); DEMO 45/46; 150 PASS.
 
 **Done when:**
-- [✅] Line editor on top of M19 with history — provided by the M19 line
-      discipline (arrows + Up/Down history); the shell reads cooked lines via
-      `SYS_READ(0)`.
-- [✅] Command parser: argv splitting + quoting (`"`/`'`) + `;`/newline
-      separation + `$VAR` expansion (env, outside single quotes).
-- [✅] Builtins: `echo`/`pwd`/`cd`/`exit`/`true`/`false`/`cat`/`ls`/`which`/`env`.
-      (`env` prints named vars only — no enumerate syscall yet.)
-- [✅] Exec native ELF programs — non-builtins run via `process::Command`
-      (`name` → `/bin/name`), blocking for exit status.
-- [ ] Pipes (`|`) and file redirection (`>`, `<`) — **stage C**. `SYS_PIPE`/
-      `DUP2` shim wrappers (exposed in arch.rs) + per-process FD inheritance
-      (M19) are the substrate; the shell sets up the pipe/redirect on its own
-      FDs around each `Command` spawn (children inherit).
-- [ ] Job control deferred to a follow-up; not in v1
-- [ ] DEMO 46 (stage C): a script that creates a file, cats it back, and pipes
-      through another program. (DEMO 45 is the stage A+B REPL/builtins test.)
+- [✅] Line editor on top of M19 with history (arrows + Up/Down); reads cooked
+      lines via `SYS_READ(0)`.
+- [✅] Command parser: argv splitting + quoting + `;`/newline + `$VAR` + the
+      `< > >> |` metacharacters.
+- [✅] Builtins: `echo`/`pwd`/`cd`/`exit`/`true`/`false`/`cat`/`ls`/`which`/`env`
+      (`cat` with no args is a stdin filter; `env` prints named vars only).
+- [✅] Exec native ELF programs via `process::Command` (`name` → `/bin/name`).
+- [✅] Pipes (`|`) and file redirection (`>`, `>>`, `<`). Pipes are sequential
+      v1 (≤ 4 KiB intermediate data; concurrent pipes are a follow-up). Exposed
+      two kernel fixes: SYS_WRITE now routes through `handle_fwrite` (so a
+      redirected file fd 1 actually writes the file), and Path `handle_fwrite`
+      is now positional (sequential writes accumulate, not overwrite).
+- [ ] Job control deferred to a follow-up; not in v1.
+- [✅] DEMO 45 (REPL/builtins) + DEMO 46 (`echo > file; cat file; echo | cat`).
 
-**Gotcha that cost time in stage A:** a new user crate builds as PIE (ET_DYN)
+**Follow-ups (not blocking):** concurrent pipes (current is sequential, bounded
+by the 4 KiB pipe buffer); `>>` true-append (currently same as `>`); per-fd
+pipe-end refcounting (the shell works around its absence by careful close
+ordering); bare `env` enumeration (needs a syscall).
+
+**Gotcha (cost time in stage A):** a new user crate builds as PIE (ET_DYN)
 unless it copies `build.rs` + `link.ld` + `.cargo/config` (non-PIE EXEC at
 0x400000) — the kernel applies no relocations, so `println` crashes while raw
 syscalls work. See `feedback_new_user_program_nonpie.md`.
