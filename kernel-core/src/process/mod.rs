@@ -697,7 +697,11 @@ pub fn set_kernel_task_id(t: Option<TaskId>) {
 /// Returns `None` (closure not run) if the slot has no associated process.
 pub fn with_current_fds_mut<R>(f: impl FnOnce(&mut FdTable) -> R) -> Option<R> {
     let slot = crate::scheduler::current_task_index();
-    let pid = pid_for_slot(slot)?;
+    // A running user process owns its slot. Kernel-context syscalls (the
+    // boot/demo task, or threads with no PCB) run on a slot with no process;
+    // they fall back to the kernel process's FD table. This keeps the lookup
+    // robust against the boot task's drifting CURRENT_TASK index.
+    let pid = pid_for_slot(slot).unwrap_or(ProcessId::KERNEL);
     unsafe { PROCESS_TABLE.get_mut(pid).map(|p| f(&mut p.fds)) }
 }
 

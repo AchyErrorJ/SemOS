@@ -697,49 +697,12 @@ fn handle_heap_free(ptr: u64, size: u64, align: u64) -> u64 {
 
 // --- File I/O handlers ---
 
-/// SYS_OPEN(path_ptr, path_len) → fd or u64::MAX on error
-// ============================================================================
-// Path-namespace FD tracking (Phase 9 Stage 3)
-// ============================================================================
-//
-// FDs land in distinct ranges so the three backends (pipe / path / ramfs)
-// can't collide:
-//   - Ramfs FDs:   3..63   (legacy embedded-files store, read-only)
-//   - Pipe FDs:    3..63   (sharing range historically; alloc_fd_number
-//                  walks the pipe table, ramfs check is a known gap)
-//   - Path FDs:    96..127 (this block — separate range to dodge the gap)
-//
-// Path FDs reference SemanticObjects via the path namespace
-// (kernel-core::fs::paths). Each entry tracks the SUID + a read cursor
-// + a flag for "this was opened from a directory" (so SYS_READDIR can
-// validate before walking).
-
-const MAX_PATH_FDS: usize = 32;
-const PATH_FD_BASE: usize = 96;
-
-#[derive(Clone, Copy)]
-struct PathFdEntry {
-    fd: u32,
-    suid: crate::semantic::suid::SUID,
-    position: u32,
-    is_directory: bool,
-    active: bool,
-}
-
-impl PathFdEntry {
-    const fn empty() -> Self {
-        Self {
-            fd: 0,
-            suid: crate::semantic::suid::SUID::NULL,
-            position: 0,
-            is_directory: false,
-            active: false,
-        }
-    }
-}
-
-static mut PATH_FDS: [PathFdEntry; MAX_PATH_FDS] =
-    [PathFdEntry::empty(); MAX_PATH_FDS];
+/// SYS_OPEN(path_ptr, path_len) → fd or u64::MAX on error.
+///
+/// All FDs (path / ramfs / pipe / console) now live in the running process's
+/// `FdTable` — there are no separate global FD-number ranges anymore. Path
+/// opens store an `FdEntry::Path{suid,position,is_directory}`; ramfs opens
+/// wrap the ramfs handle in `FdEntry::Ramfs`.
 
 /// SYS_OPEN flag bits (passed in `flags` arg).
 pub mod open_flags {
@@ -749,68 +712,6 @@ pub mod open_flags {
     pub const DIRECTORY: u64 = 1 << 1;
     // Bits 4-5 reserved for tier when CREATE is set:
     // tier = (flags >> 4) & 0x3 → 0=Public, 1=Internal, 2=Sensitive, 3=Secret.
-}
-
-/// Allocate a free path-FD slot. Returns the FD number (in PATH_FD_BASE..),
-/// or `None` if the table is full.
-fn alloc_path_fd_slot(suid: crate::semantic::suid::SUID, is_directory: bool) -> Option<usize> {
-    unsafe {
-        let table = &raw mut PATH_FDS;
-        // Find a free slot; FD number = PATH_FD_BASE + slot index.
-        for (slot, entry) in (*table).iter_mut().enumerate() {
-            if !entry.active {
-                let fd = PATH_FD_BASE + slot;
-                *entry = PathFdEntry {
-                    fd: fd as u32,
-                    suid,
-                    position: 0,
-                    is_directory,
-                    active: true,
-                };
-                return Some(fd);
-            }
-        }
-    }
-    None
-}
-
-/// Look up a path FD. Returns the entry (copied) if found.
-fn lookup_path_fd(fd: usize) -> Option<PathFdEntry> {
-    if !(PATH_FD_BASE..PATH_FD_BASE + MAX_PATH_FDS).contains(&fd) {
-        return None;
-    }
-    let slot = fd - PATH_FD_BASE;
-    unsafe {
-        let table = &raw const PATH_FDS;
-        let entry = (*table)[slot];
-        if entry.active && entry.fd as usize == fd { Some(entry) } else { None }
-    }
-}
-
-/// Update a path FD's read cursor.
-fn update_path_fd_position(fd: usize, new_position: u32) {
-    if !(PATH_FD_BASE..PATH_FD_BASE + MAX_PATH_FDS).contains(&fd) { return; }
-    let slot = fd - PATH_FD_BASE;
-    unsafe {
-        let table = &raw mut PATH_FDS;
-        if (*table)[slot].active && (*table)[slot].fd as usize == fd {
-            (*table)[slot].position = new_position;
-        }
-    }
-}
-
-/// Free a path FD. Returns true if it was active.
-fn free_path_fd(fd: usize) -> bool {
-    if !(PATH_FD_BASE..PATH_FD_BASE + MAX_PATH_FDS).contains(&fd) { return false; }
-    let slot = fd - PATH_FD_BASE;
-    unsafe {
-        let table = &raw mut PATH_FDS;
-        if (*table)[slot].active && (*table)[slot].fd as usize == fd {
-            (*table)[slot].active = false;
-            return true;
-        }
-    }
-    false
 }
 
 // ============================================================================
@@ -843,7 +744,21 @@ fn handle_open(path_ptr: u64, path_len: u64, flags: u64) -> u64 {
     };
 
     match fd_table.open(fs, name) {
-        Some(fd) => fd as u64,
+        Some(ramfs_fd) => {
+            // Wrap the ramfs handle in a per-process FD; the ramfs fd table
+            // remains the backing store (it owns the read cursor).
+            match crate::process::with_current_fds_mut(|t| {
+                t.alloc(crate::process::FdEntry::Ramfs { handle: ramfs_fd as u32 })
+            })
+            .flatten()
+            {
+                Some(user_fd) => user_fd as u64,
+                None => {
+                    fd_table.close(ramfs_fd);
+                    u64::MAX
+                }
+            }
+        }
         None => {
             crate::platform::log("[syscall] open: file not found: ");
             crate::platform::log(name);
@@ -934,10 +849,14 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
         return u64::MAX;
     }
 
-    match alloc_path_fd_slot(suid, is_dir) {
+    match crate::process::with_current_fds_mut(|t| {
+        t.alloc(crate::process::FdEntry::Path { suid, position: 0, is_directory: is_dir })
+    })
+    .flatten()
+    {
         Some(fd) => fd as u64,
         None => {
-            crate::platform::log("[open] path FD table full for ");
+            crate::platform::log("[open] FD table full for ");
             crate::platform::log(path);
             crate::platform::log("\n");
             u64::MAX
@@ -945,264 +864,180 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
     }
 }
 
-// --- Pipe FD tracking ---
-//
-// Maps file descriptor numbers to pipe endpoints.
-// Separate from ramfs FdTable so file and pipe FDs can coexist.
-
-/// Maximum pipe-backed file descriptors system-wide.
-const MAX_PIPE_FDS: usize = 64;
-
-/// A pipe FD entry: maps an FD number to a pipe ID + direction.
-#[derive(Clone, Copy)]
-struct PipeFdEntry {
-    fd: usize,
-    pipe_id: usize,
-    is_read_end: bool,
-    active: bool,
-}
-
-impl PipeFdEntry {
-    const fn empty() -> Self {
-        Self { fd: 0, pipe_id: 0, is_read_end: false, active: false }
-    }
-}
-
-static mut PIPE_FDS: [PipeFdEntry; MAX_PIPE_FDS] = [PipeFdEntry::empty(); MAX_PIPE_FDS];
-
-/// Register a pipe FD.
-fn register_pipe_fd(fd: usize, pipe_id: usize, is_read_end: bool) {
-    unsafe {
-        let fds = &raw mut PIPE_FDS;
-        for entry in (*fds).iter_mut() {
-            if !entry.active {
-                *entry = PipeFdEntry { fd, pipe_id, is_read_end, active: true };
-                return;
-            }
-        }
-    }
-}
-
-/// Look up a pipe FD. Returns (pipe_id, is_read_end) if found.
-fn lookup_pipe_fd(fd: usize) -> Option<(usize, bool)> {
-    unsafe {
-        let fds = &raw const PIPE_FDS;
-        for entry in (*fds).iter() {
-            if entry.active && entry.fd == fd {
-                return Some((entry.pipe_id, entry.is_read_end));
-            }
-        }
-    }
-    None
-}
-
-/// Unregister a pipe FD.
-fn unregister_pipe_fd(fd: usize) -> Option<(usize, bool)> {
-    unsafe {
-        let fds = &raw mut PIPE_FDS;
-        for entry in (*fds).iter_mut() {
-            if entry.active && entry.fd == fd {
-                let result = (entry.pipe_id, entry.is_read_end);
-                entry.active = false;
-                return Some(result);
-            }
-        }
-    }
-    None
-}
-
-/// Allocate the next free FD number (starting from 3, skipping stdin/out/err).
-fn alloc_fd_number() -> Option<usize> {
-    // Check which FD numbers are in use by pipes
-    let mut used = [false; 64];
-    unsafe {
-        let fds = &raw const PIPE_FDS;
-        for entry in (*fds).iter() {
-            if entry.active && entry.fd < 64 {
-                used[entry.fd] = true;
-            }
-        }
-    }
-    // Also check ramfs FDs
-    if let Some(fd_table) = crate::fs::ramfs::get_fd_table_mut() {
-        // FDs 0-2 are reserved, ramfs uses 3+
-        // We'll start pipe FDs from a higher range to avoid collisions
-    }
-    // Find first free FD from 3 upward
-    for fd in 3..64 {
-        if !used[fd] {
-            return Some(fd);
-        }
-    }
-    None
-}
-
-/// SYS_CLOSE(fd) → 0 on success, u64::MAX on error
+/// SYS_CLOSE(fd) → 0 on success, u64::MAX on error. All FD kinds live in the
+/// running process's table now; closing releases any backing resource (pipe
+/// endpoint, ramfs handle) and frees the slot.
 fn handle_close(fd: u64) -> u64 {
-    let fd_num = fd as usize;
-
-    // Per-process FD first (Console / Pipe). Closing a pipe end also
-    // releases the underlying ipc endpoint.
-    let closed = crate::process::with_current_fds_mut(|t| {
+    use crate::process::FdEntry;
+    crate::process::with_current_fds_mut(|t| {
         match t.get(fd as i32).copied() {
-            Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end }) => {
+            Some(FdEntry::Pipe { pipe_id, is_read_end }) => {
                 if is_read_end {
                     crate::ipc::close_read_end(pipe_id as usize);
                 } else {
                     crate::ipc::close_write_end(pipe_id as usize);
                 }
                 t.close(fd as i32);
-                true
+                0
             }
-            Some(crate::process::FdEntry::Console) => {
+            Some(FdEntry::Ramfs { handle }) => {
+                if let Some(rt) = crate::fs::ramfs::get_fd_table_mut() {
+                    rt.close(handle as usize);
+                }
                 t.close(fd as i32);
-                true
+                0
             }
-            _ => false, // Empty / Path / Ramfs → handled below (Stage 2)
+            Some(FdEntry::Console) | Some(FdEntry::Path { .. }) => {
+                t.close(fd as i32);
+                0
+            }
+            _ => u64::MAX, // Empty / no such FD
         }
     })
-    .unwrap_or(false);
-    if closed { return 0; }
-
-    // Path-namespace FD (global, Stage 2 migrates this)
-    if free_path_fd(fd_num) { return 0; }
-
-    // Otherwise try ramfs
-    let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
-        Some(t) => t,
-        None => return u64::MAX,
-    };
-    if fd_table.close(fd_num) { 0 } else { u64::MAX }
+    .unwrap_or(u64::MAX)
 }
 
 /// SYS_FREAD(fd, buf_ptr, buf_len) → bytes read, 0 = EOF, u64::MAX = error
 fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
-    let fd_num = fd as usize;
+    use crate::process::FdEntry;
     let len = buf_len as usize;
-    // Match the path-FD FWRITE upper bound (task #44). Pipe/ramfs
-    // paths below still use stack tmp buffers — 4 KiB ceiling there.
+    // Match the path-FD FWRITE upper bound (task #44). Pipe/ramfs paths use
+    // stack tmp buffers — 4 KiB ceiling there.
     if len == 0 || len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
 
-    // Per-process FD first: pipes (and a Console read = stdin) live here now.
     match current_fd_entry(fd) {
-        Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end: true }) => {
-            return pipe_read_blocking(pipe_id as usize, buf_ptr, buf_len)
+        Some(FdEntry::Pipe { pipe_id, is_read_end: true }) => {
+            pipe_read_blocking(pipe_id as usize, buf_ptr, buf_len)
         }
-        Some(crate::process::FdEntry::Pipe { is_read_end: false, .. }) => return u64::MAX,
-        Some(crate::process::FdEntry::Console) => return stdin_drain(buf_ptr, len),
-        _ => {} // Path / Ramfs / Empty → existing logic below (Stage 2 migrates)
-    }
+        Some(FdEntry::Pipe { is_read_end: false, .. }) => u64::MAX,
+        Some(FdEntry::Console) => stdin_drain(buf_ptr, len),
 
-    // Path-namespace FD: read from the SemanticObject at the cursor.
-    if let Some(entry) = lookup_path_fd(fd_num) {
-        if entry.is_directory { return u64::MAX; }  // use SYS_READDIR
-        let registry = unsafe { crate::semantic::registry::global_registry() };
-        let obj = match registry.get(&entry.suid) {
-            Some(o) => o,
-            None => return u64::MAX,
-        };
-        let bytes = match obj.content.as_bytes() {
-            Some(b) => b,
-            None => return u64::MAX,
-        };
-        let pos = entry.position as usize;
-        if pos >= bytes.len() { return 0; }
-        let n = (bytes.len() - pos).min(len);
-        unsafe {
-            let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
-            dest.copy_from_slice(&bytes[pos..pos + n]);
-        }
-        update_path_fd_position(fd_num, (pos + n) as u32);
-        return n as u64;
-    }
-
-    // Ramfs file read (pipes were handled above via the FD table).
-    let fs = match crate::fs::ramfs::get_fs() {
-        Some(fs) => fs,
-        None => return u64::MAX,
-    };
-    let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
-        Some(t) => t,
-        None => return u64::MAX,
-    };
-
-    // Ramfs path uses a 4 KiB stack tmp.
-    let tmp_cap = 4096usize;
-    let mut tmp = [0u8; 4096];
-    let read_len = len.min(tmp_cap);
-    let read_buf = &mut tmp[..read_len];
-
-    match fd_table.read(fs, fd_num, read_buf) {
-        Some(n) => {
-            if n > 0 {
-                unsafe {
-                    let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
-                    dest.copy_from_slice(&read_buf[..n]);
-                }
+        // Path-namespace FD: read the SemanticObject at the cursor, advance it.
+        Some(FdEntry::Path { suid, position, is_directory }) => {
+            if is_directory { return u64::MAX; } // use SYS_READDIR
+            let registry = unsafe { crate::semantic::registry::global_registry() };
+            let obj = match registry.get(&suid) {
+                Some(o) => o,
+                None => return u64::MAX,
+            };
+            let bytes = match obj.content.as_bytes() {
+                Some(b) => b,
+                None => return u64::MAX,
+            };
+            let pos = position as usize;
+            if pos >= bytes.len() { return 0; }
+            let n = (bytes.len() - pos).min(len);
+            unsafe {
+                let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
+                dest.copy_from_slice(&bytes[pos..pos + n]);
             }
+            crate::process::with_current_fds_mut(|t| {
+                if let Some(FdEntry::Path { position, .. }) = t.get_mut(fd as i32) {
+                    *position = (pos + n) as u32;
+                }
+            });
             n as u64
         }
-        None => u64::MAX,
+
+        // Legacy ramfs file: delegate to the ramfs fd table via the handle.
+        Some(FdEntry::Ramfs { handle }) => {
+            let fs = match crate::fs::ramfs::get_fs() {
+                Some(fs) => fs,
+                None => return u64::MAX,
+            };
+            let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
+                Some(t) => t,
+                None => return u64::MAX,
+            };
+            let mut tmp = [0u8; 4096];
+            let read_len = len.min(4096);
+            let read_buf = &mut tmp[..read_len];
+            match fd_table.read(fs, handle as usize, read_buf) {
+                Some(n) => {
+                    if n > 0 {
+                        unsafe {
+                            let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
+                            dest.copy_from_slice(&read_buf[..n]);
+                        }
+                    }
+                    n as u64
+                }
+                None => u64::MAX,
+            }
+        }
+
+        _ => u64::MAX, // Empty / no such FD
     }
 }
 
 /// SYS_FWRITE(fd, buf_ptr, buf_len) → bytes written or u64::MAX
 fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
-    let fd_num = fd as usize;
-
-    // Per-process FD first: Console (incl. stdout/stderr 1/2) and pipes
-    // now live in the process FD table.
+    use crate::process::FdEntry;
     match current_fd_entry(fd) {
-        Some(crate::process::FdEntry::Console) => return console_write(buf_ptr, buf_len),
-        Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end: false }) => {
-            return pipe_write_blocking(pipe_id as usize, buf_ptr, buf_len)
+        Some(FdEntry::Console) => console_write(buf_ptr, buf_len),
+        Some(FdEntry::Pipe { pipe_id, is_read_end: false }) => {
+            pipe_write_blocking(pipe_id as usize, buf_ptr, buf_len)
         }
-        Some(crate::process::FdEntry::Pipe { is_read_end: true, .. }) => return u64::MAX,
-        _ => {} // Path / Ramfs / Empty → existing logic below (Stage 2 migrates)
-    }
+        Some(FdEntry::Pipe { is_read_end: true, .. }) => u64::MAX,
 
-    // Path-namespace FD: overwrite the SemanticObject's content with
-    // the buffer. v1: full-file overwrite (matches Namespace::write_file).
-    // Append/random-write are follow-ups (need richer object content
-    // ownership).
-    if let Some(entry) = lookup_path_fd(fd_num) {
-        if entry.is_directory { return u64::MAX; }
-        // task #44: accept up to MAX_FILE_CONTENT (64 KiB). Inline still
-        // covers ≤ 256 B; larger payloads route through heap-Allocated
-        // via from_bytes. Reject anything past the cap rather than
-        // silently truncate (silent truncation in the old 256-cap path
-        // looked like data loss to apps).
-        let len = buf_len as usize;
-        if len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
-        let data = unsafe {
-            core::slice::from_raw_parts(buf_ptr as *const u8, len)
-        };
-        let registry = unsafe { crate::semantic::registry::global_registry() };
-        let obj = match registry.get_mut(&entry.suid) {
-            Some(o) => o,
-            None => return u64::MAX,
-        };
-        obj.content = match crate::semantic::object::ObjectContent::from_bytes(data) {
-            Some(c) => c,
-            None => return u64::MAX,
-        };
-        // Reset cursor — write is full-file overwrite for now.
-        update_path_fd_position(fd_num, 0);
-        return len as u64;
-    }
+        // Path-namespace FD: full-file overwrite of the SemanticObject.
+        // Append/random-write are follow-ups (need richer content ownership).
+        Some(FdEntry::Path { suid, is_directory, .. }) => {
+            if is_directory { return u64::MAX; }
+            // task #44: accept up to MAX_FILE_CONTENT (64 KiB); ≤256 B stays
+            // inline, larger routes through heap-Allocated via from_bytes.
+            let len = buf_len as usize;
+            if len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
+            let data = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, len) };
+            let registry = unsafe { crate::semantic::registry::global_registry() };
+            let obj = match registry.get_mut(&suid) {
+                Some(o) => o,
+                None => return u64::MAX,
+            };
+            obj.content = match crate::semantic::object::ObjectContent::from_bytes(data) {
+                Some(c) => c,
+                None => return u64::MAX,
+            };
+            // Reset cursor — write is full-file overwrite for now.
+            crate::process::with_current_fds_mut(|t| {
+                if let Some(FdEntry::Path { position, .. }) = t.get_mut(fd as i32) {
+                    *position = 0;
+                }
+            });
+            len as u64
+        }
 
-    // ramfs is read-only (and pipes were handled above via the FD table).
-    crate::platform::log("[syscall] fwrite: read-only filesystem\n");
-    u64::MAX
+        // ramfs is read-only.
+        Some(FdEntry::Ramfs { .. }) => {
+            crate::platform::log("[syscall] fwrite: read-only filesystem\n");
+            u64::MAX
+        }
+
+        _ => u64::MAX, // Empty / no such FD
+    }
 }
 
 /// SYS_SEEK(fd, position) → 0 on success, u64::MAX on error
 fn handle_seek(fd: u64, position: u64) -> u64 {
-    let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
-        Some(t) => t,
-        None => return u64::MAX,
-    };
-    if fd_table.seek(fd as usize, position as usize) { 0 } else { u64::MAX }
+    use crate::process::FdEntry;
+    match current_fd_entry(fd) {
+        Some(FdEntry::Path { .. }) => {
+            crate::process::with_current_fds_mut(|t| {
+                if let Some(FdEntry::Path { position: p, .. }) = t.get_mut(fd as i32) {
+                    *p = position as u32;
+                }
+            });
+            0
+        }
+        Some(FdEntry::Ramfs { handle }) => {
+            let fd_table = match crate::fs::ramfs::get_fd_table_mut() {
+                Some(t) => t,
+                None => return u64::MAX,
+            };
+            if fd_table.seek(handle as usize, position as usize) { 0 } else { u64::MAX }
+        }
+        _ => u64::MAX,
+    }
 }
 
 /// SYS_STAT(path_ptr, path_len) → file size, or u64::MAX if not found
@@ -1395,8 +1230,8 @@ fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
 /// surface is paths and names. To get the entry's metadata, the caller
 /// joins the name to the dir path and calls SYS_STAT or SYS_OPEN.
 fn handle_readdir(fd: u64, idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u64 {
-    let entry = match lookup_path_fd(fd as usize) {
-        Some(e) if e.is_directory => e,
+    let dir_suid = match current_fd_entry(fd) {
+        Some(crate::process::FdEntry::Path { suid, is_directory: true, .. }) => suid,
         _ => return u64::MAX,
     };
 
@@ -1407,7 +1242,7 @@ fn handle_readdir(fd: u64, idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u6
     // copy that entry's name out. The path namespace exposes this
     // via the visitor-callback API.
     let registry = unsafe { crate::semantic::registry::global_registry() };
-    let obj = match registry.get(&entry.suid) {
+    let obj = match registry.get(&dir_suid) {
         Some(o) => o,
         None => return u64::MAX,
     };
