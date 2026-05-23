@@ -318,26 +318,11 @@ fn console_write(buf_ptr: u64, buf_len: u64) -> u64 {
 }
 
 /// SYS_WRITE(buf, len) — write to stdout, i.e. the running process's FD 1.
-/// Per-process: if the process redirected FD 1 (e.g. to a pipe), the bytes
-/// follow the redirect; otherwise (Console, or no process) they hit the TTY.
+/// Delegates to `handle_fwrite(1, ..)` so FD 1 routes to whatever it points
+/// at: Console → TTY, a redirected pipe → the pipe, a redirected file → the
+/// file (positional). The no-process fallback resolves FD 1 = Console.
 fn handle_write(buf_ptr: u64, buf_len: u64) -> u64 {
-    write_to_fd(1, buf_ptr, buf_len)
-}
-
-/// Route a write to whatever the running process's FD `fd` points at.
-/// Console (and the no-process fallback) → TTY; pipe write-end → pipe.
-/// Returns u64::MAX for a non-writable target (e.g. a pipe read end).
-/// File targets (Path/Ramfs) are not reachable via SYS_WRITE today; they
-/// go through SYS_FWRITE — see `handle_fwrite`.
-fn write_to_fd(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
-    match current_fd_entry(fd) {
-        Some(crate::process::FdEntry::Pipe { pipe_id, is_read_end: false }) => {
-            pipe_write_blocking(pipe_id as usize, buf_ptr, buf_len)
-        }
-        Some(crate::process::FdEntry::Pipe { is_read_end: true, .. }) => u64::MAX,
-        // Console, or no per-process entry → TTY (today's behavior).
-        _ => console_write(buf_ptr, buf_len),
-    }
+    handle_fwrite(1, buf_ptr, buf_len)
 }
 
 /// Copy out the running process's FD entry at `fd`, or None if there's no
@@ -980,28 +965,48 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         }
         Some(FdEntry::Pipe { is_read_end: true, .. }) => u64::MAX,
 
-        // Path-namespace FD: full-file overwrite of the SemanticObject.
-        // Append/random-write are follow-ups (need richer content ownership).
-        Some(FdEntry::Path { suid, is_directory, .. }) => {
+        // Path-namespace FD: positional write at the FD cursor (so multiple
+        // sequential writes — e.g. shell `echo` emitting text then newline,
+        // or io::Write::write_all looping — accumulate instead of clobbering).
+        // Small files splice through a fixed stack buffer (kernel-core has no
+        // allocator); larger writes fall back to whole-file overwrite.
+        Some(FdEntry::Path { suid, position, is_directory }) => {
             if is_directory { return u64::MAX; }
             // task #44: accept up to MAX_FILE_CONTENT (64 KiB); ≤256 B stays
             // inline, larger routes through heap-Allocated via from_bytes.
             let len = buf_len as usize;
             if len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
             let data = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, len) };
+            let pos = position as usize;
             let registry = unsafe { crate::semantic::registry::global_registry() };
             let obj = match registry.get_mut(&suid) {
                 Some(o) => o,
                 None => return u64::MAX,
             };
-            obj.content = match crate::semantic::object::ObjectContent::from_bytes(data) {
+
+            const SPLICE_CAP: usize = 4096;
+            let existing_len = obj.content.len();
+            let new_content = if pos + len <= SPLICE_CAP && existing_len <= SPLICE_CAP {
+                // Splice `data` in at `pos`, extending the file if needed.
+                let mut tmp = [0u8; SPLICE_CAP];
+                if let Some(ex) = obj.content.as_bytes() {
+                    tmp[..existing_len].copy_from_slice(ex);
+                }
+                tmp[pos..pos + len].copy_from_slice(data);
+                let new_len = core::cmp::max(pos + len, existing_len);
+                crate::semantic::object::ObjectContent::from_bytes(&tmp[..new_len])
+            } else {
+                // Too big to splice on the stack — whole-file overwrite.
+                crate::semantic::object::ObjectContent::from_bytes(data)
+            };
+            obj.content = match new_content {
                 Some(c) => c,
                 None => return u64::MAX,
             };
-            // Reset cursor — write is full-file overwrite for now.
+            // Advance the cursor past what we wrote.
             crate::process::with_current_fds_mut(|t| {
                 if let Some(FdEntry::Path { position, .. }) = t.get_mut(fd as i32) {
-                    *position = 0;
+                    *position = (pos + len) as u32;
                 }
             });
             len as u64

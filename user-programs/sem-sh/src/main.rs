@@ -14,7 +14,8 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall3, syscall4, SYS_CLOSE, SYS_OPEN, SYS_READ, SYS_READDIR, SYS_SLEEP,
+    syscall1, syscall2, syscall3, syscall4, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN, SYS_PIPE,
+    SYS_READ, SYS_READDIR, SYS_SLEEP,
 };
 use semos_std::string::String;
 use semos_std::vec::Vec;
@@ -139,6 +140,23 @@ fn tokenize(line: &str) -> Vec<String> {
                     i += 1;
                     cur.push_str(&expand_var(&chars, &mut i));
                 }
+                // Shell metacharacters become their own tokens (so `cat>f`
+                // and `cat > f` both split). `>>` is recognized. Quoting a
+                // metachar to use it literally is not supported (v1).
+                '|' | '<' | '>' => {
+                    if !cur.is_empty() {
+                        out.push(core::mem::take(&mut cur));
+                    }
+                    if c == '>' && i + 1 < chars.len() && chars[i + 1] == '>' {
+                        out.push(String::from(">>"));
+                        i += 2;
+                    } else {
+                        let mut op = String::new();
+                        op.push(c);
+                        out.push(op);
+                        i += 1;
+                    }
+                }
                 c if c.is_whitespace() => {
                     if !cur.is_empty() {
                         out.push(core::mem::take(&mut cur));
@@ -193,9 +211,196 @@ fn ls_dir(path: &str) -> i32 {
     0
 }
 
-/// Run one (already separated) command. Returns its exit status.
+// --- tiny fd-syscall helpers (stage C) ---
+fn fd_dup(fd: u64) -> u64 {
+    unsafe { syscall1(SYS_DUP, fd) }
+}
+fn fd_dup2(old: u64, new: u64) {
+    unsafe {
+        syscall2(SYS_DUP2, old, new);
+    }
+}
+fn fd_close(fd: u64) {
+    unsafe {
+        syscall1(SYS_CLOSE, fd);
+    }
+}
+fn fd_open(path: &str, flags: u64) -> u64 {
+    unsafe { syscall3(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, flags) }
+}
+fn fd_pipe() -> Option<(u64, u64)> {
+    let mut fds = [0u64; 2];
+    let r = unsafe { syscall1(SYS_PIPE, fds.as_mut_ptr() as u64) };
+    if r == 0 {
+        Some((fds[0], fds[1]))
+    } else {
+        None
+    }
+}
+
+/// Run one command: split into pipeline stages on `|`; a single stage runs
+/// with its redirections, multiple stages chain through pipes.
 fn run_command(line: &str) -> i32 {
-    let argv = tokenize(line);
+    let tokens = tokenize(line);
+    if tokens.is_empty() {
+        return 0;
+    }
+    // Split the token stream into pipeline segments on `|`.
+    let mut segments: Vec<Vec<String>> = Vec::new();
+    let mut cur: Vec<String> = Vec::new();
+    for t in tokens {
+        if t == "|" {
+            segments.push(core::mem::take(&mut cur));
+        } else {
+            cur.push(t);
+        }
+    }
+    segments.push(cur);
+
+    if segments.len() == 1 {
+        run_with_redirects(&segments[0])
+    } else {
+        run_pipeline(&segments)
+    }
+}
+
+/// Run a single pipeline stage, applying `>`/`>>`/`<` redirections to the
+/// shell's own fd 0/1 around the command (saved via dup, restored after) so
+/// both builtins and external programs (which inherit on spawn) are redirected.
+fn run_with_redirects(seg: &[String]) -> i32 {
+    const O_CREATE: u64 = 1 << 0;
+    const O_RDONLY: u64 = 0;
+    let mut argv: Vec<String> = Vec::new();
+    let mut out_file: Option<String> = None; // `>` / `>>` (append not yet real)
+    let mut in_file: Option<String> = None; // `<`
+    let mut i = 0;
+    while i < seg.len() {
+        match seg[i].as_str() {
+            ">" | ">>" => {
+                i += 1;
+                if i < seg.len() {
+                    out_file = Some(seg[i].clone());
+                }
+            }
+            "<" => {
+                i += 1;
+                if i < seg.len() {
+                    in_file = Some(seg[i].clone());
+                }
+            }
+            _ => argv.push(seg[i].clone()),
+        }
+        i += 1;
+    }
+    if argv.is_empty() {
+        return 0;
+    }
+
+    let mut saved_out: Option<u64> = None;
+    let mut saved_in: Option<u64> = None;
+    if let Some(path) = &out_file {
+        let fd = fd_open(path, O_CREATE);
+        if fd != u64::MAX {
+            saved_out = Some(fd_dup(1));
+            fd_dup2(fd, 1);
+            fd_close(fd);
+        } else {
+            println!("sem-sh: {}: cannot open for writing", path);
+            return 1;
+        }
+    }
+    if let Some(path) = &in_file {
+        let fd = fd_open(path, O_RDONLY);
+        if fd != u64::MAX {
+            saved_in = Some(fd_dup(0));
+            fd_dup2(fd, 0);
+            fd_close(fd);
+        } else {
+            if let Some(s) = saved_out {
+                fd_dup2(s, 1);
+                fd_close(s);
+            }
+            println!("sem-sh: {}: cannot open for reading", path);
+            return 1;
+        }
+    }
+
+    let status = dispatch_argv(&argv);
+
+    // Restore. Overwriting fd1/fd0 closes the redirect target's FD entry.
+    if let Some(s) = saved_out {
+        fd_dup2(s, 1);
+        fd_close(s);
+    }
+    if let Some(s) = saved_in {
+        fd_dup2(s, 0);
+        fd_close(s);
+    }
+    status
+}
+
+/// Run a `a | b | c` pipeline. v1 is sequential: each stage runs to
+/// completion with its stdout on the pipe, then we close the write end so the
+/// next stage's stdin sees EOF and reads the buffered data. Works for
+/// intermediate data up to the kernel pipe buffer (4 KiB); true concurrent
+/// pipes are a follow-up.
+fn run_pipeline(segments: &[Vec<String>]) -> i32 {
+    let mut prev_read: Option<u64> = None;
+    let mut status = 0;
+    let last = segments.len() - 1;
+    for (idx, seg) in segments.iter().enumerate() {
+        // stdin ← previous stage's pipe read end. Note: dup2 copies the entry
+        // (pipe ends aren't fd-refcounted), so we must NOT close the original
+        // `r` until after the stage runs — closing it now would shut the
+        // pipe's read end and deactivate it before the reader drains it.
+        let mut saved_in: Option<u64> = None;
+        let mut consumed_read: Option<u64> = None;
+        if let Some(r) = prev_read {
+            saved_in = Some(fd_dup(0));
+            fd_dup2(r, 0);
+            consumed_read = Some(r);
+        }
+        // stdout → a fresh pipe write end (unless this is the last stage).
+        let mut saved_out: Option<u64> = None;
+        let mut next_read: Option<u64> = None;
+        if idx != last {
+            if let Some((r, w)) = fd_pipe() {
+                saved_out = Some(fd_dup(1));
+                fd_dup2(w, 1);
+                fd_close(w);
+                next_read = Some(r);
+            }
+        }
+
+        status = run_with_redirects(seg);
+
+        // Restore stdout — overwriting fd 1 closes this stage's pipe write
+        // end, so the next stage reading stdin sees EOF after the buffered data.
+        if let Some(s) = saved_out {
+            fd_dup2(s, 1);
+            fd_close(s);
+        }
+        if let Some(s) = saved_in {
+            fd_dup2(s, 0);
+            fd_close(s);
+        }
+        // Now safe to drop the consumed read end (restore above already shut
+        // fd 0's copy; this close is idempotent on the now-inactive pipe).
+        if let Some(r) = consumed_read {
+            fd_close(r);
+        }
+        prev_read = next_read;
+    }
+    if let Some(r) = prev_read {
+        fd_close(r);
+    }
+    status
+}
+
+/// Dispatch an already-parsed argv (no redirection/pipe handling — the
+/// caller has set up fd 0/1 as needed). Returns the command's exit status.
+/// Builtins write to fd 1 / read fd 0, so redirection works transparently.
+fn dispatch_argv(argv: &[String]) -> i32 {
     if argv.is_empty() {
         return 0;
     }
@@ -234,6 +439,23 @@ fn run_command(line: &str) -> i32 {
         "true" => 0,
         "false" => 1,
         "cat" => {
+            if argv.len() == 1 {
+                // No files → copy stdin to stdout to EOF (used as a pipe
+                // filter). A pipe read returns 0 once the write end closes;
+                // the shell closes it before running the reader, so 0 = EOF.
+                let mut buf = [0u8; 512];
+                loop {
+                    let n = unsafe {
+                        syscall3(SYS_READ, 0, buf.as_mut_ptr() as u64, buf.len() as u64)
+                    };
+                    if n == 0 || n == u64::MAX {
+                        break;
+                    }
+                    let s = String::from_utf8_lossy(&buf[..n as usize]);
+                    print!("{}", s);
+                }
+                return 0;
+            }
             let mut status = 0;
             for p in &argv[1..] {
                 match fs::read_to_string(p) {

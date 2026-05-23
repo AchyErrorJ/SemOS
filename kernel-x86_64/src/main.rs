@@ -899,6 +899,13 @@ fn init_loader_task() {
     println!("================================================================");
     shell_demo();
 
+    // DEMO 46: M20 stage C — redirection (>) + pipes (|) in sem-sh.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 46: sem-sh redirection + pipes (M20 stage C)");
+    println!("================================================================");
+    shell_pipe_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4379,6 +4386,88 @@ fn shell_demo() {
     } else {
         println!("  [DEMO 45] FAIL: stage B — var={} cat={} which={} ({} bytes) {:?}",
             var_ok, cat_ok, which_ok, n, out);
+    }
+
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+    kernel_core::process::set_kernel_task_id(saved_kernel_task);
+}
+
+/// DEMO 46: M20 stage C — `>` redirection and `|` pipes in sem-sh.
+/// Drives the shell (interactive, stdout captured via an inherited pipe) with:
+///   echo redir-out > /shc2   # echo's stdout redirected to a file
+///   cat /shc2                # read it back → captured stdout
+///   echo via-pipe | cat      # pipe echo into `cat` (stdin filter) → stdout
+/// Verifies the capture contains "redir-out" (redirect-to-file + read-back
+/// worked) and "via-pipe" (the pipeline worked).
+fn shell_pipe_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let saved_kernel_task = kernel_core::process::kernel_task_id();
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        println!("  [DEMO 46] FAIL: SYS_PIPE failed");
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+
+    let path = "/bin/sem-sh";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 3, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 46] FAIL: SYS_SPAWN(/bin/sem-sh) returned MAX");
+        dispatch(SYS_DUP2, 0, 1, 0, 0);
+        dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+        dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+
+    for &b in b"echo redir-out > /shc2\ncat /shc2\necho via-pipe | cat\nexit\n" {
+        tty::input_push(b);
+    }
+
+    let child = kernel_core::process::ProcessId(pid as u32);
+    if let Some(cs) = kernel_core::process::get(child).and_then(|p| p.task_id) {
+        let mut polled = 0u64;
+        while kernel_core::scheduler::task_state(cs) != kernel_core::scheduler::TaskState::Exited
+            && polled < 1200
+        {
+            let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+            polled += 1;
+        }
+    }
+
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+    // Drain in a loop (the shell's output spans several writes).
+    let mut cap = [0u8; 512];
+    let mut clen = 0usize;
+    let mut empties = 0;
+    while clen < cap.len() && empties < 3 {
+        let r = dispatch(SYS_READ, read_fd, cap[clen..].as_mut_ptr() as u64, (cap.len() - clen) as u64, 0);
+        if r == u64::MAX { break; }
+        let n = (r as usize).min(cap.len() - clen);
+        if n == 0 { empties += 1; } else { clen += n; empties = 0; }
+    }
+    let out = &cap[..clen];
+    let has = |needle: &[u8]| out.windows(needle.len()).any(|w| w == needle);
+
+    let redir_ok = has(b"redir-out"); // echo > file, then cat file → stdout
+    let pipe_ok = has(b"via-pipe"); // echo | cat → stdout
+    if redir_ok {
+        println!("  [DEMO 46] PASS: `echo > /shc2` + `cat /shc2` round-tripped via file redirection");
+    } else {
+        println!("  [DEMO 46] FAIL: redirection — {} bytes {:?}", clen, out);
+    }
+    if pipe_ok {
+        println!("  [DEMO 46] PASS: `echo via-pipe | cat` — pipeline delivered stdin→stdout");
+        println!("  [DEMO 46] => M20 stage C: redirection + pipes (FD inheritance + SYS_PIPE/DUP2)");
+    } else {
+        println!("  [DEMO 46] FAIL: pipe — {} bytes {:?}", clen, out);
     }
 
     dispatch(SYS_DUP2, 0, 1, 0, 0);
