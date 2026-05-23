@@ -876,6 +876,13 @@ fn init_loader_task() {
     println!("================================================================");
     line_editor_demo();
 
+    // DEMO 44: TtyConsole scrollback — recover a line that scrolled off.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 44: TTY scrollback (M19)");
+    println!("================================================================");
+    scrollback_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4186,6 +4193,80 @@ fn line_editor_demo() {
 
     if insert_ok && bs_ok && hist_ok {
         println!("  [DEMO 43] => line editor: in-line cursor (arrows), mid-line edit, history recall");
+    }
+}
+
+/// DEMO 44: TtyConsole scrollback. Writes a dense first line then enough
+/// sparse lines to scroll it off the small region, then `show_scrollback(0)`
+/// re-renders from the oldest retained line. Verified headlessly: the region's
+/// top row holds far more lit pixels when scrolled back to the dense line 0
+/// than it does in the live view (which shows a later sparse line).
+fn scrollback_demo() {
+    use crate::framebuffer as fb;
+    use crate::tty::{Aa, TtyConsole};
+
+    let (fbw, fbh) = fb::fb_dimensions();
+    if fbw == 0 || fbh == 0 {
+        println!("  [DEMO 44] SKIPPED: no framebuffer");
+        return;
+    }
+
+    let px = 18.0f32;
+    let lh = font::line_height(px).max(px as usize + 2);
+    let x0 = 16usize;
+    let w = fbw.saturating_sub(32).min(360);
+    let h = lh * 3; // 3 visible rows
+    let y0 = fbh.saturating_sub(h + 96);
+    let white = fb::rgb(0xFF, 0xFF, 0xFF);
+    let black = fb::rgb(0x00, 0x00, 0x00);
+
+    let mut con = TtyConsole::new(x0, y0, w, h, px, white, black);
+    // Line 0 is dense; lines 1..=6 are sparse. 7 lines into a 3-row region
+    // pushes line 0 well off the live view.
+    con.write(Aa::Sharp, "MMMMMMMMMMMMMMMM\n");
+    for _ in 0..6 {
+        con.write(Aa::Sharp, ".\n");
+    }
+
+    // Count lit pixels in the region's top row band — live view (a sparse line).
+    let top_band_lit = |c_white: u32| -> usize {
+        let y1 = (y0 + lh).min(fbh);
+        let x1 = (x0 + w).min(fbw);
+        let mut lit = 0usize;
+        let mut yy = y0;
+        while yy < y1 {
+            let mut xx = x0;
+            while xx < x1 {
+                if fb::fb_read_pixel(xx, yy) == c_white {
+                    lit += 1;
+                }
+                xx += 1;
+            }
+            yy += 1;
+        }
+        lit
+    };
+    let live_lit = top_band_lit(white);
+
+    // Scroll back to the oldest retained line (line 0, dense) and re-measure.
+    con.show_scrollback(con.scrollback_oldest());
+    let back_lit = top_band_lit(white);
+
+    let total_ok = con.scrollback_total() == 7;
+    let scroll_ok = back_lit > live_lit && back_lit > 40;
+
+    if total_ok {
+        println!("  [DEMO 44] PASS: scrollback retained {} logical lines", con.scrollback_total());
+    } else {
+        println!("  [DEMO 44] FAIL: scrollback_total = {}", con.scrollback_total());
+    }
+    if scroll_ok {
+        println!("  [DEMO 44] PASS: scroll-back re-rendered line 0 — top row {} lit px vs {} live", back_lit, live_lit);
+    } else {
+        println!("  [DEMO 44] FAIL: back_lit={} live_lit={}", back_lit, live_lit);
+    }
+    if total_ok && scroll_ok {
+        println!("  [DEMO 44] => TtyConsole scrollback recovers scrolled-off output");
     }
 }
 

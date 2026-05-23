@@ -46,7 +46,18 @@ pub struct TtyConsole {
     bg: Color,
     pen_x: usize,
     line_top: usize,
+    // Line-oriented scrollback: every logical line written is recorded so it
+    // can be re-rendered after it scrolls off the region (see show_scrollback).
+    sb: [[u8; SB_W]; SB_N],
+    sb_len: [usize; SB_N],
+    sb_count: usize, // total lines ever pushed (ring index = sb_count % SB_N)
+    cur: [u8; SB_W], // line currently being accumulated (until '\n')
+    cur_n: usize,
 }
+
+/// Scrollback ring: lines kept × max bytes recorded per line.
+const SB_N: usize = 64;
+const SB_W: usize = 96;
 
 impl TtyConsole {
     /// Create a console over region `(x0, y0, w, h)` with em height `px`,
@@ -57,7 +68,81 @@ impl TtyConsole {
             .unwrap_or((px / 2.0) as usize)
             .max(1);
         fb::fb_fill_rect(x0, y0, w, h, bg);
-        Self { x0, y0, w, h, px, line_h, col_w, fg, bg, pen_x: x0, line_top: y0 }
+        Self {
+            x0, y0, w, h, px, line_h, col_w, fg, bg, pen_x: x0, line_top: y0,
+            sb: [[0; SB_W]; SB_N],
+            sb_len: [0; SB_N],
+            sb_count: 0,
+            cur: [0; SB_W],
+            cur_n: 0,
+        }
+    }
+
+    /// Record `text` into the scrollback line buffer (newlines flush a line).
+    /// Called by `write` so scrollback captures logical lines regardless of
+    /// render mode or wrapping.
+    fn record(&mut self, text: &str) {
+        for &b in text.as_bytes() {
+            if b == b'\n' {
+                self.push_line();
+            } else if self.cur_n < SB_W {
+                self.cur[self.cur_n] = b;
+                self.cur_n += 1;
+            }
+        }
+    }
+
+    fn push_line(&mut self) {
+        let idx = self.sb_count % SB_N;
+        let len = self.cur_n;
+        self.sb[idx][..len].copy_from_slice(&self.cur[..len]);
+        self.sb_len[idx] = len;
+        self.sb_count += 1;
+        self.cur_n = 0;
+    }
+
+    /// Number of text rows that fit in the region.
+    fn visible_rows(&self) -> usize {
+        (self.h / self.line_h).max(1)
+    }
+
+    /// Oldest scrollback line index still retained in the ring.
+    pub fn scrollback_oldest(&self) -> usize {
+        self.sb_count.saturating_sub(SB_N)
+    }
+
+    /// Total logical lines pushed to scrollback.
+    pub fn scrollback_total(&self) -> usize {
+        self.sb_count
+    }
+
+    /// Re-render the region showing scrollback starting at logical line
+    /// `top` (clamped to retained range). Used to scroll back through output
+    /// that has scrolled off the live view. Does not disturb the live cursor.
+    pub fn show_scrollback(&mut self, top: usize) {
+        let rows = self.visible_rows();
+        let oldest = self.scrollback_oldest();
+        let top = top.max(oldest).min(self.sb_count);
+        fb::fb_fill_rect(self.x0, self.y0, self.w, self.h, self.bg);
+        for r in 0..rows {
+            let line_idx = top + r;
+            if line_idx >= self.sb_count {
+                break;
+            }
+            let phys = line_idx % SB_N;
+            let len = self.sb_len[phys];
+            let baseline = (self.y0 + r * self.line_h + (self.line_h * 4) / 5) as f32;
+            let x0 = self.x0 as f32;
+            let fg = self.fg;
+            if let Ok(s) = core::str::from_utf8(&self.sb[phys][..len]) {
+                font::with_face(self.px, |f| {
+                    let mut x = x0;
+                    for ch in s.chars() {
+                        x += f.draw_char(x, baseline, ch, fg);
+                    }
+                });
+            }
+        }
     }
 
     /// Set the foreground color used for subsequent glyphs (ANSI SGR).
@@ -116,6 +201,7 @@ impl TtyConsole {
     /// Write `text` in `mode`, handling `\n`, right-edge wrap (Sharp), and
     /// bottom scroll.
     pub fn write(&mut self, mode: Aa, text: &str) {
+        self.record(text); // capture logical lines for scrollback
         match mode {
             Aa::Sharp => {
                 // One parse for the whole write; draw glyph-by-glyph so we can
