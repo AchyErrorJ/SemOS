@@ -895,7 +895,7 @@ fn init_loader_task() {
     // DEMO 45: M20 native shell — run a script, capture its stdout.
     println!();
     println!("================================================================");
-    println!("  SemOS DEMO 45: sem-sh native shell (M20 stage A)");
+    println!("  SemOS DEMO 45: sem-sh native shell (M20 stage A+B)");
     println!("================================================================");
     shell_demo();
 
@@ -4297,6 +4297,19 @@ fn shell_demo() {
     let saved_kernel_task = kernel_core::process::kernel_task_id();
     kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
 
+    // Stage B setup: an env var the shell will expand via $VAR (inherited on
+    // spawn), and a file the shell will `cat`.
+    let k = b"MYVAR";
+    let v = b"stageB";
+    dispatch(SYS_SET_ENV, k.as_ptr() as u64, k.len() as u64, v.as_ptr() as u64, v.len() as u64);
+    let fpath = b"/shfile";
+    let fd = dispatch(SYS_OPEN, fpath.as_ptr() as u64, fpath.len() as u64, 1 /*CREATE*/, 0);
+    if fd != u64::MAX {
+        let data = b"CATME\n";
+        dispatch(SYS_FWRITE, fd, data.as_ptr() as u64, data.len() as u64, 0);
+        dispatch(SYS_CLOSE, fd, 0, 0, 0);
+    }
+
     // Pipe + redirect our stdout (fd 1) so the spawned shell inherits it.
     let mut fds = [0u64; 2];
     if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
@@ -4308,8 +4321,8 @@ fn shell_demo() {
     dispatch(SYS_DUP2, write_fd, 1, 0, 0);
 
     // Spawn the shell with no args → interactive REPL. It inherits our FD
-    // table, so its stdout is the pipe and its stdin is the Console (the M19
-    // line discipline). We then "type" commands into the line discipline.
+    // table (stdout = pipe, stdin = Console/M19 line discipline) and our env
+    // (MYVAR). We then "type" commands into the line discipline.
     let path = "/bin/sem-sh";
     let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 3, 0);
     if pid == u64::MAX {
@@ -4322,9 +4335,10 @@ fn shell_demo() {
     }
     println!("  [DEMO 45] PASS: SYS_SPAWN(/bin/sem-sh) → PID {} (interactive)", pid);
 
-    // "Type" a script into the TTY line discipline: an echo, then exit. The
-    // shell's SYS_READ(fd 0) drains these committed lines.
-    for &b in b"echo SHELL_OK_45\nexit\n" {
+    // "Type" a script into the TTY line discipline: echo (stage A), then the
+    // stage-B builtins ($VAR expansion, cat, which), then exit. The shell's
+    // SYS_READ(fd 0) drains these committed lines.
+    for &b in b"echo SHELL_OK_45\necho v=$MYVAR\ncat /shfile\nwhich cat\nexit\n" {
         tty::input_push(b);
     }
 
@@ -4342,19 +4356,29 @@ fn shell_demo() {
 
     // Re-pin (slot drifted during the sleeps) and drain the shell's stdout.
     kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
-    let mut cap = [0u8; 256];
+    let mut cap = [0u8; 512];
     let n = {
         let r = dispatch(SYS_READ, read_fd, cap.as_mut_ptr() as u64, cap.len() as u64, 0);
         if r == u64::MAX { 0 } else { (r as usize).min(cap.len()) }
     };
     let out = &cap[..n];
+    let has = |needle: &[u8]| out.windows(needle.len()).any(|w| w == needle);
 
-    let ok = out.windows(b"SHELL_OK_45".len()).any(|w| w == b"SHELL_OK_45");
-    if ok {
-        println!("  [DEMO 45] PASS: shell read stdin, ran echo → \"SHELL_OK_45\" via inherited pipe ({} bytes)", n);
-        println!("  [DEMO 45] => M20 stage A: sem-sh REPL — stdin (M19) → parse → builtin → stdout");
+    let echo_ok = has(b"SHELL_OK_45");
+    let var_ok = has(b"v=stageB"); // $VAR expanded from inherited env
+    let cat_ok = has(b"CATME"); // cat read /shfile
+    let which_ok = has(b"cat: shell builtin"); // which classified a builtin
+    if echo_ok {
+        println!("  [DEMO 45] PASS: stage A — REPL ran echo → \"SHELL_OK_45\" (stdin→parse→builtin→stdout)");
     } else {
-        println!("  [DEMO 45] FAIL: captured {} bytes = {:?}", n, out);
+        println!("  [DEMO 45] FAIL: echo — captured {} bytes = {:?}", n, out);
+    }
+    if var_ok && cat_ok && which_ok {
+        println!("  [DEMO 45] PASS: stage B — $VAR expanded, cat read /shfile, which classified builtin");
+        println!("  [DEMO 45] => M20 A+B: builtins (echo/cat/ls/which/env) + $VAR + external exec");
+    } else {
+        println!("  [DEMO 45] FAIL: stage B — var={} cat={} which={} ({} bytes) {:?}",
+            var_ok, cat_ok, which_ok, n, out);
     }
 
     dispatch(SYS_DUP2, 0, 1, 0, 0);

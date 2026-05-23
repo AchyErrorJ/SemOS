@@ -13,10 +13,12 @@
 #![no_std]
 #![no_main]
 
-use semos_std::arch::{syscall1, syscall3, SYS_READ, SYS_SLEEP};
+use semos_std::arch::{
+    syscall1, syscall3, syscall4, SYS_CLOSE, SYS_OPEN, SYS_READ, SYS_READDIR, SYS_SLEEP,
+};
 use semos_std::string::String;
 use semos_std::vec::Vec;
-use semos_std::{env, format, main, print, println, process};
+use semos_std::{env, fs, format, main, print, println, process};
 
 main!(fn main() {
     let args = env::args(); // args[0] = program path
@@ -81,28 +83,72 @@ fn run_script(script: &str) -> i32 {
     status
 }
 
-/// Tokenize a single command line into argv, honoring `"…"` and `'…'` quotes.
+/// Read a `$VAR` identifier ([A-Za-z0-9_]) starting at `*i`, advancing `*i`
+/// past it. Returns the variable's value via `env::var`, or "" if unset.
+fn expand_var(chars: &[char], i: &mut usize) -> String {
+    let start = *i;
+    while *i < chars.len() && (chars[*i].is_ascii_alphanumeric() || chars[*i] == '_') {
+        *i += 1;
+    }
+    let name: String = chars[start..*i].iter().collect();
+    if name.is_empty() {
+        return String::from("$"); // a lone `$` is literal
+    }
+    env::var(&name).unwrap_or_default()
+}
+
+/// Tokenize a command line into argv. Honors `"…"`/`'…'` quotes and expands
+/// `$VAR` (from the environment) outside single quotes.
 fn tokenize(line: &str) -> Vec<String> {
+    let chars: Vec<char> = line.chars().collect();
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut quote: Option<char> = None;
-    for c in line.chars() {
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
         match quote {
-            Some(q) => {
-                if c == q {
+            // Single quotes: everything literal until the closing quote.
+            Some('\'') => {
+                i += 1;
+                if c == '\'' {
                     quote = None;
                 } else {
                     cur.push(c);
                 }
             }
+            // Double quotes: literal except `$VAR` expansion.
+            Some(_) => {
+                if c == '"' {
+                    quote = None;
+                    i += 1;
+                } else if c == '$' {
+                    i += 1;
+                    cur.push_str(&expand_var(&chars, &mut i));
+                } else {
+                    cur.push(c);
+                    i += 1;
+                }
+            }
             None => match c {
-                '"' | '\'' => quote = Some(c),
+                '\'' | '"' => {
+                    quote = Some(c);
+                    i += 1;
+                }
+                '$' => {
+                    i += 1;
+                    cur.push_str(&expand_var(&chars, &mut i));
+                }
                 c if c.is_whitespace() => {
                     if !cur.is_empty() {
                         out.push(core::mem::take(&mut cur));
                     }
+                    i += 1;
                 }
-                _ => cur.push(c),
+                _ => {
+                    cur.push(c);
+                    i += 1;
+                }
             },
         }
     }
@@ -110,6 +156,41 @@ fn tokenize(line: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// Is `name` a shell builtin?
+fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
+    )
+}
+
+/// `ls [dir]` — list a directory's entries via SYS_OPEN(DIRECTORY)+SYS_READDIR.
+fn ls_dir(path: &str) -> i32 {
+    const O_DIRECTORY: u64 = 1 << 1;
+    let fd = unsafe { syscall3(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, O_DIRECTORY) };
+    if fd == u64::MAX {
+        println!("sem-sh: ls: {}: not a directory", path);
+        return 1;
+    }
+    let mut idx = 0u64;
+    let mut namebuf = [0u8; 256];
+    loop {
+        let n = unsafe {
+            syscall4(SYS_READDIR, fd, idx, namebuf.as_mut_ptr() as u64, namebuf.len() as u64)
+        };
+        if n == 0 || n == u64::MAX {
+            break;
+        }
+        let len = (n as usize).min(namebuf.len());
+        if let Ok(s) = core::str::from_utf8(&namebuf[..len]) {
+            println!("{}", s);
+        }
+        idx += 1;
+    }
+    unsafe { syscall1(SYS_CLOSE, fd) };
+    0
 }
 
 /// Run one (already separated) command. Returns its exit status.
@@ -152,6 +233,49 @@ fn run_command(line: &str) -> i32 {
         }
         "true" => 0,
         "false" => 1,
+        "cat" => {
+            let mut status = 0;
+            for p in &argv[1..] {
+                match fs::read_to_string(p) {
+                    Ok(s) => print!("{}", s),
+                    Err(_) => {
+                        println!("sem-sh: cat: {}: cannot read", p);
+                        status = 1;
+                    }
+                }
+            }
+            status
+        }
+        "ls" => {
+            let dir = argv
+                .get(1)
+                .cloned()
+                .or_else(env::current_dir_string)
+                .unwrap_or_else(|| String::from("/"));
+            ls_dir(&dir)
+        }
+        "which" => {
+            for name in &argv[1..] {
+                if is_builtin(name) {
+                    println!("{}: shell builtin", name);
+                } else if name.starts_with('/') {
+                    println!("{}", name);
+                } else {
+                    println!("/bin/{}", name);
+                }
+            }
+            0
+        }
+        "env" => {
+            // No syscall enumerates the env block, so `env KEY...` prints the
+            // named vars (bare `env` is a no-op for now).
+            for key in &argv[1..] {
+                if let Some(v) = env::var(key) {
+                    println!("{}={}", key, v);
+                }
+            }
+            0
+        }
         _ => exec_external(&argv),
     }
 }
