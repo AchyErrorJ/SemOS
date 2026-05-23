@@ -44,6 +44,8 @@ struct KeyboardState {
     caps_lock: bool,
     /// Ctrl held
     ctrl: bool,
+    /// The previous byte was the 0xE0 extended-scancode prefix.
+    ext: bool,
 }
 
 impl KeyboardState {
@@ -55,6 +57,7 @@ impl KeyboardState {
             shift: false,
             caps_lock: false,
             ctrl: false,
+            ext: false,
         }
     }
 
@@ -134,6 +137,35 @@ static SCANCODE_TABLE_SHIFT: [u8; 58] = [
 /// Called from the keyboard interrupt handler.
 pub fn handle_scancode(scancode: u8) {
     let mut kb = KEYBOARD.lock();
+
+    // Extended-scancode prefix (arrow keys, etc.). Must be checked before the
+    // release test, since 0xE0 has bit 7 set.
+    if scancode == 0xE0 {
+        kb.ext = true;
+        return;
+    }
+    if kb.ext {
+        kb.ext = false;
+        // Only presses (bit 7 clear). Map the cursor keys to ANSI escapes the
+        // TTY line discipline understands: ESC [ A/B/C/D.
+        if scancode & 0x80 == 0 {
+            let letter = match scancode {
+                0x48 => Some(b'A'), // up
+                0x50 => Some(b'B'), // down
+                0x4D => Some(b'C'), // right
+                0x4B => Some(b'D'), // left
+                _ => None,
+            };
+            if let Some(letter) = letter {
+                drop(kb);
+                crate::tty::input_push(0x1B);
+                crate::tty::input_push(b'[');
+                crate::tty::input_push(letter);
+                return;
+            }
+        }
+        return;
+    }
 
     // Key release (bit 7 set)
     if scancode & 0x80 != 0 {

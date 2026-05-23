@@ -869,6 +869,13 @@ fn init_loader_task() {
     println!("================================================================");
     fd_inherit_demo();
 
+    // DEMO 43: TTY line editor — in-line cursor (arrows), mid-line edit, history.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 43: TTY line editing + history (M19)");
+    println!("================================================================");
+    line_editor_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1084,6 +1091,21 @@ fn usb_hid_demo() {
                         print!("{}", c as char);
                     } else if c == b'\n' {
                         println!();
+                    }
+                } else {
+                    // Arrow keys (HID usage 0x4F..0x52) → ANSI escapes for the
+                    // line editor: Right/Left/Down/Up = ESC [ C/D/B/A.
+                    let letter = match k {
+                        0x4F => Some(b'C'),
+                        0x50 => Some(b'D'),
+                        0x51 => Some(b'B'),
+                        0x52 => Some(b'A'),
+                        _ => None,
+                    };
+                    if let Some(letter) = letter {
+                        tty::input_push(0x1B);
+                        tty::input_push(b'[');
+                        tty::input_push(letter);
                     }
                 }
             }
@@ -4086,6 +4108,84 @@ fn fd_inherit_demo() {
 
     if inherited && found {
         println!("  [DEMO 42] => spawn inherits the parent FD table — child stdio redirect works");
+    }
+}
+
+/// DEMO 43: TTY line editor. Drives the cooked-mode line discipline through
+/// `tty::input_push` (the same entry the keyboard ISR feeds), injecting arrow
+/// escapes (`ESC [ A/B/C/D`) to exercise the in-line cursor and history, and
+/// reads the committed lines back via `SYS_READ(fd 0)`.
+fn line_editor_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    fn feed(bytes: &[u8]) {
+        for &b in bytes {
+            tty::input_push(b);
+        }
+    }
+    fn left() {
+        feed(&[0x1B, b'[', b'D']);
+    }
+    fn up() {
+        feed(&[0x1B, b'[', b'A']);
+    }
+    fn down() {
+        feed(&[0x1B, b'[', b'B']);
+    }
+    fn read_line(buf: &mut [u8]) -> usize {
+        let n = dispatch(SYS_READ, 0, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+        if n == u64::MAX { 0 } else { (n as usize).min(buf.len()) }
+    }
+
+    let mut buf = [0u8; 32];
+
+    // (1) Left-arrow + insert: type "ac", move left, insert 'b' → "abc".
+    feed(b"ac");
+    left();
+    feed(b"b");
+    feed(b"\n");
+    let n = read_line(&mut buf);
+    let insert_ok = &buf[..n] == b"abc\n";
+    if insert_ok {
+        println!("  [DEMO 43] PASS: left-arrow + insert → \"abc\" (cursor mid-line)");
+    } else {
+        println!("  [DEMO 43] FAIL: insert got {:?}", &buf[..n]);
+    }
+
+    // (2) Mid-line Backspace: type "abXc", move left (before 'c'), Backspace
+    // deletes 'X' → "abc".
+    feed(b"abXc");
+    left();
+    feed(&[0x08]); // Backspace
+    feed(b"\n");
+    let n = read_line(&mut buf);
+    let bs_ok = &buf[..n] == b"abc\n";
+    if bs_ok {
+        println!("  [DEMO 43] PASS: mid-line Backspace deleted before cursor → \"abc\"");
+    } else {
+        println!("  [DEMO 43] FAIL: mid-line backspace got {:?}", &buf[..n]);
+    }
+
+    // (3) History: commit "one" and "two", then Up,Up (→ "one"), Down (→ "two"),
+    // Enter → "two".
+    feed(b"one\n");
+    feed(b"two\n");
+    let _ = read_line(&mut buf); // flush the two committed lines
+    let _ = read_line(&mut buf);
+    up(); // → "two"
+    up(); // → "one"
+    down(); // → "two"
+    feed(b"\n");
+    let n = read_line(&mut buf);
+    let hist_ok = &buf[..n] == b"two\n";
+    if hist_ok {
+        println!("  [DEMO 43] PASS: history Up/Up/Down recalled \"two\"");
+    } else {
+        println!("  [DEMO 43] FAIL: history got {:?}", &buf[..n]);
+    }
+
+    if insert_ok && bs_ok && hist_ok {
+        println!("  [DEMO 43] => line editor: in-line cursor (arrows), mid-line edit, history recall");
     }
 }
 

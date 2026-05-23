@@ -167,19 +167,54 @@ impl TtyConsole {
 
 const PEND_MAX: usize = 256;
 const QUEUE_MAX: usize = 1024;
+const HIST_N: usize = 8; // remembered command lines
+const HIST_W: usize = 128; // max bytes stored per history line
+
+/// Input-escape parser state. Arrow keys arrive as `ESC [ A/B/C/D` (the
+/// keyboard layer emits these for the cursor keys); we parse them here for
+/// in-line editing + history recall, distinct from `AnsiTty` which parses
+/// *output* escapes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InEsc {
+    Normal,
+    Esc,
+    Csi,
+}
 
 struct LineState {
+    // Pending (cooked) line being edited, with an in-line insertion cursor.
     pend: [u8; PEND_MAX],
     pend_n: usize,
+    cursor: usize, // 0..=pend_n
+    // Committed-byte ring drained by SYS_READ.
     q: [u8; QUEUE_MAX],
-    head: usize, // write index
-    tail: usize, // read index
+    head: usize,
+    tail: usize,
     count: usize,
+    // Command history (oldest..newest in 0..hist_count) + navigation index.
+    hist: [[u8; HIST_W]; HIST_N],
+    hist_len: [usize; HIST_N],
+    hist_count: usize,
+    hist_nav: usize, // 0..=hist_count; == hist_count means "editing a fresh line"
+    esc: InEsc,
 }
 
 impl LineState {
     const fn new() -> Self {
-        Self { pend: [0; PEND_MAX], pend_n: 0, q: [0; QUEUE_MAX], head: 0, tail: 0, count: 0 }
+        Self {
+            pend: [0; PEND_MAX],
+            pend_n: 0,
+            cursor: 0,
+            q: [0; QUEUE_MAX],
+            head: 0,
+            tail: 0,
+            count: 0,
+            hist: [[0; HIST_W]; HIST_N],
+            hist_len: [0; HIST_N],
+            hist_count: 0,
+            hist_nav: 0,
+            esc: InEsc::Normal,
+        }
     }
 
     fn commit_push(&mut self, b: u8) {
@@ -200,12 +235,73 @@ impl LineState {
         self.count -= 1;
         Some(b)
     }
+
+    /// Insert `b` at the cursor (mid-line inserts shift the tail right).
+    fn insert(&mut self, b: u8) {
+        if self.pend_n >= PEND_MAX {
+            return;
+        }
+        let c = self.cursor;
+        self.pend.copy_within(c..self.pend_n, c + 1);
+        self.pend[c] = b;
+        self.pend_n += 1;
+        self.cursor += 1;
+    }
+
+    /// Delete the char before the cursor (Backspace).
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let c = self.cursor;
+        self.pend.copy_within(c..self.pend_n, c - 1);
+        self.pend_n -= 1;
+        self.cursor -= 1;
+    }
+
+    /// Replace the pending line with history entry `hist_nav` (or clear it
+    /// when nav is at the "fresh line" slot).
+    fn load_from_history(&mut self) {
+        if self.hist_nav >= self.hist_count {
+            self.pend_n = 0;
+            self.cursor = 0;
+            return;
+        }
+        let len = self.hist_len[self.hist_nav];
+        self.pend[..len].copy_from_slice(&self.hist[self.hist_nav][..len]);
+        self.pend_n = len;
+        self.cursor = len;
+    }
+
+    /// Store the just-committed line into history (drops the oldest when full).
+    fn store_history(&mut self) {
+        if self.pend_n == 0 {
+            return;
+        }
+        let len = self.pend_n.min(HIST_W);
+        if self.hist_count < HIST_N {
+            let i = self.hist_count;
+            self.hist[i][..len].copy_from_slice(&self.pend[..len]);
+            self.hist_len[i] = len;
+            self.hist_count += 1;
+        } else {
+            // Shift down, drop oldest, append at the end.
+            for i in 1..HIST_N {
+                let (a, b) = self.hist.split_at_mut(i);
+                a[i - 1] = b[0];
+                self.hist_len[i - 1] = self.hist_len[i];
+            }
+            self.hist[HIST_N - 1][..len].copy_from_slice(&self.pend[..len]);
+            self.hist_len[HIST_N - 1] = len;
+        }
+    }
 }
 
 static STDIN: Mutex<LineState> = Mutex::new(LineState::new());
 
 /// Feed one input byte through the line discipline. Call from the keyboard
-/// ISR / HID poll. Backspace edits the pending line, Enter commits it.
+/// ISR / HID poll. Handles printable insert, Backspace, Enter (commit), and
+/// the `ESC [ A/B/C/D` cursor/history escapes the keyboard emits for arrows.
 /// `without_interrupts` guards against a keyboard IRQ deadlocking against a
 /// concurrent `drain` (both take the STDIN lock).
 pub fn input_push(b: u8) {
@@ -214,19 +310,64 @@ pub fn input_push(b: u8) {
 
 fn input_push_locked(b: u8) {
     let mut s = STDIN.lock();
+
+    // --- input-escape state machine (arrow keys) ---
+    match s.esc {
+        InEsc::Esc => {
+            s.esc = if b == b'[' { InEsc::Csi } else { InEsc::Normal };
+            return;
+        }
+        InEsc::Csi => {
+            match b {
+                b'A' => {
+                    // Up — older history.
+                    if s.hist_nav > 0 {
+                        s.hist_nav -= 1;
+                        s.load_from_history();
+                    }
+                }
+                b'B' => {
+                    // Down — newer history (hist_count == fresh empty line).
+                    if s.hist_nav < s.hist_count {
+                        s.hist_nav += 1;
+                        s.load_from_history();
+                    }
+                }
+                b'C' => {
+                    if s.cursor < s.pend_n {
+                        s.cursor += 1;
+                    }
+                }
+                b'D' => {
+                    if s.cursor > 0 {
+                        s.cursor -= 1;
+                    }
+                }
+                _ => {}
+            }
+            s.esc = InEsc::Normal;
+            return;
+        }
+        InEsc::Normal => {}
+    }
+
     match b {
+        0x1B => s.esc = InEsc::Esc,
         b'\n' | b'\r' => {
             for i in 0..s.pend_n {
                 let c = s.pend[i];
                 s.commit_push(c);
             }
             s.commit_push(b'\n');
+            s.store_history();
             s.pend_n = 0;
+            s.cursor = 0;
+            s.hist_nav = s.hist_count; // reset to fresh-line slot
             crate::serial::Serial::put_char('\n');
         }
         0x08 | 0x7F => {
-            if s.pend_n > 0 {
-                s.pend_n -= 1;
+            if s.cursor > 0 {
+                s.backspace();
                 // Erase the echoed glyph on a terminal: BS, space, BS.
                 crate::serial::Serial::put_char('\u{8}');
                 crate::serial::Serial::put_char(' ');
@@ -235,9 +376,7 @@ fn input_push_locked(b: u8) {
         }
         0x20..=0x7E | b'\t' => {
             if s.pend_n < PEND_MAX {
-                let n = s.pend_n;
-                s.pend[n] = b;
-                s.pend_n = n + 1;
+                s.insert(b);
                 crate::serial::Serial::put_char(b as char);
             }
         }
