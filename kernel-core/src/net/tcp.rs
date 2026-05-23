@@ -277,9 +277,19 @@ impl embedded_io::ErrorType for TcpStream {
     type Error = TcpError;
 }
 
+/// Max wall-clock ticks an embedded-io read/write will spin with no progress
+/// before giving up. 100 Hz APIC → 1000 ticks = 10 s. A live peer always
+/// makes progress within an RTT, so this only fires when the peer is silent —
+/// e.g. a non-TLS service that accepted the TCP connect but never speaks (the
+/// SLIRP-port-1 case in DEMO 15). Without it the TLS handshake's blocking read
+/// of ServerHello spins forever and hangs the boot. On timeout we report EOF
+/// (read) / NotConnected (write) so the handshake fails *cleanly*.
+const IO_IDLE_TIMEOUT_TICKS: u64 = 1000;
+
 impl embedded_io::Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {
         if buf.is_empty() { return Ok(0); }
+        let start = crate::platform::ticks();
         loop {
             super::state::poll();
             match TcpStream::read(self, buf) {
@@ -291,6 +301,10 @@ impl embedded_io::Read for TcpStream {
                     // an error from our side.
                     if self.is_closed() {
                         // embedded_io's convention: read of 0 == EOF.
+                        return Ok(0);
+                    }
+                    // Idle-timeout guard: a silent peer must not hang us.
+                    if crate::platform::ticks().wrapping_sub(start) >= IO_IDLE_TIMEOUT_TICKS {
                         return Ok(0);
                     }
                     core::hint::spin_loop();
@@ -305,12 +319,16 @@ impl embedded_io::Read for TcpStream {
 impl embedded_io::Write for TcpStream {
     fn write(&mut self, buf: &[u8]) -> Result<usize, TcpError> {
         if buf.is_empty() { return Ok(0); }
+        let start = crate::platform::ticks();
         loop {
             super::state::poll();
             match TcpStream::write(self, buf) {
                 Ok(n) if n > 0 => return Ok(n),
                 Ok(_) => {
                     if self.is_closed() {
+                        return Err(TcpError::NotConnected);
+                    }
+                    if crate::platform::ticks().wrapping_sub(start) >= IO_IDLE_TIMEOUT_TICKS {
                         return Err(TcpError::NotConnected);
                     }
                     core::hint::spin_loop();
