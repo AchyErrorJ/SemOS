@@ -18,6 +18,7 @@ pub const SYS_OPEN:         u64 = 10;
 pub const SYS_CLOSE:        u64 = 11;
 pub const SYS_FREAD:        u64 = 12;
 pub const SYS_FWRITE:       u64 = 13;
+pub const SYS_SEEK:         u64 = 14;
 pub const SYS_STAT:         u64 = 15;
 pub const SYS_MKDIR:        u64 = 16;
 pub const SYS_UNLINK:       u64 = 17;

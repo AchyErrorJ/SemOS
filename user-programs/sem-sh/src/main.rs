@@ -15,7 +15,7 @@
 
 use semos_std::arch::{
     syscall1, syscall2, syscall3, syscall4, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN, SYS_PIPE,
-    SYS_READ, SYS_READDIR, SYS_SLEEP,
+    SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_TRUNCATE,
 };
 use semos_std::string::String;
 use semos_std::vec::Vec;
@@ -271,15 +271,21 @@ fn run_with_redirects(seg: &[String]) -> i32 {
     const O_CREATE: u64 = 1 << 0;
     const O_RDONLY: u64 = 0;
     let mut argv: Vec<String> = Vec::new();
-    let mut out_file: Option<String> = None; // `>` / `>>` (append not yet real)
+    let mut out_file: Option<(String, bool)> = None; // (path, append?)
     let mut in_file: Option<String> = None; // `<`
     let mut i = 0;
     while i < seg.len() {
         match seg[i].as_str() {
-            ">" | ">>" => {
+            ">" => {
                 i += 1;
                 if i < seg.len() {
-                    out_file = Some(seg[i].clone());
+                    out_file = Some((seg[i].clone(), false));
+                }
+            }
+            ">>" => {
+                i += 1;
+                if i < seg.len() {
+                    out_file = Some((seg[i].clone(), true));
                 }
             }
             "<" => {
@@ -298,9 +304,19 @@ fn run_with_redirects(seg: &[String]) -> i32 {
 
     let mut saved_out: Option<u64> = None;
     let mut saved_in: Option<u64> = None;
-    if let Some(path) = &out_file {
+    if let Some((path, append)) = &out_file {
         let fd = fd_open(path, O_CREATE);
         if fd != u64::MAX {
+            if *append {
+                // Seek the FD cursor to EOF so writes append.
+                let size = unsafe { syscall2(SYS_STAT, path.as_ptr() as u64, path.len() as u64) };
+                if size != u64::MAX {
+                    unsafe { syscall2(SYS_SEEK, fd, size) };
+                }
+            } else {
+                // `>` truncates: clear existing content, write from offset 0.
+                unsafe { syscall3(SYS_TRUNCATE, path.as_ptr() as u64, path.len() as u64, 0) };
+            }
             saved_out = Some(fd_dup(1));
             fd_dup2(fd, 1);
             fd_close(fd);

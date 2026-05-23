@@ -4427,7 +4427,7 @@ fn shell_pipe_demo() {
         return;
     }
 
-    for &b in b"echo redir-out > /shc2\ncat /shc2\necho via-pipe | cat\nexit\n" {
+    for &b in b"echo redir-out > /shc2\ncat /shc2\necho via-pipe | cat\necho AA > /shc3\necho BB >> /shc3\ncat /shc3\nexit\n" {
         tty::input_push(b);
     }
 
@@ -4458,6 +4458,7 @@ fn shell_pipe_demo() {
 
     let redir_ok = has(b"redir-out"); // echo > file, then cat file → stdout
     let pipe_ok = has(b"via-pipe"); // echo | cat → stdout
+    let append_ok = has(b"AA") && has(b"BB"); // > then >> kept both lines
     if redir_ok {
         println!("  [DEMO 46] PASS: `echo > /shc2` + `cat /shc2` round-tripped via file redirection");
     } else {
@@ -4465,9 +4466,14 @@ fn shell_pipe_demo() {
     }
     if pipe_ok {
         println!("  [DEMO 46] PASS: `echo via-pipe | cat` — pipeline delivered stdin→stdout");
-        println!("  [DEMO 46] => M20 stage C: redirection + pipes (FD inheritance + SYS_PIPE/DUP2)");
     } else {
         println!("  [DEMO 46] FAIL: pipe — {} bytes {:?}", clen, out);
+    }
+    if append_ok {
+        println!("  [DEMO 46] PASS: `> AA` then `>> BB` — append kept both lines (cat → AA+BB)");
+        println!("  [DEMO 46] => M20 stage C: redirection (>, >>) + pipes (FD inheritance + SYS_PIPE/DUP2)");
+    } else {
+        println!("  [DEMO 46] FAIL: append — {} bytes {:?}", clen, out);
     }
 
     dispatch(SYS_DUP2, 0, 1, 0, 0);
