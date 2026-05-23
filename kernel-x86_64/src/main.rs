@@ -44,6 +44,7 @@ static KERNEL_ALLOCATOR: KernelGlobalAlloc = KernelGlobalAlloc;
 
 mod serial;
 pub mod tty;
+pub mod agent;
 pub mod gdt;
 mod interrupts;
 mod memory;
@@ -905,6 +906,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 46: sem-sh redirection + pipes (M20 stage C)");
     println!("================================================================");
     shell_pipe_demo();
+
+    // DEMO 47: M22 Claude agent core — Messages-API framing + tool dispatch.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 47: Claude agent core (M22 stage A, no network)");
+    println!("================================================================");
+    agent_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4499,6 +4507,88 @@ fn shell_pipe_demo() {
     dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
     dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
     kernel_core::process::set_kernel_task_id(saved_kernel_task);
+}
+
+/// DEMO 47: M22 Claude agent core (no network). Exercises the agent's
+/// Messages-API request framing, response parsing (text + tool_use), and tool
+/// dispatch (write_file then read_file) end-to-end with canned data — the
+/// reasoning machinery that Stage B (live TLS) and Stage C (loop+TUI) drive.
+fn agent_demo() {
+    use crate::agent::{self, Message};
+    use alloc::string::String;
+
+    // 1. Request framing: a real request body with system + user msg + tools.
+    let msgs = [Message::text("user", "Read /agent-test.txt and summarize it.")];
+    let req = agent::build_request("claude-opus-4-7", 1024, "You are a helpful agent.", &msgs);
+    let req_ok = req.contains("\"model\":\"claude-opus-4-7\"")
+        && req.contains("\"tools\":")
+        && req.contains("read_file")
+        && req.contains("Read /agent-test.txt");
+    if req_ok {
+        println!("  [DEMO 47] PASS: built Messages-API request ({} B, model+system+tools+messages)", req.len());
+    } else {
+        println!("  [DEMO 47] FAIL: request framing");
+    }
+
+    // 2. Parse a tool_use response (as Claude would return).
+    let canned_tu = "{\"id\":\"msg_1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"read_file\",\"input\":{\"path\":\"/agent-test.txt\"}}],\"stop_reason\":\"tool_use\"}";
+    let r = agent::parse_response(canned_tu);
+    let tu_ok = match &r.tool_use {
+        Some(t) => t.name == "read_file" && t.id == "toolu_1" && t.input_json.contains("/agent-test.txt"),
+        None => false,
+    };
+    if tu_ok {
+        println!("  [DEMO 47] PASS: parsed tool_use → name=read_file id=toolu_1 input has path");
+    } else {
+        println!("  [DEMO 47] FAIL: tool_use parse");
+    }
+
+    // 3. Tool dispatch: write_file then read_file (the inputs Claude sent).
+    let _ = agent::run_tool(
+        "write_file",
+        "{\"path\":\"/agent-test.txt\",\"content\":\"AGENT_FILE_OK\"}",
+    );
+    let read_result = match &r.tool_use {
+        Some(t) => agent::run_tool(&t.name, &t.input_json),
+        None => String::new(),
+    };
+    let tool_ok = read_result.contains("AGENT_FILE_OK");
+    if tool_ok {
+        println!("  [DEMO 47] PASS: tool dispatch — write_file + read_file round-tripped \"AGENT_FILE_OK\"");
+    } else {
+        println!("  [DEMO 47] FAIL: tool dispatch got {:?}", read_result);
+    }
+
+    // 4. Parse a text response.
+    let canned_txt = "{\"content\":[{\"type\":\"text\",\"text\":\"The file says it is OK.\"}]}";
+    let rt = agent::parse_response(canned_txt);
+    let text_ok = rt.text.as_deref() == Some("The file says it is OK.");
+    if text_ok {
+        println!("  [DEMO 47] PASS: parsed assistant text response");
+    } else {
+        println!("  [DEMO 47] FAIL: text parse got {:?}", rt.text);
+    }
+
+    // 5. Build a follow-up request carrying the tool_result.
+    let follow_ok = if let Some(t) = &r.tool_use {
+        let follow = [
+            Message::text("user", "Read /agent-test.txt and summarize it."),
+            Message::tool_result(&t.id, &read_result),
+        ];
+        let req2 = agent::build_request("claude-opus-4-7", 1024, "", &follow);
+        req2.contains("tool_result") && req2.contains("toolu_1") && req2.contains("AGENT_FILE_OK")
+    } else {
+        false
+    };
+    if follow_ok {
+        println!("  [DEMO 47] PASS: follow-up request carries the tool_result back to the model");
+    } else {
+        println!("  [DEMO 47] FAIL: tool_result follow-up");
+    }
+
+    if req_ok && tu_ok && tool_ok && text_ok && follow_ok {
+        println!("  [DEMO 47] => M22 stage A: agent protocol + tools work (read_file/write_file); next: live TLS");
+    }
 }
 
 /// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).
