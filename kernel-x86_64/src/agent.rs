@@ -276,6 +276,113 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 // ============================================================================
+// Live transport — POST the request to api.anthropic.com over the TLS stack.
+// ============================================================================
+
+/// Wrap a JSON body in a full HTTP/1.1 POST to /v1/messages. `api_key` is
+/// added as `x-api-key` when non-empty (empty → expect a 401, which still
+/// proves the round-trip).
+pub fn build_http_request(body: &str, api_key: &str) -> String {
+    let mut req = String::with_capacity(body.len() + 256);
+    req.push_str("POST /v1/messages HTTP/1.1\r\n");
+    req.push_str("Host: api.anthropic.com\r\n");
+    req.push_str("User-Agent: semantic-os/0.1\r\n");
+    req.push_str("Content-Type: application/json\r\n");
+    req.push_str("anthropic-version: 2023-06-01\r\n");
+    if !api_key.is_empty() {
+        req.push_str("x-api-key: ");
+        req.push_str(api_key);
+        req.push_str("\r\n");
+    }
+    req.push_str("Connection: close\r\n");
+    req.push_str(&format!("Content-Length: {}\r\n\r\n", body.len()));
+    req.push_str(body);
+    req
+}
+
+/// Send `request` to api.anthropic.com:443 over the Phase-8 TLS transport and
+/// read the response into `resp_out`. Resolves the host (DNS, hardcoded
+/// fallback), connects (TLS 1.3 handshake + cert pin), sends, reads until the
+/// server closes (we send `Connection: close`), and closes. Returns bytes read.
+pub fn send_over_tls(request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'static str> {
+    use kernel_core::llm::transport::NetworkTransport;
+    use kernel_core::net::Ipv4Address;
+    use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
+
+    const SNI: &str = "api.anthropic.com";
+    const PORT: u16 = 443;
+    const FALLBACK: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
+
+    let ip = kernel_core::net::resolve(SNI).unwrap_or(FALLBACK);
+    configure_global(ip, PORT);
+
+    unsafe {
+        let t = global_tls_transport();
+        if t.connect(SNI, PORT).is_err() {
+            t.close();
+            return Err("tls connect failed");
+        }
+        // Send the whole request.
+        let mut sent = 0;
+        while sent < request.len() {
+            match t.send(&request[sent..]) {
+                Ok(0) => break,
+                Ok(n) => sent += n,
+                Err(_) => {
+                    t.close();
+                    return Err("send failed");
+                }
+            }
+        }
+        // Read until EOF (server closes after the response) or buffer full.
+        let mut got = 0;
+        for _ in 0..64 {
+            if got == resp_out.len() {
+                break;
+            }
+            match t.recv(&mut resp_out[got..]) {
+                Ok(0) => break,
+                Ok(n) => got += n,
+                Err(_) => break,
+            }
+        }
+        t.close();
+        Ok(got)
+    }
+}
+
+/// Parse the numeric status code out of an HTTP response (`HTTP/1.1 NNN ...`).
+pub fn http_status(resp: &[u8]) -> Option<u32> {
+    if resp.len() < 12 || &resp[..5] != b"HTTP/" {
+        return None;
+    }
+    let sp = resp.iter().position(|&b| b == b' ')?;
+    let mut code = 0u32;
+    let mut i = sp + 1;
+    while i < resp.len() && resp[i].is_ascii_digit() {
+        code = code * 10 + (resp[i] - b'0') as u32;
+        i += 1;
+    }
+    if code > 0 {
+        Some(code)
+    } else {
+        None
+    }
+}
+
+/// Return the body slice of an HTTP response (everything after the blank line).
+/// (Chunked decoding is a stage-C concern; the 401 we test in stage B is small
+/// and Content-Length framed.)
+pub fn http_body(resp: &[u8]) -> &[u8] {
+    let sep = b"\r\n\r\n";
+    if let Some(i) = find(resp, sep) {
+        &resp[i + sep.len()..]
+    } else {
+        &[]
+    }
+}
+
+// ============================================================================
 // Tool dispatch — run a tool against the kernel, return the tool_result text.
 // ============================================================================
 

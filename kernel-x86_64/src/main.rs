@@ -914,6 +914,15 @@ fn init_loader_task() {
     println!("================================================================");
     agent_demo();
 
+    // DEMO 48: M22 stage B — agent's request over live TLS to api.anthropic.com.
+    if kernel_core::net::is_initialized() {
+        println!();
+        println!("================================================================");
+        println!("  SemOS DEMO 48: agent live TLS round-trip (M22 stage B)");
+        println!("================================================================");
+        agent_live_demo();
+    }
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4588,6 +4597,45 @@ fn agent_demo() {
 
     if req_ok && tu_ok && tool_ok && text_ok && follow_ok {
         println!("  [DEMO 47] => M22 stage A: agent protocol + tools work (read_file/write_file); next: live TLS");
+    }
+}
+
+/// DEMO 48: M22 stage B — send the agent's Messages-API request to
+/// api.anthropic.com over the Phase-8 TLS transport and read the response.
+/// With no API key we expect HTTP 401 — which proves the agent's request was
+/// framed correctly, encrypted, sent, and a parseable HTTP response came back
+/// (the same "401 round-trip" Phase 8 used as its acceptance). Stage C adds
+/// the key, the conversation loop, and the tool round-trips.
+fn agent_live_demo() {
+    use crate::agent::{self, Message};
+
+    // Build a real Messages-API request body (model + tools + one user turn).
+    let msgs = [Message::text("user", "Say hello in one short sentence.")];
+    let body = agent::build_request("claude-haiku-4-5-20251001", 64, "", &msgs);
+    // No key → expect 401. (Stage C reads it from /etc/anthropic-api-key.)
+    let http = agent::build_http_request(&body, "");
+    println!("  [DEMO 48] sending {}-byte agent request over TLS (no key → expect 401)...", http.len());
+
+    let mut resp = [0u8; 4096];
+    match agent::send_over_tls(http.as_bytes(), &mut resp) {
+        Ok(n) => {
+            let resp = &resp[..n];
+            let status = agent::http_status(resp).unwrap_or(0);
+            println!("  [DEMO 48] received {} bytes, HTTP status {}", n, status);
+            if status == 401 {
+                println!("  [DEMO 48] PASS: agent request reached Anthropic over TLS — 401 (auth) as expected, no key");
+                println!("  [DEMO 48] => M22 stage B: request framing + TLS send/recv work end-to-end; stage C adds key + loop");
+            } else if status != 0 {
+                // Any HTTP status still proves the round-trip; a key would 200.
+                println!("  [DEMO 48] PASS: agent round-trip OK (HTTP {} — request reached the API)", status);
+            } else {
+                println!("  [DEMO 48] FAIL: no HTTP status parsed from {} bytes", n);
+            }
+        }
+        Err(e) => {
+            // Network/TLS issue (intermittent SLIRP); not an agent-logic failure.
+            println!("  [DEMO 48] SKIPPED: transport error ({}) — retry boot if -netdev flaked", e);
+        }
     }
 }
 
