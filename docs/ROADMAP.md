@@ -49,7 +49,8 @@ A milestone is **done** when:
 | -netdev DEMO 15 hang FIXED 2026-05-23 | `ad540dd`: embedded-io TcpStream read/write now bounded by a 10 s idle deadline. The TLS handshake's ServerHello read spun forever when SLIRP raced port 1 to ESTABLISHED then went silent — hung the boot 350 s+. 4 consecutive -netdev boots clean after. |
 | M20 stage B 2026-05-23 | **sem-sh fs builtins + $VAR** (`b81251d`, DEMO 45): cat/ls/which/env builtins + `$VAR` expansion (inherited env). Suite **148 PASS**. |
 | M20 DONE 2026-05-23 | **sem-sh redirection + pipes** (`96fbaf9`, DEMO 46): `>`/`<` redirection + `|` pipelines (sequential v1). Kernel: SYS_WRITE→handle_fwrite routing + positional Path writes. Suite **150 PASS / 0 FAIL / 0 #DF**. M20 ✅ — shell complete. |
-| M19/M20 hardening 2026-05-23 | **pipe-end refcounting** (`0b4a6bb`) + **true `>>` append** (`763188a`) + **concurrent pipes** (`9d89dbb`: WOULDBLOCK reads + spawn-inherit refcount + exit-time FD cleanup + concurrent shell spawn). Suite **152 PASS / 0 FAIL / 0 #DF**. M19/M20 hardening done. Next: M21 editor / M22 agent. |
+| M19/M20 hardening 2026-05-23 | **pipe-end refcounting** (`0b4a6bb`) + **true `>>` append** (`763188a`) + **concurrent pipes** (`9d89dbb`: WOULDBLOCK reads + spawn-inherit refcount + exit-time FD cleanup + concurrent shell spawn). Suite **152 PASS / 0 FAIL / 0 #DF**. |
+| M22 stage A 2026-05-23 | **Claude agent core** (`34ef9ee`, DEMO 47): `agent.rs` — Messages-API request framing + response parse (text + tool_use) + tool dispatch (read_file/write_file). No network. Suite **157 PASS / 0 FAIL / 0 #DF**. Stage B: live TLS round-trip. Stage C: loop + TUI + key + live demo. *(Note: -netdev DEMO 15 TLS stall recurred intermittently — passes on retry.)* |
 
 ---
 
@@ -454,11 +455,11 @@ built on `semos-std`. **Done 2026-05-23** across stages A (`5398720`), B
 - [✅] Builtins: `echo`/`pwd`/`cd`/`exit`/`true`/`false`/`cat`/`ls`/`which`/`env`
       (`cat` with no args is a stdin filter; `env` prints named vars only).
 - [✅] Exec native ELF programs via `process::Command` (`name` → `/bin/name`).
-- [✅] Pipes (`|`) and file redirection (`>`, `>>`, `<`). Pipes are sequential
-      v1 (≤ 4 KiB intermediate data; concurrent pipes are a follow-up). Exposed
-      two kernel fixes: SYS_WRITE now routes through `handle_fwrite` (so a
-      redirected file fd 1 actually writes the file), and Path `handle_fwrite`
-      is now positional (sequential writes accumulate, not overwrite).
+- [✅] Pipes (`|`) and file redirection (`>`, `>>`, `<`) — concurrent (external
+      producers spawn under the scheduler; see follow-ups). Exposed two kernel
+      fixes: SYS_WRITE now routes through `handle_fwrite` (so a redirected file
+      fd 1 actually writes the file), and Path `handle_fwrite` is positional
+      (sequential writes accumulate, not overwrite).
 - [ ] Job control deferred to a follow-up; not in v1.
 - [✅] DEMO 45 (REPL/builtins) + DEMO 46 (`echo > file; cat file; echo | cat`).
 
@@ -494,25 +495,28 @@ Edit source files in-place. Not vim-compatible, just usable.
 - [ ] Multi-file open (tabs or buffers)
 - [ ] DEMO 34 opens a file, edits a line, saves, re-reads to verify
 
-## M22 — Claude agent client (native Rust port) `[  ]`
+## M22 — Claude agent client (native Rust port) `[🔨 stage A: core landed]`
 
 The reason for all of the above. A TUI agent like Claude Code but
 written for this kernel, talking to the Anthropic API over the
 TLS stack from Phase 8 + Wi-Fi from Phase 10.
 
+**Stage A (`34ef9ee`, DEMO 47):** the agent *core*, no network — lives in
+`kernel-x86_64/src/agent.rs` (alloc + kernel syscall/TLS surface; the native
+TUI Ring-3 wrapper is a later refactor, needs TLS exposed to Ring-3).
+
 **Done when:**
-- [ ] TUI render loop on M19/M20 (split panes, status line, scrollback)
-- [ ] Agent message loop: read user input, send to API, parse
-      response, render output, repeat
-- [ ] Tool use: at minimum `read_file`, `write_file`, `bash`
-      (executes via M20), `grep`, `glob` — the smallest set that
-      lets Claude make real edits to this codebase
-- [ ] Multi-turn conversation with context management (truncate
-      old turns when nearing token limit)
-- [ ] Loads API key from a file under `/etc/anthropic-api-key`
-      (M5 persistence makes this possible)
-- [ ] DEMO 35 boots the agent, asks Claude to read README.md and
-      summarize it; agent calls `read_file`, returns the summary
+- [ ] TUI render loop on M19/M20 (split panes, status line, scrollback) — stage C.
+- [~] Agent message loop — request framing (`build_request`) + response parse
+      (`parse_response`: text + tool_use) done; the live send + loop is stage B/C.
+- [~] Tool use: `read_file`/`write_file` dispatch done (SYS_OPEN/FREAD/FWRITE);
+      `bash` (via M20 sem-sh), `grep`, `glob` are stage C.
+- [ ] Multi-turn conversation with context management — message model + multi-
+      turn request building done; truncation/window is stage C.
+- [ ] Loads API key from `/etc/anthropic-api-key` — stage C.
+- [ ] DEMO (stage C) boots the agent, asks Claude to read README and
+      summarize; agent calls `read_file`, returns the summary (needs a key + net).
+      Stage A's DEMO 47 validates the protocol+tools with canned data.
 
 ## M23 — Build pipeline (cross-build over network) `[  ]` — OPTIONAL FALLBACK
 
