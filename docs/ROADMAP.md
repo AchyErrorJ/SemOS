@@ -45,6 +45,7 @@ A milestone is **done** when:
 | M19 slice 1 2026-05-22 | **TTY stdin + ANSI** (`716eafd`, DEMO 40): cooked-mode line discipline (`SYS_READ` fd 0, Backspace), `AnsiTty` (SGR color / 2J / K / H) over the TTF console. Suite **135 PASS**. |
 | M19 per-process stdio 2026-05-22 | **Full per-process FD-table refactor** (`673d948`+`efd444e`+`21dbd8f`, DEMO 41/42): all FDs (console/pipe/path/ramfs) live in the process `FdTable`; global PATH_FDS/PIPE_FDS deleted; stdio routable (dup2→pipe) + inherited on spawn; slot-keyed resolution + stale-task_id fix. Suite **140 PASS**. |
 | M19 DONE 2026-05-22 | **TTY complete** (`9787cb7` line editing + history, `93ca47c` scrollback; DEMO 43/44): in-line cursor + arrow keys (PS/2 0xE0 + USB HID → ESC[ABCD) + 8-line history; TtyConsole scrollback ring. Suite **145 PASS / 0 FAIL / 0 #DF**. M19 ✅ — next is M20 native shell. |
+| M20 stage A 2026-05-23 | **sem-sh native shell** (`5398720`, DEMO 45): REPL reading cooked stdin (M19) + script mode, quote-aware parser, builtins (echo/pwd/cd/exit), external ELF exec via Command. Suite **147 PASS**. Gotcha: new user crate must be non-PIE (build.rs+link.ld) or println crashes — see feedback memory. Stage B: ls/cat/which/$VAR. Stage C: pipes/redirection. |
 
 ---
 
@@ -435,20 +436,32 @@ Validated 140 PASS / 0 FAIL / 0 #DF.
       inheritance across spawn (42), line editing + history (43), scrollback
       (44). (Next free DEMO is 45.)
 
-## M20 — Native shell (`sem-sh` or similar) `[  ]`
+## M20 — Native shell (`sem-sh` or similar) `[🔨 stage A landed]`
 
-Rust shell — no bash compatibility, just what we need.
+Rust shell — no bash compatibility, just what we need. `user-programs/sem-sh`,
+built on `semos-std`. **Stage A landed (`5398720`, DEMO 45, 147 PASS):** REPL +
+script mode + parser + core builtins + external exec.
 
 **Done when:**
-- [ ] Line editor on top of M19 with history (Up/Down recall)
-- [ ] Command parser: argv splitting, quoting, env-var substitution
-- [ ] Builtins: `cd`, `ls`, `cat`, `echo`, `pwd`, `exit`, `env`, `which`
-- [ ] Exec native ELF programs (extension of today's `user-programs/`
-      mechanism — currently only kernel-launched, needs runtime spawn)
-- [ ] Pipes (`|`) and file redirection (`>`, `<`)
+- [✅] Line editor on top of M19 with history — provided by the M19 line
+      discipline (arrows + Up/Down history); the shell reads cooked lines via
+      `SYS_READ(0)`.
+- [~] Command parser: argv splitting + quoting (`"`/`'`) + `;`/newline
+      separation done. **Env-var substitution (`$VAR`) still TODO (stage B).**
+- [~] Builtins: `echo`/`pwd`/`cd`/`exit`/`true`/`false` done.
+      **`ls`/`cat`/`which`/`env` TODO (stage B).**
+- [✅] Exec native ELF programs — non-builtins run via `process::Command`
+      (`name` → `/bin/name`), blocking for exit status.
+- [ ] Pipes (`|`) and file redirection (`>`, `<`) — stage C. `SYS_PIPE`/`DUP2`
+      shim wrappers + the per-process FD inheritance (M19) are the substrate.
 - [ ] Job control deferred to a follow-up; not in v1
-- [ ] DEMO 33 launches `sem-sh` and runs a script that creates a
-      file, cats it back, and pipes through another program
+- [ ] DEMO 46 (stage C): a script that creates a file, cats it back, and pipes
+      through another program. (DEMO 45 is stage A's REPL test.)
+
+**Gotcha that cost time in stage A:** a new user crate builds as PIE (ET_DYN)
+unless it copies `build.rs` + `link.ld` + `.cargo/config` (non-PIE EXEC at
+0x400000) — the kernel applies no relocations, so `println` crashes while raw
+syscalls work. See `feedback_new_user_program_nonpie.md`.
 
 ## M21 — Native editor `[  ]`
 
