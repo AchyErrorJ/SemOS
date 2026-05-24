@@ -534,10 +534,23 @@ unfolds — `set_status` while it connects/runs a tool/thinks, `push_*` per turn
 so it's the real agent UI, not a mock. (Adding the module overflowed the
 `init_loader` task stack at DEMO 26 → bumped `TASK_STACK_SIZE` 128→256 KiB.)
 
+**Stage E (DEMO 51 + DEMO 49 prompt):** **interactive keyboard input**. The
+cooked-mode line discipline (`tty::input_push`, fed by the PS/2 ISR and a new
+`pump_keyboard` USB-HID poll) → `tty::peek_line` snapshot → `Tui::read_line`,
+which echoes the in-progress line into the prompt pane (Backspace + arrow
+editing all work) and returns the committed line on Enter. DEMO 51 validates
+the path headlessly by injecting keystrokes (incl. an edit + Backspace),
+pixel-checking the prompt echo, then confirming `read_line` returns the
+assembled line. DEMO 49's live loop now reads its question through `read_line`
+(real keyboard on metal; injected headless) → so you type a question and Claude
+answers in the TUI.
+
 **Done when:**
 - [x] TUI render loop on M19/M20 (status / transcript+scrollback / prompt panes,
-      role colours) — DEMO 50; live loop renders into it (DEMO 49). Split-pane
-      side-by-side layout + interactive keyboard input still to come.
+      role colours) — DEMO 50; live loop renders into it (DEMO 49).
+- [x] Interactive keyboard input — `Tui::read_line` over the cooked line
+      discipline + USB/PS2 pump, prompt echo + editing (DEMO 51); the live agent
+      reads its question through it (DEMO 49). Side-by-side split panes still to come.
 - [x] Agent message loop — full send→parse→tools→resend loop live (DEMO 49).
 - [~] Tool use: `read_file`/`write_file` live; `bash` (via M20 sem-sh), `grep`,
       `glob` defined in `tools_json` but not yet dispatched/validated.

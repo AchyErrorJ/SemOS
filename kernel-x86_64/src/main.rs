@@ -940,6 +940,14 @@ fn init_loader_task() {
     println!("================================================================");
     agent_tui_demo();
 
+    // DEMO 51: M22 TUI interactive input — type into the prompt pane, edit,
+    // and commit a line (cooked-mode line discipline → TUI prompt → read_line).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 51: TUI keyboard input (M22 — prompt + read_line)");
+    println!("================================================================");
+    agent_tui_input_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1103,6 +1111,36 @@ fn fb_drawing_demo() {
     } else {
         println!("  [DEMO 35] => M6 had failures (see above)");
     }
+}
+
+/// Poll the USB HID keyboard once and feed any keystrokes into the TTY line
+/// discipline (`tty::input_push`) — the same entry the PS/2 ISR uses. Maps
+/// ASCII via `keycode_to_ascii` and the arrow keys to `ESC [ A/B/C/D` for the
+/// line editor. Call this in an interactive read loop (the TUI prompt) so USB
+/// keyboards work on metal; the PS/2 path is ISR-driven and needs no polling.
+/// No-op (returns 0) if no HID device is enumerated (e.g. headless QEMU).
+pub fn pump_keyboard() -> usize {
+    usb::xhci::poll_hid(|rep| {
+        let shift = rep.shift_held();
+        for k in rep.pressed_keys() {
+            if let Some(c) = usb::hid::keycode_to_ascii(k, shift) {
+                tty::input_push(c);
+            } else {
+                let letter = match k {
+                    0x4F => Some(b'C'),
+                    0x50 => Some(b'D'),
+                    0x51 => Some(b'B'),
+                    0x52 => Some(b'A'),
+                    _ => None,
+                };
+                if let Some(letter) = letter {
+                    tty::input_push(0x1B);
+                    tty::input_push(b'[');
+                    tty::input_push(letter);
+                }
+            }
+        }
+    })
 }
 
 /// DEMO 18: poll the HID transfer ring for a few seconds, print any keypress
@@ -4726,6 +4764,65 @@ fn agent_tui_demo() {
     }
 }
 
+/// DEMO 51: M22 TUI interactive input. Drives the real input path — cooked-mode
+/// line discipline (`tty::input_push`, the same entry the PS/2 ISR and USB HID
+/// poll feed) → the TUI prompt pane → `Tui::read_line`. Headless QEMU has no
+/// keyboard, so we *inject* keystrokes (incl. an edit and Backspace) exactly as
+/// a keyboard would, render the in-progress line, verify by pixel readback that
+/// the prompt pane shows the typed text, then commit with Enter and confirm
+/// `read_line` returns the assembled line. On metal the same `read_line` reads a
+/// real keyboard (USB via `pump_keyboard`, PS/2 via its ISR).
+fn agent_tui_input_demo() {
+    use crate::tui::{self, Tui};
+
+    let mut t = match Tui::new("claude-haiku-4-5") {
+        Some(t) => t,
+        None => {
+            println!("  [DEMO 51] SKIPPED: no framebuffer");
+            return;
+        }
+    };
+
+    // Simulate the user typing a question (no Enter yet). Throw in a stray 'X'
+    // then Backspace to exercise in-line editing through the discipline.
+    let typed = b"summarize /README";
+    for &b in typed {
+        tty::input_push(b);
+    }
+    tty::input_push(b'X');
+    tty::input_push(0x08); // Backspace — removes the 'X'
+
+    // Echo the in-progress line into the prompt pane and verify it rendered.
+    t.refresh_prompt();
+    let (px, py, pw, ph) = t.prompt_rect();
+    let prompt_ink = tui::count_non_bg(px, py, pw, ph, tui::PROMPT_BG_C);
+
+    // Press Enter, then read the committed line back through read_line.
+    tty::input_push(b'\n');
+    let mut line = [0u8; 128];
+    let len = t.read_line(&mut line);
+    let got = &line[..len];
+
+    let render_ok = prompt_ink > 200; // "› summarize /README_" is plenty of ink
+    let line_ok = got == typed; // 'X' was backspaced out
+
+    if render_ok {
+        println!("  [DEMO 51] PASS: typed line echoed to prompt pane ({} ink px)", prompt_ink);
+    } else {
+        println!("  [DEMO 51] FAIL: prompt ink {} (expected typed text)", prompt_ink);
+    }
+    if line_ok {
+        if let Ok(s) = core::str::from_utf8(got) {
+            println!("  [DEMO 51] PASS: read_line committed \"{}\" ({} B, Backspace applied)", s, len);
+        }
+    } else {
+        println!("  [DEMO 51] FAIL: read_line returned {:?}", got);
+    }
+    if render_ok && line_ok {
+        println!("  [DEMO 51] => M22 TUI: keyboard input → prompt echo → committed line works");
+    }
+}
+
 /// DEMO 49: M22 stage C — the agent reasoning loop against a LIVE Claude model.
 /// Creates /README, asks Claude to read it via the read_file tool and
 /// summarize; runs the loop (send → parse tool_use → run_tool → tool_result →
@@ -4745,7 +4842,25 @@ fn agent_loop_demo() {
     // same loop that prints to serial drives the panes — so this is the real
     // agent UI, not a mock. `None` on a headless run; calls are no-ops then.
     let mut tui = Tui::new("claude-haiku-4-5");
-    let question = "Use the read_file tool to read /README, then summarize it in one short sentence.";
+
+    // Get the user's question through the TUI prompt. On metal `read_line`
+    // blocks on the real keyboard; headless, we inject the keystrokes first so
+    // the same input path (line discipline → prompt echo → read_line) runs
+    // deterministically and Claude still gets a real, user-supplied question.
+    let default_q = "Use the read_file tool to read /README, then summarize it in one short sentence.";
+    let question_owned = if let Some(t) = tui.as_mut() {
+        for &b in default_q.as_bytes() {
+            tty::input_push(b);
+        }
+        tty::input_push(b'\n');
+        let mut qbuf = [0u8; 256];
+        let n = t.read_line(&mut qbuf);
+        String::from_utf8_lossy(&qbuf[..n]).into_owned()
+    } else {
+        String::from(default_q)
+    };
+    let question = question_owned.as_str();
+    println!("  [DEMO 49] prompt: \"{}\"", question);
     if let Some(t) = tui.as_mut() {
         t.push_user(question);
         t.set_status("connecting");

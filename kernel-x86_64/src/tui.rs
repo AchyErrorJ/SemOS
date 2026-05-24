@@ -147,6 +147,67 @@ impl Tui {
         self.prompt.write(Aa::Sharp, text);
     }
 
+    /// Render the in-progress edit line (`› ` + typed bytes + a caret) into the
+    /// prompt pane. `text` is the cooked-mode `pend` snapshot (ASCII).
+    fn render_prompt_edit(&mut self, text: &[u8], _cursor: usize) {
+        self.prompt.clear();
+        self.prompt.set_fg(ACCENT);
+        self.prompt.write(Aa::Sharp, "\u{203a} ");
+        self.prompt.set_fg(FG);
+        if let Ok(s) = core::str::from_utf8(text) {
+            self.prompt.write(Aa::Sharp, s);
+        }
+        self.prompt.set_fg(ACCENT);
+        self.prompt.write(Aa::Sharp, "_"); // block caret
+    }
+
+    /// Echo the current uncommitted input line into the prompt pane (one shot).
+    pub fn refresh_prompt(&mut self) {
+        let mut pbuf = [0u8; 256];
+        let (plen, cur) = crate::tty::peek_line(&mut pbuf);
+        self.render_prompt_edit(&pbuf[..plen], cur);
+    }
+
+    /// Interactively read one line into `out`, echoing keystrokes into the
+    /// prompt pane as they're typed. Pumps the USB keyboard (PS/2 is ISR-fed)
+    /// and the cooked-mode line discipline (Backspace + arrow editing + history
+    /// all work via `tty::input_push`), re-rendering the prompt only when the
+    /// pending line changes. Returns the committed line length (newline
+    /// stripped) once the user presses Enter. Blocks until then.
+    pub fn read_line(&mut self, out: &mut [u8]) -> usize {
+        let mut pbuf = [0u8; 256];
+        let mut last = [0u8; 256];
+        let mut last_len = usize::MAX;
+        let mut acc = 0usize;
+        let mut dbuf = [0u8; 256];
+        loop {
+            crate::pump_keyboard();
+
+            // Re-render the prompt only when the pending line changed.
+            let (plen, cur) = crate::tty::peek_line(&mut pbuf);
+            if plen != last_len || pbuf[..plen] != last[..plen] {
+                self.render_prompt_edit(&pbuf[..plen], cur);
+                last[..plen].copy_from_slice(&pbuf[..plen]);
+                last_len = plen;
+            }
+
+            // Pull any committed bytes; a '\n' ends the line.
+            let n = crate::tty::drain(&mut dbuf);
+            for i in 0..n {
+                let b = dbuf[i];
+                if b == b'\n' {
+                    self.set_prompt("");
+                    return acc;
+                }
+                if acc < out.len() {
+                    out[acc] = b;
+                    acc += 1;
+                }
+            }
+            core::hint::spin_loop();
+        }
+    }
+
     /// Append a transcript line: coloured `label` then `text`, newline-terminated.
     fn push(&mut self, color: Color, label: &str, text: &str) {
         self.transcript.set_fg(color);

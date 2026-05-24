@@ -470,6 +470,20 @@ fn input_push_locked(b: u8) {
     }
 }
 
+/// Snapshot the *uncommitted* line currently being edited (the cooked-mode
+/// `pend` buffer) into `buf`, returning `(len, cursor)`. Unlike `drain`, this
+/// does not consume anything — it lets an interactive UI (the TUI prompt pane)
+/// echo what the user has typed so far, re-rendering only when this changes.
+/// `cursor` is the in-line insertion index (0..=len) for arrow-key editing.
+pub fn peek_line(buf: &mut [u8]) -> (usize, usize) {
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let s = STDIN.lock();
+        let n = s.pend_n.min(buf.len());
+        buf[..n].copy_from_slice(&s.pend[..n]);
+        (n, s.cursor.min(n))
+    })
+}
+
 /// Drain committed stdin bytes into `buf` (non-blocking). Returns the count.
 /// This backs `platform::stdin_read` → SYS_READ(fd 0).
 pub fn drain(buf: &mut [u8]) -> usize {

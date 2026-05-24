@@ -334,6 +334,11 @@ pub fn build_http_request(body: &str, api_key: &str) -> String {
 /// than fail the whole agent turn on a transient, we tear down and reconnect.
 /// Our requests are read-only/idempotent for this purpose, so a resend is safe.
 pub fn send_over_tls(request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'static str> {
+    // 3 attempts: absorbs the common single-socket reconnect flake (empty first
+    // read) without grinding — a *failing* attempt can sit on the 30 s recv idle
+    // timeout, so a high cap turns a bad-luck streak into a multi-minute stall.
+    // The residual flake (rare total failure) is the documented single-socket
+    // limitation; the real fix is a socket pool / HTTP keep-alive.
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = "no attempt";
     for attempt in 1..=MAX_ATTEMPTS {
