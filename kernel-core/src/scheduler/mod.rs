@@ -63,9 +63,17 @@ pub const SCHEDULER_TICK_HZ: u64 = 62;
 /// been silently spilling into the unused top of the adjacent slot. 128 KiB
 /// restores headroom above that real watermark.
 ///
-/// At 128 KiB × MAX_TASKS = 2 MiB of BSS, still comfortable against the
-/// 16 MiB heap budget. Overflow is now a hard fault, not silent corruption.
-pub const TASK_STACK_SIZE: usize = 128 * 1024;
+/// Bumped to 256 KiB: the demo-runner (`init_loader`) is a single giant
+/// function whose LLVM-chosen frame grows with kernel code size, and the M22
+/// agent + TUI modules pushed its peak (during DEMO 26's `remove_child` FS path
+/// + a timer frame) past 128 KiB → a #DF in slot 5's guard page. 256 KiB
+/// restores generous headroom over the ~64 KiB real watermark and absorbs
+/// future code-size growth. NOTE: this stack is layout-sensitive — a deep-demo
+/// #DF whose CR2 sits just below RSP in the `TASK_STACKS` range means bump this.
+///
+/// At 256 KiB × MAX_TASKS = 4 MiB of BSS, still comfortable against the
+/// 16 MiB heap budget. Overflow is a hard fault, not silent corruption.
+pub const TASK_STACK_SIZE: usize = 256 * 1024;
 
 /// Task state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

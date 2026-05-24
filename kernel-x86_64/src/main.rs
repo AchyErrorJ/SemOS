@@ -45,6 +45,7 @@ static KERNEL_ALLOCATOR: KernelGlobalAlloc = KernelGlobalAlloc;
 mod serial;
 pub mod tty;
 pub mod agent;
+pub mod tui;
 pub mod gdt;
 mod interrupts;
 mod memory;
@@ -71,14 +72,12 @@ pub static BOOTLOADER_CONFIG: BootloaderConfig = {
     // Request a framebuffer if available
     config.mappings.physical_memory = Some(bootloader_api::config::Mapping::Dynamic);
     // task #42: bump main kernel stack from default 80 KiB to 512 KiB.
-    // kernel_main is a single giant function with many println-formatting
-    // frames + the Lazy<InterruptDescriptorTable>::new closure (20+
-    // set_handler_fn calls). Small code-size growth (e.g. adding a Drop
-    // impl, bumping a fixed buffer) was inflating LLVM-chosen frame
-    // sizes enough to overflow 80 KiB → silent SS fault that manifested
-    // as "hang at IDT init" (the latest println before the closure ran).
-    // 512 KiB gives generous headroom; the bootloader allocates this
-    // from its frame allocator before jumping to the kernel.
+    // This is the EARLY-boot stack (before kernel_main hands off to the
+    // `init_loader` demo-runner task, which runs on a TASK_STACKS slot — see
+    // scheduler::TASK_STACK_SIZE). kernel_main + the
+    // Lazy<InterruptDescriptorTable>::new closure (20+ set_handler_fn calls)
+    // overflowed 80 KiB → "hang at IDT init"; 512 KiB fixed it. (The M22 TUI
+    // #DF was a separate overflow of the *task* stack, fixed there.)
     config.kernel_stack_size = 512 * 1024;
     config
 };
@@ -932,6 +931,14 @@ fn init_loader_task() {
             agent_loop_demo();
         }
     }
+
+    // DEMO 50: M22 TUI — the multi-pane agent terminal (status / transcript /
+    // prompt) rendered over the framebuffer, verified by pixel readback.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 50: Claude agent TUI (M22 — panes + roles)");
+    println!("================================================================");
+    agent_tui_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4649,6 +4656,76 @@ fn agent_live_demo() {
     }
 }
 
+/// DEMO 50: M22 TUI — lay the three-pane agent terminal over the framebuffer
+/// and render a representative conversation through every pane/role, then
+/// verify headlessly by pixel readback. Because `Aa::Sharp` fills glyphs in a
+/// *solid* colour, we can confirm each role rendered in its exact colour by
+/// counting matching pixels (no AA blending to fuzz the match). Mirrors the
+/// DEMO 35/39 discipline: do ALL readback into locals first (the boot console
+/// scrolls the whole framebuffer on a newline), then print verdicts.
+fn agent_tui_demo() {
+    use crate::tui::{self, Tui};
+
+    let mut t = match Tui::new("claude-haiku-4-5") {
+        Some(t) => t,
+        None => {
+            println!("  [DEMO 50] SKIPPED: no framebuffer");
+            return;
+        }
+    };
+
+    // Drive the panes exactly as the agent loop would as a turn unfolds.
+    t.set_status("thinking");
+    t.push_user("Read /README and summarize it.");
+    t.push_assistant("I'll read the file first.");
+    t.set_status("running read_file");
+    t.push_tool_call("read_file", "{\"path\":\"/README\"}");
+    t.push_tool_result("Semantic OS is a bare-metal x86_64 Rust kernel with a four-tier LLM security model.");
+    t.push_assistant("Semantic OS is a bare-metal x86_64 Rust kernel with a four-tier LLM security model.");
+    t.set_status("done");
+    t.set_prompt("ask a follow-up");
+
+    // ---- readback (no println until all counts are captured) ----
+    let (sx, sy, sw, sh) = t.status_rect();
+    let (tx, ty, tw, th) = t.transcript_rect();
+    let (px, py, pw, ph) = t.prompt_rect();
+
+    let status_ink = tui::count_non_bg(sx, sy, sw, sh, tui::STATUS_BG_C);
+    let prompt_ink = tui::count_non_bg(px, py, pw, ph, tui::PROMPT_BG_C);
+    let trans_ink = tui::count_non_bg(tx, ty, tw, th, tui::TRANSCRIPT_BG);
+
+    // Per-role colour presence inside the transcript.
+    let user = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[0]);
+    let asst = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[1]);
+    let tool = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[2]);
+    let result = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[3]);
+
+    // ---- verdicts ----
+    let chrome_ok = status_ink > 100 && prompt_ink > 20;
+    let roles_ok = user > 10 && asst > 10 && tool > 10 && result > 10;
+    let transcript_ok = trans_ink > 400;
+
+    if chrome_ok {
+        println!("  [DEMO 50] PASS: chrome — status {} ink px, prompt {} ink px", status_ink, prompt_ink);
+    } else {
+        println!("  [DEMO 50] FAIL: chrome — status {} prompt {}", status_ink, prompt_ink);
+    }
+    if roles_ok {
+        println!("  [DEMO 50] PASS: roles rendered in colour — user={} assistant={} tool={} result={} px",
+            user, asst, tool, result);
+    } else {
+        println!("  [DEMO 50] FAIL: roles — user={} assistant={} tool={} result={}", user, asst, tool, result);
+    }
+    if transcript_ok {
+        println!("  [DEMO 50] PASS: transcript pane drew {} ink px across {} role colours", trans_ink, 4);
+    } else {
+        println!("  [DEMO 50] FAIL: transcript ink {}", trans_ink);
+    }
+    if chrome_ok && roles_ok && transcript_ok {
+        println!("  [DEMO 50] => M22 TUI: status/transcript/prompt panes + role colours live on the fb");
+    }
+}
+
 /// DEMO 49: M22 stage C — the agent reasoning loop against a LIVE Claude model.
 /// Creates /README, asks Claude to read it via the read_file tool and
 /// summarize; runs the loop (send → parse tool_use → run_tool → tool_result →
@@ -4656,12 +4733,23 @@ fn agent_live_demo() {
 /// Gated on a baked-in ANTHROPIC_KEY (see agent::api_key).
 fn agent_loop_demo() {
     use crate::agent::{self, Message};
+    use crate::tui::Tui;
     use alloc::string::String;
     use alloc::vec;
 
     let key = agent::api_key();
     let model = "claude-haiku-4-5-20251001";
     let sys = "You are a terse assistant on a tiny OS. Use the read_file tool to read files before answering. Reply in one short sentence.";
+
+    // Live mirror of the conversation on the framebuffer TUI (if present). The
+    // same loop that prints to serial drives the panes — so this is the real
+    // agent UI, not a mock. `None` on a headless run; calls are no-ops then.
+    let mut tui = Tui::new("claude-haiku-4-5");
+    let question = "Use the read_file tool to read /README, then summarize it in one short sentence.";
+    if let Some(t) = tui.as_mut() {
+        t.push_user(question);
+        t.set_status("connecting");
+    }
 
     // Seed a file for Claude to read.
     let readme = "Semantic OS is a bare-metal x86_64 Rust kernel with a four-tier LLM security model.";
@@ -4670,10 +4758,7 @@ fn agent_loop_demo() {
         &alloc::format!("{{\"path\":\"/README\",\"content\":\"{}\"}}", readme),
     );
 
-    let mut msgs = vec![Message::text(
-        "user",
-        "Use the read_file tool to read /README, then summarize it in one short sentence.",
-    )];
+    let mut msgs = vec![Message::text("user", question)];
 
     let mut resp = [0u8; 8192];
     let mut body = [0u8; 8192];
@@ -4686,6 +4771,7 @@ fn agent_loop_demo() {
         Ok(n) => n,
         Err(e) => {
             println!("  [DEMO 49] SKIPPED: transport error ({})", e);
+            if let Some(t) = tui.as_mut() { t.push_error(e); t.set_status("error"); }
             return;
         }
     };
@@ -4696,15 +4782,24 @@ fn agent_loop_demo() {
         Some(t) => t,
         None => {
             println!("  [DEMO 49] FAIL: turn 1 had no tool_use (HTTP {}). text={:?}", status1, r1.text);
+            if let Some(t) = tui.as_mut() { t.push_error("no tool_use in turn 1"); t.set_status("error"); }
             return;
         }
     };
     println!("  [DEMO 49] PASS: Claude requested tool '{}' with input {}", tu.name, tu.input_json);
+    if let Some(t) = tui.as_mut() {
+        t.push_tool_call(&tu.name, &tu.input_json);
+        t.set_status("running read_file");
+    }
     let used_read = tu.name == "read_file";
 
     // Run the tool the model asked for.
     let tool_result = agent::run_tool(&tu.name, &tu.input_json);
     println!("  [DEMO 49] ran tool → {} bytes back", tool_result.len());
+    if let Some(t) = tui.as_mut() {
+        t.push_tool_result(&tool_result);
+        t.set_status("thinking");
+    }
 
     // --- Turn 2: replay assistant tool_use + our tool_result, expect text ---
     msgs.push(Message::assistant_tool_use(&tu));
@@ -4715,6 +4810,7 @@ fn agent_loop_demo() {
         Ok(n) => n,
         Err(e) => {
             println!("  [DEMO 49] SKIPPED: transport error on turn 2 ({})", e);
+            if let Some(t) = tui.as_mut() { t.push_error(e); t.set_status("error"); }
             return;
         }
     };
@@ -4726,8 +4822,14 @@ fn agent_loop_demo() {
         println!("  [DEMO 49] PASS: Claude summarized after the tool call:");
         println!("  [DEMO 49]   \"{}\"", summary.trim());
         println!("  [DEMO 49] => M22: native agent loop works end-to-end against live Claude");
+        if let Some(t) = tui.as_mut() {
+            t.push_assistant(summary.trim());
+            t.set_status("done");
+            t.set_prompt("");
+        }
     } else {
         println!("  [DEMO 49] FAIL: used_read={} summary={:?}", used_read, summary);
+        if let Some(t) = tui.as_mut() { t.push_error("empty summary"); t.set_status("error"); }
     }
 }
 
