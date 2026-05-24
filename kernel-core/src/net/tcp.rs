@@ -47,10 +47,32 @@ const TCP_TX_SIZE: usize = 8 * 1024;
 static mut TCP_RX_BUF: [u8; TCP_RX_SIZE] = [0; TCP_RX_SIZE];
 static mut TCP_TX_BUF: [u8; TCP_TX_SIZE] = [0; TCP_TX_SIZE];
 
-/// Ephemeral local port for outbound connections. RFC 6335 reserves
-/// 49152-65535 for ephemeral use; we pin one because we only ever have
-/// one outbound connection in flight at a time.
-const LOCAL_PORT: u16 = 49152;
+/// Base of the ephemeral local-port range. RFC 6335 reserves 49152-65535
+/// for ephemeral use.
+const LOCAL_PORT_BASE: u16 = 49152;
+const LOCAL_PORT_TOP: u16 = 65000;
+
+/// Rotating ephemeral local port. We only have one outbound connection in
+/// flight at a time, but we must NOT reuse the same local port across
+/// back-to-back connections: the SLIRP host NAT (and the peer) keep the prior
+/// 4-tuple in TIME_WAIT, so a fresh SYN from an identical (local,remote) tuple
+/// is dropped and the connect never establishes — it hangs in
+/// `poll_to_terminal` until the timeout. Handing out a new local port each
+/// connect gives every connection a distinct 4-tuple. (This is what real
+/// ephemeral-port allocation does, and it's why the 3rd reconnect in a boot
+/// — DEMO 16 → 48 → 49 — was the one that hung.)
+static mut NEXT_LOCAL_PORT: u16 = LOCAL_PORT_BASE;
+
+/// Hand out the next ephemeral local port, wrapping within the range.
+unsafe fn next_local_port() -> u16 {
+    let p = NEXT_LOCAL_PORT;
+    NEXT_LOCAL_PORT = if NEXT_LOCAL_PORT >= LOCAL_PORT_TOP {
+        LOCAL_PORT_BASE
+    } else {
+        NEXT_LOCAL_PORT + 1
+    };
+    p
+}
 
 /// Single-socket guard. `connect` sets this; `close` clears it.
 static mut SOCKET_IN_USE: bool = false;
@@ -126,7 +148,7 @@ impl TcpStream {
             let cx = iface.context();
             let socket = sockets.get_mut::<tcp::Socket>(handle);
             let remote_endpoint = IpEndpoint::new(IpAddress::Ipv4(remote_ip), remote_port);
-            let local_endpoint = IpListenEndpoint { addr: None, port: LOCAL_PORT };
+            let local_endpoint = IpListenEndpoint { addr: None, port: next_local_port() };
             if socket.connect(cx, remote_endpoint, local_endpoint).is_err() {
                 // Roll back: remove the socket so we don't leak it.
                 sockets.remove(handle);
@@ -282,13 +304,19 @@ impl embedded_io::ErrorType for TcpStream {
 }
 
 /// Max wall-clock ticks an embedded-io read/write will spin with no progress
-/// before giving up. 100 Hz APIC → 1000 ticks = 10 s. A live peer always
-/// makes progress within an RTT, so this only fires when the peer is silent —
-/// e.g. a non-TLS service that accepted the TCP connect but never speaks (the
+/// before giving up. 100 Hz APIC → 3000 ticks = 30 s. A live peer makes
+/// progress within an RTT, so this only fires when the peer is silent — e.g. a
+/// non-TLS service that accepted the TCP connect but never speaks (the
 /// SLIRP-port-1 case in DEMO 15). Without it the TLS handshake's blocking read
 /// of ServerHello spins forever and hangs the boot. On timeout we report EOF
 /// (read) / NotConnected (write) so the handshake fails *cleanly*.
-const IO_IDLE_TIMEOUT_TICKS: u64 = 1000;
+///
+/// 30 s (not 10) because an LLM endpoint's time-to-first-byte is legitimately
+/// long: when the agent asks Claude to *generate* a reply (e.g. summarize after
+/// a tool call), the server may think for >10 s before the first token. A 10 s
+/// cap reported a premature EOF mid-conversation and failed the turn. 30 s
+/// still bounds the dead-peer case at a tolerable worst case.
+const IO_IDLE_TIMEOUT_TICKS: u64 = 3000;
 
 impl embedded_io::Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {

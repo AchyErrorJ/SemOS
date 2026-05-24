@@ -44,6 +44,29 @@ impl Message {
             ),
         }
     }
+
+    /// The assistant turn that issued a tool_use — must be replayed in the
+    /// message history before the matching tool_result (Anthropic requirement).
+    /// `input_json` is the raw input object, inserted verbatim.
+    pub fn assistant_tool_use(tu: &ToolUse) -> Self {
+        Self {
+            role: "assistant",
+            content_json: format!(
+                "[{{\"type\":\"tool_use\",\"id\":\"{}\",\"name\":\"{}\",\"input\":{}}}]",
+                json_escape(&tu.id),
+                json_escape(&tu.name),
+                tu.input_json
+            ),
+        }
+    }
+}
+
+/// The Anthropic API key for outbound requests. Compile-time only via the
+/// ANTHROPIC_KEY env var (so it lands in the gitignored binary, never in
+/// source/git); empty if not set. The persistent mechanism is a future
+/// `/etc/anthropic-api-key` read.
+pub fn api_key() -> &'static str {
+    option_env!("ANTHROPIC_KEY").unwrap_or("")
 }
 
 /// What the model asked for in a response: free text and/or one tool call.
@@ -304,7 +327,41 @@ pub fn build_http_request(body: &str, api_key: &str) -> String {
 /// read the response into `resp_out`. Resolves the host (DNS, hardcoded
 /// fallback), connects (TLS 1.3 handshake + cert pin), sends, reads until the
 /// server closes (we send `Connection: close`), and closes. Returns bytes read.
+///
+/// Wrapped in a small retry loop: the single-static-socket model occasionally
+/// races the prior connection's teardown (SLIRP/smoltcp) on back-to-back
+/// connects, so a fresh connection's first read can come back empty. Rather
+/// than fail the whole agent turn on a transient, we tear down and reconnect.
+/// Our requests are read-only/idempotent for this purpose, so a resend is safe.
 pub fn send_over_tls(request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'static str> {
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err = "no attempt";
+    for attempt in 1..=MAX_ATTEMPTS {
+        match send_over_tls_once(request, resp_out, attempt) {
+            Ok(n) if n > 0 => return Ok(n),
+            Ok(_) => {
+                last_err = "empty response";
+                crate::println!("    [tls] attempt {} got 0 bytes — retrying", attempt);
+            }
+            Err(e) => {
+                last_err = e;
+                crate::println!("    [tls] attempt {} failed ({}) — retrying", attempt, e);
+            }
+        }
+        // Let the failed connection's teardown drain before reconnecting.
+        for _ in 0..200 {
+            kernel_core::net::poll();
+        }
+    }
+    Err(last_err)
+}
+
+/// One connect → send → recv → close cycle. See `send_over_tls`.
+fn send_over_tls_once(
+    request: &[u8],
+    resp_out: &mut [u8],
+    attempt: u32,
+) -> Result<usize, &'static str> {
     use kernel_core::llm::transport::NetworkTransport;
     use kernel_core::net::Ipv4Address;
     use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
@@ -314,6 +371,7 @@ pub fn send_over_tls(request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'sta
     const FALLBACK: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
 
     let ip = kernel_core::net::resolve(SNI).unwrap_or(FALLBACK);
+    crate::println!("    [tls] attempt {}: resolved, connecting...", attempt);
     configure_global(ip, PORT);
 
     unsafe {
@@ -322,6 +380,7 @@ pub fn send_over_tls(request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'sta
             t.close();
             return Err("tls connect failed");
         }
+        crate::println!("    [tls] connected, sending {} B...", request.len());
         // Send the whole request.
         let mut sent = 0;
         while sent < request.len() {
@@ -334,6 +393,7 @@ pub fn send_over_tls(request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'sta
                 }
             }
         }
+        crate::println!("    [tls] sent {} B, receiving...", sent);
         // Read until EOF (server closes after the response) or buffer full.
         let mut got = 0;
         for _ in 0..64 {
@@ -346,6 +406,7 @@ pub fn send_over_tls(request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'sta
                 Err(_) => break,
             }
         }
+        crate::println!("    [tls] recv done: {} B", got);
         t.close();
         Ok(got)
     }
@@ -371,14 +432,30 @@ pub fn http_status(resp: &[u8]) -> Option<u32> {
 }
 
 /// Return the body slice of an HTTP response (everything after the blank line).
-/// (Chunked decoding is a stage-C concern; the 401 we test in stage B is small
-/// and Content-Length framed.)
 pub fn http_body(resp: &[u8]) -> &[u8] {
     let sep = b"\r\n\r\n";
     if let Some(i) = find(resp, sep) {
         &resp[i + sep.len()..]
     } else {
         &[]
+    }
+}
+
+/// Decode the HTTP body into `out`, de-chunking if the response used
+/// Transfer-Encoding: chunked (real Claude responses do). Returns the decoded
+/// length. For a Content-Length body it's a straight copy.
+pub fn decode_body(resp: &[u8], out: &mut [u8]) -> usize {
+    let sep = b"\r\n\r\n";
+    let (headers, body) = match find(resp, sep) {
+        Some(i) => (&resp[..i], &resp[i + sep.len()..]),
+        None => return 0,
+    };
+    if kernel_core::net::http::is_chunked(headers) {
+        kernel_core::net::http::decode_chunked(body, out).unwrap_or(0)
+    } else {
+        let n = body.len().min(out.len());
+        out[..n].copy_from_slice(&body[..n]);
+        n
     }
 }
 

@@ -921,6 +921,16 @@ fn init_loader_task() {
         println!("  SemOS DEMO 48: agent live TLS round-trip (M22 stage B)");
         println!("================================================================");
         agent_live_demo();
+
+        // DEMO 49: M22 stage C — full agent loop with a real Claude model
+        // (read_file tool round-trip). Only runs if a key was baked in.
+        if !crate::agent::api_key().is_empty() {
+            println!();
+            println!("================================================================");
+            println!("  SemOS DEMO 49: agent tool loop w/ live Claude (M22 stage C)");
+            println!("================================================================");
+            agent_loop_demo();
+        }
     }
 
     // Final marker before idling. On bare metal this is your "the kernel
@@ -4636,6 +4646,88 @@ fn agent_live_demo() {
             // Network/TLS issue (intermittent SLIRP); not an agent-logic failure.
             println!("  [DEMO 48] SKIPPED: transport error ({}) — retry boot if -netdev flaked", e);
         }
+    }
+}
+
+/// DEMO 49: M22 stage C — the agent reasoning loop against a LIVE Claude model.
+/// Creates /README, asks Claude to read it via the read_file tool and
+/// summarize; runs the loop (send → parse tool_use → run_tool → tool_result →
+/// resend → text). Proves the whole agent end-to-end against the real API.
+/// Gated on a baked-in ANTHROPIC_KEY (see agent::api_key).
+fn agent_loop_demo() {
+    use crate::agent::{self, Message};
+    use alloc::string::String;
+    use alloc::vec;
+
+    let key = agent::api_key();
+    let model = "claude-haiku-4-5-20251001";
+    let sys = "You are a terse assistant on a tiny OS. Use the read_file tool to read files before answering. Reply in one short sentence.";
+
+    // Seed a file for Claude to read.
+    let readme = "Semantic OS is a bare-metal x86_64 Rust kernel with a four-tier LLM security model.";
+    let _ = agent::run_tool(
+        "write_file",
+        &alloc::format!("{{\"path\":\"/README\",\"content\":\"{}\"}}", readme),
+    );
+
+    let mut msgs = vec![Message::text(
+        "user",
+        "Use the read_file tool to read /README, then summarize it in one short sentence.",
+    )];
+
+    let mut resp = [0u8; 8192];
+    let mut body = [0u8; 8192];
+
+    // --- Turn 1: expect a read_file tool_use ---
+    println!("  [DEMO 49] turn 1: asking Claude (with key) to use read_file...");
+    let req1 = agent::build_request(model, 256, sys, &msgs);
+    let http1 = agent::build_http_request(&req1, key);
+    let n1 = match agent::send_over_tls(http1.as_bytes(), &mut resp) {
+        Ok(n) => n,
+        Err(e) => {
+            println!("  [DEMO 49] SKIPPED: transport error ({})", e);
+            return;
+        }
+    };
+    let status1 = agent::http_status(&resp[..n1]).unwrap_or(0);
+    let bn1 = agent::decode_body(&resp[..n1], &mut body);
+    let r1 = agent::parse_response(&String::from_utf8_lossy(&body[..bn1]));
+    let tu = match r1.tool_use {
+        Some(t) => t,
+        None => {
+            println!("  [DEMO 49] FAIL: turn 1 had no tool_use (HTTP {}). text={:?}", status1, r1.text);
+            return;
+        }
+    };
+    println!("  [DEMO 49] PASS: Claude requested tool '{}' with input {}", tu.name, tu.input_json);
+    let used_read = tu.name == "read_file";
+
+    // Run the tool the model asked for.
+    let tool_result = agent::run_tool(&tu.name, &tu.input_json);
+    println!("  [DEMO 49] ran tool → {} bytes back", tool_result.len());
+
+    // --- Turn 2: replay assistant tool_use + our tool_result, expect text ---
+    msgs.push(Message::assistant_tool_use(&tu));
+    msgs.push(Message::tool_result(&tu.id, &tool_result));
+    let req2 = agent::build_request(model, 256, sys, &msgs);
+    let http2 = agent::build_http_request(&req2, key);
+    let n2 = match agent::send_over_tls(http2.as_bytes(), &mut resp) {
+        Ok(n) => n,
+        Err(e) => {
+            println!("  [DEMO 49] SKIPPED: transport error on turn 2 ({})", e);
+            return;
+        }
+    };
+    let bn2 = agent::decode_body(&resp[..n2], &mut body);
+    let r2 = agent::parse_response(&String::from_utf8_lossy(&body[..bn2]));
+    let summary = r2.text.unwrap_or_default();
+
+    if used_read && !summary.is_empty() {
+        println!("  [DEMO 49] PASS: Claude summarized after the tool call:");
+        println!("  [DEMO 49]   \"{}\"", summary.trim());
+        println!("  [DEMO 49] => M22: native agent loop works end-to-end against live Claude");
+    } else {
+        println!("  [DEMO 49] FAIL: used_read={} summary={:?}", used_read, summary);
     }
 }
 
