@@ -44,10 +44,21 @@ const C_TOOL: Color = fb::rgb(0xE0, 0xC0, 0x40); // yellow
 const C_RESULT: Color = fb::rgb(0xA0, 0xA0, 0xA0); // gray
 const C_ERROR: Color = fb::rgb(0xE0, 0x50, 0x50); // red
 
-/// A three-pane agent terminal over the framebuffer.
+/// A split-pane agent terminal over the framebuffer:
+///
+/// ```text
+///  status bar  (full width)
+///  ┌───────────────────────┬───────────────┐
+///  │ conversation (left)   │ activity      │  middle row, side by side:
+///  │ user / assistant turns│ tool_use /    │  what was said | what the
+///  │                       │ tool_result   │  agent did
+///  └───────────────────────┴───────────────┘
+///  › prompt   (full width)
+/// ```
 pub struct Tui {
     status: TtyConsole,
-    transcript: TtyConsole,
+    transcript: TtyConsole, // left pane — the conversation
+    activity: TtyConsole,   // right pane — tool calls + results
     prompt: TtyConsole,
     model: &'static str,
     // Geometry kept for chrome redraw + headless readback.
@@ -57,6 +68,9 @@ pub struct Tui {
     status_h: usize,
     trans_y: usize,
     trans_h: usize,
+    trans_w: usize, // left-pane width
+    act_x: usize,   // right-pane left edge
+    act_w: usize,   // right-pane width
     prompt_y: usize,
     prompt_h: usize,
 }
@@ -91,13 +105,22 @@ impl Tui {
         let trans_y = status_y + status_h + gap;
         let prompt_y = trans_y + trans_h + gap;
 
+        // Split the middle row into a wider conversation pane (left) and a
+        // narrower activity pane (right), separated by a vertical gap.
+        let vgap = 14usize;
+        let trans_w = (w * 62) / 100;
+        let act_x = x0 + trans_w + vgap;
+        let act_w = w.saturating_sub(trans_w + vgap);
+
         let status = TtyConsole::new(x0, status_y, w, status_h, px, FG, STATUS_BG);
-        let transcript = TtyConsole::new(x0, trans_y, w, trans_h, px, FG, TRANS_BG);
+        let transcript = TtyConsole::new(x0, trans_y, trans_w, trans_h, px, FG, TRANS_BG);
+        let activity = TtyConsole::new(act_x, trans_y, act_w, trans_h, px, FG, TRANS_BG);
         let prompt = TtyConsole::new(x0, prompt_y, w, prompt_h, px, FG, PROMPT_BG);
 
         let mut tui = Self {
             status,
             transcript,
+            activity,
             prompt,
             model,
             x0,
@@ -106,6 +129,9 @@ impl Tui {
             status_h,
             trans_y,
             trans_h,
+            trans_w,
+            act_x,
+            act_w,
             prompt_y,
             prompt_h,
         };
@@ -115,12 +141,16 @@ impl Tui {
         Some(tui)
     }
 
-    /// Accent rule between status/transcript and transcript/prompt.
+    /// Accent rules: horizontal under the status bar and above the prompt, plus
+    /// a vertical rule between the conversation and activity panes.
     fn draw_dividers(&self) {
         let d1 = self.status_y + self.status_h + 2;
         let d2 = self.prompt_y.saturating_sub(4);
         fb::fb_fill_rect(self.x0, d1, self.w, 2, ACCENT);
         fb::fb_fill_rect(self.x0, d2, self.w, 2, ACCENT);
+        // Vertical divider centred in the gap between the two panes.
+        let vx = (self.x0 + self.trans_w + self.act_x) / 2;
+        fb::fb_fill_rect(vx, self.trans_y, 2, self.trans_h, ACCENT);
     }
 
     /// Redraw the status bar: app name (accent) · model · agent state.
@@ -227,20 +257,26 @@ impl Tui {
         self.push(C_ASSISTANT, "\u{25cf} claude  ", text);
     }
 
-    /// A tool invocation (name + raw input JSON), drawn in the tool colour.
+    /// A tool invocation (name + raw input JSON) — rendered in the right-hand
+    /// activity pane, in the tool colour.
     pub fn push_tool_call(&mut self, name: &str, input_json: &str) {
-        self.transcript.set_fg(C_TOOL);
-        self.transcript.write(Aa::Sharp, "\u{2699} ");
-        self.transcript.write(Aa::Sharp, name);
-        self.transcript.write(Aa::Sharp, " ");
-        self.transcript.write(Aa::Sharp, input_json);
-        self.transcript.write(Aa::Sharp, "\n");
+        self.activity.set_fg(C_TOOL);
+        self.activity.write(Aa::Sharp, "\u{2699} ");
+        self.activity.write(Aa::Sharp, name);
+        self.activity.write(Aa::Sharp, "\n");
+        self.activity.set_fg(FG);
+        self.activity.write(Aa::Sharp, input_json);
+        self.activity.write(Aa::Sharp, "\n");
     }
 
-    /// The result fed back to the model (truncated for display).
+    /// The result fed back to the model (truncated) — right-hand activity pane.
     pub fn push_tool_result(&mut self, text: &str) {
-        let shown = if text.len() > 80 { &text[..80] } else { text };
-        self.push(C_RESULT, "\u{21b3} result  ", shown);
+        let shown = if text.len() > 64 { &text[..64] } else { text };
+        self.activity.set_fg(C_RESULT);
+        self.activity.write(Aa::Sharp, "\u{21b3} result\n");
+        self.activity.set_fg(FG);
+        self.activity.write(Aa::Sharp, shown);
+        self.activity.write(Aa::Sharp, "\n");
     }
 
     /// A system / error notice.
@@ -258,7 +294,10 @@ impl Tui {
         (self.x0, self.status_y, self.w, self.status_h)
     }
     pub fn transcript_rect(&self) -> (usize, usize, usize, usize) {
-        (self.x0, self.trans_y, self.w, self.trans_h)
+        (self.x0, self.trans_y, self.trans_w, self.trans_h)
+    }
+    pub fn activity_rect(&self) -> (usize, usize, usize, usize) {
+        (self.act_x, self.trans_y, self.act_w, self.trans_h)
     }
     pub fn prompt_rect(&self) -> (usize, usize, usize, usize) {
         (self.x0, self.prompt_y, self.w, self.prompt_h)

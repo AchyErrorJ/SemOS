@@ -4699,13 +4699,16 @@ fn agent_live_demo() {
     }
 }
 
-/// DEMO 50: M22 TUI — lay the three-pane agent terminal over the framebuffer
-/// and render a representative conversation through every pane/role, then
-/// verify headlessly by pixel readback. Because `Aa::Sharp` fills glyphs in a
-/// *solid* colour, we can confirm each role rendered in its exact colour by
-/// counting matching pixels (no AA blending to fuzz the match). Mirrors the
-/// DEMO 35/39 discipline: do ALL readback into locals first (the boot console
-/// scrolls the whole framebuffer on a newline), then print verdicts.
+/// DEMO 50: M22 TUI — lay the split-pane agent terminal over the framebuffer
+/// (status bar / conversation | activity / prompt) and render a representative
+/// conversation, then verify headlessly by pixel readback. Because `Aa::Sharp`
+/// fills glyphs in a *solid* colour, we confirm each role rendered in its exact
+/// colour by counting matching pixels — and confirm the LEFT pane holds the
+/// conversation (user/assistant) while the RIGHT pane holds tool activity
+/// (tool_use/tool_result), with no colour bleed across the divider: that mutual
+/// exclusion proves the side-by-side split. Mirrors the DEMO 35/39 discipline:
+/// do ALL readback into locals first (the boot console scrolls the whole
+/// framebuffer on a newline), then print verdicts.
 fn agent_tui_demo() {
     use crate::tui::{self, Tui};
 
@@ -4730,42 +4733,46 @@ fn agent_tui_demo() {
 
     // ---- readback (no println until all counts are captured) ----
     let (sx, sy, sw, sh) = t.status_rect();
-    let (tx, ty, tw, th) = t.transcript_rect();
+    let (tx, ty, tw, th) = t.transcript_rect(); // left pane
+    let (ax, ay, aw, ah) = t.activity_rect(); // right pane
     let (px, py, pw, ph) = t.prompt_rect();
 
     let status_ink = tui::count_non_bg(sx, sy, sw, sh, tui::STATUS_BG_C);
     let prompt_ink = tui::count_non_bg(px, py, pw, ph, tui::PROMPT_BG_C);
-    let trans_ink = tui::count_non_bg(tx, ty, tw, th, tui::TRANSCRIPT_BG);
 
-    // Per-role colour presence inside the transcript.
-    let user = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[0]);
-    let asst = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[1]);
-    let tool = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[2]);
-    let result = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[3]);
+    // Conversation colours must land in the LEFT pane, tool colours in the
+    // RIGHT pane — that's the split. Cross-check each colour in each pane.
+    let l_user = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[0]);
+    let l_asst = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[1]);
+    let l_tool = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[2]);
+    let r_tool = tui::count_color(ax, ay, aw, ah, tui::ROLE_COLORS[2]);
+    let r_result = tui::count_color(ax, ay, aw, ah, tui::ROLE_COLORS[3]);
+    let r_user = tui::count_color(ax, ay, aw, ah, tui::ROLE_COLORS[0]);
 
     // ---- verdicts ----
     let chrome_ok = status_ink > 100 && prompt_ink > 20;
-    let roles_ok = user > 10 && asst > 10 && tool > 10 && result > 10;
-    let transcript_ok = trans_ink > 400;
+    // Left pane: conversation present, no tool ink. Right pane: tool activity
+    // present, no conversation ink. The mutual exclusion proves side-by-side.
+    let left_ok = l_user > 10 && l_asst > 10 && l_tool == 0;
+    let right_ok = r_tool > 10 && r_result > 10 && r_user == 0;
 
     if chrome_ok {
         println!("  [DEMO 50] PASS: chrome — status {} ink px, prompt {} ink px", status_ink, prompt_ink);
     } else {
         println!("  [DEMO 50] FAIL: chrome — status {} prompt {}", status_ink, prompt_ink);
     }
-    if roles_ok {
-        println!("  [DEMO 50] PASS: roles rendered in colour — user={} assistant={} tool={} result={} px",
-            user, asst, tool, result);
+    if left_ok {
+        println!("  [DEMO 50] PASS: left pane = conversation (user={} assistant={} px, no tool ink)", l_user, l_asst);
     } else {
-        println!("  [DEMO 50] FAIL: roles — user={} assistant={} tool={} result={}", user, asst, tool, result);
+        println!("  [DEMO 50] FAIL: left pane user={} assistant={} tool-bleed={}", l_user, l_asst, l_tool);
     }
-    if transcript_ok {
-        println!("  [DEMO 50] PASS: transcript pane drew {} ink px across {} role colours", trans_ink, 4);
+    if right_ok {
+        println!("  [DEMO 50] PASS: right pane = activity (tool={} result={} px, no convo ink)", r_tool, r_result);
     } else {
-        println!("  [DEMO 50] FAIL: transcript ink {}", trans_ink);
+        println!("  [DEMO 50] FAIL: right pane tool={} result={} convo-bleed={}", r_tool, r_result, r_user);
     }
-    if chrome_ok && roles_ok && transcript_ok {
-        println!("  [DEMO 50] => M22 TUI: status/transcript/prompt panes + role colours live on the fb");
+    if chrome_ok && left_ok && right_ok {
+        println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
     }
 }
 
