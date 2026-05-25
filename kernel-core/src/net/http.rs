@@ -123,6 +123,41 @@ pub fn is_chunked(headers: &[u8]) -> bool {
     false
 }
 
+/// Parse the `Content-Length` header value out of an HTTP header block, if
+/// present. `headers` is the bytes up to (and optionally including) the blank
+/// line. Returns `None` if the header is absent or its value isn't a decimal.
+/// Case-insensitive on the field name (RFC 7230). Used by keep-alive response
+/// framing to know how many body bytes to read before the connection's next
+/// request.
+pub fn content_length(headers: &[u8]) -> Option<usize> {
+    const NAME: &[u8] = b"content-length:";
+    let mut i = 0;
+    while i + NAME.len() <= headers.len() {
+        // Must be at a line start (index 0 or just after a CRLF) so we don't
+        // match a header whose name merely ends in "content-length".
+        let at_line_start = i == 0 || (i >= 2 && headers[i - 2] == b'\r' && headers[i - 1] == b'\n');
+        if at_line_start && eq_ignore_case(&headers[i..i + NAME.len()], NAME) {
+            let val_start = i + NAME.len();
+            let val_end = find_crlf(headers, val_start).unwrap_or(headers.len());
+            let mut value: usize = 0;
+            let mut any = false;
+            for &b in &headers[val_start..val_end] {
+                match b {
+                    b'0'..=b'9' => {
+                        value = value.checked_mul(10)?.checked_add((b - b'0') as usize)?;
+                        any = true;
+                    }
+                    b' ' | b'\t' => {}
+                    _ => return None,
+                }
+            }
+            return if any { Some(value) } else { None };
+        }
+        i += 1;
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

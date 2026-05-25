@@ -915,15 +915,19 @@ fn init_loader_task() {
 
     // DEMO 48: M22 stage B — agent's request over live TLS to api.anthropic.com.
     if kernel_core::net::is_initialized() {
-        println!();
-        println!("================================================================");
-        println!("  SemOS DEMO 48: agent live TLS round-trip (M22 stage B)");
-        println!("================================================================");
-        agent_live_demo();
-
-        // DEMO 49: M22 stage C — full agent loop with a real Claude model
-        // (read_file tool round-trip). Only runs if a key was baked in.
-        if !crate::agent::api_key().is_empty() {
+        if crate::agent::api_key().is_empty() {
+            // DEMO 48 is the no-key round-trip test (expects 401). With a key
+            // baked in, DEMO 49 supersedes it AND skipping it means DEMO 49's
+            // session opens on the 2nd TLS connect of the boot (after DEMO 16)
+            // rather than the 3rd — the reconnect flake worsens with count.
+            println!();
+            println!("================================================================");
+            println!("  SemOS DEMO 48: agent live TLS round-trip (M22 stage B)");
+            println!("================================================================");
+            agent_live_demo();
+        } else {
+            // DEMO 49: M22 stage C — full agent loop with a real Claude model
+            // (read_file tool round-trip), over ONE keep-alive connection.
             println!();
             println!("================================================================");
             println!("  SemOS DEMO 49: agent tool loop w/ live Claude (M22 stage C)");
@@ -4668,7 +4672,8 @@ fn agent_live_demo() {
     let msgs = [Message::text("user", "Say hello in one short sentence.")];
     let body = agent::build_request("claude-haiku-4-5-20251001", 64, "", &msgs);
     // No key → expect 401. (Stage C reads it from /etc/anthropic-api-key.)
-    let http = agent::build_http_request(&body, "");
+    // One-shot: Connection: close + read-until-EOF via send_over_tls.
+    let http = agent::build_http_request(&body, "", false);
     println!("  [DEMO 48] sending {}-byte agent request over TLS (no key → expect 401)...", http.len());
 
     let mut resp = [0u8; 4096];
@@ -4878,15 +4883,28 @@ fn agent_loop_demo() {
     let mut resp = [0u8; 8192];
     let mut body = [0u8; 8192];
 
+    // ONE keep-alive TLS connection for the whole conversation — both turns
+    // ride it, so the multi-turn loop does a single handshake instead of a
+    // reconnect per turn (which is what tripped the single-socket flake).
+    let mut session = match agent::Session::open() {
+        Ok(s) => s,
+        Err(e) => {
+            println!("  [DEMO 49] SKIPPED: session open failed ({})", e);
+            if let Some(t) = tui.as_mut() { t.push_error(e); t.set_status("error"); }
+            return;
+        }
+    };
+
     // --- Turn 1: expect a read_file tool_use ---
     println!("  [DEMO 49] turn 1: asking Claude (with key) to use read_file...");
     let req1 = agent::build_request(model, 256, sys, &msgs);
-    let http1 = agent::build_http_request(&req1, key);
-    let n1 = match agent::send_over_tls(http1.as_bytes(), &mut resp) {
+    let http1 = agent::build_http_request(&req1, key, true);
+    let n1 = match session.request(http1.as_bytes(), &mut resp) {
         Ok(n) => n,
         Err(e) => {
             println!("  [DEMO 49] SKIPPED: transport error ({})", e);
             if let Some(t) = tui.as_mut() { t.push_error(e); t.set_status("error"); }
+            session.close();
             return;
         }
     };
@@ -4920,12 +4938,14 @@ fn agent_loop_demo() {
     msgs.push(Message::assistant_tool_use(&tu));
     msgs.push(Message::tool_result(&tu.id, &tool_result));
     let req2 = agent::build_request(model, 256, sys, &msgs);
-    let http2 = agent::build_http_request(&req2, key);
-    let n2 = match agent::send_over_tls(http2.as_bytes(), &mut resp) {
+    let http2 = agent::build_http_request(&req2, key, true);
+    // SAME connection — no reconnect between turns.
+    let n2 = match session.request(http2.as_bytes(), &mut resp) {
         Ok(n) => n,
         Err(e) => {
             println!("  [DEMO 49] SKIPPED: transport error on turn 2 ({})", e);
             if let Some(t) = tui.as_mut() { t.push_error(e); t.set_status("error"); }
+            session.close();
             return;
         }
     };
@@ -4946,6 +4966,9 @@ fn agent_loop_demo() {
         println!("  [DEMO 49] FAIL: used_read={} summary={:?}", used_read, summary);
         if let Some(t) = tui.as_mut() { t.push_error("empty summary"); t.set_status("error"); }
     }
+
+    // Done with the conversation — tear the one connection down.
+    session.close();
 }
 
 /// DEMO 33: HTTP chunked-transfer-encoding decoder (M13).

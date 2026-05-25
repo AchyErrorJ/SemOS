@@ -304,8 +304,10 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Wrap a JSON body in a full HTTP/1.1 POST to /v1/messages. `api_key` is
 /// added as `x-api-key` when non-empty (empty → expect a 401, which still
-/// proves the round-trip).
-pub fn build_http_request(body: &str, api_key: &str) -> String {
+/// proves the round-trip). When `keep_alive`, request `Connection: keep-alive`
+/// so the TLS connection survives the response and the next turn reuses it
+/// (see `Session`); otherwise `Connection: close` (one-shot, read-until-EOF).
+pub fn build_http_request(body: &str, api_key: &str, keep_alive: bool) -> String {
     let mut req = String::with_capacity(body.len() + 256);
     req.push_str("POST /v1/messages HTTP/1.1\r\n");
     req.push_str("Host: api.anthropic.com\r\n");
@@ -317,10 +319,42 @@ pub fn build_http_request(body: &str, api_key: &str) -> String {
         req.push_str(api_key);
         req.push_str("\r\n");
     }
-    req.push_str("Connection: close\r\n");
+    req.push_str(if keep_alive {
+        "Connection: keep-alive\r\n"
+    } else {
+        "Connection: close\r\n"
+    });
     req.push_str(&format!("Content-Length: {}\r\n\r\n", body.len()));
     req.push_str(body);
     req
+}
+
+/// Is `resp` a complete HTTP response? On a keep-alive connection the server
+/// does NOT close after the body, so we can't read-until-EOF — we must frame
+/// each response exactly. Returns `true` once the body is fully present:
+///   - chunked: `decode_chunked` succeeds (it returns `Ok` only at the
+///     terminating zero-chunk, `Err` while truncated) — exact, not a substring
+///     search for `0\r\n\r\n`.
+///   - Content-Length: the body has reached the declared length.
+/// Returns `false` (need more bytes) until then. A response with neither
+/// framing header can only be delimited by close, so it never reports complete
+/// here — the read loop falls back to EOF for that case.
+fn response_complete(resp: &[u8]) -> bool {
+    let sep = b"\r\n\r\n";
+    let hdr_end = match find(resp, sep) {
+        Some(i) => i,
+        None => return false, // headers not fully received yet
+    };
+    let headers = &resp[..hdr_end];
+    let body = &resp[hdr_end + sep.len()..];
+    if kernel_core::net::http::is_chunked(headers) {
+        let mut scratch = [0u8; 8192];
+        kernel_core::net::http::decode_chunked(body, &mut scratch).is_ok()
+    } else if let Some(clen) = kernel_core::net::http::content_length(headers) {
+        body.len() >= clen
+    } else {
+        false
+    }
 }
 
 /// Send `request` to api.anthropic.com:443 over the Phase-8 TLS transport and
@@ -414,6 +448,158 @@ fn send_over_tls_once(
         crate::println!("    [tls] recv done: {} B", got);
         t.close();
         Ok(got)
+    }
+}
+
+/// A keep-alive HTTP/1.1 session over ONE persistent TLS connection to
+/// api.anthropic.com. A multi-turn agent conversation opens a single session
+/// and issues several `request`s over it — one TLS handshake for the whole
+/// conversation instead of a fresh connect per turn. That's the fix for the
+/// single-socket reconnect flake: the flake is in *reconnecting*, so we stop
+/// reconnecting between turns. Responses are framed exactly (chunked terminator
+/// / Content-Length via `response_complete`) so the connection stays open and
+/// we never wait out a trailing idle timeout. If the peer drops the connection
+/// mid-conversation, `request` transparently reconnects once and resends.
+pub struct Session {
+    connected: bool,
+}
+
+impl Session {
+    const SNI: &'static str = "api.anthropic.com";
+    const PORT: u16 = 443;
+
+    /// Open the session: resolve + TLS handshake, retried a few times to absorb
+    /// the rotating-port reconnect flake on the very first connect.
+    pub fn open() -> Result<Self, &'static str> {
+        let mut s = Session { connected: false };
+        for attempt in 1..=3 {
+            crate::println!("    [tls] session connect attempt {}...", attempt);
+            if s.connect() {
+                crate::println!("    [tls] session established (keep-alive)");
+                return Ok(s);
+            }
+            for _ in 0..200 {
+                kernel_core::net::poll();
+            }
+        }
+        Err("session connect failed")
+    }
+
+    fn connect(&mut self) -> bool {
+        use kernel_core::llm::transport::NetworkTransport;
+        use kernel_core::net::Ipv4Address;
+        use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
+        const FALLBACK: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
+        let ip = kernel_core::net::resolve(Self::SNI).unwrap_or(FALLBACK);
+        configure_global(ip, Self::PORT);
+        unsafe {
+            let t = global_tls_transport();
+            if t.connect(Self::SNI, Self::PORT).is_err() {
+                t.close();
+                self.connected = false;
+                return false;
+            }
+        }
+        self.connected = true;
+        true
+    }
+
+    fn force_close(&mut self) {
+        use kernel_core::llm::transport::NetworkTransport;
+        use kernel_core::tls::transport_tls::global_tls_transport;
+        unsafe {
+            global_tls_transport().close();
+        }
+        self.connected = false;
+        for _ in 0..200 {
+            kernel_core::net::poll();
+        }
+    }
+
+    /// Send one request and read one complete response over the live
+    /// connection. On a transport error or a dropped connection, reconnect once
+    /// and resend (our requests are idempotent for this purpose).
+    pub fn request(&mut self, request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'static str> {
+        let mut last_err = "no attempt";
+        // Up to 4 tries: the *initial* connect of a session is still a
+        // reconnect-within-the-boot and can hit the single-socket flake (a fast
+        // recv error, not a slow timeout), so retrying is cheap. Once a turn
+        // succeeds, subsequent turns reuse the live connection with no reconnect.
+        for attempt in 1..=4 {
+            if !self.connected && !self.connect() {
+                last_err = "reconnect failed";
+                for _ in 0..200 {
+                    kernel_core::net::poll();
+                }
+                continue;
+            }
+            match self.send_and_read(request, resp_out) {
+                Ok(n) if n > 0 => return Ok(n),
+                Ok(_) => last_err = "empty response",
+                Err(e) => last_err = e,
+            }
+            crate::println!("    [tls] request attempt {} failed ({}) — reconnecting", attempt, last_err);
+            self.force_close();
+        }
+        Err(last_err)
+    }
+
+    fn send_and_read(&mut self, request: &[u8], resp_out: &mut [u8]) -> Result<usize, &'static str> {
+        use kernel_core::llm::transport::NetworkTransport;
+        use kernel_core::tls::transport_tls::global_tls_transport;
+        unsafe {
+            let t = global_tls_transport();
+            // Send the whole request on the live connection.
+            let mut sent = 0;
+            while sent < request.len() {
+                match t.send(&request[sent..]) {
+                    Ok(0) => return Err("send returned 0"),
+                    Ok(n) => sent += n,
+                    Err(_) => {
+                        self.connected = false;
+                        return Err("send failed");
+                    }
+                }
+            }
+            crate::println!("    [tls] sent {} B (keep-alive), receiving framed...", sent);
+            // Read exactly one framed response; the connection stays OPEN. We
+            // return the instant the body is complete — no trailing recv that
+            // would block on the idle timeout (the read-until-EOF path's cost).
+            let mut got = 0;
+            for _ in 0..256 {
+                if response_complete(&resp_out[..got]) {
+                    crate::println!("    [tls] framed response: {} B (conn kept alive)", got);
+                    return Ok(got);
+                }
+                if got == resp_out.len() {
+                    return Ok(got); // buffer full — best effort
+                }
+                match t.recv(&mut resp_out[got..]) {
+                    Ok(0) => {
+                        // Peer closed. Complete only if framing says so.
+                        self.connected = false;
+                        return if response_complete(&resp_out[..got]) {
+                            Ok(got)
+                        } else {
+                            Err("eof before complete")
+                        };
+                    }
+                    Ok(n) => got += n,
+                    Err(_) => {
+                        self.connected = false;
+                        return Err("recv failed");
+                    }
+                }
+            }
+            Err("response did not complete")
+        }
+    }
+
+    /// Tear the session down (close_notify + socket release). Idempotent.
+    pub fn close(&mut self) {
+        if self.connected {
+            self.force_close();
+        }
     }
 }
 
