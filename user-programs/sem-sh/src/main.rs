@@ -181,7 +181,21 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
+            | "grep"
     )
+}
+
+/// Print every line of `text` containing `pat`; return whether any matched.
+/// (Substring match — no regex. Enough for the agent to search files/output.)
+fn grep_scan(text: &str, pat: &str) -> bool {
+    let mut matched = false;
+    for line in text.split('\n') {
+        if line.contains(pat) {
+            println!("{}", line);
+            matched = true;
+        }
+    }
+    matched
 }
 
 /// `ls [dir]` — list a directory's entries via SYS_OPEN(DIRECTORY)+SYS_READDIR.
@@ -527,6 +541,55 @@ fn dispatch_argv(argv: &[String]) -> i32 {
                 }
             }
             status
+        }
+        "grep" => {
+            // grep PATTERN [file...] — files given: scan each; no files: filter
+            // stdin (so `cmd | grep x` works). Substring match, prints matches.
+            if argv.len() < 2 {
+                println!("sem-sh: grep: usage: grep PATTERN [file...]");
+                return 2;
+            }
+            let pat = argv[1].as_str();
+            let mut matched = false;
+            if argv.len() == 2 {
+                // stdin filter — drain the pipe to EOF, then scan.
+                const WOULDBLOCK: u64 = u64::MAX - 1;
+                let mut acc: Vec<u8> = Vec::new();
+                let mut buf = [0u8; 512];
+                loop {
+                    let n = unsafe {
+                        syscall3(SYS_READ, 0, buf.as_mut_ptr() as u64, buf.len() as u64)
+                    };
+                    if n == u64::MAX {
+                        break;
+                    }
+                    if n == WOULDBLOCK {
+                        unsafe { syscall1(SYS_SLEEP, 1) };
+                        continue;
+                    }
+                    if n == 0 {
+                        break;
+                    }
+                    acc.extend_from_slice(&buf[..n as usize]);
+                }
+                matched = grep_scan(&String::from_utf8_lossy(&acc), pat);
+            } else {
+                for p in &argv[2..] {
+                    match fs::read_to_string(p) {
+                        Ok(s) => {
+                            if grep_scan(&s, pat) {
+                                matched = true;
+                            }
+                        }
+                        Err(_) => println!("sem-sh: grep: {}: cannot read", p),
+                    }
+                }
+            }
+            if matched {
+                0
+            } else {
+                1
+            }
         }
         "ls" => {
             let dir = argv

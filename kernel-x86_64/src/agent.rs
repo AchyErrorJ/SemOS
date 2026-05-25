@@ -109,7 +109,7 @@ pub fn tools_json() -> &'static str {
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},",
         "{\"name\":\"write_file\",\"description\":\"Write contents to a file (creates/overwrites).\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},",
-        "{\"name\":\"bash\",\"description\":\"Run a shell command via sem-sh and return its output.\",",
+        "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false. External programs run from /bin.\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}}",
         "]"
     )
@@ -677,7 +677,7 @@ pub fn run_tool(name: &str, input_json: &str) -> String {
             }
         }
         "bash" => match field_str(input_json, "command") {
-            Some(_cmd) => String::from("error: bash tool not wired yet (stage C)"),
+            Some(cmd) => run_bash(&cmd),
             None => String::from("error: missing 'command'"),
         },
         other => format!("error: unknown tool '{}'", other),
@@ -687,6 +687,125 @@ pub fn run_tool(name: &str, input_json: &str) -> String {
 /// Pull a string field out of a small JSON object (the tool input).
 fn field_str(obj_json: &str, key: &str) -> Option<String> {
     scan_string_field(obj_json.as_bytes(), key, 0).map(|(v, _)| v)
+}
+
+/// The agent's `bash` tool: run `cmd` through the real M20 shell
+/// (`/bin/sem-sh -c "<cmd>"`) and return its captured stdout. This is a *real*
+/// shell — builtins, `;` sequencing, `|` pipes, `</>/>>` redirection, external
+/// ELF exec — not a kernel-side reimplementation. The agent therefore gets the
+/// OS's actual command surface, and anything we add to sem-sh (e.g. `grep`)
+/// becomes available to Claude for free.
+///
+/// Mechanics (we run in kernel context, on the `init_loader` task): pin the
+/// kernel task to the current scheduler slot so per-process FD ops resolve to
+/// us; open a pipe and dup its write end onto fd 1 so the spawned shell
+/// inherits it as stdout; spawn with argv `["/bin/sem-sh","-c",cmd]`; then poll
+/// the child's slot while draining the pipe *interleaved* (the pipe is 4 KiB —
+/// draining as we go means a chatty command can't fill it and deadlock).
+fn run_bash(cmd: &str) -> String {
+    use alloc::vec::Vec;
+    use kernel_core::scheduler::{self, TaskState};
+    use kernel_core::syscall::SpawnArgs;
+
+    // argv blob: [count: u32][len: u32][bytes]... for ["/bin/sem-sh","-c",cmd].
+    let items: [&str; 3] = ["/bin/sem-sh", "-c", cmd];
+    let mut blob: Vec<u8> = Vec::new();
+    blob.extend_from_slice(&(items.len() as u32).to_le_bytes());
+    for it in items {
+        blob.extend_from_slice(&(it.len() as u32).to_le_bytes());
+        blob.extend_from_slice(it.as_bytes());
+    }
+
+    let saved = kernel_core::process::kernel_task_id();
+    kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
+
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        kernel_core::process::set_kernel_task_id(saved);
+        return String::from("error: pipe failed");
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+
+    let path = "/bin/sem-sh";
+    let spawn_args = SpawnArgs {
+        argv_blob_ptr: blob.as_ptr() as u64,
+        argv_blob_len: blob.len() as u32,
+        envp_blob_ptr: 0,
+        envp_blob_len: 0,
+    };
+    let pid = dispatch(
+        SYS_SPAWN,
+        path.as_ptr() as u64,
+        path.len() as u64,
+        3, // max tier
+        &spawn_args as *const SpawnArgs as u64,
+    );
+    // Restore our own stdout; the child already inherited the pipe at spawn.
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+
+    if pid == u64::MAX {
+        dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+        dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(saved);
+        return String::from("error: failed to spawn /bin/sem-sh");
+    }
+
+    let child = kernel_core::process::ProcessId(pid as u32);
+    let cs = kernel_core::process::get(child).and_then(|p| p.task_id);
+
+    let mut out = String::new();
+    let mut buf = [0u8; 512];
+    let mut polled = 0u64;
+    const OUT_CAP: usize = 8192;
+    loop {
+        // The scheduler ran the child during the last sleep, so the current
+        // slot is ours again — re-pin so FD ops keep resolving to us.
+        kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
+
+        let r = dispatch(SYS_READ, read_fd, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+        let got = if r == u64::MAX || r == u64::MAX - 1 { 0 } else { (r as usize).min(buf.len()) };
+        if got > 0 {
+            out.push_str(&String::from_utf8_lossy(&buf[..got]));
+            if out.len() >= OUT_CAP {
+                break;
+            }
+            continue; // drain greedily before sleeping
+        }
+
+        let exited = match cs {
+            Some(slot) => scheduler::task_state(slot) == TaskState::Exited,
+            None => true,
+        };
+        if exited {
+            // Final drain of whatever is still buffered after exit.
+            loop {
+                let r2 = dispatch(SYS_READ, read_fd, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+                let g2 = if r2 == u64::MAX || r2 == u64::MAX - 1 { 0 } else { (r2 as usize).min(buf.len()) };
+                if g2 == 0 || out.len() >= OUT_CAP {
+                    break;
+                }
+                out.push_str(&String::from_utf8_lossy(&buf[..g2]));
+            }
+            break;
+        }
+
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+        if polled > 2000 {
+            break; // safety: never hang the boot on a stuck child
+        }
+    }
+
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+    kernel_core::process::set_kernel_task_id(saved);
+
+    if out.is_empty() {
+        String::from("(no output)")
+    } else {
+        out
+    }
 }
 
 /// Read a path-namespace file via SYS_OPEN + SYS_FREAD.

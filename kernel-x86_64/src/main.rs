@@ -952,6 +952,14 @@ fn init_loader_task() {
     println!("================================================================");
     agent_tui_input_demo();
 
+    // DEMO 52: M22 agent `bash` tool — run a real shell command via sem-sh and
+    // capture its output (the agent's shell surface).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 52: agent bash tool (M22 — sem-sh capture)");
+    println!("================================================================");
+    agent_bash_tool_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4773,6 +4781,38 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 52: M22 agent `bash` tool. Calls `agent::run_tool("bash", …)` directly
+/// (no key/network needed) — it spawns `/bin/sem-sh -c "<cmd>"`, captures the
+/// shell's stdout over a pipe, and returns it. Seeds a file with the agent's
+/// own write_file tool, then runs `echo … ; cat <file>` through the shell and
+/// checks both the echo and the file contents came back — proving the agent
+/// gets the OS's real command surface (builtins + `;` sequencing + capture).
+fn agent_bash_tool_demo() {
+    use crate::agent;
+
+    // Seed a multi-line file via the agent's write_file tool.
+    let _ = agent::run_tool(
+        "write_file",
+        "{\"path\":\"/bashtest\",\"content\":\"alpha\\nNEEDLE_LINE\\nbeta\"}",
+    );
+    // Run echo (builtin) + grep (new builtin) through the shell, captured.
+    let out = agent::run_tool(
+        "bash",
+        "{\"command\":\"echo RUN_OK ; grep NEEDLE /bashtest\"}",
+    );
+
+    let echo_ok = out.contains("RUN_OK");
+    let grep_hit = out.contains("NEEDLE_LINE");
+    let grep_filtered = !out.contains("alpha"); // grep dropped non-matching lines
+    if echo_ok && grep_hit && grep_filtered {
+        println!("  [DEMO 52] PASS: bash tool ran sem-sh (echo + grep), captured {} B", out.len());
+        println!("  [DEMO 52] => M22: agent `bash` tool gives Claude the real shell (sem-sh + grep)");
+    } else {
+        println!("  [DEMO 52] FAIL: echo={} grep_hit={} filtered={} out={:?}",
+            echo_ok, grep_hit, grep_filtered, out);
     }
 }
 
