@@ -106,42 +106,74 @@ docs/               # README artifacts (boot logs, architecture notes)
 See [`docs/architecture.md`](docs/architecture.md) for the module-level
 map and the syscall table.
 
-## Build and run
+## Build and run all the demos
 
 Toolchain: Rust nightly pinned to `nightly-2026-02-01` (the version the
-bootloader-0.11 crate requires).
+bootloader-0.11 crate requires). A single boot runs **DEMOs 1–57** and prints
+`PASS:` / `FAIL:` lines to the serial log, ending with `All demos complete`.
 
 ```sh
-# 1. Build user programs first (they're embedded into the kernel via include_bytes!)
-( cd user-programs/hello    && cargo build --release )
-( cd user-programs/sem-demo && cargo build --release )
+# 1. Build every user program — they're embedded into the kernel via
+#    include_bytes!, so the kernel build below won't pick up changes until
+#    these are (re)built first.
+for p in hello hello-std sem-demo sem-sh net-demo std-demo \
+         thread-demo vec-demo spawn-demo exfil-demo; do
+  ( cd user-programs/$p && cargo build --release )
+done
 
-# 2. Build the kernel
+# 2. (optional) bake an Anthropic API key for the LIVE agent demos
+#    (48 = 401 round-trip, 49 = agent tool loop, 54 = `ask`). Omit it and
+#    those self-skip / return "no key" — the rest of the suite is unaffected.
+#    The key only ever lands in the gitignored target/ binary, never in git.
+# export ANTHROPIC_KEY=sk-ant-...
+
+# 3. Build the kernel.
 ( cd kernel-x86_64 && cargo build --release )
 
-# 3. Wrap the kernel ELF into a bootable BIOS+UEFI image
+# 4. Wrap the kernel ELF into a bootable BIOS+UEFI image.
+#    NOTE: run this from x86_64-runner/ (it's a host tool); running it from
+#    kernel-x86_64/ leaves a STALE image.
 ( cd x86_64-runner && cargo run --release )
 
-# 4. (one-time) make a virtio disk for the persistence demo
+# 5. (one-time) a virtio disk for the persistence/FS demos.
 qemu-img create -f raw vdisk.img 16M
 
-# 5. Boot in QEMU
-qemu-system-x86_64 \
+# 6. Boot. The full flag set runs ALL demos including the networked ones.
+qemu-system-x86_64 -cpu max \
   -drive format=raw,file=kernel-x86_64/target/x86_64-unknown-none/release/semantic-os-x86_64-bios.img \
-  -drive format=raw,file=vdisk.img,if=virtio \
-  -serial file:qemu-serial.log \
-  -display none -no-reboot \
-  -m 128M -accel tcg,tb-size=128
+  -drive if=virtio,format=raw,file=vdisk.img \
+  -device qemu-xhci -device usb-kbd \
+  -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+  -m 256M -serial file:serial.log -display none -no-reboot
 ```
 
-`-m 128M -accel tcg,tb-size=128` — the host this was developed on runs
-under memory pressure; default `-m` and TCG buffer fail with `cannot
-set up guest memory`. Bump as appropriate on a less-constrained machine.
+Flag notes:
+- **`-cpu max`** is required — the crypto stack uses `RDRAND`.
+- **`-netdev user ... -device virtio-net-pci`** (SLIRP) enables the network
+  demos: DNS (34), TLS round-trip to api.anthropic.com (16/48/49), `std::net`
+  (36), and the shell `fetch` (55). Without it, those self-skip.
+- **`-device qemu-xhci -device usb-kbd`** gives a USB keyboard for the TTY /
+  shell-input demos (40/43/51).
+- It runs headless (`-display none`); the serial log is the source of truth.
+
+Check the result:
+
+```sh
+grep -c 'PASS:' serial.log        # ~154 with the network up
+grep    'FAIL:' serial.log        # expect no output
+grep 'All demos complete' serial.log
+```
 
 For GDB on the kernel: also pass `-gdb tcp::1240 -S`, then in another
 shell `gdb -ex "set osabi none" -ex "set architecture i386:x86-64"
 -ex "file kernel-x86_64/target/x86_64-unknown-none/release/semantic-os-x86_64"
 -ex "target remote :1240"`.
+
+> The sections below predate the network/TLS stack, the native Claude agent,
+> the `sem-sh` shell, and most of the current 57-demo suite — see
+> [`docs/ROADMAP.md`](docs/ROADMAP.md) for the up-to-date milestone log
+> (task #40's intermittent `#PF`, noted under "Known issues", was root-caused
+> and fixed; the suite now boots `0 FAIL / 0 #DF`).
 
 ## Known issues
 
