@@ -48,6 +48,14 @@ pub trait Platform: Send + Sync + 'static {
     /// the PT-frame pool dry. Returns the number of address spaces freed.
     fn reclaim_address_spaces(&self) -> usize { 0 }
 
+    /// Ensure maskable interrupts are enabled. Called at the top of a blocking
+    /// network read/write spin so the timer IRQ keeps firing — without it,
+    /// `ticks()` freezes and the wall-clock idle-timeout can never fire, so a
+    /// slow/stalled peer hangs the kernel forever (the recv-stall bug). A
+    /// spinning task-level wait must always allow the timer + preemption.
+    /// No-op by default; arch impl sets IF.
+    fn enable_interrupts(&self) {}
+
     /// Run a one-shot LLM query (the shell `ask` builtin / `SYS_ASK`): send
     /// `prompt` to the configured model over the network and write the plain
     /// text answer into `out`, returning its length. Runs synchronously in the

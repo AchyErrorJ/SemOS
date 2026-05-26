@@ -233,6 +233,10 @@ impl Platform for X86Platform {
         crate::context::reclaim_dead_address_spaces()
     }
 
+    fn enable_interrupts(&self) {
+        x86_64::instructions::interrupts::enable();
+    }
+
     fn llm_ask(&self, prompt: &[u8], out: &mut [u8]) -> usize {
         // The agent's network path is wall-clock bounded (TLS idle timeout),
         // which needs the timer to advance — and a multi-second call shouldn't

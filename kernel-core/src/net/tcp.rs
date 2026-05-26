@@ -321,6 +321,10 @@ const IO_IDLE_TIMEOUT_TICKS: u64 = 3000;
 impl embedded_io::Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {
         if buf.is_empty() { return Ok(0); }
+        // A spinning network wait MUST let the timer IRQ fire, or `ticks()`
+        // freezes and the idle-timeout below can never trip — the recv-stall
+        // hang. Ensure interrupts are enabled before we start spinning.
+        crate::platform::get().enable_interrupts();
         let start = crate::platform::ticks();
         loop {
             super::state::poll();
@@ -335,7 +339,11 @@ impl embedded_io::Read for TcpStream {
                         // embedded_io's convention: read of 0 == EOF.
                         return Ok(0);
                     }
-                    // Idle-timeout guard: a silent peer must not hang us.
+                    // Idle-timeout guard: a silent peer must not hang us. This
+                    // is wall-clock (tick) based, which only works because the
+                    // `enable_interrupts()` above keeps the timer IRQ firing
+                    // while we spin (a disabled-IF spin froze ticks → the
+                    // recv-stall hang, root-caused 2026-05-25).
                     if crate::platform::ticks().wrapping_sub(start) >= IO_IDLE_TIMEOUT_TICKS {
                         return Ok(0);
                     }
@@ -351,6 +359,7 @@ impl embedded_io::Read for TcpStream {
 impl embedded_io::Write for TcpStream {
     fn write(&mut self, buf: &[u8]) -> Result<usize, TcpError> {
         if buf.is_empty() { return Ok(0); }
+        crate::platform::get().enable_interrupts(); // keep the timer alive while spinning
         let start = crate::platform::ticks();
         loop {
             super::state::poll();
