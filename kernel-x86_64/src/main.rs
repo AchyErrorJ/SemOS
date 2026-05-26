@@ -985,6 +985,14 @@ fn init_loader_task() {
         shell_fetch_demo();
     }
 
+    // DEMO 56: security — the agent's shell is sandboxed at tier 0 (Public), so
+    // it cannot read a Secret-tier file (the LLM can't see secrets).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 56: agent shell sandbox — LLM can't read secrets");
+    println!("================================================================");
+    agent_sandbox_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4806,6 +4814,80 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 56: the agent shell sandbox. The agent's `bash` tool spawns sem-sh at
+/// tier 0 (Public) — the LLM is the least-trusted component, so its shell runs
+/// with the lowest clearance. We create a **Secret**-tier file and a Public
+/// file from the kernel (tier 3), then have the agent's shell try to `cat`
+/// both: SYS_OPEN's tier check denies the Secret one (caller tier 0 < object
+/// tier 3) while the Public one reads fine. Proves "the LLM can't see secrets"
+/// using the existing tier enforcement — no new mechanism, just running the
+/// agent where it belongs in the 4-tier model.
+fn agent_sandbox_demo() {
+    use crate::agent;
+    use kernel_core::syscall::{dispatch, numbers::*, open_flags};
+
+    // Helper: create a file at a given tier (flags = CREATE | tier<<4) and write.
+    fn make(path: &str, tier: u64, content: &[u8]) -> bool {
+        let flags = open_flags::CREATE | (tier << 4);
+        let fd = dispatch(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, flags, 0);
+        if fd == u64::MAX {
+            return false;
+        }
+        dispatch(SYS_FWRITE, fd, content.as_ptr() as u64, content.len() as u64, 0);
+        dispatch(SYS_CLOSE, fd, 0, 0, 0);
+        true
+    }
+
+    let sec_ok = make("/sec-doc", 3, b"TOPSECRET_XYZZY");
+    let pub_ok = make("/pub-doc", 0, b"PUBLICOK_ABCDE");
+    if !sec_ok || !pub_ok {
+        println!("  [DEMO 56] FAIL: could not seed test files (sec={} pub={})", sec_ok, pub_ok);
+        return;
+    }
+
+    let secret_out = agent::run_tool("bash", "{\"command\":\"cat /sec-doc\"}");
+    let public_out = agent::run_tool("bash", "{\"command\":\"cat /pub-doc\"}");
+
+    // Try to MODIFY the secret from the sandboxed shell — the redirect's open
+    // must be tier-denied, leaving the file untouched. Read it back as the
+    // kernel (tier 3) to confirm.
+    let _ = agent::run_tool("bash", "{\"command\":\"echo HACKED > /sec-doc\"}");
+    let mut rb = [0u8; 64];
+    let path = "/sec-doc";
+    let fd = dispatch(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    let n = if fd == u64::MAX {
+        0
+    } else {
+        let r = dispatch(SYS_FREAD, fd, rb.as_mut_ptr() as u64, rb.len() as u64, 0);
+        dispatch(SYS_CLOSE, fd, 0, 0, 0);
+        if r == u64::MAX { 0 } else { (r as usize).min(rb.len()) }
+    };
+    let after = core::str::from_utf8(&rb[..n]).unwrap_or("");
+
+    let secret_blocked = !secret_out.contains("TOPSECRET_XYZZY");
+    let public_readable = public_out.contains("PUBLICOK_ABCDE");
+    let write_denied = after.contains("TOPSECRET_XYZZY") && !after.contains("HACKED");
+
+    if secret_blocked {
+        println!("  [DEMO 56] PASS: Secret-tier /sec-doc NOT readable by the agent shell (tier-denied)");
+    } else {
+        println!("  [DEMO 56] FAIL: secret leaked to the agent shell: {:?}", secret_out.trim());
+    }
+    if write_denied {
+        println!("  [DEMO 56] PASS: agent shell could NOT modify /sec-doc (write tier-denied, content intact)");
+    } else {
+        println!("  [DEMO 56] FAIL: secret was modified — after = {:?}", after);
+    }
+    if public_readable {
+        println!("  [DEMO 56] PASS: Public-tier /pub-doc readable by the agent shell (as expected)");
+    } else {
+        println!("  [DEMO 56] FAIL: public file unreadable: {:?}", public_out.trim());
+    }
+    if secret_blocked && write_denied && public_readable {
+        println!("  [DEMO 56] => LLM shell at tier 0: can't SEE secrets, can't MODIFY protected state");
     }
 }
 

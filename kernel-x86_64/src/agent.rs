@@ -824,7 +824,12 @@ fn run_bash(cmd: &str) -> String {
         SYS_SPAWN,
         path.as_ptr() as u64,
         path.len() as u64,
-        3, // max tier
+        // Sandbox the agent's shell at tier 0 (Public). The LLM is the
+        // least-trusted component in the 4-tier model, so its shell runs with
+        // the lowest clearance: SYS_OPEN's tier check then denies it any
+        // Internal/Sensitive/Secret file — it can neither read secrets nor
+        // modify protected (higher-tier) state, only touch Public files.
+        0,
         &spawn_args as *const SpawnArgs as u64,
     );
     // Restore our own stdout; the child already inherited the pipe at spawn.
