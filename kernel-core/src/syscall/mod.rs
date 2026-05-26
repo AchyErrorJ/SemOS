@@ -1540,6 +1540,107 @@ fn parse_argv_blob<'a>(blob: &'a [u8], items_out: &mut [&'a [u8]]) -> Option<usi
     Some(count)
 }
 
+/// Parse the optional `SpawnArgs` blob (arg3) into argv/envp item slices.
+/// Returns `(argc, envc)`, `Some((0,0))` when `spawn_args_ptr == 0` (legacy
+/// no-args callers), or `None` on a malformed/oversized blob. The item refs
+/// point into the caller's blob, valid for the syscall's duration.
+fn parse_spawn_args<'a>(
+    spawn_args_ptr: u64,
+    argv_items: &mut [&'a [u8]],
+    envp_items: &mut [&'a [u8]],
+) -> Option<(usize, usize)> {
+    if spawn_args_ptr == 0 {
+        return Some((0, 0));
+    }
+    let sa = unsafe { &*(spawn_args_ptr as *const SpawnArgs) };
+    if sa.argv_blob_len as usize > MAX_BLOB_BYTES || sa.envp_blob_len as usize > MAX_BLOB_BYTES {
+        return None;
+    }
+    let mut argc = 0usize;
+    let mut envc = 0usize;
+    if sa.argv_blob_ptr != 0 && sa.argv_blob_len > 0 {
+        let blob = unsafe {
+            core::slice::from_raw_parts(sa.argv_blob_ptr as *const u8, sa.argv_blob_len as usize)
+        };
+        argc = parse_argv_blob(blob, argv_items)?;
+    }
+    if sa.envp_blob_ptr != 0 && sa.envp_blob_len > 0 {
+        let blob = unsafe {
+            core::slice::from_raw_parts(sa.envp_blob_ptr as *const u8, sa.envp_blob_len as usize)
+        };
+        envc = parse_argv_blob(blob, envp_items)?;
+    }
+    Some((argc, envc))
+}
+
+/// Spawn an executable stored at a path-namespace path (NOT ramfs `/bin`) —
+/// the "install anywhere / run anywhere" path. Resolves the path, tier-checks
+/// the caller against the object (the LLM at tier 0 can't run a higher-tier
+/// binary, just as it can't read one), reads its ELF bytes from the object's
+/// heap content, and spawns. Returns the PID or `u64::MAX`. Task name is the
+/// generic `"user-app"` for now (the scheduler wants a `&'static str`;
+/// per-path names are a follow-up).
+fn spawn_namespace_elf(path: &str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
+    use crate::fs::paths::Namespace;
+
+    let suid = match Namespace::resolve(path) {
+        Ok(s) => s,
+        Err(_) => {
+            crate::platform::log("[syscall] spawn: namespace path not found: ");
+            crate::platform::log(path);
+            crate::platform::log("\n");
+            return u64::MAX;
+        }
+    };
+
+    // Hold the registry borrow for the rest of the call (it's &'static mut and
+    // spawn doesn't touch the registry, so the ELF byte borrow stays valid).
+    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let obj = match registry.get(&suid) {
+        Some(o) => o,
+        None => return u64::MAX,
+    };
+    // Security: caller must be cleared for the executable's tier — mirrors the
+    // SYS_OPEN read check, so a sandboxed (tier-0) agent can't run secrets.
+    let caller_tier = crate::scheduler::current_task_max_tier();
+    if caller_tier < (obj.tier as u8) {
+        crate::platform::log("[syscall] spawn: tier denied for namespace exec: ");
+        crate::platform::log(path);
+        crate::platform::log("\n");
+        return u64::MAX;
+    }
+    let elf_data: &[u8] = match obj.content.as_bytes() {
+        Some(b) => b,
+        None => return u64::MAX,
+    };
+
+    let mut argv_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
+    let mut envp_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
+    let (argc, envc) = match parse_spawn_args(spawn_args_ptr, &mut argv_items, &mut envp_items) {
+        Some(t) => t,
+        None => {
+            crate::platform::log("[syscall] spawn: argv/envp blob malformed\n");
+            return u64::MAX;
+        }
+    };
+
+    match crate::process::spawn_from_elf_with_args(
+        "user-app",
+        elf_data,
+        spawn_tier,
+        &argv_items[..argc],
+        &envp_items[..envc],
+    ) {
+        Some(pid) => pid.0 as u64,
+        None => {
+            crate::platform::log("[syscall] spawn: failed to load namespace ELF: ");
+            crate::platform::log(path);
+            crate::platform::log("\n");
+            u64::MAX
+        }
+    }
+}
+
 fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64) -> u64 {
     // Validate tier access — can't spawn at a higher tier than yourself
     let caller_tier = crate::scheduler::current_task_max_tier();
@@ -1605,13 +1706,10 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
             return u64::MAX;
         }
     } else if path.starts_with('/') {
-        // Other absolute paths point at the path namespace, which
-        // can't store ELF-sized content yet (256 B inline cap).
-        // Once SemanticObject grows >256 B content, route here.
-        crate::platform::log("[syscall] spawn: path-namespace ELF not yet supported: ");
-        crate::platform::log(path);
-        crate::platform::log("\n");
-        return u64::MAX;
+        // Other absolute paths are path-namespace executables ("install
+        // anywhere"). Now that content can hold up to 256 KiB, resolve + spawn
+        // directly from the object's bytes — no ramfs, no hardcoded table.
+        return spawn_namespace_elf(path, spawn_tier, spawn_args_ptr);
     } else {
         path  // legacy: flat ramfs name (preserves existing callers)
     };
@@ -1649,35 +1747,13 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
     // Backwards-compatible: arg3=0 → empty argv/envp, behave like old API.
     let mut argv_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
     let mut envp_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
-    let mut argc = 0usize;
-    let mut envc = 0usize;
-    if spawn_args_ptr != 0 {
-        let sa = unsafe { &*(spawn_args_ptr as *const SpawnArgs) };
-        if sa.argv_blob_len as usize > MAX_BLOB_BYTES
-            || sa.envp_blob_len as usize > MAX_BLOB_BYTES
-        {
-            crate::platform::log("[syscall] spawn: argv/envp blob too large\n");
+    let (argc, envc) = match parse_spawn_args(spawn_args_ptr, &mut argv_items, &mut envp_items) {
+        Some(t) => t,
+        None => {
+            crate::platform::log("[syscall] spawn: argv/envp blob malformed\n");
             return u64::MAX;
         }
-        if sa.argv_blob_ptr != 0 && sa.argv_blob_len > 0 {
-            let blob = unsafe {
-                core::slice::from_raw_parts(sa.argv_blob_ptr as *const u8, sa.argv_blob_len as usize)
-            };
-            argc = match parse_argv_blob(blob, &mut argv_items) {
-                Some(n) => n,
-                None => { crate::platform::log("[syscall] spawn: argv blob malformed\n"); return u64::MAX; }
-            };
-        }
-        if sa.envp_blob_ptr != 0 && sa.envp_blob_len > 0 {
-            let blob = unsafe {
-                core::slice::from_raw_parts(sa.envp_blob_ptr as *const u8, sa.envp_blob_len as usize)
-            };
-            envc = match parse_argv_blob(blob, &mut envp_items) {
-                Some(n) => n,
-                None => { crate::platform::log("[syscall] spawn: envp blob malformed\n"); return u64::MAX; }
-            };
-        }
-    }
+    };
 
     match crate::process::spawn_from_elf_with_args(
         static_name, elf_data, spawn_tier,

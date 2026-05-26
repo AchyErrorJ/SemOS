@@ -1000,6 +1000,14 @@ fn init_loader_task() {
     println!("================================================================");
     shell_scripting_demo();
 
+    // DEMO 58: install anywhere / run anywhere — install an ELF at a namespace
+    // path and run it from the shell (spawn is no longer /bin-only).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 58: install anywhere — run an app from any path");
+    println!("================================================================");
+    install_anywhere_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -3251,9 +3259,9 @@ fn large_file_fwrite_test() {
     }
     println!("  [DEMO 26] PASS: overwrite 4 KiB → 8 KiB (old heap block freed, new allocated)");
 
-    // Step 5: Pathologically-large write past MAX_FILE_CONTENT (64 KiB)
+    // Step 5: Pathologically-large write past MAX_FILE_CONTENT (256 KiB)
     // must fail cleanly without corrupting state.
-    let huge_len = 65 * 1024;
+    let huge_len = 257 * 1024;
     let huge_ptr = kernel_core::memory::heap::allocate(huge_len, 8);
     if huge_ptr.is_null() {
         println!("  [DEMO 26] SKIPPED: couldn't allocate test buffer (heap pressure)");
@@ -3289,7 +3297,7 @@ fn large_file_fwrite_test() {
     // Cleanup.
     let _ = dispatch(SYS_UNLINK, "/big".as_ptr() as u64, 4, 0, 0);
 
-    println!("  [DEMO 26] => FWRITE up to MAX_FILE_CONTENT (64 KiB) works; #44 unblocked");
+    println!("  [DEMO 26] => FWRITE up to MAX_FILE_CONTENT (256 KiB) works; #44 unblocked");
 }
 
 // DEMO 27 — kernel-mode threading + futex + join validation.
@@ -4821,6 +4829,48 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 58: install anywhere / run anywhere. "Installs" an executable by
+/// writing its ELF bytes to a path in the semantic namespace (not the
+/// compile-time ramfs `/bin`), then runs it from the shell by that path —
+/// which `SYS_SPAWN` now supports (resolve path → read object bytes → spawn,
+/// tier-checked). This is the core of the "apps installed anywhere are always
+/// runnable" vision; persistence across reboot (via `SYS_FSYNC`) is the
+/// natural follow-on since namespace files already persist to disk.
+fn install_anywhere_demo() {
+    use crate::agent;
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+
+    // Install: copy a small embedded ELF to a namespace path at Public tier.
+    let n = match kernel_core::fs::ramfs::get_fs().and_then(|fs| fs.find("hello-std.elf")) {
+        Some(f) => {
+            let bytes = f.data();
+            let len = bytes.len();
+            match Namespace::create_file("/myapp", SecurityTier::Public, bytes) {
+                Ok(_) => len,
+                Err(e) => {
+                    println!("  [DEMO 58] FAIL: install failed (create_file: {:?})", e);
+                    return;
+                }
+            }
+        }
+        None => {
+            println!("  [DEMO 58] SKIPPED: hello-std.elf not embedded");
+            return;
+        }
+    };
+
+    // Run it from the shell by its namespace path — previously impossible
+    // (spawn only knew the hardcoded /bin table). Output captured via bash.
+    let out = agent::run_tool("bash", "{\"command\":\"/myapp\"}");
+    if out.contains("Hello from semos-std!") {
+        println!("  [DEMO 58] PASS: installed a {} B ELF at /myapp and ran it from the shell", n);
+        println!("  [DEMO 58] => install anywhere / run anywhere — spawn from any namespace path");
+    } else {
+        println!("  [DEMO 58] FAIL: /myapp did not run — output = {:?}", out.trim());
     }
 }
 

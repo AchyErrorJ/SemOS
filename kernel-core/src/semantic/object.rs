@@ -16,8 +16,13 @@ pub use crate::memory::SecurityTier;
 /// Maximum number of links per object
 pub const MAX_LINKS: usize = 16;
 
-/// Maximum content size (64KB for now)
-pub const MAX_CONTENT_SIZE: usize = 64 * 1024;
+/// Maximum content size. 256 KiB so the path namespace can hold installable
+/// executables (the largest current binary, sem-sh, is ~124 KiB) — the
+/// "install anywhere" story. This is a pure validation cap: content over 256 B
+/// is a heap-`Allocated` block at its actual size (no buffer is sized to this
+/// constant), drawn from the 16 MiB heap arena. At this OS's scale — a handful
+/// of apps + system tools on a dedicated work machine — that's ample headroom.
+pub const MAX_CONTENT_SIZE: usize = 256 * 1024;
 
 /// Object content type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

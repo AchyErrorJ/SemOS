@@ -73,11 +73,17 @@ pub const MAX_PATH_LEN: usize = 256;
 /// needs a bound).
 pub const MAX_PATH_DEPTH: usize = 32;
 
-/// Maximum entries we'll let a single directory hold in Stage 1's
-/// inline format. With per-entry overhead of ~25 bytes (avg 8-char
-/// name) into 256-byte inline content, ten entries leaves room for
-/// the count byte + slack.
-pub const MAX_DIR_ENTRIES: usize = 16;
+/// Maximum entries a single directory holds. Directory content is now stored
+/// via `from_bytes` (heap-backed, like files) rather than 256-byte inline, so
+/// the limit is the serialization buffer (`DIR_CONTENT_MAX`) not inline size.
+/// 64 entries is right for a dedicated work OS — a handful of apps, system
+/// tools, and documents per directory — without being unbounded.
+pub const MAX_DIR_ENTRIES: usize = 64;
+
+/// Serialization-buffer size for a directory's content: `[count: u8]` + up to
+/// `MAX_DIR_ENTRIES` entries of `[len:1][name:≤31][suid:16]` = ≤ 48 B each.
+/// 1 + 64·48 = 3073 → round up to 4096.
+pub const DIR_CONTENT_MAX: usize = 4096;
 
 /// Well-known SUID for the root directory. System type (TYPE_SYSTEM=15)
 /// so it can't be confused with content-addressed or random user SUIDs.
@@ -876,7 +882,7 @@ fn lookup_in_dir(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
 fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
     // Snapshot existing content into a local buffer so we can reborrow
     // the registry mutably for the rewrite.
-    let mut scratch = [0u8; 256];
+    let mut scratch = [0u8; DIR_CONTENT_MAX];
     let existing_len = {
         let registry = unsafe { global_registry() };
         let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
@@ -889,12 +895,13 @@ fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
         bytes.len()
     };
 
-    let mut new_buf = [0u8; 256];
+    let mut new_buf = [0u8; DIR_CONTENT_MAX];
     let new_len = insert_dir_entry(&scratch[..existing_len], name, suid, &mut new_buf)?;
 
     let registry = unsafe { global_registry() };
     let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
-    parent.content = ObjectContent::from_inline(&new_buf[..new_len])
+    // Heap-backed (from_bytes) so a directory isn't capped at 256 B inline.
+    parent.content = ObjectContent::from_bytes(&new_buf[..new_len])
         .ok_or(FsError::DirectoryFull)?;
     Ok(())
 }
@@ -902,7 +909,7 @@ fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
 /// Remove the entry named `name` from the directory at `parent_suid`.
 /// Returns the SUID of the entry that was removed.
 fn remove_child(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
-    let mut scratch = [0u8; 256];
+    let mut scratch = [0u8; DIR_CONTENT_MAX];
     let existing_len = {
         let registry = unsafe { global_registry() };
         let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
@@ -915,13 +922,13 @@ fn remove_child(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
         bytes.len()
     };
 
-    let mut new_buf = [0u8; 256];
+    let mut new_buf = [0u8; DIR_CONTENT_MAX];
     let (new_len, removed_suid) =
         remove_dir_entry(&scratch[..existing_len], name, &mut new_buf)?;
 
     let registry = unsafe { global_registry() };
     let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
-    parent.content = ObjectContent::from_inline(&new_buf[..new_len])
+    parent.content = ObjectContent::from_bytes(&new_buf[..new_len])
         .ok_or(FsError::Corrupt)?;
     Ok(removed_suid)
 }
