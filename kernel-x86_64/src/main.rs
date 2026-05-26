@@ -960,6 +960,14 @@ fn init_loader_task() {
     println!("================================================================");
     agent_bash_tool_demo();
 
+    // DEMO 53: shell introspection builtins (ps / free / uptime) — the shell as
+    // a system interface. Read-only, tier-safe.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 53: shell introspection — ps / free / uptime");
+    println!("================================================================");
+    shell_introspection_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4781,6 +4789,45 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 53: shell introspection builtins. Runs `ps`, `free`, `uptime` through
+/// the agent's bash tool (→ sem-sh → new SYS_PS / SYS_SYSINFO / SYS_TIME) and
+/// checks each produced sane output. These are read-only and tier-safe — they
+/// expose task metadata + heap totals, never secrets or mutable state — so the
+/// agent can inspect the system it runs on without being able to change it.
+fn shell_introspection_demo() {
+    use crate::agent;
+
+    let ps = agent::run_tool("bash", "{\"command\":\"ps\"}");
+    // The header + at least one kernel-mode task (the demo runner) must appear.
+    let ps_ok = ps.contains("STATE") && ps.contains("TIER") && ps.contains("kernel");
+
+    let free = agent::run_tool("bash", "{\"command\":\"free\"}");
+    let free_ok = free.contains("heap:") && free.contains("free blocks");
+
+    let uptime = agent::run_tool("bash", "{\"command\":\"uptime\"}");
+    let uptime_ok = uptime.contains("ticks");
+
+    if ps_ok {
+        let lines = ps.split('\n').filter(|l| !l.is_empty()).count();
+        println!("  [DEMO 53] PASS: ps listed the task table ({} lines, shows STATE+TIER)", lines);
+    } else {
+        println!("  [DEMO 53] FAIL: ps output = {:?}", ps);
+    }
+    if free_ok {
+        println!("  [DEMO 53] PASS: free reported heap usage — {:?}", free.trim());
+    } else {
+        println!("  [DEMO 53] FAIL: free output = {:?}", free);
+    }
+    if uptime_ok {
+        println!("  [DEMO 53] PASS: uptime reported — {:?}", uptime.trim());
+    } else {
+        println!("  [DEMO 53] FAIL: uptime output = {:?}", uptime);
+    }
+    if ps_ok && free_ok && uptime_ok {
+        println!("  [DEMO 53] => shell is a system interface: read-only ps/free/uptime, tier-safe");
     }
 }
 

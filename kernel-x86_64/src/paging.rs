@@ -147,15 +147,18 @@ impl PageTable {
 // Page Table Frame Allocator
 // ============================================================================
 
-/// Maximum page table frames we can allocate (for page table structures themselves)
-// Each user process consumes ~10-15 PT frames (PML4 + 3 subtables per
-// segment-page-frame chain × 3 LOAD segments + user stack). Phase 14
-// M25 spawned ~6 demos worth before hitting the 128-frame cap. Bumped
-// to 512 to give M25-era processes (hello-std + thread-demo + future
-// shim-based binaries) headroom without yet adding per-slot reaping
-// at process-exit time. Real fix is to free PT frames on
-// PROCESS_TABLE.remove() — separate refactor.
-const MAX_PT_FRAMES: usize = 512;
+/// Maximum page table frames we can allocate (for page table structures
+/// themselves AND, via `map_user_stack`, the 16-frame user stack — so each
+/// process draws ~30-40 frames from this pool). The boot demo cascade spawns a
+/// dozen short-lived processes; since one-shot demos don't reap, their frames
+/// accumulate and the old 512 cap drained right around the agent `bash` /
+/// introspection demos (DEMO 52/53), failing the next spawn's stack/segment
+/// maps. Two mitigations now exist: the agent `bash` tool reaps its own child
+/// at exit (`reap_slot`), so a session looping shell commands stays flat; and
+/// this pool is bumped to 2048 (8 MiB reserved) so the non-reaping demo cascade
+/// has ample headroom. The fuller fix — free PT frames on every process exit —
+/// is still a separate refactor (`reclaim_dead_address_spaces` exists for it).
+const MAX_PT_FRAMES: usize = 2048;
 
 /// Pool of pre-allocated 4KB frames for page table structures.
 /// These come from the kernel's usable memory, separate from the security pools.

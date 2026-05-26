@@ -109,7 +109,7 @@ pub fn tools_json() -> &'static str {
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},",
         "{\"name\":\"write_file\",\"description\":\"Write contents to a file (creates/overwrites).\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},",
-        "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false. External programs run from /bin.\",",
+        "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false, ps (tasks+tiers), free (heap), uptime. External programs run from /bin.\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}}",
         "]"
     )
@@ -799,6 +799,18 @@ fn run_bash(cmd: &str) -> String {
 
     dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
     dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+
+    // Reap the child immediately so its address-space PT frames return to the
+    // pool now, not whenever some future spawn happens to reuse the slot. We
+    // are the child's waiter and it has exited, so this is safe — and it's what
+    // keeps a session that runs many shell commands (this tool, in a loop)
+    // sustainable instead of exhausting the frame pool after ~MAX_TASKS spawns.
+    if let Some(slot) = cs {
+        if scheduler::task_state(slot) == TaskState::Exited {
+            kernel_core::platform::get().reap_slot(slot);
+        }
+    }
+
     kernel_core::process::set_kernel_task_id(saved);
 
     if out.is_empty() {

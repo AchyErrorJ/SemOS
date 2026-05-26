@@ -229,6 +229,10 @@ impl Platform for X86Platform {
         Some(cr3)
     }
 
+    fn reclaim_address_spaces(&self) -> usize {
+        crate::context::reclaim_dead_address_spaces()
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,

@@ -138,6 +138,12 @@ pub mod numbers {
     pub const SYS_TCP_CLOSE:    u64 = 104; // (fd) -> 0 / u64::MAX
     pub const SYS_TCP_STATE:    u64 = 105; // (fd) -> 0 closed / 1 connecting / 2 established / u64::MAX
 
+    // Read-only system introspection (shell `ps`/`free`; safe at any tier —
+    // exposes task metadata + heap totals, never secrets or mutable state).
+    pub const SYS_PS:           u64 = 110; // (buf_ptr, buf_len) -> task record count; 24B/rec
+    // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
+    // writes [used:u64][free:u64][free_blocks:u64].
+
     /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
     /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
     /// (hard error). The shim retries after yielding.
@@ -219,10 +225,14 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
         // System (70-79)
         SYS_TIME => crate::platform::ticks(),
+        SYS_SYSINFO => handle_sysinfo(arg0, arg1),
         SYS_GET_CWD => handle_get_cwd(arg0, arg1),
         SYS_SET_CWD => handle_set_cwd(arg0, arg1),
         SYS_GET_ENV => handle_get_env(arg0, arg1, arg2, arg3),
         SYS_SET_ENV => handle_set_env(arg0, arg1, arg2, arg3),
+
+        // Read-only introspection
+        SYS_PS => handle_ps(arg0, arg1),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),
@@ -476,6 +486,60 @@ fn handle_getpid() -> u64 {
 fn handle_info() -> u64 {
     crate::platform::log("Semantic OS Kernel Core v0.1.0\n");
     0
+}
+
+/// SYS_SYSINFO(buf_ptr, buf_len) — write heap stats `[used:u64][free:u64]
+/// [free_blocks:u64]` (24 bytes LE) into the caller buffer. Read-only; backs
+/// the shell `free` builtin. Returns 0 on success, u64::MAX if the buffer is
+/// too small.
+fn handle_sysinfo(buf_ptr: u64, buf_len: u64) -> u64 {
+    if buf_ptr == 0 || (buf_len as usize) < 24 {
+        return u64::MAX;
+    }
+    let (used, free, blocks) = crate::memory::heap::stats();
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, 24) };
+    buf[0..8].copy_from_slice(&(used as u64).to_le_bytes());
+    buf[8..16].copy_from_slice(&(free as u64).to_le_bytes());
+    buf[16..24].copy_from_slice(&(blocks as u64).to_le_bytes());
+    0
+}
+
+/// SYS_PS(buf_ptr, buf_len) — write one 24-byte record per live scheduler task
+/// into the caller buffer and return the count. Read-only; backs the shell
+/// `ps` builtin and lets the agent see what's running (and at which security
+/// tier). Record layout (LE): slot:u32 @0, id:u32 @4, run_count:u64 @8,
+/// state:u8 @16, max_tier:u8 @17, is_kernel:u8 @18, user_id:u8 @19, pad @20.
+fn handle_ps(buf_ptr: u64, buf_len: u64) -> u64 {
+    const REC: usize = 24;
+    if buf_ptr == 0 {
+        return 0;
+    }
+    let cap = (buf_len as usize) / REC;
+    if cap == 0 {
+        return 0;
+    }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len as usize) };
+    let tasks = unsafe { &*core::ptr::addr_of!(crate::scheduler::TASKS) };
+    let mut n = 0usize;
+    for (i, t) in tasks.iter().enumerate() {
+        if t.state == crate::scheduler::TaskState::Empty {
+            continue;
+        }
+        if n >= cap {
+            break;
+        }
+        let o = n * REC;
+        buf[o..o + 4].copy_from_slice(&(i as u32).to_le_bytes());
+        buf[o + 4..o + 8].copy_from_slice(&(t.id as u32).to_le_bytes());
+        buf[o + 8..o + 16].copy_from_slice(&t.run_count.to_le_bytes());
+        buf[o + 16] = t.state as u8;
+        buf[o + 17] = t.max_tier;
+        buf[o + 18] = if t.is_kernel { 1 } else { 0 };
+        buf[o + 19] = t.user_id;
+        buf[o + 20..o + 24].copy_from_slice(&[0u8; 4]);
+        n += 1;
+    }
+    n as u64
 }
 
 fn handle_alloc(tier: u64, _size: u64) -> u64 {

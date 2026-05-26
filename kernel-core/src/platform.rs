@@ -41,6 +41,13 @@ pub trait Platform: Send + Sync + 'static {
     /// The address space inherits kernel higher-half mappings.
     fn create_address_space(&self, _max_tier: u8) -> Option<u64> { None }
 
+    /// Reclaim page-table frames of exited-but-unreaped processes (those whose
+    /// address space has no live task). The spawn path calls this when
+    /// `create_address_space` fails so a long-lived session that spawns many
+    /// short-lived children (e.g. the shell / agent `bash` tool) doesn't run
+    /// the PT-frame pool dry. Returns the number of address spaces freed.
+    fn reclaim_address_spaces(&self) -> usize { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`

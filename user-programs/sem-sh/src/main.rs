@@ -15,7 +15,8 @@
 
 use semos_std::arch::{
     syscall1, syscall2, syscall3, syscall4, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN, SYS_PIPE,
-    SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_TRUNCATE,
+    SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
+    SYS_TRUNCATE,
 };
 use semos_std::string::String;
 use semos_std::vec::Vec;
@@ -181,7 +182,7 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
-            | "grep"
+            | "grep" | "ps" | "free" | "uptime"
     )
 }
 
@@ -590,6 +591,54 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             } else {
                 1
             }
+        }
+        "ps" => {
+            // Read-only task table via SYS_PS (24-byte records). Surfaces each
+            // task's security tier — the agent (and you) can see what's running.
+            let mut buf = [0u8; 24 * 24]; // up to 24 tasks
+            let n = unsafe { syscall2(SYS_PS, buf.as_mut_ptr() as u64, buf.len() as u64) } as usize;
+            println!("SLOT  PID  STATE    TIER  MODE  USER  RUNS");
+            for i in 0..n {
+                let o = i * 24;
+                let slot = u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+                let pid = u32::from_le_bytes([buf[o + 4], buf[o + 5], buf[o + 6], buf[o + 7]]);
+                let runs = u64::from_le_bytes([
+                    buf[o + 8], buf[o + 9], buf[o + 10], buf[o + 11],
+                    buf[o + 12], buf[o + 13], buf[o + 14], buf[o + 15],
+                ]);
+                let sname = match buf[o + 16] {
+                    1 => "ready",
+                    2 => "running",
+                    3 => "blocked",
+                    4 => "exited",
+                    _ => "empty",
+                };
+                let tier = buf[o + 17];
+                let mode = if buf[o + 18] != 0 { "kernel" } else { "user" };
+                let user = buf[o + 19];
+                println!("{:<5} {:<4} {:<8} {:<5} {:<5} {:<5} {}", slot, pid, sname, tier, mode, user, runs);
+            }
+            0
+        }
+        "free" => {
+            // Heap usage via SYS_SYSINFO. Read-only.
+            let mut buf = [0u8; 24];
+            let r = unsafe { syscall2(SYS_SYSINFO, buf.as_mut_ptr() as u64, buf.len() as u64) };
+            if r == u64::MAX {
+                println!("sem-sh: free: sysinfo unavailable");
+                return 1;
+            }
+            let used = u64::from_le_bytes([buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7]]);
+            let free = u64::from_le_bytes([buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]]);
+            let blocks = u64::from_le_bytes([buf[16], buf[17], buf[18], buf[19], buf[20], buf[21], buf[22], buf[23]]);
+            println!("heap: used {} B, free {} B, total {} B ({} free blocks)", used, free, used + free, blocks);
+            0
+        }
+        "uptime" => {
+            // SYS_TIME → ticks at 100 Hz.
+            let ticks = unsafe { syscall1(SYS_TIME, 0) };
+            println!("up {} s ({} ticks @ 100 Hz)", ticks / 100, ticks);
+            0
         }
         "ls" => {
             let dir = argv

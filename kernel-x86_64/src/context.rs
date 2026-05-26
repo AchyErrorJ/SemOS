@@ -812,6 +812,32 @@ pub fn store_address_space(space: crate::paging::AddressSpace) {
     }
 }
 
+/// Free the page-table frames of every stored address space whose cr3 no
+/// longer has a live task — exited-but-unreaped processes. `store_address_space`
+/// GCs these lazily, but only once the *table* is full; the PT-frame pool can
+/// run dry first (a spawn's `create_process_address_space` allocates frames
+/// *before* `store_address_space` runs its GC). The spawn path calls this
+/// proactively when allocation fails, then retries. Safe: it only reclaims PT
+/// frames of processes with no live task — slot state and the published exit
+/// code (which live on the scheduler `TaskInfo`, not the address space) are
+/// untouched, so a pending `SYS_WAIT` still works. Returns the count freed.
+pub fn reclaim_dead_address_spaces() -> usize {
+    unsafe {
+        let spaces = &raw mut ADDRESS_SPACES;
+        let mut freed = 0;
+        for slot in (*spaces).iter_mut() {
+            let dead = matches!(slot, Some(s) if !cr3_has_live_task(s.cr3));
+            if dead {
+                if let Some(mut victim) = slot.take() {
+                    victim.destroy(); // PT frames back to the pool
+                    freed += 1;
+                }
+            }
+        }
+        freed
+    }
+}
+
 /// Map a page in the address space identified by CR3.
 pub fn map_page_in_space(
     cr3: u64,
