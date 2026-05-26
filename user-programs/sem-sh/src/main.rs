@@ -82,7 +82,57 @@ fn run_script(script: &str) -> i32 {
         if cmd.is_empty() {
             continue;
         }
-        status = run_command(cmd);
+        status = run_conditional(cmd);
+    }
+    status
+}
+
+/// Which connector precedes a segment in an `&&`/`||` chain.
+#[derive(Clone, Copy)]
+enum Conn {
+    First,
+    And,
+    Or,
+}
+
+/// Run one `;`-piece, honouring `&&` (run next only if prev succeeded) and
+/// `||` (run next only if prev failed) with short-circuit. Splits at top-level
+/// `&&`/`||` only — quotes are respected, and a single `|` stays in the command
+/// for `run_command`'s pipe handling.
+fn run_conditional(piece: &str) -> i32 {
+    let bytes = piece.as_bytes();
+    let mut segs: Vec<(Conn, &str)> = Vec::new();
+    let mut conn = Conn::First;
+    let mut start = 0usize;
+    let mut i = 0usize;
+    let (mut in_s, mut in_d) = (false, false);
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'\'' && !in_d {
+            in_s = !in_s;
+        } else if c == b'"' && !in_s {
+            in_d = !in_d;
+        } else if !in_s && !in_d && i + 1 < bytes.len() && (c == b'&' || c == b'|') && bytes[i + 1] == c {
+            segs.push((conn, piece[start..i].trim()));
+            conn = if c == b'&' { Conn::And } else { Conn::Or };
+            i += 2;
+            start = i;
+            continue;
+        }
+        i += 1;
+    }
+    segs.push((conn, piece[start..].trim()));
+
+    let mut status = 0;
+    for (conn, cmd) in segs {
+        let run = match conn {
+            Conn::First => true,
+            Conn::And => status == 0,
+            Conn::Or => status != 0,
+        };
+        if run && !cmd.is_empty() {
+            status = run_command(cmd);
+        }
     }
     status
 }

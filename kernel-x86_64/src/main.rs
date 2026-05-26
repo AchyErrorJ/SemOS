@@ -993,6 +993,13 @@ fn init_loader_task() {
     println!("================================================================");
     agent_sandbox_demo();
 
+    // DEMO 57: shell scripting — `&&` / `||` conditional chaining.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 57: shell scripting — && / || (short-circuit)");
+    println!("================================================================");
+    shell_scripting_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4814,6 +4821,28 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 57: shell `&&` / `||` short-circuit chaining via the agent bash tool.
+/// `true && echo A` runs A; `false && echo B` skips B; `false || echo C` runs C.
+fn shell_scripting_demo() {
+    use crate::agent;
+
+    let out = agent::run_tool(
+        "bash",
+        "{\"command\":\"true && echo CHAINED ; false && echo NOPE ; false || echo RECOVER\"}",
+    );
+    let chained = out.contains("CHAINED");
+    let recovered = out.contains("RECOVER");
+    let skipped = !out.contains("NOPE");
+
+    if chained && recovered && skipped {
+        println!("  [DEMO 57] PASS: && runs on success, || runs on failure, both short-circuit");
+        println!("  [DEMO 57] => shell scripting: conditional chaining works ({:?})", out.trim());
+    } else {
+        println!("  [DEMO 57] FAIL: chained={} recovered={} skipped_nope={} out={:?}",
+            chained, recovered, skipped, out.trim());
     }
 }
 
