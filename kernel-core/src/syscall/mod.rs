@@ -141,6 +141,7 @@ pub mod numbers {
     // Read-only system introspection (shell `ps`/`free`; safe at any tier —
     // exposes task metadata + heap totals, never secrets or mutable state).
     pub const SYS_PS:           u64 = 110; // (buf_ptr, buf_len) -> task record count; 24B/rec
+    pub const SYS_ASK:          u64 = 111; // (prompt_ptr, prompt_len, out_ptr, out_len) -> answer len
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -233,6 +234,9 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
         // Read-only introspection
         SYS_PS => handle_ps(arg0, arg1),
+
+        // Agentic shell: one-shot LLM query (the `ask` builtin)
+        SYS_ASK => handle_ask(arg0, arg1, arg2, arg3),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),
@@ -502,6 +506,20 @@ fn handle_sysinfo(buf_ptr: u64, buf_len: u64) -> u64 {
     buf[8..16].copy_from_slice(&(free as u64).to_le_bytes());
     buf[16..24].copy_from_slice(&(blocks as u64).to_le_bytes());
     0
+}
+
+/// SYS_ASK(prompt_ptr, prompt_len, out_ptr, out_len) — one-shot LLM query for
+/// the shell `ask` builtin. Hands the prompt to the platform's network agent
+/// and writes the plain-text answer into the caller buffer; returns its length.
+/// The platform impl runs the (multi-second, network) call synchronously with
+/// interrupts enabled. Bounded prompt size keeps the request sane.
+fn handle_ask(prompt_ptr: u64, prompt_len: u64, out_ptr: u64, out_len: u64) -> u64 {
+    if prompt_ptr == 0 || out_ptr == 0 || prompt_len == 0 || prompt_len > 16384 || out_len == 0 {
+        return 0;
+    }
+    let prompt = unsafe { core::slice::from_raw_parts(prompt_ptr as *const u8, prompt_len as usize) };
+    let out = unsafe { core::slice::from_raw_parts_mut(out_ptr as *mut u8, out_len as usize) };
+    crate::platform::get().llm_ask(prompt, out) as u64
 }
 
 /// SYS_PS(buf_ptr, buf_len) — write one 24-byte record per live scheduler task

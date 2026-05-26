@@ -48,6 +48,13 @@ pub trait Platform: Send + Sync + 'static {
     /// the PT-frame pool dry. Returns the number of address spaces freed.
     fn reclaim_address_spaces(&self) -> usize { 0 }
 
+    /// Run a one-shot LLM query (the shell `ask` builtin / `SYS_ASK`): send
+    /// `prompt` to the configured model over the network and write the plain
+    /// text answer into `out`, returning its length. Runs synchronously in the
+    /// caller's syscall context, so the impl enables interrupts (the network
+    /// path's wall-clock timeouts need the timer). Default: unavailable.
+    fn llm_ask(&self, _prompt: &[u8], _out: &mut [u8]) -> usize { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`

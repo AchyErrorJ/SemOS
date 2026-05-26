@@ -968,6 +968,14 @@ fn init_loader_task() {
     println!("================================================================");
     shell_introspection_demo();
 
+    // DEMO 54: agentic shell — the `ask` builtin reaches the kernel LLM agent
+    // via SYS_ASK (Ring-3 → kernel bridge).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 54: agentic shell — `ask` builtin (SYS_ASK bridge)");
+    println!("================================================================");
+    agent_ask_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4789,6 +4797,38 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 54: the agentic shell. Runs `ask <question>` through the agent's bash
+/// tool — sem-sh's `ask` builtin → `SYS_ASK` → the kernel LLM agent → back. The
+/// keyless build can't reach the network, so `ask` returns a clear "no key"
+/// message (not a hang) — which still proves the whole Ring-3 → kernel-agent
+/// bridge end to end. With a key baked in, it returns a real Claude answer.
+fn agent_ask_demo() {
+    use crate::agent;
+
+    let out = agent::run_tool("bash", "{\"command\":\"ask what is two plus two\"}");
+    let trimmed = out.trim();
+
+    if agent::api_key().is_empty() {
+        // Bridge works iff the answer is the agent's own "no key" message —
+        // meaning the call reached agent::ask through SYS_ASK and returned.
+        if out.contains("no ANTHROPIC_KEY") {
+            println!("  [DEMO 54] PASS: ask reached the kernel agent via SYS_ASK (keyless): {:?}", trimmed);
+            println!("  [DEMO 54] => agentic shell wired — bake ANTHROPIC_KEY for live `ask` answers");
+        } else {
+            println!("  [DEMO 54] FAIL: ask bridge — out = {:?}", out);
+        }
+    } else {
+        // Keyed: a real answer (anything that isn't one of our error strings).
+        let answered = !trimmed.is_empty() && !trimmed.starts_with("ask:");
+        if answered {
+            println!("  [DEMO 54] PASS: ask → live Claude: {:?}", trimmed);
+            println!("  [DEMO 54] => the shell can talk to the OS's LLM");
+        } else {
+            println!("  [DEMO 54] FAIL: ask (keyed) returned {:?}", out);
+        }
     }
 }
 

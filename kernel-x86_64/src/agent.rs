@@ -145,6 +145,34 @@ pub fn build_request(model: &str, max_tokens: u32, system: &str, messages: &[Mes
     body
 }
 
+/// Build a plain (tool-free) Messages request — for the shell `ask` builtin,
+/// which wants a direct text answer, not a tool-use turn.
+pub fn build_query(model: &str, max_tokens: u32, system: &str, messages: &[Message]) -> String {
+    let mut body = String::with_capacity(512);
+    body.push_str("{\"model\":\"");
+    body.push_str(&json_escape(model));
+    body.push_str("\",\"max_tokens\":");
+    body.push_str(&format!("{}", max_tokens));
+    if !system.is_empty() {
+        body.push_str(",\"system\":\"");
+        body.push_str(&json_escape(system));
+        body.push('"');
+    }
+    body.push_str(",\"messages\":[");
+    for (i, m) in messages.iter().enumerate() {
+        if i > 0 {
+            body.push(',');
+        }
+        body.push_str("{\"role\":\"");
+        body.push_str(m.role);
+        body.push_str("\",\"content\":");
+        body.push_str(&m.content_json);
+        body.push('}');
+    }
+    body.push_str("]}");
+    body
+}
+
 // ============================================================================
 // Response parsing — a minimal scanner for the Anthropic response shape.
 // ============================================================================
@@ -599,6 +627,64 @@ impl Session {
     pub fn close(&mut self) {
         if self.connected {
             self.force_close();
+        }
+    }
+}
+
+/// Copy `s` into `out` (truncating to fit) and return the byte count.
+fn write_out(out: &mut [u8], s: &str) -> usize {
+    let b = s.as_bytes();
+    let n = b.len().min(out.len());
+    out[..n].copy_from_slice(&b[..n]);
+    n
+}
+
+/// The shell `ask` builtin's engine: send `prompt` to Claude as a single
+/// tool-free turn over one keep-alive TLS connection, and write the plain-text
+/// answer into `out` (returning its length). This is the OS's LLM, reachable
+/// from the shell — `ask "question"` or `cmd | ask "..."`. Degrades to a clear
+/// message (not a hang) when there's no key or the network is unavailable.
+///
+/// NOTE (security): the prompt is sent verbatim to the external API. Whatever
+/// the caller pipes in is disclosed — tier-aware redaction (so the LLM can't be
+/// fed Secret-tier content) is the planned guard, not yet enforced here.
+pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
+    let key = api_key();
+    if key.is_empty() {
+        return write_out(out, "ask: no ANTHROPIC_KEY configured in this build");
+    }
+    if prompt.is_empty() {
+        return write_out(out, "ask: empty prompt");
+    }
+
+    let model = "claude-haiku-4-5-20251001";
+    let sys = "You are a terse assistant embedded in the Semantic OS shell. Answer in one or two plain sentences, no preamble.";
+    let msgs = [Message::text("user", prompt)];
+    let req = build_query(model, 512, sys, &msgs);
+    let http = build_http_request(&req, key, true);
+
+    let mut session = match Session::open() {
+        Ok(s) => s,
+        Err(e) => return write_out(out, &format!("ask: connection failed ({})", e)),
+    };
+    let mut resp = [0u8; 8192];
+    let n = match session.request(http.as_bytes(), &mut resp) {
+        Ok(n) => n,
+        Err(e) => {
+            session.close();
+            return write_out(out, &format!("ask: request failed ({})", e));
+        }
+    };
+    session.close();
+
+    let mut body = [0u8; 8192];
+    let bn = decode_body(&resp[..n], &mut body);
+    let parsed = parse_response(&String::from_utf8_lossy(&body[..bn]));
+    match parsed.text {
+        Some(t) if !t.trim().is_empty() => write_out(out, t.trim()),
+        _ => {
+            let status = http_status(&resp[..n]).unwrap_or(0);
+            write_out(out, &format!("ask: no answer (HTTP {})", status))
         }
     }
 }

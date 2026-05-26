@@ -233,6 +233,16 @@ impl Platform for X86Platform {
         crate::context::reclaim_dead_address_spaces()
     }
 
+    fn llm_ask(&self, prompt: &[u8], out: &mut [u8]) -> usize {
+        // The agent's network path is wall-clock bounded (TLS idle timeout),
+        // which needs the timer to advance — and a multi-second call shouldn't
+        // freeze the scheduler. Enable interrupts for the duration; iretq
+        // restores the caller's (Ring-3, IF=1) flags on return.
+        x86_64::instructions::interrupts::enable();
+        let p = core::str::from_utf8(prompt).unwrap_or("");
+        crate::agent::ask(p, out)
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,

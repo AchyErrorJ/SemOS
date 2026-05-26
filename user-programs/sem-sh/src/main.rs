@@ -14,8 +14,8 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN, SYS_PIPE,
-    SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
+    syscall1, syscall2, syscall3, syscall4, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN,
+    SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
 use semos_std::string::String;
@@ -182,7 +182,7 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
-            | "grep" | "ps" | "free" | "uptime"
+            | "grep" | "ps" | "free" | "uptime" | "ask"
     )
 }
 
@@ -638,6 +638,67 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // SYS_TIME → ticks at 100 Hz.
             let ticks = unsafe { syscall1(SYS_TIME, 0) };
             println!("up {} s ({} ticks @ 100 Hz)", ticks / 100, ticks);
+            0
+        }
+        "ask" => {
+            // The OS's LLM, from the shell: `ask <question>` or `cmd | ask <q>`.
+            // Drain any piped stdin (bounded, non-blocking on an idle console),
+            // then prepend it as context to the question.
+            const WOULDBLOCK: u64 = u64::MAX - 1;
+            let mut ctx: Vec<u8> = Vec::new();
+            let mut idle = 0;
+            loop {
+                let mut b = [0u8; 256];
+                let n = unsafe { syscall3(SYS_READ, 0, b.as_mut_ptr() as u64, b.len() as u64) };
+                if n == u64::MAX || n == 0 {
+                    break; // error or EOF (idle console returns 0 → no context)
+                }
+                if n == WOULDBLOCK {
+                    idle += 1;
+                    if idle > 2 {
+                        break;
+                    }
+                    unsafe { syscall1(SYS_SLEEP, 1) };
+                    continue;
+                }
+                ctx.extend_from_slice(&b[..n as usize]);
+                if ctx.len() > 8192 {
+                    break;
+                }
+            }
+
+            let mut question = String::new();
+            for (i, a) in argv[1..].iter().enumerate() {
+                if i > 0 {
+                    question.push(' ');
+                }
+                question.push_str(a);
+            }
+
+            let prompt = if ctx.is_empty() {
+                question
+            } else if question.is_empty() {
+                String::from_utf8_lossy(&ctx).into_owned()
+            } else {
+                format!("{}\n\n{}", String::from_utf8_lossy(&ctx), question)
+            };
+            if prompt.is_empty() {
+                println!("ask: usage: ask <question>   (or:  cmd | ask <question>)");
+                return 2;
+            }
+
+            let mut out = [0u8; 8192];
+            let n = unsafe {
+                syscall4(
+                    SYS_ASK,
+                    prompt.as_ptr() as u64,
+                    prompt.len() as u64,
+                    out.as_mut_ptr() as u64,
+                    out.len() as u64,
+                )
+            } as usize;
+            let n = n.min(out.len());
+            println!("{}", String::from_utf8_lossy(&out[..n]));
             0
         }
         "ls" => {
