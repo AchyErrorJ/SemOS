@@ -18,6 +18,8 @@ use semos_std::arch::{
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
+use semos_std::io::{Read, Write};
+use semos_std::net::TcpStream;
 use semos_std::string::String;
 use semos_std::vec::Vec;
 use semos_std::{env, fs, format, main, print, println, process};
@@ -182,8 +184,68 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
-            | "grep" | "ps" | "free" | "uptime" | "ask"
+            | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch"
     )
+}
+
+/// `fetch <url>` engine: HTTP/1.1 GET over the kernel's TCP stack
+/// (`semos_std::net`). Writes the full response to stdout. HTTP only — the TLS
+/// stack is SPKI-pinned to the agent endpoint, so arbitrary HTTPS can't be
+/// validated yet. Returns an exit status.
+fn do_fetch(url: &str) -> i32 {
+    let rest = if let Some(r) = url.strip_prefix("http://") {
+        r
+    } else if url.starts_with("https://") {
+        println!("sem-sh: fetch: https unsupported (TLS is pinned to the agent endpoint) — use http://");
+        return 2;
+    } else {
+        url
+    };
+    let (hostport, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    let (host, port) = match hostport.find(':') {
+        Some(i) => (&hostport[..i], hostport[i + 1..].parse::<u16>().unwrap_or(80)),
+        None => (hostport, 80u16),
+    };
+    if host.is_empty() {
+        println!("sem-sh: fetch: empty host");
+        return 2;
+    }
+
+    let mut stream = match TcpStream::connect(host, port) {
+        Ok(s) => s,
+        Err(_) => {
+            println!("sem-sh: fetch: connect failed ({}:{})", host, port);
+            return 1;
+        }
+    };
+    let req = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: sem-sh\r\nConnection: close\r\n\r\n",
+        path, host
+    );
+    if stream.write_all(req.as_bytes()).is_err() {
+        println!("sem-sh: fetch: write failed");
+        return 1;
+    }
+
+    let mut body: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 512];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                body.extend_from_slice(&chunk[..n]);
+                if body.len() > 16384 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    print!("{}", String::from_utf8_lossy(&body));
+    0
 }
 
 /// Print every line of `text` containing `pat`; return whether any matched.
@@ -639,6 +701,13 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             let ticks = unsafe { syscall1(SYS_TIME, 0) };
             println!("up {} s ({} ticks @ 100 Hz)", ticks / 100, ticks);
             0
+        }
+        "fetch" => {
+            if argv.len() < 2 {
+                println!("sem-sh: fetch: usage: fetch <url>   (http only, e.g. http://example.com/)");
+                return 2;
+            }
+            do_fetch(&argv[1])
         }
         "ask" => {
             // The OS's LLM, from the shell: `ask <question>` or `cmd | ask <q>`.

@@ -976,6 +976,15 @@ fn init_loader_task() {
     println!("================================================================");
     agent_ask_demo();
 
+    // DEMO 55: shell `fetch` — HTTP GET over the kernel TCP stack from sem-sh.
+    if kernel_core::net::is_initialized() {
+        println!();
+        println!("================================================================");
+        println!("  SemOS DEMO 55: shell `fetch` — HTTP GET (sem-sh + std::net)");
+        println!("================================================================");
+        shell_fetch_demo();
+    }
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4797,6 +4806,30 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 55: shell `fetch` — `fetch http://example.com/` through the agent's
+/// bash tool. sem-sh's `fetch` builtin does an HTTP/1.1 GET over the kernel's
+/// TCP stack (`semos_std::net`) and writes the response to stdout, which the
+/// bash tool captures. Needs SLIRP networking (same as DEMO 36). Proves the
+/// shell can pull external data — and, via the bash tool, so can the agent.
+fn shell_fetch_demo() {
+    use crate::agent;
+
+    let out = agent::run_tool("bash", "{\"command\":\"fetch http://example.com/\"}");
+    let got_http = out.contains("HTTP/1.1") || out.contains("HTTP/1.0");
+    let got_body = out.contains("Example Domain") || out.contains("<html") || out.contains("<HTML");
+
+    if got_http && got_body {
+        println!("  [DEMO 55] PASS: fetch http://example.com/ → {} B (HTTP response + HTML body)", out.len());
+        println!("  [DEMO 55] => shell `fetch` pulls the web over the kernel TCP stack (agent can too)");
+    } else if got_http {
+        println!("  [DEMO 55] PASS: fetch got an HTTP response ({} B) — body check soft", out.len());
+    } else {
+        let preview: alloc::string::String = out.chars().take(80).collect();
+        println!("  [DEMO 55] SKIPPED/soft: fetch returned {} B (network or host unavailable): {:?}",
+            out.len(), preview);
     }
 }
 
