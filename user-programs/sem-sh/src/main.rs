@@ -858,20 +858,49 @@ fn dispatch_argv(argv: &[String]) -> i32 {
 /// used as-is. argv[1..] become the child's arguments. Blocks for exit status.
 fn exec_external(argv: &[String]) -> i32 {
     let prog = &argv[0];
-    let path = if prog.starts_with('/') {
-        prog.clone()
-    } else {
-        format!("/bin/{}", prog)
-    };
-    let mut cmd = process::Command::new(&path);
+
+    // An explicit path (absolute, or ./ relative) runs as given.
+    if prog.starts_with('/') || prog.starts_with("./") {
+        return match spawn_at(prog, argv) {
+            Some(code) => code,
+            None => {
+                println!("sem-sh: cannot exec: {}", prog);
+                127
+            }
+        };
+    }
+
+    // Bare name: search $PATH (apps installed in any PATH dir are runnable by
+    // name — "always on path"). Default covers the system /bin and a
+    // conventional /apps install dir.
+    let path_var = env::var("PATH").unwrap_or_else(|| String::from("/bin:/apps"));
+    for dir in path_var.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let full = if dir.ends_with('/') {
+            format!("{}{}", dir, prog)
+        } else {
+            format!("{}/{}", dir, prog)
+        };
+        if let Some(code) = spawn_at(&full, argv) {
+            return code;
+        }
+    }
+    println!("sem-sh: command not found: {}", prog);
+    127
+}
+
+/// Spawn `path` with `argv[1..]` and wait. `Some(code)` if it ran (any exit
+/// status); `None` if the spawn failed (e.g. no such program) so the caller
+/// can try the next `$PATH` entry.
+fn spawn_at(path: &str, argv: &[String]) -> Option<i32> {
+    let mut cmd = process::Command::new(path);
     for a in &argv[1..] {
         cmd.arg(a.as_str());
     }
     match cmd.status() {
-        Ok(s) => s.code().unwrap_or(0),
-        Err(_) => {
-            println!("sem-sh: command not found: {}", prog);
-            127
-        }
+        Ok(s) => Some(s.code().unwrap_or(0)),
+        Err(_) => None,
     }
 }

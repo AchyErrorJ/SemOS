@@ -1008,6 +1008,13 @@ fn init_loader_task() {
     println!("================================================================");
     install_anywhere_demo();
 
+    // DEMO 59: $PATH — install into /apps and run it by BARE NAME (always on path).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 59: $PATH — installed app runnable by bare name");
+    println!("================================================================");
+    path_search_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -4829,6 +4836,41 @@ fn agent_tui_demo() {
     }
     if chrome_ok && left_ok && right_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
+    }
+}
+
+/// DEMO 59: `$PATH` search. Installs an app into the conventional `/apps`
+/// directory, then runs it from the shell by its **bare name** — sem-sh's
+/// `exec_external` searches `$PATH` (default `/bin:/apps`), so an app installed
+/// anywhere on PATH is runnable without typing its full path ("always on
+/// path"). Closes the convenience half of the install-anywhere vision.
+fn path_search_demo() {
+    use crate::agent;
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    // Ensure /apps exists (conventional install dir; on the default PATH).
+    let apps = "/apps";
+    let _ = dispatch(SYS_MKDIR, apps.as_ptr() as u64, apps.len() as u64, 0, 0);
+
+    // Install an app there (copy a small embedded ELF).
+    let installed = match kernel_core::fs::ramfs::get_fs().and_then(|fs| fs.find("hello-std.elf")) {
+        Some(f) => Namespace::create_file("/apps/greet", SecurityTier::Public, f.data()).is_ok(),
+        None => false,
+    };
+    if !installed {
+        println!("  [DEMO 59] FAIL: could not install /apps/greet");
+        return;
+    }
+
+    // Run it by BARE NAME — PATH search must find /apps/greet.
+    let out = agent::run_tool("bash", "{\"command\":\"greet\"}");
+    if out.contains("Hello from semos-std!") {
+        println!("  [DEMO 59] PASS: bare `greet` resolved via $PATH to /apps/greet and ran");
+        println!("  [DEMO 59] => apps installed anywhere on PATH are runnable by name");
+    } else {
+        println!("  [DEMO 59] FAIL: bare `greet` did not run — output = {:?}", out.trim());
     }
 }
 
