@@ -23,15 +23,18 @@ pub use kernel_core::memory::SecurityTier;
 /// Frame size (4KB)
 pub const FRAME_SIZE: usize = 4096;
 
-/// Maximum frames a pool's bitmap can track. Each tier pool is ~54 MB
-/// (≈13570 × 4 KiB frames); the bitmap MUST cover that or `alloc`
-/// silently caps at the bitmap size while `stats().free` keeps
-/// reporting `frame_count - allocated` (a lie). This bit the M25
-/// user-heap (SYS_MMAP_ANON) — the first caller to pull >256 frames
-/// from a tier pool — as a spurious OOM with 13310 frames "free".
-/// 16384 covers a 64 MiB pool with headroom; cost is
-/// 16384/64 × 8 B = 2 KiB bitmap per pool × 4 pools = 8 KiB BSS.
-const MAX_FRAMES: usize = 16384;
+/// Maximum frames a pool's bitmap can track — the per-tier memory ceiling.
+/// `pool_size = detected_RAM / 4`, but the bitmap caps it: a pool never uses
+/// more than `MAX_FRAMES` frames regardless of RAM (the tail is unused). This
+/// is what limited any single app to ~64 MiB even on a big machine.
+///
+/// Raised to 131072 → **512 MiB per tier pool** so memory-heavy (2D) design
+/// work has real headroom on the target hardware (in QEMU the pool is still
+/// RAM-bound, so this only lifts the ceiling). Cost: 131072/64 × 8 B = 16 KiB
+/// bitmap per pool × 4 pools = 64 KiB BSS. Bump further (with the next-fit
+/// allocator below it stays fast) if apps need GB-scale working sets; past a
+/// few GB/pool a buddy/free-list allocator would beat the bitmap.
+const MAX_FRAMES: usize = 131072;
 
 /// A memory pool for a specific security tier
 pub struct MemoryPool {
@@ -47,6 +50,10 @@ pub struct MemoryPool {
     tier: SecurityTier,
     /// Number of allocated frames
     allocated: usize,
+    /// Next-fit cursor: bitmap word index to start the next `alloc` scan from.
+    /// Avoids rescanning the full allocated prefix every call (the old O(n)
+    /// scan → O(n²) to fill a pool); sequential allocation is amortized O(1).
+    next_word: usize,
 }
 
 impl MemoryPool {
@@ -58,6 +65,7 @@ impl MemoryPool {
             frame_count: 0,
             tier,
             allocated: 0,
+            next_word: 0,
         }
     }
 
@@ -71,6 +79,7 @@ impl MemoryPool {
         // MAX_FRAMES allows, we simply don't use the tail.
         self.frame_count = (size / FRAME_SIZE).min(MAX_FRAMES);
         self.allocated = 0;
+        self.next_word = 0;
 
         // Clear bitmap
         for i in 0..self.bitmap.len() {
@@ -78,26 +87,32 @@ impl MemoryPool {
         }
     }
 
-    /// Allocate a frame from this pool
+    /// Allocate a frame from this pool. Next-fit: scan starts at `next_word`
+    /// and wraps once, so a near-full pool doesn't re-walk its allocated prefix
+    /// on every call. A word with a free bit beyond `frame_count` (only the
+    /// last partial word) is skipped, not treated as exhaustion.
     pub fn alloc(&mut self) -> Option<u64> {
-        // Find a free frame
-        for (word_idx, word) in self.bitmap.iter_mut().enumerate() {
-            if *word != !0u64 {
-                // Find first zero bit
-                let bit = (!*word).trailing_zeros() as usize;
-                let frame_idx = word_idx * 64 + bit;
-
-                if frame_idx >= self.frame_count {
-                    return None;
-                }
-
-                // Mark as allocated
-                *word |= 1u64 << bit;
-                self.allocated += 1;
-
-                let addr = self.base + (frame_idx as u64 * FRAME_SIZE as u64);
-                return Some(addr);
+        let words = self.bitmap.len();
+        if words == 0 {
+            return None;
+        }
+        for offset in 0..words {
+            let word_idx = (self.next_word + offset) % words;
+            let word = self.bitmap[word_idx];
+            if word == !0u64 {
+                continue; // fully allocated
             }
+            let bit = (!word).trailing_zeros() as usize;
+            let frame_idx = word_idx * 64 + bit;
+            if frame_idx >= self.frame_count {
+                continue; // free bit, but past the usable tail of this pool
+            }
+            self.bitmap[word_idx] |= 1u64 << bit;
+            self.allocated += 1;
+            // Stay on this word — it likely has more free bits for the next call.
+            self.next_word = word_idx;
+            let addr = self.base + (frame_idx as u64 * FRAME_SIZE as u64);
+            return Some(addr);
         }
         None
     }
@@ -124,6 +139,11 @@ impl MemoryPool {
 
         self.bitmap[word_idx] &= !(1u64 << bit);
         self.allocated -= 1;
+        // Bias the next allocation toward this just-freed word so freed frames
+        // are reused promptly (keeps the cursor from drifting past free space).
+        if word_idx < self.next_word {
+            self.next_word = word_idx;
+        }
         true
     }
 
