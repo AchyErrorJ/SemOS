@@ -840,14 +840,16 @@ mod serial {
                 existing.content_type = ctype;
                 existing.created_at = created_at;
                 existing.modified_at = modified_at;
-                existing.content = ObjectContent::from_inline(content_slice)
+                // Heap-backed (from_bytes) so restored content over 256 B —
+                // notably installed ELFs and large directories — round-trips.
+                existing.content = ObjectContent::from_bytes(content_slice)
                     .ok_or(FsError::ContentTooLarge)?;
             } else {
                 let mut obj = SemanticObject::new(suid, tier, 0);
                 obj.content_type = ctype;
                 obj.created_at = created_at;
                 obj.modified_at = modified_at;
-                obj.content = ObjectContent::from_inline(content_slice)
+                obj.content = ObjectContent::from_bytes(content_slice)
                     .ok_or(FsError::ContentTooLarge)?;
                 if !registry.insert(obj) { return Err(FsError::RegistryFull); }
             }

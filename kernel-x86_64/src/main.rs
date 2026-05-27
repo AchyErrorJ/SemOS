@@ -1020,6 +1020,13 @@ fn init_loader_task() {
     println!("================================================================");
     path_search_demo();
 
+    // DEMO 60: persistence — an installed app survives reboot (fsync + restore).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 60: persistence — installed app survives reboot");
+    println!("================================================================");
+    persistence_install_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the

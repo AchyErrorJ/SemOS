@@ -230,7 +230,10 @@ pub(crate) fn path_search_demo() {
     let apps = "/apps";
     let _ = dispatch(SYS_MKDIR, apps.as_ptr() as u64, apps.len() as u64, 0, 0);
 
-    // Install an app there (copy a small embedded ELF).
+    // Install an app there (copy a small embedded ELF). Unlink first so the
+    // demo is reboot-safe — once persistence (DEMO 60) fsyncs the namespace, a
+    // restored /apps/greet would otherwise make create_file fail.
+    let _ = Namespace::unlink("/apps/greet");
     let installed = match kernel_core::fs::ramfs::get_fs().and_then(|fs| fs.find("hello-std.elf")) {
         Some(f) => Namespace::create_file("/apps/greet", SecurityTier::Public, f.data()).is_ok(),
         None => false,
@@ -263,6 +266,8 @@ pub(crate) fn install_anywhere_demo() {
     use kernel_core::semantic::object::SecurityTier;
 
     // Install: copy a small embedded ELF to a namespace path at Public tier.
+    // Unlink first so it's reboot-safe (see DEMO 59).
+    let _ = Namespace::unlink("/myapp");
     let n = match kernel_core::fs::ramfs::get_fs().and_then(|fs| fs.find("hello-std.elf")) {
         Some(f) => {
             let bytes = f.data();
@@ -289,6 +294,55 @@ pub(crate) fn install_anywhere_demo() {
         println!("  [DEMO 58] => install anywhere / run anywhere — spawn from any namespace path");
     } else {
         println!("  [DEMO 58] FAIL: /myapp did not run — output = {:?}", out.trim());
+    }
+}
+
+/// DEMO 60: persistence — an installed app survives reboot. Namespace files
+/// persist to virtio0 via `SYS_FSYNC` and are restored at boot
+/// (`Namespace::load`). On the FIRST boot (fresh disk) we install
+/// `/apps/persistent-tool` and fsync; on a LATER boot it's already present
+/// (restored from disk) so we run it — proving the install survived the reboot.
+/// Validate with two boots sharing one vdisk: boot 1 installs, boot 2 PASSes.
+pub(crate) fn persistence_install_demo() {
+    use crate::agent;
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let path = "/apps/persistent-tool";
+
+    if Namespace::resolve(path).is_ok() {
+        // Restored from a prior boot's snapshot — run it to prove it survived.
+        let out = agent::run_tool("bash", "{\"command\":\"/apps/persistent-tool\"}");
+        if out.contains("Hello from semos-std!") {
+            println!("  [DEMO 60] PASS: {} survived reboot and ran", path);
+            println!("  [DEMO 60] => installed apps persist across reboots (namespace → virtio0 → restore)");
+        } else {
+            println!("  [DEMO 60] FAIL: restored app didn't run — out = {:?}", out.trim());
+        }
+        return;
+    }
+
+    // First boot: ensure /apps exists, install the app, flush to disk.
+    let apps = "/apps";
+    let _ = dispatch(SYS_MKDIR, apps.as_ptr() as u64, apps.len() as u64, 0, 0);
+    let elf = match kernel_core::fs::ramfs::get_fs().and_then(|fs| fs.find("hello-std.elf")) {
+        Some(f) => f.data(),
+        None => {
+            println!("  [DEMO 60] SKIPPED: hello-std.elf not embedded");
+            return;
+        }
+    };
+    if Namespace::create_file(path, SecurityTier::Public, elf).is_err() {
+        println!("  [DEMO 60] FAIL: could not install {}", path);
+        return;
+    }
+    let fsync_ok = dispatch(SYS_FSYNC, 0, 0, 0, 0) == 0;
+    if fsync_ok {
+        println!("  [DEMO 60] first boot: installed {} + fsync'd the namespace to virtio0", path);
+        println!("  [DEMO 60] => reboot with the same vdisk to verify it persists");
+    } else {
+        println!("  [DEMO 60] FAIL: fsync failed (snapshot too large, or no virtio0)");
     }
 }
 
