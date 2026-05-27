@@ -3185,7 +3185,7 @@ fn extended_fs_test() {
 /// Until #44 landed, FWRITE was capped at 256 B (the Inline variant of
 /// ObjectContent). The compiler emits source files much larger than
 /// that — DEMO 26 proves the kernel now handles writes up to
-/// MAX_FILE_CONTENT (64 KiB) by routing them through the heap.
+/// MAX_FILE_CONTENT (2 MiB) by routing them through the heap.
 ///
 /// What this proves:
 ///   1. FWRITE accepts a 4 KiB payload (well past the 256 B inline cap)
@@ -3278,9 +3278,10 @@ fn large_file_fwrite_test() {
     }
     println!("  [DEMO 26] PASS: overwrite 4 KiB → 8 KiB (old heap block freed, new allocated)");
 
-    // Step 5: Pathologically-large write past MAX_FILE_CONTENT (256 KiB)
-    // must fail cleanly without corrupting state.
-    let huge_len = 257 * 1024;
+    // Step 5: Pathologically-large write past MAX_FILE_CONTENT must fail
+    // cleanly without corrupting state. Derive the size from the constant
+    // (+1 page) so this stays correct as the cap is raised.
+    let huge_len = kernel_core::semantic::object::MAX_FILE_CONTENT + 4096;
     let huge_ptr = kernel_core::memory::heap::allocate(huge_len, 8);
     if huge_ptr.is_null() {
         println!("  [DEMO 26] SKIPPED: couldn't allocate test buffer (heap pressure)");
@@ -3316,7 +3317,7 @@ fn large_file_fwrite_test() {
     // Cleanup.
     let _ = dispatch(SYS_UNLINK, "/big".as_ptr() as u64, 4, 0, 0);
 
-    println!("  [DEMO 26] => FWRITE up to MAX_FILE_CONTENT (256 KiB) works; #44 unblocked");
+    println!("  [DEMO 26] => FWRITE up to MAX_FILE_CONTENT (2 MiB) works; #44 unblocked");
 }
 
 // DEMO 27 — kernel-mode threading + futex + join validation.

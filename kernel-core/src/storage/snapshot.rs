@@ -19,13 +19,15 @@ use crate::drivers::traits::{BlockDevice, DriverError, DriverResult};
 const SECTOR_SIZE: usize = 512;
 const MAGIC: u64 = 0x_5365_6D4F_535F_4E41; // "SemOS_NA" ASCII LE — change w/ format
 
-/// Maximum payload bytes a single snapshot can hold. 1 MiB so the whole
-/// namespace — a handful of installed apps (≤256 KiB each) plus documents and
-/// system files — persists. The caller buffers a payload of this size on the
-/// heap (NOT the stack), so this can grow without stack-overflow risk; the
-/// on-disk reservation is `PAYLOAD_SECTORS` (2048) + 1 header sector, well
-/// within the 16 MiB vdisk.
-pub const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
+/// Maximum payload bytes a single snapshot can hold. 4 MiB so the whole
+/// namespace — installed apps + documents up to the 2 MiB per-file cap — fits.
+/// The caller buffers a payload of this size on the heap (NOT the stack), so it
+/// grows without stack-overflow risk; on-disk reservation is `PAYLOAD_SECTORS`
+/// (8192) + 1 header sector = 4 MiB, well within the 16 MiB vdisk. NOTE: this
+/// monolithic snapshot copies ALL content into one buffer, so it's the real cap
+/// on total persisted size — FS Model A stage 2b moves to per-file disk blocks
+/// (snapshot → metadata only) so large files persist without this duplication.
+pub const MAX_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 const PAYLOAD_SECTORS: u64 = (MAX_SNAPSHOT_BYTES / SECTOR_SIZE) as u64;
 
 #[repr(C)]

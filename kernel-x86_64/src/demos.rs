@@ -344,9 +344,30 @@ pub(crate) fn persistence_install_demo() {
         }
         if big_ok {
             println!("  [DEMO 60] PASS: {} ({} B, >64 KiB) survived reboot byte-for-byte", big, big_restored);
-            println!("  [DEMO 60] => persistence + u32 content_len: large installed apps persist across reboot");
         } else {
             println!("  [DEMO 60] FAIL: large file persistence — restored={} expected={}", big_restored, big_expected);
+        }
+        // Stage-1 large-file proof: a 1 MiB doc (> the old 256 KiB content cap
+        // AND the old 1 MiB snapshot) restored with its byte pattern intact.
+        const DOC: usize = 1024 * 1024;
+        let doc_ok = Namespace::resolve("/apps/bigdoc")
+            .ok()
+            .and_then(|suid| unsafe {
+                kernel_core::semantic::registry::global_registry()
+                    .get(&suid)
+                    .and_then(|o| o.content.as_bytes())
+                    .map(|b| {
+                        b.len() == DOC
+                            && b[1000] == (1000 % 251) as u8
+                            && b[DOC - 1] == ((DOC - 1) % 251) as u8
+                    })
+            })
+            .unwrap_or(false);
+        if doc_ok {
+            println!("  [DEMO 60] PASS: /apps/bigdoc (1 MiB, > old 256 KiB cap) survived reboot, pattern intact");
+            println!("  [DEMO 60] => large files persist (Model A stage 1): cap 256 KiB→2 MiB, snapshot 1→4 MiB");
+        } else {
+            println!("  [DEMO 60] FAIL: 1 MiB doc did not persist correctly");
         }
         return;
     }
@@ -371,10 +392,25 @@ pub(crate) fn persistence_install_demo() {
             return;
         }
     }
+    // Synthesize a 1 MiB document (heap buffer, checkable pattern) and install
+    // it — proves the lifted cap + 4 MiB snapshot persist files past the old
+    // 256 KiB / 1 MiB limits. create_file copies it; free the staging buffer.
+    const DOC: usize = 1024 * 1024;
+    let dbuf = kernel_core::memory::heap::allocate(DOC, 8);
+    if !dbuf.is_null() {
+        let s = unsafe { core::slice::from_raw_parts_mut(dbuf, DOC) };
+        let mut i = 0;
+        while i < DOC {
+            s[i] = (i % 251) as u8;
+            i += 1;
+        }
+        let _ = Namespace::create_file("/apps/bigdoc", SecurityTier::Public, s);
+        kernel_core::memory::heap::deallocate(dbuf, DOC, 8);
+    }
     if dispatch(SYS_FSYNC, 0, 0, 0, 0) == 0 {
-        println!("  [DEMO 60] first boot: installed {} (12 KiB) + {} ({} B) + fsync'd to virtio0",
+        println!("  [DEMO 60] first boot: installed {} (12 KiB) + {} ({} B) + /apps/bigdoc (1 MiB) + fsync'd",
             small, big, big_expected);
-        println!("  [DEMO 60] => reboot with the same vdisk to verify both persist");
+        println!("  [DEMO 60] => reboot with the same vdisk to verify all three persist");
     } else {
         println!("  [DEMO 60] FAIL: fsync failed (snapshot too large, or no virtio0)");
     }

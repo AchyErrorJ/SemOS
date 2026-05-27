@@ -16,13 +16,14 @@ pub use crate::memory::SecurityTier;
 /// Maximum number of links per object
 pub const MAX_LINKS: usize = 16;
 
-/// Maximum content size. 256 KiB so the path namespace can hold installable
-/// executables (the largest current binary, sem-sh, is ~124 KiB) — the
-/// "install anywhere" story. This is a pure validation cap: content over 256 B
-/// is a heap-`Allocated` block at its actual size (no buffer is sized to this
-/// constant), drawn from the 16 MiB heap arena. At this OS's scale — a handful
-/// of apps + system tools on a dedicated work machine — that's ample headroom.
-pub const MAX_CONTENT_SIZE: usize = 256 * 1024;
+/// Maximum content size — the per-file ceiling (FIXED, not "all free frames":
+/// a single file must never be able to drain memory and starve everything
+/// else). 2 MiB for FS large-files Model A, stage 1: content is still one
+/// heap-`Allocated` blob (contiguous, so `as_bytes()` is unchanged), so the
+/// real bound is the 16 MiB heap — this is the heap-safe step. Stage 2a
+/// frame-backs content (contiguous frames via `phys_to_virt`) to lift this to
+/// ~128 MiB without touching the heap; see ROADMAP.
+pub const MAX_CONTENT_SIZE: usize = 2 * 1024 * 1024;
 
 /// Object content type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +44,7 @@ pub enum ContentType {
 /// Maximum size for a heap-Allocated object's content. Bounded so a
 /// runaway FWRITE can't drain the 16 MiB kernel heap on a single file.
 /// Larger than MAX_CONTENT_SIZE would be inconsistent; keep them aligned.
-pub const MAX_FILE_CONTENT: usize = MAX_CONTENT_SIZE; // 64 KiB
+pub const MAX_FILE_CONTENT: usize = MAX_CONTENT_SIZE; // 2 MiB (stage 1)
 
 /// Object content storage.
 ///
