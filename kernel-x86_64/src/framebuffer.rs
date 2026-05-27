@@ -24,6 +24,16 @@ use bootloader_api::info::{FrameBuffer, PixelFormat};
 const FONT_WIDTH: usize = 8;
 const FONT_HEIGHT: usize = 8;
 
+/// Integer upscale for the 8x8 bitmap font, plus a per-row gap, so boot/console
+/// text is legible on a high-res framebuffer instead of cramped 8px cells. At
+/// 1280x720 this gives ~80x36 character cells (was 160x90). Bump `FONT_SCALE`
+/// for bigger text; `LINE_GAP` adds breathing room between rows.
+const FONT_SCALE: usize = 2;
+const LINE_GAP: usize = 4;
+/// Character cell size in pixels (glyph box + gap).
+const CELL_W: usize = FONT_WIDTH * FONT_SCALE;
+const CELL_H: usize = FONT_HEIGHT * FONT_SCALE + LINE_GAP;
+
 /// Foreground color: light gray.
 const FG: u32 = 0x00C0_C0C0;
 /// Background color: black.
@@ -444,8 +454,8 @@ pub fn init(fb: &mut FrameBuffer) {
         format,
         cursor_x: 0,
         cursor_y: 0,
-        cols: width / FONT_WIDTH,
-        rows: height / FONT_HEIGHT,
+        cols: width / CELL_W,
+        rows: height / CELL_H,
     };
 
     // Publish the M6 drawing surface (independent view over the same bytes).
@@ -581,7 +591,7 @@ impl FramebufferConsole {
 
     /// Scroll the screen up by one character row.
     fn scroll(&mut self) {
-        let row_pixels = FONT_HEIGHT;
+        let row_pixels = CELL_H;
         let copy_height = self.height - row_pixels;
         // Copy lines down → up using the underlying byte buffer.
         // We move whole scanlines (stride * bpp bytes each).
@@ -604,14 +614,31 @@ impl FramebufferConsole {
 
     fn draw_glyph(&self, col: usize, row: usize, ch: u8) {
         let glyph = font_glyph(ch);
-        let base_x = col * FONT_WIDTH;
-        let base_y = row * FONT_HEIGHT;
+        let base_x = col * CELL_W;
+        let base_y = row * CELL_H;
+        // Clear the whole cell first (incl. the inter-row gap) so scaled glyphs
+        // and the gap band are clean even when overwriting prior text.
+        for cy in 0..CELL_H {
+            for cx in 0..CELL_W {
+                self.put_pixel(base_x + cx, base_y + cy, BG);
+            }
+        }
         for (gy, row_bits) in glyph.iter().enumerate() {
             for gx in 0..FONT_WIDTH {
                 // Bit 7 = leftmost pixel.
-                let on = (row_bits >> (7 - gx)) & 1 != 0;
-                let color = if on { FG } else { BG };
-                self.put_pixel(base_x + gx, base_y + gy, color);
+                if (row_bits >> (7 - gx)) & 1 == 0 {
+                    continue;
+                }
+                // Paint a FONT_SCALE x FONT_SCALE block per source pixel.
+                for sy in 0..FONT_SCALE {
+                    for sx in 0..FONT_SCALE {
+                        self.put_pixel(
+                            base_x + gx * FONT_SCALE + sx,
+                            base_y + gy * FONT_SCALE + sy,
+                            FG,
+                        );
+                    }
+                }
             }
         }
     }
