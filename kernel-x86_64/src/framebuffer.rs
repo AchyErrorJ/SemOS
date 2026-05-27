@@ -473,6 +473,17 @@ pub fn write_str(s: &str) {
     }
 }
 
+/// Clear the framebuffer console to the background and home the cursor. Used
+/// when a full-screen overlay (the agent TUI) tears down, so the next output
+/// resumes from a clean top-left instead of underneath the leftover panes.
+pub fn clear() {
+    if let Some(ref mut c) = *CONSOLE.lock() {
+        c.clear_all();
+        c.cursor_x = 0;
+        c.cursor_y = 0;
+    }
+}
+
 /// `core::fmt` adapter so `format_args!` can target the framebuffer.
 struct ConsoleWriter;
 

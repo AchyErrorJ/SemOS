@@ -247,6 +247,14 @@ impl Platform for X86Platform {
         crate::agent::ask(p, out)
     }
 
+    fn run_agent_tui(&self, flags: u64) -> u64 {
+        // The TUI's read_line + the network ask both need the timer advancing
+        // (keyboard pump cadence, TLS idle timeout); enable interrupts for the
+        // session. iretq restores the Ring-3 caller's flags on return.
+        x86_64::instructions::interrupts::enable();
+        crate::agent::run_interactive(flags)
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,

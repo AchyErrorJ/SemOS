@@ -67,6 +67,13 @@ pub mod usb;
 
 use serial::Serial;
 
+/// Set while the kernel-side agent TUI (`SYS_AGENT`, the shell's `agent`
+/// builtin) owns the keyboard. The interactive-shell wait loop checks this and
+/// stops pumping the USB HID ring so it doesn't race the TUI's own pump for
+/// keystrokes (both call `usb::xhci::poll_hid`). Set by `agent::run_interactive`.
+pub static AGENT_TUI_ACTIVE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 /// Bootloader configuration
 pub static BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
@@ -1098,7 +1105,12 @@ fn interactive_session() {
         let mut prev_keys = [0u8; 6];
         if let Some(slot) = cs {
             while scheduler::task_state(slot) != TaskState::Exited {
-                pump_console_input(&mut prev_keys);
+                // Skip our pump while the agent TUI owns the keyboard (the shell
+                // is blocked in SYS_AGENT and the TUI's own pump is draining the
+                // HID ring) — otherwise we'd steal/split its keystrokes.
+                if !AGENT_TUI_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
+                    pump_console_input(&mut prev_keys);
+                }
                 let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
                 kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
             }
@@ -1127,11 +1139,23 @@ fn pump_console_input(prev: &mut [u8; 6]) {
                 continue; // empty slot, or a key that was already held
             }
             if let Some(c) = usb::hid::keycode_to_ascii(k, shift) {
+                // For Backspace, check whether the line discipline actually has
+                // something to delete *before* input_push consumes it — else an
+                // erase echo at an empty prompt would chew into the "sem-sh$ "
+                // prompt text itself (the line discipline stops at column 0, but
+                // our framebuffer echo wouldn't have).
+                let erasing = if c == 0x08 || c == 0x7F {
+                    let mut pk = [0u8; 256];
+                    let (_, cur) = tty::peek_line(&mut pk);
+                    cur > 0
+                } else {
+                    false
+                };
                 tty::input_push(c);
                 match c {
                     0x20..=0x7E => print!("{}", c as char),
                     b'\n' | b'\r' => println!(),
-                    0x08 | 0x7F => print!("\u{8} \u{8}"), // erase last glyph
+                    0x08 | 0x7F if erasing => print!("\u{8} \u{8}"), // erase last glyph
                     _ => {}
                 }
             } else {

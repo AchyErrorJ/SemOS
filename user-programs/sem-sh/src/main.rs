@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -234,7 +234,7 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
-            | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch"
+            | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent"
     )
 }
 
@@ -849,6 +849,36 @@ fn dispatch_argv(argv: &[String]) -> i32 {
                 }
             }
             0
+        }
+        "help" => {
+            println!("sem-sh — the Semantic OS shell. Builtins:");
+            println!("  help                this list");
+            println!("  echo ARGS           print arguments");
+            println!("  pwd / cd [DIR]      working directory");
+            println!("  ls [DIR]            list a directory");
+            println!("  cat FILE...         print files");
+            println!("  which NAME...       locate a command");
+            println!("  env KEY...          print env vars");
+            println!("  grep PATTERN [FILE] filter lines (also: cmd | grep PAT)");
+            println!("  ps                  task table + security tiers");
+            println!("  free                heap usage");
+            println!("  uptime              ticks since boot");
+            println!("  ask QUESTION        ask the OS's Claude agent (one-shot)");
+            println!("  agent               open the split-pane agent terminal");
+            println!("  fetch URL           HTTP GET (http:// only)");
+            println!("  exit [CODE]         leave the shell");
+            println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
+            0
+        }
+        "agent" => {
+            // Hand off to the kernel-side split-pane agent TUI: a multi-turn
+            // Claude conversation over the framebuffer, reading the keyboard
+            // through the same line discipline as the shell. Blocks until the
+            // user leaves the agent (then control returns here). The kernel
+            // restores the console afterward. Needs a baked-in ANTHROPIC_KEY
+            // for live answers; without one it reports that and returns.
+            let rc = unsafe { syscall1(SYS_AGENT, 0) };
+            rc as i32
         }
         _ => exec_external(&argv),
     }

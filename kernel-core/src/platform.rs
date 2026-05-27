@@ -63,6 +63,13 @@ pub trait Platform: Send + Sync + 'static {
     /// path's wall-clock timeouts need the timer). Default: unavailable.
     fn llm_ask(&self, _prompt: &[u8], _out: &mut [u8]) -> usize { 0 }
 
+    /// SYS_AGENT: run the interactive split-pane agent terminal (the shell's
+    /// `agent` builtin). Blocks in the caller's syscall context, driving a
+    /// framebuffer TUI chat loop off the real keyboard until the user exits;
+    /// returns 0 on a clean exit, non-zero if it couldn't run (e.g. headless).
+    /// Default: unavailable.
+    fn run_agent_tui(&self, _flags: u64) -> u64 { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`

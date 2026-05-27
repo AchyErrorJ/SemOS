@@ -689,6 +689,67 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
     }
 }
 
+/// SYS_AGENT — the interactive split-pane agent terminal launched by the
+/// shell's `agent` builtin. Runs a chat loop over the framebuffer TUI: each
+/// line the user types is sent to Claude via the one-shot `ask` path and the
+/// reply lands in the conversation pane, until they type `exit`/`quit`. Reuses
+/// the tested `ask` query, so each turn is independent for now (multi-turn
+/// memory + the read_file/bash tools in the loop are a follow-up). Without a
+/// baked-in key it still runs — you can see the UI and type — and reports that
+/// chatting needs a key. Headless (no framebuffer) → nothing to show, returns 1.
+///
+/// While this runs, the shell is blocked in the syscall and the interactive
+/// wait loop must not pump the HID ring (it would race our `read_line` pump),
+/// so we hold `AGENT_TUI_ACTIVE` for the duration and clear the screen on exit.
+pub fn run_interactive(_flags: u64) -> u64 {
+    use crate::tui::Tui;
+    use core::sync::atomic::Ordering;
+
+    // Clear the boot console first so the TUI sits on a clean screen instead of
+    // overlaying leftover demo/shell scrollback.
+    crate::framebuffer::clear();
+    let mut tui = match Tui::new("claude-haiku-4-5") {
+        Some(t) => t,
+        None => return 1, // headless — no framebuffer to draw the TUI
+    };
+    tui.push_assistant("Agent terminal — type a question, Enter to send. 'exit' returns to the shell.");
+
+    let have_key = !api_key().is_empty();
+    if !have_key {
+        tui.push_error("(no ANTHROPIC_KEY in this build — you can type, but chatting needs a key)");
+    }
+
+    crate::AGENT_TUI_ACTIVE.store(true, Ordering::Relaxed);
+
+    let mut out = [0u8; 8192];
+    loop {
+        tui.set_status("ready");
+        let mut qbuf = [0u8; 512];
+        let n = tui.read_line(&mut qbuf);
+        let q = core::str::from_utf8(&qbuf[..n]).unwrap_or("").trim();
+        if q.is_empty() {
+            continue;
+        }
+        if q.eq_ignore_ascii_case("exit") || q.eq_ignore_ascii_case("quit") {
+            break;
+        }
+        tui.push_user(q);
+        if !have_key {
+            tui.push_error("can't reach Claude: no ANTHROPIC_KEY baked into this build");
+            continue;
+        }
+        tui.set_status("thinking");
+        let m = ask(q, &mut out).min(out.len());
+        let answer = core::str::from_utf8(&out[..m]).unwrap_or("(decode error)");
+        tui.push_assistant(answer);
+    }
+
+    crate::AGENT_TUI_ACTIVE.store(false, Ordering::Relaxed);
+    // Tear down the overlay so the shell prompt resumes on a clean screen.
+    crate::framebuffer::clear();
+    0
+}
+
 /// Parse the numeric status code out of an HTTP response (`HTTP/1.1 NNN ...`).
 pub fn http_status(resp: &[u8]) -> Option<u32> {
     if resp.len() < 12 || &resp[..5] != b"HTTP/" {
