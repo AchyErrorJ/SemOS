@@ -432,6 +432,105 @@ pub fn replay_to_serial() {
     }
 }
 
+// ============================================================================
+// Scrollback pager — let the user scroll back through console history
+// ============================================================================
+//
+// Lines printed are recorded into the byte ring above (re-enabled in the
+// console write path). `scroll_view` walks the ring to render a window of
+// history; while scrolled (VIEW_OFFSET != 0) the live console suppresses
+// drawing so the frozen view isn't overwritten (output still records).
+
+/// Lines scrolled UP from the live bottom. 0 = live.
+static VIEW_OFFSET: AtomicU64 = AtomicU64::new(0);
+
+/// True while viewing history — the console write path checks this and skips
+/// drawing (but still records) so the frozen view stays put.
+pub fn is_scrolled() -> bool {
+    VIEW_OFFSET.load(AtomicOrdering::Relaxed) != 0
+}
+
+/// Index just AFTER the `n`th newline walking back from `from`, i.e. the start
+/// of the line `n` lines above `from`. Clamped to the oldest recorded byte.
+fn index_back_lines(head: u64, from: u64, n: usize) -> u64 {
+    let recorded = (head as usize).min(SCROLLBACK_SIZE) as u64;
+    let oldest = head.wrapping_sub(recorded);
+    let buf_ptr = (&raw const SCROLLBACK_BUF) as *const u8;
+    let mut idx = from;
+    let mut seen = 0usize;
+    while idx > oldest {
+        idx = idx.wrapping_sub(1);
+        let pos = (idx as usize) & (SCROLLBACK_SIZE - 1);
+        let byte = unsafe { core::ptr::read_volatile(buf_ptr.add(pos)) };
+        if byte == b'\n' {
+            seen += 1;
+            if seen > n {
+                return idx.wrapping_add(1); // start of the line below this NL
+            }
+        }
+    }
+    oldest
+}
+
+/// Total recorded lines (newline count) — the scroll-up limit.
+fn recorded_lines(head: u64) -> usize {
+    let recorded = (head as usize).min(SCROLLBACK_SIZE);
+    let oldest = head.wrapping_sub(recorded as u64);
+    let buf_ptr = (&raw const SCROLLBACK_BUF) as *const u8;
+    let mut idx = oldest;
+    let mut nl = 0usize;
+    while idx != head {
+        let pos = (idx as usize) & (SCROLLBACK_SIZE - 1);
+        if unsafe { core::ptr::read_volatile(buf_ptr.add(pos)) } == b'\n' {
+            nl += 1;
+        }
+        idx = idx.wrapping_add(1);
+    }
+    nl
+}
+
+/// Render the ring window for `offset` lines above the live bottom: `rows`
+/// lines, cleared and replayed via put_byte. At offset 0 this replays right up
+/// to HEAD, so the live cursor ends correctly and live drawing can resume.
+fn render_from_offset(offset: u64) {
+    let head = SCROLLBACK_HEAD.load(AtomicOrdering::Relaxed);
+    let rows = match *CONSOLE.lock() {
+        Some(ref c) => c.rows,
+        None => return,
+    };
+    let end = index_back_lines(head, head, offset as usize);
+    let start = index_back_lines(head, end, rows.saturating_sub(1));
+    if let Some(ref mut c) = *CONSOLE.lock() {
+        c.clear_all();
+        c.cursor_x = 0;
+        c.cursor_y = 0;
+        let buf_ptr = (&raw const SCROLLBACK_BUF) as *const u8;
+        let mut idx = start;
+        while idx != end {
+            // Don't let a trailing newline at the window edge scroll us.
+            let pos = (idx as usize) & (SCROLLBACK_SIZE - 1);
+            let byte = unsafe { core::ptr::read_volatile(buf_ptr.add(pos)) };
+            if byte == b'\n' && idx.wrapping_add(1) == end {
+                break;
+            }
+            c.put_byte(byte);
+            idx = idx.wrapping_add(1);
+        }
+    }
+}
+
+/// Scroll the console view by `lines` (positive = older/up, negative =
+/// newer/down). Clamps to [live, oldest]; re-renders the window. Reaching 0
+/// returns to live (subsequent output draws normally again).
+pub fn scroll_view(lines: isize) {
+    let head = SCROLLBACK_HEAD.load(AtomicOrdering::Relaxed);
+    let max_back = recorded_lines(head) as isize;
+    let cur = VIEW_OFFSET.load(AtomicOrdering::Relaxed) as isize;
+    let next = (cur + lines).clamp(0, max_back);
+    VIEW_OFFSET.store(next as u64, AtomicOrdering::Relaxed);
+    render_from_offset(next as u64);
+}
+
 /// Initialize the framebuffer console from the bootloader's framebuffer.
 pub fn init(fb: &mut FrameBuffer) {
     let info = fb.info();
@@ -476,6 +575,13 @@ pub fn init(fb: &mut FrameBuffer) {
 
 /// Write a string to the framebuffer console (no-op if not initialized).
 pub fn write_str(s: &str) {
+    for byte in s.bytes() {
+        scrollback_push(byte);
+    }
+    // While the user is viewing history, record but don't draw (freeze view).
+    if is_scrolled() {
+        return;
+    }
     if let Some(ref mut c) = *CONSOLE.lock() {
         for byte in s.bytes() {
             c.put_byte(byte);
@@ -499,10 +605,16 @@ struct ConsoleWriter;
 
 impl fmt::Write for ConsoleWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        // Scrollback recording temporarily disabled while diagnosing whether
-        // the recording itself (lock acquisition or 64KB Mutex) destabilizes
-        // the kernel. Re-enable once the cause is found.
-        // for byte in s.bytes() { scrollback_push(byte); }
+        // Record into the lock-free byte ring (scrollback pager + fault dump).
+        // The earlier instability was a Mutex<[u8; 64K]>; this ring is lock-free
+        // (atomic head + volatile writes), which is why it's safe to re-enable.
+        for byte in s.bytes() {
+            scrollback_push(byte);
+        }
+        // Freeze drawing while the user is scrolled back into history.
+        if is_scrolled() {
+            return Ok(());
+        }
         if let Some(ref mut c) = *CONSOLE.lock() {
             for byte in s.bytes() {
                 c.put_byte(byte);

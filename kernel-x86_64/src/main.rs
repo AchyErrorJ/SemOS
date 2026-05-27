@@ -1138,6 +1138,28 @@ fn pump_console_input(prev: &mut [u8; 6]) {
             if k == 0 || prev.contains(&k) {
                 continue; // empty slot, or a key that was already held
             }
+            // Scrollback paging — consumed here, never delivered to the shell.
+            // PageUp/Down scroll the console through history; End jumps to live.
+            match k {
+                0x4B => {
+                    crate::framebuffer::scroll_view(15);
+                    continue;
+                }
+                0x4E => {
+                    crate::framebuffer::scroll_view(-15);
+                    continue;
+                }
+                0x4D => {
+                    crate::framebuffer::scroll_view(-1_000_000);
+                    continue;
+                }
+                _ => {}
+            }
+            // If scrolled into history and the user starts typing, snap back to
+            // live first so their keystrokes are visible.
+            if crate::framebuffer::is_scrolled() {
+                crate::framebuffer::scroll_view(-1_000_000);
+            }
             if let Some(c) = usb::hid::keycode_to_ascii(k, shift) {
                 // For Backspace, check whether the line discipline actually has
                 // something to delete *before* input_push consumes it — else an
