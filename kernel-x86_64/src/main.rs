@@ -1039,9 +1039,119 @@ fn init_loader_task() {
         kernel_core::scheduler::current_task_index() + 1);
     println!("================================================================");
 
+    // `--features interactive`: hand the keyboard to a live sem-sh instead of
+    // idling. Returns only if the shell can't be spawned, then we fall through
+    // to the halt loop (same as a default build).
+    #[cfg(feature = "interactive")]
+    interactive_session();
+
     loop {
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
+}
+
+/// Feature-gated interactive landing (`--features interactive`). Instead of
+/// idling after the demo suite, drop into the live `sem-sh` shell driven by the
+/// real keyboard: USB/PS2 IRQ → `tty::input_push` → Console line discipline →
+/// the shell's `SYS_READ(fd 0)`; the shell's stdout is the framebuffer console.
+/// This is the "shell IS the OS interface" landing — run apps from any PATH,
+/// pipe, and reach Claude via the `ask`/`fetch` builtins. Unlike the agent's
+/// own sandboxed shell (tier 0), the interactive user's shell runs at tier 3 so
+/// it can reach every security tier. When the user types `exit` we reap the
+/// child (freeing its address-space frames) and relaunch — a login-shell loop.
+#[cfg(feature = "interactive")]
+fn interactive_session() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+    use kernel_core::scheduler::{self, TaskState};
+
+    println!();
+    println!("================================================================");
+    println!("  Interactive sem-sh — your keyboard is live.");
+    println!("  Try:  ls /bin  |  ps  |  free  |  cat /apps/...  |  ask \"hello\"");
+    println!("  'exit' relaunches the shell; power off the VM to stop.");
+    println!("================================================================");
+    println!();
+
+    // Pin FD/stdio resolution to this (the loader) task before spawning.
+    kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
+
+    loop {
+        // No args → REPL. The child inherits fd 0 = Console (keyboard line
+        // discipline) and fd 1 = Console (framebuffer). We do NOT synthesize
+        // keystrokes — the real keyboard drives stdin.
+        let path = "/bin/sem-sh";
+        let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 3, 0);
+        if pid == u64::MAX {
+            println!("  [interactive] could not spawn /bin/sem-sh — idling.");
+            return;
+        }
+        let child = kernel_core::process::ProcessId(pid as u32);
+        let cs = kernel_core::process::get(child).and_then(|p| p.task_id);
+
+        // Wait for the user to `exit`. While the shell blocks on SYS_READ(fd 0)
+        // we must *service the USB keyboard*: QEMU (and real hardware) deliver
+        // keystrokes to the USB HID device, whose event ring is only drained
+        // when someone polls it — nothing else does while we idle here. Each
+        // tick we pump the ring into the line discipline (+ echo), then SLEEP
+        // to yield to the shell. Re-pin after each sleep (the current slot
+        // drifts while we yield).
+        let mut prev_keys = [0u8; 6];
+        if let Some(slot) = cs {
+            while scheduler::task_state(slot) != TaskState::Exited {
+                pump_console_input(&mut prev_keys);
+                let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+                kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
+            }
+            // We are the child's waiter and it has exited: reap now so its PT
+            // frames return to the pool instead of leaking across relaunches.
+            kernel_core::platform::get().reap_slot(slot);
+        }
+        println!();
+        println!("  [interactive] shell exited — relaunching (power off to stop).");
+    }
+}
+
+/// Drain the USB HID keyboard event ring into the TTY line discipline, with
+/// edge detection so a held key isn't re-emitted on every report (a HID report
+/// lists *all* currently-pressed keys; a key already in `prev` is still-held,
+/// not a new press). `input_push` echoes only to serial, so we also echo
+/// printables/Enter/Backspace to the framebuffer console here — otherwise the
+/// user can't see what they type on the plain console (the TUI uses `peek_line`
+/// for that instead). Arrow keys become `ESC [ A/B/C/D` for the line editor.
+#[cfg(feature = "interactive")]
+fn pump_console_input(prev: &mut [u8; 6]) {
+    usb::xhci::poll_hid(|rep| {
+        let shift = rep.shift_held();
+        for &k in rep.keys.iter() {
+            if k == 0 || prev.contains(&k) {
+                continue; // empty slot, or a key that was already held
+            }
+            if let Some(c) = usb::hid::keycode_to_ascii(k, shift) {
+                tty::input_push(c);
+                match c {
+                    0x20..=0x7E => print!("{}", c as char),
+                    b'\n' | b'\r' => println!(),
+                    0x08 | 0x7F => print!("\u{8} \u{8}"), // erase last glyph
+                    _ => {}
+                }
+            } else {
+                // Arrow keys (HID usage 0x4F..0x52) → ANSI for the line editor.
+                let letter = match k {
+                    0x4F => Some(b'C'),
+                    0x50 => Some(b'D'),
+                    0x51 => Some(b'B'),
+                    0x52 => Some(b'A'),
+                    _ => None,
+                };
+                if let Some(letter) = letter {
+                    tty::input_push(0x1B);
+                    tty::input_push(b'[');
+                    tty::input_push(letter);
+                }
+            }
+        }
+        *prev = rep.keys;
+    });
 }
 
 /// DEMO 35: M6 framebuffer drawing API. Exercises every primitive
