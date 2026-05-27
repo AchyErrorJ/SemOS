@@ -678,21 +678,43 @@ impl Namespace {
     /// `crate::storage::snapshot::save_snapshot` with our serializer.
     /// Caller passes a `BlockDevice` — typically `"virtio0"`.
     pub fn save(dev: &dyn crate::drivers::traits::BlockDevice) -> Result<usize, FsError> {
-        let mut scratch = [0u8; crate::storage::snapshot::MAX_SNAPSHOT_BYTES];
-        let n = Self::serialize(&mut scratch)?;
-        crate::storage::snapshot::save_snapshot(dev, &scratch[..n])
-            .map_err(|_| FsError::Corrupt)?;
-        Ok(n)
+        // Heap-backed scratch (MAX_SNAPSHOT_BYTES is now 1 MiB — far too big for
+        // the stack). Freed on every path.
+        let cap = crate::storage::snapshot::MAX_SNAPSHOT_BYTES;
+        let ptr = crate::memory::heap::allocate(cap, 8);
+        if ptr.is_null() {
+            return Err(FsError::Corrupt);
+        }
+        let result = {
+            let scratch = unsafe { core::slice::from_raw_parts_mut(ptr, cap) };
+            match Self::serialize(scratch) {
+                Ok(n) => crate::storage::snapshot::save_snapshot(dev, &scratch[..n])
+                    .map(|_| n)
+                    .map_err(|_| FsError::Corrupt),
+                Err(e) => Err(e),
+            }
+        };
+        crate::memory::heap::deallocate(ptr, cap, 8);
+        result
     }
 
     /// Read a previously-saved snapshot and reconstruct the namespace
     /// in `global_registry()`. Returns the number of bytes consumed.
     pub fn load(dev: &dyn crate::drivers::traits::BlockDevice) -> Result<usize, FsError> {
-        let mut scratch = [0u8; crate::storage::snapshot::MAX_SNAPSHOT_BYTES];
-        let n = crate::storage::snapshot::load_snapshot(dev, &mut scratch)
-            .map_err(|_| FsError::Corrupt)?;
-        Self::deserialize(&scratch[..n])?;
-        Ok(n)
+        let cap = crate::storage::snapshot::MAX_SNAPSHOT_BYTES;
+        let ptr = crate::memory::heap::allocate(cap, 8);
+        if ptr.is_null() {
+            return Err(FsError::Corrupt);
+        }
+        let result = {
+            let scratch = unsafe { core::slice::from_raw_parts_mut(ptr, cap) };
+            match crate::storage::snapshot::load_snapshot(dev, scratch) {
+                Ok(n) => Self::deserialize(&scratch[..n]).map(|_| n),
+                Err(_) => Err(FsError::Corrupt),
+            }
+        };
+        crate::memory::heap::deallocate(ptr, cap, 8);
+        result
     }
 }
 
@@ -706,11 +728,13 @@ mod serial {
     /// On-disk magic so a stale or wrong snapshot can't be loaded as
     /// a namespace. ASCII "FSNS".
     const MAGIC: [u8; 4] = *b"FSNS";
-    /// Bump when the field layout changes.
-    const VERSION: u32 = 1;
+    /// Bump when the field layout changes. v2: content length widened u16→u32
+    /// so files over 64 KiB persist (up to MAX_FILE_CONTENT). v1 snapshots are
+    /// rejected on load (deserialize checks VERSION) → treated as a fresh disk.
+    const VERSION: u32 = 2;
     /// Per-object header size (everything except the trailing content).
-    const OBJ_HEADER: usize = 16 + 1 + 1 + 2 + 8 + 8 + 2;
-    //                       suid + tier + type + rsvd + ctime + mtime + clen
+    const OBJ_HEADER: usize = 16 + 1 + 1 + 2 + 8 + 8 + 4;
+    //                       suid + tier + type + rsvd + ctime + mtime + clen(u32)
 
     /// Maximum reachable objects we'll serialize in one snapshot. The
     /// registry caps at MAX_OBJECTS (1024) but the path namespace
@@ -749,7 +773,9 @@ mod serial {
             let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
             let content_bytes = obj.content.as_bytes().unwrap_or(&[]);
             let content_len = content_bytes.len();
-            if content_len > u16::MAX as usize { return Err(FsError::ContentTooLarge); }
+            if content_len > crate::semantic::object::MAX_FILE_CONTENT {
+                return Err(FsError::ContentTooLarge);
+            }
 
             // Bounds-check before writing the object record.
             let record_len = OBJ_HEADER + content_len;
@@ -770,8 +796,8 @@ mod serial {
             buf[cursor + 20..cursor + 28].copy_from_slice(&obj.created_at.to_le_bytes());
             buf[cursor + 28..cursor + 36].copy_from_slice(&obj.modified_at.to_le_bytes());
             // content length + body
-            buf[cursor + 36..cursor + 38].copy_from_slice(&(content_len as u16).to_le_bytes());
-            buf[cursor + 38..cursor + 38 + content_len].copy_from_slice(content_bytes);
+            buf[cursor + 36..cursor + 40].copy_from_slice(&(content_len as u32).to_le_bytes());
+            buf[cursor + 40..cursor + 40 + content_len].copy_from_slice(content_bytes);
             cursor += record_len;
 
             visited[count as usize] = suid;
@@ -811,7 +837,7 @@ mod serial {
             let ctype_raw = buf[cursor + 17];
             let created_at = u64::from_le_bytes(buf[cursor + 20..cursor + 28].try_into().unwrap());
             let modified_at = u64::from_le_bytes(buf[cursor + 28..cursor + 36].try_into().unwrap());
-            let content_len = u16::from_le_bytes(buf[cursor + 36..cursor + 38].try_into().unwrap()) as usize;
+            let content_len = u32::from_le_bytes(buf[cursor + 36..cursor + 40].try_into().unwrap()) as usize;
             cursor += OBJ_HEADER;
             if cursor + content_len > buf.len() { return Err(FsError::Corrupt); }
             let content_slice = &buf[cursor..cursor + content_len];

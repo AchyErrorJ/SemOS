@@ -297,50 +297,84 @@ pub(crate) fn install_anywhere_demo() {
     }
 }
 
-/// DEMO 60: persistence — an installed app survives reboot. Namespace files
-/// persist to virtio0 via `SYS_FSYNC` and are restored at boot
-/// (`Namespace::load`). On the FIRST boot (fresh disk) we install
-/// `/apps/persistent-tool` and fsync; on a LATER boot it's already present
-/// (restored from disk) so we run it — proving the install survived the reboot.
-/// Validate with two boots sharing one vdisk: boot 1 installs, boot 2 PASSes.
+/// DEMO 60: persistence — installed apps survive reboot, including files over
+/// the old 64 KiB limit. Namespace files persist to virtio0 via `SYS_FSYNC`
+/// and restore at boot (`Namespace::load`). FIRST boot (fresh disk): install a
+/// small runnable app (`/apps/persistent-tool`, hello-std) AND a large one
+/// (`/apps/big-tool`, sem-sh ≈124 KiB — which the old u16 content_len would
+/// have refused to persist) and fsync. LATER boot: both are restored, so we run
+/// the small one and confirm the large one came back byte-for-byte — proving
+/// persistence and the u32 content-length bump. Two boots, shared vdisk.
 pub(crate) fn persistence_install_demo() {
     use crate::agent;
     use kernel_core::fs::paths::Namespace;
     use kernel_core::semantic::object::SecurityTier;
     use kernel_core::syscall::{dispatch, numbers::*};
 
-    let path = "/apps/persistent-tool";
+    let small = "/apps/persistent-tool";
+    let big = "/apps/big-tool";
 
-    if Namespace::resolve(path).is_ok() {
-        // Restored from a prior boot's snapshot — run it to prove it survived.
+    // The large file's expected size (its ramfs ELF is still embedded, so we
+    // can compare on either boot without hardcoding a number).
+    let big_expected = kernel_core::fs::ramfs::get_fs()
+        .and_then(|fs| fs.find("sem-sh.elf"))
+        .map(|f| f.data().len())
+        .unwrap_or(0);
+
+    // Restored content length of `big` from the live namespace (0 if absent).
+    let big_restored = Namespace::resolve(big)
+        .ok()
+        .and_then(|suid| unsafe {
+            kernel_core::semantic::registry::global_registry()
+                .get(&suid)
+                .and_then(|o| o.content.as_bytes())
+                .map(|b| b.len())
+        })
+        .unwrap_or(0);
+
+    if Namespace::resolve(small).is_ok() {
+        // --- Later boot: both restored from disk. ---
         let out = agent::run_tool("bash", "{\"command\":\"/apps/persistent-tool\"}");
-        if out.contains("Hello from semos-std!") {
-            println!("  [DEMO 60] PASS: {} survived reboot and ran", path);
-            println!("  [DEMO 60] => installed apps persist across reboots (namespace → virtio0 → restore)");
+        let ran = out.contains("Hello from semos-std!");
+        let big_ok = big_restored == big_expected && big_restored > 64 * 1024;
+        if ran {
+            println!("  [DEMO 60] PASS: {} survived reboot and ran", small);
         } else {
             println!("  [DEMO 60] FAIL: restored app didn't run — out = {:?}", out.trim());
         }
+        if big_ok {
+            println!("  [DEMO 60] PASS: {} ({} B, >64 KiB) survived reboot byte-for-byte", big, big_restored);
+            println!("  [DEMO 60] => persistence + u32 content_len: large installed apps persist across reboot");
+        } else {
+            println!("  [DEMO 60] FAIL: large file persistence — restored={} expected={}", big_restored, big_expected);
+        }
         return;
     }
 
-    // First boot: ensure /apps exists, install the app, flush to disk.
+    // --- First boot: install small + large, then flush to disk. ---
     let apps = "/apps";
     let _ = dispatch(SYS_MKDIR, apps.as_ptr() as u64, apps.len() as u64, 0, 0);
-    let elf = match kernel_core::fs::ramfs::get_fs().and_then(|fs| fs.find("hello-std.elf")) {
-        Some(f) => f.data(),
-        None => {
-            println!("  [DEMO 60] SKIPPED: hello-std.elf not embedded");
+    let fs = kernel_core::fs::ramfs::get_fs();
+    let small_elf = fs.and_then(|f| f.find("hello-std.elf")).map(|f| f.data());
+    let big_elf = fs.and_then(|f| f.find("sem-sh.elf")).map(|f| f.data());
+    match (small_elf, big_elf) {
+        (Some(s), Some(b)) => {
+            let ok = Namespace::create_file(small, SecurityTier::Public, s).is_ok()
+                && Namespace::create_file(big, SecurityTier::Public, b).is_ok();
+            if !ok {
+                println!("  [DEMO 60] FAIL: could not install test apps");
+                return;
+            }
+        }
+        _ => {
+            println!("  [DEMO 60] SKIPPED: test ELFs not embedded");
             return;
         }
-    };
-    if Namespace::create_file(path, SecurityTier::Public, elf).is_err() {
-        println!("  [DEMO 60] FAIL: could not install {}", path);
-        return;
     }
-    let fsync_ok = dispatch(SYS_FSYNC, 0, 0, 0, 0) == 0;
-    if fsync_ok {
-        println!("  [DEMO 60] first boot: installed {} + fsync'd the namespace to virtio0", path);
-        println!("  [DEMO 60] => reboot with the same vdisk to verify it persists");
+    if dispatch(SYS_FSYNC, 0, 0, 0, 0) == 0 {
+        println!("  [DEMO 60] first boot: installed {} (12 KiB) + {} ({} B) + fsync'd to virtio0",
+            small, big, big_expected);
+        println!("  [DEMO 60] => reboot with the same vdisk to verify both persist");
     } else {
         println!("  [DEMO 60] FAIL: fsync failed (snapshot too large, or no virtio0)");
     }

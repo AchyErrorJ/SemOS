@@ -19,10 +19,13 @@ use crate::drivers::traits::{BlockDevice, DriverError, DriverResult};
 const SECTOR_SIZE: usize = 512;
 const MAGIC: u64 = 0x_5365_6D4F_535F_4E41; // "SemOS_NA" ASCII LE — change w/ format
 
-/// Maximum payload bytes a single snapshot can hold.
-/// 64 KiB is plenty for the registry-snapshot demo and keeps the
-/// reservation small (128 sectors).
-pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024;
+/// Maximum payload bytes a single snapshot can hold. 1 MiB so the whole
+/// namespace — a handful of installed apps (≤256 KiB each) plus documents and
+/// system files — persists. The caller buffers a payload of this size on the
+/// heap (NOT the stack), so this can grow without stack-overflow risk; the
+/// on-disk reservation is `PAYLOAD_SECTORS` (2048) + 1 header sector, well
+/// within the 16 MiB vdisk.
+pub const MAX_SNAPSHOT_BYTES: usize = 1024 * 1024;
 const PAYLOAD_SECTORS: u64 = (MAX_SNAPSHOT_BYTES / SECTOR_SIZE) as u64;
 
 #[repr(C)]
