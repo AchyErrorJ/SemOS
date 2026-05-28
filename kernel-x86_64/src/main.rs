@@ -1109,6 +1109,13 @@ fn init_loader_task() {
     println!("================================================================");
     ahci_demo();
 
+    // DEMO 68: USB Mass Storage protocol layer — read a USB stick on metal.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 68: USB Mass Storage CBW/CSW + SCSI");
+    println!("================================================================");
+    usb_msc_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1273,6 +1280,111 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 68: USB Mass Storage protocol. Builds the CBWs for INQUIRY, READ
+/// CAPACITY (10), and READ (10), byte-validates each against the BBB §5 +
+/// SCSI Block Commands spec layout, and parses canned responses for the
+/// inquiry data and capacity. Hardware-ready for a USB stick on the T540
+/// once xHCI bulk-endpoint TX/RX lands.
+fn usb_msc_demo() {
+    use usb::mass_storage::{
+        self as msc, scsi, CBW_SIGNATURE, CBW_LEN, CSW_LEN, CSW_SIGNATURE, CswStatus,
+    };
+
+    // --- CBW: INQUIRY (alloc 36) ---------------------------------------------
+    let mut cbw = [0u8; 64];
+    let cdb = scsi::inquiry(36);
+    let n = msc::build_cbw(&mut cbw, 0xDEADBEEF, 36, true, 0, &cdb).unwrap_or(0);
+    let sig_ok = u32::from_le_bytes(cbw[0..4].try_into().unwrap()) == CBW_SIGNATURE;
+    let cbw_ok = n == CBW_LEN
+        && sig_ok
+        && u32::from_le_bytes(cbw[4..8].try_into().unwrap()) == 0xDEADBEEF
+        && u32::from_le_bytes(cbw[8..12].try_into().unwrap()) == 36
+        && cbw[12] == 0x80 // data IN
+        && cbw[13] == 0    // LUN 0
+        && cbw[14] == 6    // CDB length
+        && cbw[15] == 0x12 // INQUIRY opcode
+        && cbw[19] == 36;  // allocation length
+    if cbw_ok {
+        println!("  [DEMO 68] PASS: CBW INQUIRY 31 B, signature 'USBC', tag=0xDEADBEEF, IN, CDB[INQUIRY,..,36]");
+    } else {
+        println!("  [DEMO 68] FAIL: CBW INQUIRY layout (n={})", n);
+        return;
+    }
+
+    // --- CBW: READ CAPACITY (10) --------------------------------------------
+    let cdb = scsi::read_capacity_10();
+    let _ = msc::build_cbw(&mut cbw, 1, 8, true, 0, &cdb);
+    if cbw[15] == 0x25 && cbw[14] == 10 && u32::from_le_bytes(cbw[8..12].try_into().unwrap()) == 8 {
+        println!("  [DEMO 68] PASS: CBW READ CAPACITY(10) — 10-byte CDB, expects 8 B in");
+    } else {
+        println!("  [DEMO 68] FAIL: CBW READ CAPACITY layout");
+        return;
+    }
+
+    // --- CBW: READ (10) at LBA 42, 2 blocks ---------------------------------
+    let cdb = scsi::read_10(42, 2);
+    let _ = msc::build_cbw(&mut cbw, 2, 1024, true, 0, &cdb);
+    // LBA big-endian in CDB[2..6] → CDB[15+2..15+6]; count BE in CDB[7..9].
+    let lba_be = u32::from_be_bytes(cbw[17..21].try_into().unwrap());
+    let cnt_be = u16::from_be_bytes(cbw[22..24].try_into().unwrap());
+    if cbw[15] == 0x28 && lba_be == 42 && cnt_be == 2 {
+        println!("  [DEMO 68] PASS: CBW READ(10) — opcode 0x28, LBA=42 (BE), count=2 (BE)");
+    } else {
+        println!("  [DEMO 68] FAIL: READ(10) — op=0x{:02X} lba_be={} cnt_be={}", cbw[15], lba_be, cnt_be);
+        return;
+    }
+
+    // --- Parse a canned INQUIRY response ------------------------------------
+    // First 36 bytes: peripheral type 0 (disk), removable bit set, vendor
+    // "SemOSDev", product "BootStick       ", revision "1.00".
+    let mut inq = [0u8; 36];
+    inq[0] = 0x00;          // peripheral type = direct-access disk
+    inq[1] = 0x80;          // removable
+    inq[8..16].copy_from_slice(b"SemOSDev");
+    inq[16..32].copy_from_slice(b"BootStick       ");
+    inq[32..36].copy_from_slice(b"1.00");
+    let parsed = msc::parse_inquiry(&inq).expect("inquiry parse failed");
+    if parsed.peripheral_type == 0
+        && parsed.removable
+        && &parsed.vendor[..] == b"SemOSDev"
+        && &parsed.product[..] == b"BootStick       "
+        && &parsed.revision[..] == b"1.00"
+    {
+        println!("  [DEMO 68] PASS: INQUIRY parsed — vendor=\"SemOSDev\", product=\"BootStick\", rev=\"1.00\", removable");
+    } else {
+        println!("  [DEMO 68] FAIL: INQUIRY parse");
+        return;
+    }
+
+    // --- Parse a canned READ CAPACITY (10) response: 1 GiB stick @ 512 B ----
+    // last_LBA = (1 GiB / 512) - 1 = 2097151 → 0x001FFFFF big-endian.
+    let cap = [
+        0x00, 0x1F, 0xFF, 0xFF, // last LBA = 2,097,151 (BE)
+        0x00, 0x00, 0x02, 0x00, // block size = 512 (BE)
+    ];
+    let (blocks, bs) = msc::parse_read_capacity_10(&cap).unwrap();
+    if blocks == 2_097_152 && bs == 512 {
+        println!("  [DEMO 68] PASS: READ CAPACITY parsed — {} blocks × {} B (1 GiB stick)", blocks, bs);
+    } else {
+        println!("  [DEMO 68] FAIL: capacity parse — blocks={} bs={}", blocks, bs);
+        return;
+    }
+
+    // --- Parse a canned CSW (success) ---------------------------------------
+    let mut csw = [0u8; CSW_LEN];
+    csw[0..4].copy_from_slice(&CSW_SIGNATURE.to_le_bytes());
+    csw[4..8].copy_from_slice(&0xDEADBEEFu32.to_le_bytes());
+    csw[8..12].copy_from_slice(&0u32.to_le_bytes()); // residue
+    csw[12] = 0; // PASSED
+    let parsed = msc::parse_csw(&csw).expect("csw parse failed");
+    if parsed.tag == 0xDEADBEEF && parsed.residue == 0 && parsed.status == CswStatus::Passed {
+        println!("  [DEMO 68] PASS: CSW parsed — tag echoed, residue=0, status=PASSED");
+        println!("  [DEMO 68] => USB Mass Storage protocol ready; xHCI bulk endpoints are the wiring");
+    } else {
+        println!("  [DEMO 68] FAIL: CSW parse — {:?}", parsed);
+    }
 }
 
 /// DEMO 67: AHCI/SATA block I/O. Resolves `sata0` from the driver registry,

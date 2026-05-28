@@ -24,6 +24,7 @@ pub mod device;
 pub mod hid;
 pub mod hid_report;
 pub mod cdc_ecm;
+pub mod mass_storage;
 pub mod xhci;
 
 /// One-shot bring-up. Returns true if at least the controller came up.
