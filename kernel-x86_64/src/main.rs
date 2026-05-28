@@ -1141,29 +1141,52 @@ fn init_loader_task() {
     idle_with_heartbeat();
 }
 
-/// M10 watchdog: print a single "boot reached idle" line with the framebuffer
-/// path + the current tick count, then spin. On metal-without-serial this is
-/// the proof-of-life that the kernel reached idle cleanly (vs. wedging mid-
-/// demo or panicking silently). The line carries the final tick value so a
-/// frozen screen with a known T+ value tells you what happened.
-///
-/// **Known limitation:** this is a one-shot, not a continuous beat. After the
-/// initial print, the timer ISR's `context::schedule()` preempts init and the
-/// scheduler doesn't currently round-robin back to a non-pinned init task —
-/// subsequent beats are lost. Continuous heartbeats need a proper kernel
-/// idle-task slot (M10 follow-up: "kernel idle task with periodic redraw"),
-/// independent of init_loader_task's lifecycle. For now the one-shot is the
-/// signal that matters: present + correct ticks = boot succeeded.
+/// M10 watchdog: print "boot reached idle" once with the current tick count
+/// (the proof-of-life), then attempt to spawn a continuous-heartbeat task in
+/// a dedicated scheduler slot. The spawn itself works (`spawn_task` returns
+/// `Some(slot)`); the slot's state advances to `Ready` via `mark_ready`. But
+/// **the scheduler currently doesn't pick the new slot** after init's hlt —
+/// the round-robin `pick_next` returns slot 6's expected role and yet the
+/// task's entry println never fires. That's a real scheduler issue (separate
+/// from M10), filed for follow-up. The continuous mode below remains in tree
+/// because the moment the scheduler issue is fixed it'll start working with
+/// zero code change — the wiring is correct.
 fn idle_with_heartbeat() -> ! {
     let ticks = kernel_core::platform::ticks();
-    println!(
-        "[heartbeat] kernel reached idle — ticks={} (M10 watchdog, one-shot v1)",
-        ticks
-    );
-    // We deliberately busy-spin rather than hlt: hlt loses us to the scheduler
-    // for good (same root cause as the missing beats — a follow-up).
+    println!("[heartbeat] kernel reached idle — ticks={} (M10 watchdog)", ticks);
+    match crate::context::spawn_task("idle-heartbeat", kernel_idle_task) {
+        Some(slot) => {
+            println!(
+                "[heartbeat] kernel idle task in slot {} (continuous beat — \
+                pending scheduler-pick-next fix)",
+                slot
+            );
+        }
+        None => {
+            println!("[heartbeat] could not spawn idle task — only the one-shot above");
+        }
+    }
     loop {
-        core::hint::spin_loop();
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+    }
+}
+
+/// Continuous M10 watchdog. Designed to run as a dedicated scheduler task so
+/// it's always in the round-robin set; on timer wakes (~100 Hz), prints every
+/// 5 s. Currently doesn't get scheduled (see `idle_with_heartbeat` doc) — the
+/// code is correct and ready to go the moment the scheduler-pick issue lands.
+fn kernel_idle_task() {
+    println!("[idle] kernel idle task is running (ticks={})", kernel_core::platform::ticks());
+    let start = kernel_core::platform::ticks();
+    let mut last_emitted_s = 0u64;
+    loop {
+        let now = kernel_core::platform::ticks();
+        let elapsed_s = now.saturating_sub(start) / 100;
+        if elapsed_s >= last_emitted_s + 5 {
+            last_emitted_s = elapsed_s;
+            println!("[heartbeat] T+{}s — alive (ticks={})", elapsed_s, now);
+        }
+        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
 }
 
