@@ -245,19 +245,23 @@ Anti-aliased lines/curves/fills for the design apps. Landed `cb6c726`.
       it's the `Aa::Smooth` mode of `tty::TtyConsole` (DEMO 39: 1661 AA-edge px).
 - [ ] Follow-ups still open: grow a real drawing API; gradients/clips.
 
-## M9 — NVMe driver `[  ]`
+## M9 — NVMe driver `[✅]`
 
-Block storage on real ThinkPad P1 hardware. VirtIO block (Phase 6)
-covers QEMU; real hardware has no SATA, no VirtIO.
+Block storage on real hardware (T440p/P1 stage). QEMU's NVMe model
+proved the bring-up in-tree before either machine arrives. v1 landed
+`53cdc1a` (DEMO 62).
 
 **Done when:**
-- [ ] PCI discovery of NVMe controller (class 0x010802)
-- [ ] Submission/completion queue pair setup
-- [ ] Identify Controller + Identify Namespace
-- [ ] Read/Write commands via I/O SQ/CQ
-- [ ] Wired as a `BlockDevice` named `nvme0` so `storage::snapshot`
-      and (eventually) M5 just work on top of it
-- [ ] DEMO 25 reads/writes a sector via the BlockDevice trait
+- [✅] PCI discovery of NVMe controller (class 0x010802) — `find_by_class`
+- [✅] Submission/completion queue pair setup (admin + I/O qid 1, polled)
+- [✅] Identify Namespace (NSZE + active LBA format) — pulls block_count + block_size
+- [✅] Read/Write commands via I/O SQ/CQ (NVM opcodes 0x02/0x01, PRP1)
+- [✅] Wired as a `BlockDevice` named `nvme0` (`drivers::registry`)
+- [✅] DEMO 62 writes a pattern to LBA 100 + reads it back byte-for-byte;
+      first-boot validation 146 PASS / 0 FAIL / 0 #DF
+- Follow-ups: MSI-X (interrupts vs polled), multi-block PRP lists, error
+  recovery beyond a polled timeout. v1 = one LBA per command (BlockDevice
+  layer loops), no interrupts.
 
 ---
 
