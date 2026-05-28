@@ -22,6 +22,7 @@
 pub mod ring;
 pub mod device;
 pub mod hid;
+pub mod hid_report;
 pub mod xhci;
 
 /// One-shot bring-up. Returns true if at least the controller came up.

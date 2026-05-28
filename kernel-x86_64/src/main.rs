@@ -1071,6 +1071,13 @@ fn init_loader_task() {
     println!("================================================================");
     hda_demo();
 
+    // DEMO 64: HID report-descriptor parser (M16) — canned gamepad descriptor.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 64: HID report descriptor parser (M16, gamepad)");
+    println!("================================================================");
+    hid_parser_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1235,6 +1242,89 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 64: HID report-descriptor parser. A canned descriptor for a generic
+/// gamepad (Generic Desktop Game Pad collection: X + Y signed 8-bit axes,
+/// 4 buttons, 4 bits of padding) is parsed and the resulting layout is
+/// applied to a synthetic input report. Verifies field counts, offsets,
+/// signed-extension on a negative axis, and the button bitmask round-trip —
+/// the parser is hardware-ready and decoded values come out as designed,
+/// even though QEMU has no gamepad device to plug into the xHCI driver.
+fn hid_parser_demo() {
+    use usb::hid_report::{self, gd, USAGE_PAGE_BUTTON, USAGE_PAGE_GENERIC_DESKTOP};
+
+    #[rustfmt::skip]
+    let descriptor: &[u8] = &[
+        0x05, 0x01,        // Usage Page (Generic Desktop)
+        0x09, 0x05,        // Usage (Game Pad)
+        0xA1, 0x01,        // Collection (Application)
+          0x05, 0x01,        //   Usage Page (Generic Desktop)
+          0x09, 0x30,        //   Usage (X)
+          0x09, 0x31,        //   Usage (Y)
+          0x15, 0x81,        //   Logical Min (-127)
+          0x25, 0x7F,        //   Logical Max (127)
+          0x75, 0x08,        //   Report Size (8)
+          0x95, 0x02,        //   Report Count (2)
+          0x81, 0x02,        //   Input (Data, Var, Abs)
+          0x05, 0x09,        //   Usage Page (Button)
+          0x19, 0x01,        //   Usage Min (Button 1)
+          0x29, 0x04,        //   Usage Max (Button 4)
+          0x15, 0x00,        //   Logical Min (0)
+          0x25, 0x01,        //   Logical Max (1)
+          0x75, 0x01,        //   Report Size (1)
+          0x95, 0x04,        //   Report Count (4)
+          0x81, 0x02,        //   Input (Data, Var, Abs)
+          0x75, 0x04,        //   Report Size (4)  ; padding
+          0x95, 0x01,        //   Report Count (1)
+          0x81, 0x03,        //   Input (Const, Var, Abs) -- pad
+        0xC0,              // End Collection
+    ];
+
+    let layout = match hid_report::parse(descriptor) {
+        Some(l) => l,
+        None => {
+            println!("  [DEMO 64] FAIL: parser returned None on the canned descriptor");
+            return;
+        }
+    };
+    // Expect 7 input fields: X, Y, B1..B4, padding.
+    if layout.len() != 7 {
+        println!("  [DEMO 64] FAIL: expected 7 fields, got {}", layout.len());
+        return;
+    }
+    println!("  [DEMO 64] PASS: descriptor parsed → {} input fields", layout.len());
+
+    // Look up X / Y / Button 1 fields and check their offsets + sizes.
+    let fx = layout.find(USAGE_PAGE_GENERIC_DESKTOP, gd::X);
+    let fy = layout.find(USAGE_PAGE_GENERIC_DESKTOP, gd::Y);
+    let fb1 = layout.find(USAGE_PAGE_BUTTON, 1);
+    let fb4 = layout.find(USAGE_PAGE_BUTTON, 4);
+    let layout_ok = matches!((fx, fy, fb1, fb4),
+        (Some(x), Some(y), Some(b1), Some(b4))
+            if x.bit_offset == 0 && x.bit_size == 8 && x.signed
+                && y.bit_offset == 8 && y.bit_size == 8 && y.signed
+                && b1.bit_offset == 16 && b1.bit_size == 1 && !b1.signed
+                && b4.bit_offset == 19 && b4.bit_size == 1);
+    if layout_ok {
+        println!("  [DEMO 64] PASS: X@bit0/8 signed, Y@bit8/8 signed, B1@bit16/1, B4@bit19/1");
+    } else {
+        println!("  [DEMO 64] FAIL: layout mismatch — X={:?}  Y={:?}  B1={:?}  B4={:?}", fx, fy, fb1, fb4);
+        return;
+    }
+
+    // Synthetic report: X=66 (0x42), Y=-2 (0xFE), buttons byte = 0b00001010 (B2 + B4).
+    let report = [0x42u8, 0xFEu8, 0x0Au8];
+    let s = hid_report::decode_gamepad(&layout, &report);
+    let decode_ok = s.x == 66 && s.y == -2 && s.buttons == 0b1010;
+    if decode_ok {
+        println!("  [DEMO 64] PASS: decoded x={}, y={} (sign-extended), buttons=0b{:04b}",
+            s.x, s.y, s.buttons);
+        println!("  [DEMO 64] => M16 parser ready for real HID gamepads on metal");
+    } else {
+        println!("  [DEMO 64] FAIL: decode — x={} y={} buttons=0b{:08b} (want x=66 y=-2 b=0b1010)",
+            s.x, s.y, s.buttons);
+    }
 }
 
 /// DEMO 63: HD Audio. After `hda::init()` armed the output stream + set RUN,
