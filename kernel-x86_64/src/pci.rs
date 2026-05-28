@@ -140,6 +140,49 @@ pub fn find_first(vendor: u16, device: u16) -> Option<Location> {
     None
 }
 
+/// Read the (class, subclass, prog_if) triple for a device. These live in the
+/// upper 3 bytes of the DWORD at offset 0x08 (revision is the low byte).
+pub fn class_triple(loc: Location) -> (u8, u8, u8) {
+    let dw = read_u32(loc.bus, loc.slot, loc.func, 0x08);
+    let class = ((dw >> 24) & 0xFF) as u8;
+    let subclass = ((dw >> 16) & 0xFF) as u8;
+    let prog_if = ((dw >> 8) & 0xFF) as u8;
+    (class, subclass, prog_if)
+}
+
+/// Find the first device on bus 0 matching a (class, subclass, prog_if) triple.
+/// Used for class-coded devices whose vendor/device IDs vary (e.g. NVMe =
+/// 0x01/0x08/0x02). Scans function 0 of each slot.
+pub fn find_by_class(class: u8, subclass: u8, prog_if: u8) -> Option<Location> {
+    for slot in 0..32u8 {
+        let loc = Location { bus: 0, slot, func: 0 };
+        if loc.vendor_id() == 0xFFFF {
+            continue;
+        }
+        if class_triple(loc) == (class, subclass, prog_if) {
+            return Some(loc);
+        }
+    }
+    None
+}
+
+/// Read a 64-bit MMIO BAR pair (BAR0 low + BAR1 high), masking the type bits.
+/// Returns the physical base address, or None if BAR0 is an I/O (not memory) BAR.
+pub fn mmio_bar64(loc: Location) -> Option<u64> {
+    let bar0 = loc.bar0();
+    if bar0 & 1 != 0 {
+        return None; // I/O space BAR, not memory
+    }
+    let bar_type = (bar0 >> 1) & 0x3;
+    let base = if bar_type == 0x2 {
+        let bar1 = read_u32(loc.bus, loc.slot, loc.func, regs::BAR1);
+        ((bar1 as u64) << 32) | ((bar0 as u64) & 0xFFFF_FFF0)
+    } else {
+        (bar0 as u64) & 0xFFFF_FFF0
+    };
+    Some(base)
+}
+
 /// Print a one-line summary of every device on bus 0. Useful for boot-time
 /// diagnostics.
 pub fn print_bus_0() {

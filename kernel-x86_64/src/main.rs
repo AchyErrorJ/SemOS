@@ -55,6 +55,7 @@ pub mod context;
 mod syscall;
 mod keyboard;
 mod editor;
+mod nvme;
 pub mod paging;
 pub mod apic;
 pub mod framebuffer;
@@ -230,6 +231,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if virtio::block::init() {
         if virtio::block::register_with_kernel_core() {
             println!("[virtio-blk] registered with driver registry as 'virtio0'");
+        }
+    }
+    println!();
+
+    println!("[*] Probing NVMe controller...");
+    if nvme::init() {
+        if nvme::register_with_kernel_core() {
+            println!("[nvme] registered with driver registry as 'nvme0'");
         }
     }
     println!();
@@ -1043,6 +1052,13 @@ fn init_loader_task() {
     println!("================================================================");
     editor_demo();
 
+    // DEMO 62: NVMe block I/O via the BlockDevice trait (M9).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 62: NVMe block read/write (M9) via BlockDevice");
+    println!("================================================================");
+    nvme_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1207,6 +1223,55 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 62: NVMe block I/O. Resolves `nvme0` from the driver registry, writes
+/// a known pattern to a high LBA (well clear of the snapshot at sector 0),
+/// reads it back, and verifies byte-for-byte — proving the admin/I/O queue
+/// bring-up + NVM read/write commands work end-to-end through the BlockDevice
+/// trait. Self-skips if no NVMe device is attached.
+fn nvme_demo() {
+    use kernel_core::drivers::registry;
+
+    let dev = match registry::get_block("nvme0") {
+        Some(d) => d,
+        None => {
+            println!("  [DEMO 62] SKIPPED: no nvme0 (run with -device nvme,drive=...,serial=...)");
+            return;
+        }
+    };
+    let bs = dev.block_size();
+    println!("  [DEMO 62] nvme0: {} blocks of {} B", dev.block_count(), bs);
+    if bs == 0 || bs > 4096 {
+        println!("  [DEMO 62] FAIL: implausible block size {}", bs);
+        return;
+    }
+
+    let mut wbuf = [0u8; 4096];
+    let mut rbuf = [0u8; 4096];
+    for (i, b) in wbuf[..bs].iter_mut().enumerate() {
+        *b = (i as u8) ^ 0x5A;
+    }
+    let lba = 100u64;
+
+    if dev.write_blocks(lba, &wbuf[..bs]).is_err() {
+        println!("  [DEMO 62] FAIL: write_blocks(LBA {})", lba);
+        return;
+    }
+    println!("  [DEMO 62] PASS: write_blocks wrote {} B at LBA {}", bs, lba);
+
+    if dev.read_blocks(lba, &mut rbuf[..bs]).is_err() {
+        println!("  [DEMO 62] FAIL: read_blocks(LBA {})", lba);
+        return;
+    }
+    if rbuf[..bs] == wbuf[..bs] {
+        println!("  [DEMO 62] PASS: read_blocks round-trips byte-for-byte ({} B)", bs);
+        println!("  [DEMO 62] => M9: NVMe admin+I/O queues, Identify, NVM read/write verified");
+    } else {
+        let i = rbuf[..bs].iter().zip(wbuf[..bs].iter()).position(|(a, b)| a != b).unwrap_or(0);
+        println!("  [DEMO 62] FAIL: mismatch at byte {} (got 0x{:02X}, want 0x{:02X})",
+            i, rbuf[i], wbuf[i]);
+    }
 }
 
 /// DEMO 61: M21 modal editor. Drives the pure `handle_key` logic with a
