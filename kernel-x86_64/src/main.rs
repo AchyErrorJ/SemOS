@@ -57,6 +57,7 @@ mod keyboard;
 mod editor;
 mod nvme;
 mod hda;
+mod wireless;
 pub mod paging;
 pub mod apic;
 pub mod framebuffer;
@@ -1078,6 +1079,13 @@ fn init_loader_task() {
     println!("================================================================");
     hid_parser_demo();
 
+    // DEMO 65: 802.11 protocol layer (M11 v1) — frame builders ready for metal.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 65: 802.11 / iwlwifi scaffolding (M11)");
+    println!("================================================================");
+    wireless_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1242,6 +1250,94 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 65: 802.11 protocol layer (M11 v1). QEMU has no wireless emulation,
+/// so v1 ships the byte-correct frame builders we'll need on day-1 of metal
+/// (T440p Wireless 7260 → P1 Gen 6 AX211). Builds a Probe Request, an Open
+/// Authentication request, and an EAPOL-Key Msg2 (the STA's WPA2 four-way
+/// handshake reply), validating each against the spec layout. Also confirms
+/// the iwlwifi PCI device-ID table recognises a known AX211 ID.
+fn wireless_demo() {
+    use wireless::{self, mgmt, ie, MacAddr};
+
+    // --- Probe Request -------------------------------------------------------
+    let mac: MacAddr = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+    let ssid = b"SemOS-Test";
+    let mut buf = [0u8; 128];
+    let n = match wireless::build_probe_request(&mut buf, &mac, ssid) {
+        Some(n) => n,
+        None => { println!("  [DEMO 65] FAIL: Probe Request buffer too small"); return; }
+    };
+    // Frame Control low byte: subtype 4 (Probe Req) << 4 | type 0 (Mgmt) << 2 = 0x40.
+    let fc_ok = buf[0] == 0x40 && buf[1] == 0x00;
+    let addrs_ok =
+        buf[4..10] == wireless::BCAST  // Addr1 = broadcast
+        && buf[10..16] == mac           // Addr2 = us
+        && buf[16..22] == wireless::BCAST; // Addr3 = broadcast
+    // SSID IE at offset 24: ID(0), len, "SemOS-Test"
+    let ssid_ie_ok = buf[24] == ie::SSID && buf[25] == ssid.len() as u8
+        && &buf[26..26 + ssid.len()] == ssid;
+    if fc_ok && addrs_ok && ssid_ie_ok && n == 24 + 2 + ssid.len() + 2 + wireless::DEFAULT_RATES.len() {
+        println!("  [DEMO 65] PASS: Probe Request ({} B) — FC=0x{:02X}{:02X}, SSID=\"{}\"",
+            n, buf[0], buf[1], core::str::from_utf8(ssid).unwrap_or("?"));
+    } else {
+        println!("  [DEMO 65] FAIL: Probe Request: fc={} addrs={} ssid_ie={} len={}",
+            fc_ok, addrs_ok, ssid_ie_ok, n);
+        return;
+    }
+
+    // --- Open Authentication -------------------------------------------------
+    let bssid: MacAddr = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+    let mut abuf = [0u8; 64];
+    let an = wireless::build_open_auth_request(&mut abuf, &mac, &bssid).unwrap_or(0);
+    // FC: subtype 11 (Auth) << 4 = 0xB0, type 0.
+    // Body: Auth Algo=0, Seq=1, Status=0.
+    let auth_ok = abuf[0] == 0xB0
+        && abuf[24..26] == [0, 0]            // algo = 0 (Open)
+        && abuf[26..28] == [1, 0]            // seq = 1
+        && abuf[28..30] == [0, 0]            // status = 0
+        && an == 30
+        && abuf[16..22] == bssid;            // Addr3 = BSSID
+    if auth_ok {
+        println!("  [DEMO 65] PASS: Open Authentication ({} B) — algo=0 seq=1 → BSSID {:02X}:..:{:02X}",
+            an, bssid[0], bssid[5]);
+    } else {
+        println!("  [DEMO 65] FAIL: Open Auth byte layout — fc=0x{:02X} body={:02X}{:02X} {:02X}{:02X} {:02X}{:02X}",
+            abuf[0], abuf[24], abuf[25], abuf[26], abuf[27], abuf[28], abuf[29]);
+        return;
+    }
+
+    // --- EAPOL-Key Msg2 ------------------------------------------------------
+    let snonce = [0x5Au8; 32];
+    let mut ebuf = [0u8; 128];
+    let en = wireless::build_eapol_msg2(&mut ebuf, &snonce, 1, &[]).unwrap_or(0);
+    // EAPOL: version=2, type=3 (Key), body_len BE, desc=2 (RSN).
+    let eapol_ok = ebuf[0] == 2 && ebuf[1] == 3
+        && ebuf[2..4] == [(en as u16 - 4).to_be_bytes()[0], (en as u16 - 4).to_be_bytes()[1]]
+        && ebuf[4] == 2;
+    // Key Info has MIC(0x100) + Pairwise(0x08) + KEY_DESC_VER_AES_CMAC(0x02) bits, big-endian.
+    let ki = u16::from_be_bytes([ebuf[5], ebuf[6]]);
+    let ki_ok = (ki & 0x100) != 0 && (ki & 0x08) != 0 && (ki & 0x02) != 0;
+    // SNonce at offset 17..49.
+    let snonce_ok = &ebuf[17..49] == &snonce[..];
+    if eapol_ok && ki_ok && snonce_ok {
+        println!("  [DEMO 65] PASS: EAPOL-Key Msg2 ({} B) — KeyInfo=0x{:04X} (MIC+Pairwise+CCMP), SNonce placed",
+            en, ki);
+    } else {
+        println!("  [DEMO 65] FAIL: EAPOL Msg2 — eapol={} ki={} snonce={}", eapol_ok, ki_ok, snonce_ok);
+        return;
+    }
+
+    // --- iwlwifi device-ID table --------------------------------------------
+    let ax211 = wireless::is_known_iwlwifi(wireless::INTEL_VENDOR_ID, 0x51F0);
+    let stranger = wireless::is_known_iwlwifi(wireless::INTEL_VENDOR_ID, 0xDEAD);
+    if ax211 == Some("Wi-Fi 6E AX211") && stranger.is_none() {
+        println!("  [DEMO 65] PASS: iwlwifi PCI table recognises AX211 (0x51F0) and rejects unknown");
+        println!("  [DEMO 65] => M11 protocol layer ready; firmware/PHY waits for T440p hardware");
+    } else {
+        println!("  [DEMO 65] FAIL: device-id lookup — ax211={:?} stranger={:?}", ax211, stranger);
+    }
 }
 
 /// DEMO 64: HID report-descriptor parser. A canned descriptor for a generic
