@@ -55,6 +55,8 @@ A milestone is **done** when:
 | FS large files — Model A, plan + stage 1 2026-05-27 | **Decision (talked through):** fix the FS for demanding design files via **Model A** — files live in RAM (now up to the 512 MB/pool ceiling), `as_bytes()`'s contiguous-`&[u8]` contract preserved (so the ~11 consumers + `spawn`'s ELF parse don't change), persisted to disk. **Model B** (disk-backed extents, content not resident, multi-GB out-of-core) **deferred until the hardware arrives** — same tier as the deferred GPU. **Per-file size: FIXED CEILING** (not "whatever frames are free"): a single file must never drain a tier pool — that would starve the app's own working set + other files into an OOM cascade; a predictable bound is good hygiene and a one-constant tune. **Stages:** (1) lift the heap-bound cap [done — see next row]; (2a) frame-backed content via a contiguous-frame allocator + `phys_to_virt` (escape the 16 MiB heap → 100s-of-MB in-RAM files, fixed ceiling ~128 MB so one file ≤ ¼ pool); (2b) per-file disk block allocator + persistence so the snapshot is metadata-only and large files persist (today's monolithic snapshot duplicates content into one buffer — the real blocker past a few MB). |
 | FS large files — stage 1 2026-05-27 | **8× the per-file cap, persistable.** `MAX_FILE_CONTENT` 256 KiB→2 MiB and `MAX_SNAPSHOT_BYTES` 1 MiB→4 MiB (heap-backed scratch already), staying within the 16 MiB heap. Content is still one heap `Allocated` blob (contiguous → `as_bytes()` unchanged). DEMO 60 extended: installs a synthesized ~1 MiB file (`/apps/bigdoc`, > the old 256 KiB cap *and* the old 1 MiB snapshot) and verifies it survives reboot byte-pattern-intact. Heap-bound (~2 MiB/file) until stage 2a frame-backs content. Two-boot test (non-net): boot 2 → all three files restored incl. **/apps/bigdoc 1 MiB pattern-intact**; DEMO 26 oversize-rejection re-derived from `MAX_FILE_CONTENT+4 KiB` (no longer drifts). **145 PASS / 0 FAIL / 0 #DF.** Known follow-up: DEMO 5 (raw-snapshot demo) shares virtio0 sector 0 with the namespace snapshot and re-seeds it when its small read buffer hits the 1.1 MB namespace header — harmless for a 2-boot test (namespace already in RAM) but clobbers on-disk persistence on a 3rd boot; give DEMO 5 its own region or skip re-seed when a namespace magic is present. |
 | Interactive mode 2026-05-27 | **the OS is drivable at the keyboard** (`30c5687` + `32a798c`). Cargo feature `interactive` (default off, so headless CI still runs the 60 demos + idles): boot ends by dropping into the live `sem-sh` shell. Fix that made typing work — the USB HID event ring is only drained when polled, and nothing polled it while we waited, so the shell's `SYS_READ` never saw keystrokes; now the wait loop pumps the ring into the line discipline (edge-detected so held keys don't repeat) with explicit framebuffer echo (`input_push` echoes only to serial). New shell builtins: `help` (lists builtins) and `agent` (launches the split-pane TUI as a Claude chat loop via **SYS_AGENT 112** → `Platform::run_agent_tui` → `agent::run_interactive`; `AGENT_TUI_ACTIVE` pauses the shell pump while the TUI owns the keyboard; `framebuffer::clear()` for overlay teardown). Validated windowed via QEMU `sendkey`: typed commands run, `help`/`agent` work, agent prompt echoes + `exit` clears back to the shell; Backspace at an empty prompt no longer eats the prompt. Default build still 141 PASS / 0 FAIL. **Next: native editor (M21).** |
+| M11 v1 (protocol) 2026-05-28 | **802.11 frame builders + iwlwifi PCI scaffolding (DEMO 65, `a0d487b`).** QEMU has no wireless emulation, so v1 = the pieces we'll need on day-1 of metal: `wireless::build_probe_request` / `build_open_auth_request` / `build_association_request` + `build_eapol_msg2` (WPA2 four-way handshake Msg2 with KeyInfo bitflags via bitflags 2.4; MIC left zero for the crypto layer to patch). iwlwifi PCI device-ID table covers T440p (7260/3160 family) and P1 Gen 6 (AX211, 0x51F0/0x51F1/0x54F0). DEMO 65 byte-validates each frame against the IEEE 802.11 layout (Probe Request FC=0x4000 + broadcast addrs + SSID IE, Open Auth algo=0/seq=1, EAPOL KeyInfo=0x010A = MIC+Pairwise+CCMP) and the PCI table. 154 PASS / 0 FAIL. Follow-ups (all hardware-gated): firmware-upload secboot, ALIVE event, PHY init (NVM+PNVM+regulatory+calibration), TX/RX command queues, four-way handshake MIC over the derived PTK. |
+| M16 HID parser 2026-05-28 | **HID report descriptor parser + gamepad decode (DEMO 64, `d4b8e2d`).** Pure-module v1 since QEMU has no gamepad: `usb::hid_report::parse` walks a HID 1.11 descriptor (short items, global/local state, Usage Min/Max ranges, multi-usage Input, signed Logical Min/Max, Output/Feature offset advancement) → `ReportLayout` flat field table (no_std, no alloc). `decode_gamepad` extracts standard axes (X/Y/Z/Rx/Ry/Rz/Hat) + first 32 buttons. Validated against a canonical Generic-Desktop Game Pad descriptor + synthetic report `[0x42, 0xFE, 0x0A]` → `x=66, y=-2 (sign-extended), buttons=0b1010`. 150 PASS / 0 FAIL. Follow-ups (hardware-gated): fetch report descriptor via USB control transfer, route input reports in xHCI, expose a Gamepad input device. |
 | M15 HD Audio 2026-05-28 | **Intel HDA controller + codec walk + PCM output (DEMO 63, `3f8fed2`).** PCI class-coded discovery (0x04/0x03/0x00), 64-bit MMIO BAR, controller reset, STATESTS-based codec discovery, walk root → AFG → first DAC + first Pin. Codec verbs via the **Immediate Command Interface** (ICI: ICO/IRI/IRS at 0x60/0x64/0x68) — CORB/RIRB-via-DMA was flaky in QEMU after the first verb. Pin: D0 + OUT_EN + EAPD. DAC: 48 kHz 16-bit stereo format, stream tag 1, unmute output amp. BDL with one entry pointing at a page-aligned 4 KiB PCM buffer holding a 440 Hz sine (16-step LUT). Output stream descriptor at MMIO `0x80 + 0x20*ISS`: CBL/LVI/FMT/BDPL/BDPU/CTL+RUN. **Validation:** LPIB sampled twice over a sleep advances (DMA active = playback). 147 PASS / 0 FAIL / 0 #DF. Follow-ups: CORB/RIRB on real metal, MSI-X, capture (ADC), gapless wrap. |
 | M9 NVMe 2026-05-27 | **NVMe block driver (DEMO 62, `53cdc1a`).** PCI class-coded discovery (0x01/0x08/0x02), 64-bit MMIO BAR, admin queue bring-up (reset → AQA/ASQ/ACQ → CC.EN → CSTS.RDY), Identify Namespace (NSZE + active LBA format → block_count + block_size), Create-I/O-CQ + Create-I/O-SQ (qid 1), NVM Read/Write via PRP1 (one LBA/cmd, BlockDevice loops). Polled completions with phase-bit tracking. Page-aligned BSS queues/buffers for contiguous DMA. Registered as `nvme0`. First-boot validation in QEMU: PCI 00:04.0, MMIO=0xFEBF0000, 65536 blocks × 512 B, write+read byte-for-byte. 146 PASS / 0 FAIL / 0 #DF. Follow-ups: MSI-X, multi-block PRP lists, real error recovery. |
 | M21 editor + console UX 2026-05-27 | **native modal editor + readable console.** `edit <file>` (`94581a8`, DEMO 61) launches a kernel-side vi-style editor (SYS_EDIT → `Platform::run_editor`): Normal/Insert/Command modes, `hjkl`/`0$`/`iaAoO`/`x`/`dd`/`gg`/`G`/`/n`, `:w :q :q! :wq`, Rust syntax highlighting (keywords/strings/comments/numbers) via the M7 TTF renderer, block/bar cursor, status line. Edit logic is pure (testable headlessly — DEMO 61 scripts gg→o→insert→Esc→:w + verifies the FS round-trip). Also: **2× console font** (`6230d97`, ~80×36 cells, readable) and a **scrollback pager** (`78b6bb2`, PageUp/PageDown/End over the byte ring, view freezes while reading). All keyless builds; 144 PASS / 0 FAIL / 0 #DF headless. Search-and-replace, multi-buffer, and the Ring-3 port are follow-ups. |
@@ -302,23 +304,27 @@ the first real-hardware session.
 - [ ] "Kernel didn't crash" watchdog: framebuffer last-line banner
       written by the idle loop, so a stalled kernel is visible
 
-## M11 — iwlwifi (AX211) driver `[  ]`
+## M11 — iwlwifi driver `[🔨 v1 protocol layer; device on metal]`
 
-802.11 over Intel AX211.
+802.11 over Intel WiFi. Two-stage hardware bring-up: T440p (7260/3160
+mini-PCIe) first, then P1 Gen 6 (AX211). v1 in-tree protocol scaffolding
+landed `a0d487b` (DEMO 65) since QEMU emulates no wireless — everything
+else here waits for a T440p in hand.
 
 **Done when:**
-- [ ] Intel firmware blobs (`iwlwifi-so-a0-gf-a0-N.ucode` + `.pnvm`)
-      embedded in ramfs
+- [✅] **802.11 MAC: management frame builders** (Probe Request,
+      Open Authentication, Association Request) + EAPOL-Key Msg2 —
+      byte-validated against the spec layout in DEMO 65
+- [✅] iwlwifi PCI device-ID table (T440p 7260 family + P1 AX211)
+- [ ] Intel firmware blobs (`iwlwifi-...ucode` + `.pnvm`) embedded
 - [ ] Firmware upload + secboot succeeds; ALIVE event received
 - [ ] PHY init: NVM + PNVM + regulatory + channel calibration
-- [ ] 802.11 MAC: management frame builder (Probe/Auth/Assoc Request,
-      EAPOL frames)
-- [ ] WPA2 four-way handshake in software, CCMP encrypt/decrypt
-      offloaded to firmware after keys installed
-- [ ] Bring up a CDC-ECM USB Ethernet path FIRST as a fallback so
-      the TLS stack can be exercised on metal before Wi-Fi works
-- [ ] DEMO 26 associates to a hardcoded SSID, gets DHCP, repeats
-      DEMO 16's handshake to api.anthropic.com over real Wi-Fi
+- [ ] WPA2 four-way handshake in software (MIC over derived PTK),
+      CCMP encrypt/decrypt offloaded to firmware after keys installed
+- [ ] Bring up a CDC-ECM USB Ethernet path FIRST as a fallback so the
+      TLS stack can be exercised on metal before Wi-Fi works
+- [ ] DEMO repeats: associate to a hardcoded SSID, get DHCP, redo the
+      Anthropic TLS round-trip over real Wi-Fi
 
 ## M12 — DNS resolver `[✅]`
 
@@ -400,14 +406,25 @@ QEMU's `-device intel-hda -device hda-output` proved the full path in-tree.
   has a small click at the buffer wrap; choose a buffer length that's a
   whole number of 440 Hz periods to fix).
 
-## M16 — USB HID gamepad `[  ]`
+## M16 — USB HID gamepad `[✅ parser; live xHCI wiring on metal]`
 
-Extension of M3 (USB keyboard) once that's working.
+v1 landed `d4b8e2d` (DEMO 64). QEMU has no gamepad device, so v1 ships
+the actually-hard piece — the report descriptor parser — as a pure
+module, validated by canned descriptor + synthetic report. Wiring to a
+real gamepad over xHCI is a small extension once T440p/P1 is around.
 
 **Done when:**
-- [ ] HID report descriptor parser (real one, not boot protocol)
-- [ ] Gamepad axis + button report parsing
-- [ ] DEMO 29 reads and prints gamepad input
+- [✅] HID report descriptor parser (real one, not boot protocol) —
+      `usb::hid_report::parse` handles short items, Usage Min/Max,
+      multi-usage Input items, Output/Feature offset, signed extension
+- [✅] Gamepad axis + button report parsing —
+      `decode_gamepad()` returns `{x,y,z,rx,ry,rz,hat, buttons:u32}`
+- [✅] DEMO 64 parses a canonical Game Pad descriptor (X+Y signed 8-bit
+      + 4 buttons + padding) and round-trips a synthetic report
+      (x=66, y=-2 sign-extended, buttons=0b1010). 150 PASS / 0 FAIL.
+- Follow-ups: fetch a HID Report Descriptor over a USB control
+  transfer in xHCI; route input reports through the parser; expose a
+  Gamepad input device. All hardware-gated.
 
 ## M17 — Software video decoder (H.264 minimum) `[  ]`
 
