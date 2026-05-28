@@ -1134,8 +1134,36 @@ fn init_loader_task() {
     #[cfg(feature = "interactive")]
     interactive_session();
 
+    // M10 watchdog (the "kernel didn't crash" heartbeat). Periodically print
+    // a line that proves the scheduler is still running — critical on bare
+    // metal without serial, where a frozen framebuffer would otherwise be
+    // indistinguishable from a panic'd or wedged kernel.
+    idle_with_heartbeat();
+}
+
+/// M10 watchdog: print a single "boot reached idle" line with the framebuffer
+/// path + the current tick count, then spin. On metal-without-serial this is
+/// the proof-of-life that the kernel reached idle cleanly (vs. wedging mid-
+/// demo or panicking silently). The line carries the final tick value so a
+/// frozen screen with a known T+ value tells you what happened.
+///
+/// **Known limitation:** this is a one-shot, not a continuous beat. After the
+/// initial print, the timer ISR's `context::schedule()` preempts init and the
+/// scheduler doesn't currently round-robin back to a non-pinned init task —
+/// subsequent beats are lost. Continuous heartbeats need a proper kernel
+/// idle-task slot (M10 follow-up: "kernel idle task with periodic redraw"),
+/// independent of init_loader_task's lifecycle. For now the one-shot is the
+/// signal that matters: present + correct ticks = boot succeeded.
+fn idle_with_heartbeat() -> ! {
+    let ticks = kernel_core::platform::ticks();
+    println!(
+        "[heartbeat] kernel reached idle — ticks={} (M10 watchdog, one-shot v1)",
+        ticks
+    );
+    // We deliberately busy-spin rather than hlt: hlt loses us to the scheduler
+    // for good (same root cause as the missing beats — a follow-up).
     loop {
-        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+        core::hint::spin_loop();
     }
 }
 

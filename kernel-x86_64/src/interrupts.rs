@@ -517,8 +517,13 @@ fn kill_current_task() {
 // Hardware Interrupt Handlers
 // ============================================================================
 
-/// Timer tick counter
-static TIMER_TICKS: spin::Mutex<u64> = spin::Mutex::new(0);
+/// Timer tick counter. **AtomicU64, not Mutex** — a spin::Mutex here would
+/// deadlock: a normal-context reader (e.g. the M10 heartbeat) holds the lock
+/// briefly; if the timer ISR fires in that window it tries to lock the same
+/// mutex, can't get CPU back to the reader, and the ISR spins forever. Atomic
+/// load/store is exactly what we need — single u64, no internal invariants.
+static TIMER_TICKS: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
 
 extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFrame) {
     // task#40 diagnostic: if the CPU just pushed an iret frame with
@@ -546,10 +551,7 @@ extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFra
             }
         }
     }
-    {
-        let mut ticks = TIMER_TICKS.lock();
-        *ticks += 1;
-    }
+    TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // Send EOI before context switch — APIC if active, else legacy PIC.
     if crate::apic::is_active() {
@@ -577,5 +579,5 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 
 /// Get the current timer tick count.
 pub fn get_ticks() -> u64 {
-    *TIMER_TICKS.lock()
+    TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed)
 }
