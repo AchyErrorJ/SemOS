@@ -56,7 +56,7 @@ A milestone is **done** when:
 | FS large files — stage 1 2026-05-27 | **8× the per-file cap, persistable.** `MAX_FILE_CONTENT` 256 KiB→2 MiB and `MAX_SNAPSHOT_BYTES` 1 MiB→4 MiB (heap-backed scratch already), staying within the 16 MiB heap. Content is still one heap `Allocated` blob (contiguous → `as_bytes()` unchanged). DEMO 60 extended: installs a synthesized ~1 MiB file (`/apps/bigdoc`, > the old 256 KiB cap *and* the old 1 MiB snapshot) and verifies it survives reboot byte-pattern-intact. Heap-bound (~2 MiB/file) until stage 2a frame-backs content. Two-boot test (non-net): boot 2 → all three files restored incl. **/apps/bigdoc 1 MiB pattern-intact**; DEMO 26 oversize-rejection re-derived from `MAX_FILE_CONTENT+4 KiB` (no longer drifts). **145 PASS / 0 FAIL / 0 #DF.** Known follow-up: DEMO 5 (raw-snapshot demo) shares virtio0 sector 0 with the namespace snapshot and re-seeds it when its small read buffer hits the 1.1 MB namespace header — harmless for a 2-boot test (namespace already in RAM) but clobbers on-disk persistence on a 3rd boot; give DEMO 5 its own region or skip re-seed when a namespace magic is present. |
 | Interactive mode 2026-05-27 | **the OS is drivable at the keyboard** (`30c5687` + `32a798c`). Cargo feature `interactive` (default off, so headless CI still runs the 60 demos + idles): boot ends by dropping into the live `sem-sh` shell. Fix that made typing work — the USB HID event ring is only drained when polled, and nothing polled it while we waited, so the shell's `SYS_READ` never saw keystrokes; now the wait loop pumps the ring into the line discipline (edge-detected so held keys don't repeat) with explicit framebuffer echo (`input_push` echoes only to serial). New shell builtins: `help` (lists builtins) and `agent` (launches the split-pane TUI as a Claude chat loop via **SYS_AGENT 112** → `Platform::run_agent_tui` → `agent::run_interactive`; `AGENT_TUI_ACTIVE` pauses the shell pump while the TUI owns the keyboard; `framebuffer::clear()` for overlay teardown). Validated windowed via QEMU `sendkey`: typed commands run, `help`/`agent` work, agent prompt echoes + `exit` clears back to the shell; Backspace at an empty prompt no longer eats the prompt. Default build still 141 PASS / 0 FAIL. **Next: native editor (M21).** |
 | CDC-ECM v1 2026-05-28 | **USB Ethernet descriptor parser (DEMO 66, `e79a3a3`).** The M11 fallback path — a USB-to-Ethernet dongle lets TLS run on metal before iwlwifi works. Protocol v1: class/subclass/protocol IDs (0x02/0x06 control, 0x0A data), `parse_config` walks the full configuration blob (skipping Header/Union functional descriptors, picking up CDC Ethernet Functional Descriptor for iMAC/MTU, finding the Data interface alt with bulk EPs), `parse_mac_string` decodes the UTF-16LE 12-hex-digit MAC string (CDC §5.4). Validated against a realistic config blob → iface 0 control, iface 1 alt 1 data, bulk 0x81/0x02 MPS 512, MAC `02:BA:DC:AF:E0:01`, MTU 1514. 157 PASS / 0 FAIL. Live xHCI bulk-endpoint TX/RX is the follow-up on real hardware. |
-| M11 v1 (protocol) 2026-05-28 | **802.11 frame builders + iwlwifi PCI scaffolding (DEMO 65, `a0d487b`).** QEMU has no wireless emulation, so v1 = the pieces we'll need on day-1 of metal: `wireless::build_probe_request` / `build_open_auth_request` / `build_association_request` + `build_eapol_msg2` (WPA2 four-way handshake Msg2 with KeyInfo bitflags via bitflags 2.4; MIC left zero for the crypto layer to patch). iwlwifi PCI device-ID table covers T440p (7260/3160 family) and P1 Gen 6 (AX211, 0x51F0/0x51F1/0x54F0). DEMO 65 byte-validates each frame against the IEEE 802.11 layout (Probe Request FC=0x4000 + broadcast addrs + SSID IE, Open Auth algo=0/seq=1, EAPOL KeyInfo=0x010A = MIC+Pairwise+CCMP) and the PCI table. 154 PASS / 0 FAIL. Follow-ups (all hardware-gated): firmware-upload secboot, ALIVE event, PHY init (NVM+PNVM+regulatory+calibration), TX/RX command queues, four-way handshake MIC over the derived PTK. |
+| M11 v1 (protocol) 2026-05-28 | **802.11 frame builders + iwlwifi PCI scaffolding (DEMO 65, `a0d487b`).** QEMU has no wireless emulation, so v1 = the pieces we'll need on day-1 of metal: `wireless::build_probe_request` / `build_open_auth_request` / `build_association_request` + `build_eapol_msg2` (WPA2 four-way handshake Msg2 with KeyInfo bitflags via bitflags 2.4; MIC left zero for the crypto layer to patch). iwlwifi PCI device-ID table covers T540 (7260/3160 family) and P1 Gen 6 (AX211, 0x51F0/0x51F1/0x54F0). DEMO 65 byte-validates each frame against the IEEE 802.11 layout (Probe Request FC=0x4000 + broadcast addrs + SSID IE, Open Auth algo=0/seq=1, EAPOL KeyInfo=0x010A = MIC+Pairwise+CCMP) and the PCI table. 154 PASS / 0 FAIL. Follow-ups (all hardware-gated): firmware-upload secboot, ALIVE event, PHY init (NVM+PNVM+regulatory+calibration), TX/RX command queues, four-way handshake MIC over the derived PTK. |
 | M16 HID parser 2026-05-28 | **HID report descriptor parser + gamepad decode (DEMO 64, `d4b8e2d`).** Pure-module v1 since QEMU has no gamepad: `usb::hid_report::parse` walks a HID 1.11 descriptor (short items, global/local state, Usage Min/Max ranges, multi-usage Input, signed Logical Min/Max, Output/Feature offset advancement) → `ReportLayout` flat field table (no_std, no alloc). `decode_gamepad` extracts standard axes (X/Y/Z/Rx/Ry/Rz/Hat) + first 32 buttons. Validated against a canonical Generic-Desktop Game Pad descriptor + synthetic report `[0x42, 0xFE, 0x0A]` → `x=66, y=-2 (sign-extended), buttons=0b1010`. 150 PASS / 0 FAIL. Follow-ups (hardware-gated): fetch report descriptor via USB control transfer, route input reports in xHCI, expose a Gamepad input device. |
 | M15 HD Audio 2026-05-28 | **Intel HDA controller + codec walk + PCM output (DEMO 63, `3f8fed2`).** PCI class-coded discovery (0x04/0x03/0x00), 64-bit MMIO BAR, controller reset, STATESTS-based codec discovery, walk root → AFG → first DAC + first Pin. Codec verbs via the **Immediate Command Interface** (ICI: ICO/IRI/IRS at 0x60/0x64/0x68) — CORB/RIRB-via-DMA was flaky in QEMU after the first verb. Pin: D0 + OUT_EN + EAPD. DAC: 48 kHz 16-bit stereo format, stream tag 1, unmute output amp. BDL with one entry pointing at a page-aligned 4 KiB PCM buffer holding a 440 Hz sine (16-step LUT). Output stream descriptor at MMIO `0x80 + 0x20*ISS`: CBL/LVI/FMT/BDPL/BDPU/CTL+RUN. **Validation:** LPIB sampled twice over a sleep advances (DMA active = playback). 147 PASS / 0 FAIL / 0 #DF. Follow-ups: CORB/RIRB on real metal, MSI-X, capture (ADC), gapless wrap. |
 | M9 NVMe 2026-05-27 | **NVMe block driver (DEMO 62, `53cdc1a`).** PCI class-coded discovery (0x01/0x08/0x02), 64-bit MMIO BAR, admin queue bring-up (reset → AQA/ASQ/ACQ → CC.EN → CSTS.RDY), Identify Namespace (NSZE + active LBA format → block_count + block_size), Create-I/O-CQ + Create-I/O-SQ (qid 1), NVM Read/Write via PRP1 (one LBA/cmd, BlockDevice loops). Polled completions with phase-bit tracking. Page-aligned BSS queues/buffers for contiguous DMA. Registered as `nvme0`. First-boot validation in QEMU: PCI 00:04.0, MMIO=0xFEBF0000, 65536 blocks × 512 B, write+read byte-for-byte. 146 PASS / 0 FAIL / 0 #DF. Follow-ups: MSI-X, multi-block PRP lists, real error recovery. |
@@ -252,8 +252,8 @@ Anti-aliased lines/curves/fills for the design apps. Landed `cb6c726`.
 
 ## M9 — NVMe driver `[✅]`
 
-Block storage on real hardware (T440p/P1 stage). QEMU's NVMe model
-proved the bring-up in-tree before either machine arrives. v1 landed
+Block storage on real hardware (**P1 stage only** — the T540 is SATA, not
+NVMe, see Phase 10). QEMU's NVMe model proved the bring-up in-tree. v1 landed
 `53cdc1a` (DEMO 62).
 
 **Done when:**
@@ -276,19 +276,29 @@ Goal: the kernel boots on real hardware, runs the same DEMOs, and can
 reach api.anthropic.com over Wi-Fi (currently TLS works via QEMU SLIRP
 forwarding).
 
-**Two-machine bring-up (decided 2026-05-27):**
-- **Stage 1 — ThinkPad T440p (acquired first, cheap validation box).**
-  Haswell, coreboot/Linux-friendly, removable mini-PCIe Wi-Fi, Intel HD
-  4600 iGPU only. Validate the **bootloader + kernel on real metal**
-  (M10 pre-flight, first-boot, USB, storage, task#40 on a real APIC),
-  then **Wi-Fi (M11)** on its iwlwifi card (7260/AC-family — different
-  firmware blob than AX211 but same driver shape). De-risks before the
-  expensive P1.
+**Two-machine bring-up (T540 on the way 2026-05-28):**
+- **Stage 1 — ThinkPad T540 (ACQUIRED, on the way).** i7-4600M Haswell,
+  8 GB RAM, 256 GB SATA SSD, Win10 preinstalled. Removable mini-PCIe
+  Wi-Fi (likely Intel 7260 AC), Intel HD 4600 iGPU only. Validate the
+  **bootloader + kernel on real metal** (M10 pre-flight, first-boot,
+  USB, task#40 on a real APIC), then **Wi-Fi (M11)** via iwlwifi 7260
+  (different firmware blob than AX211 but same driver shape — our M11
+  v1 PCI ID table + frame builders cover both already).
+  **T540 deltas vs the earlier T440p plan:**
+  - **SSD is SATA, not NVMe** (T540-era predates factory NVMe). M9 NVMe
+    does NOT exercise here — that waits for the P1. To use the internal
+    disk on the T540 we need a new **AHCI/SATA driver**. For initial
+    metal bring-up we can avoid that by booting from USB.
+  - **USB Mass Storage** class becomes a meaningful goal: boot-from-USB
+    needs it on metal, independent of any AHCI work.
+  - Windows 10 stays on the disk; we dual-boot off USB. Disable Secure
+    Boot in firmware.
 - **Stage 2 — ThinkPad P1 Gen 6 (the real target, later).** Only once
-  proven on the T440p. This is where **GPU work begins** (Phase 11/12,
-  Iris Xe + NVIDIA) — gated on the P1, since neither QEMU nor the T440p
-  has the silicon. Everything else stays QEMU-developed meanwhile; note
-  NVMe (M9) and HD Audio (M15) are QEMU-modelled, so buildable now.
+  proven on the T540. This is where **GPU work begins** (Phase 11/12,
+  Iris Xe + NVIDIA) AND **M9 NVMe gets its first real-hardware test** —
+  the T540's SATA SSD means M9 stays QEMU-only until then. HD Audio
+  (M15), CDC-ECM, HID parser, 802.11 protocol layer are all QEMU /
+  canned-test validated and ready for either machine.
 
 ## M10 — Pre-flight checklist for bare-metal boot `[  ]`
 
@@ -307,16 +317,16 @@ the first real-hardware session.
 
 ## M11 — iwlwifi driver `[🔨 v1 protocol layer; device on metal]`
 
-802.11 over Intel WiFi. Two-stage hardware bring-up: T440p (7260/3160
+802.11 over Intel WiFi. Two-stage hardware bring-up: T540 (7260/3160
 mini-PCIe) first, then P1 Gen 6 (AX211). v1 in-tree protocol scaffolding
 landed `a0d487b` (DEMO 65) since QEMU emulates no wireless — everything
-else here waits for a T440p in hand.
+else here waits for a T540 in hand.
 
 **Done when:**
 - [✅] **802.11 MAC: management frame builders** (Probe Request,
       Open Authentication, Association Request) + EAPOL-Key Msg2 —
       byte-validated against the spec layout in DEMO 65
-- [✅] iwlwifi PCI device-ID table (T440p 7260 family + P1 AX211)
+- [✅] iwlwifi PCI device-ID table (T540 7260 family + P1 AX211)
 - [ ] Intel firmware blobs (`iwlwifi-...ucode` + `.pnvm`) embedded
 - [ ] Firmware upload + secboot succeeds; ALIVE event received
 - [ ] PHY init: NVM + PNVM + regulatory + channel calibration
@@ -416,7 +426,7 @@ QEMU's `-device intel-hda -device hda-output` proved the full path in-tree.
 v1 landed `d4b8e2d` (DEMO 64). QEMU has no gamepad device, so v1 ships
 the actually-hard piece — the report descriptor parser — as a pure
 module, validated by canned descriptor + synthetic report. Wiring to a
-real gamepad over xHCI is a small extension once T440p/P1 is around.
+real gamepad over xHCI is a small extension once T540/P1 is around.
 
 **Done when:**
 - [✅] HID report descriptor parser (real one, not boot protocol) —
