@@ -1086,6 +1086,13 @@ fn init_loader_task() {
     println!("================================================================");
     wireless_demo();
 
+    // DEMO 66: CDC-ECM (USB Ethernet) protocol layer.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 66: CDC-ECM USB Ethernet — descriptor parser");
+    println!("================================================================");
+    cdc_ecm_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1250,6 +1257,84 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 66: CDC-ECM protocol layer (M11-prereq). Feeds a realistic CDC-ECM
+/// configuration descriptor blob (Comm-class iface + Ethernet Functional
+/// Descriptor + Data-class iface alt 0 with 0 EPs + alt 1 with bulk IN/OUT)
+/// through the parser, then decodes the MAC string descriptor. Verifies
+/// interface routing, MAC discovery, and MTU. Hardware-ready for a USB
+/// Ethernet adapter on the T440p once the xHCI driver gains bulk endpoints.
+fn cdc_ecm_demo() {
+    use usb::cdc_ecm;
+
+    // Canned config blob — realistic CDC-ECM shape (the QEMU usb-net device
+    // emits essentially this, modulo string indices and MPS values).
+    #[rustfmt::skip]
+    let cfg: &[u8] = &[
+        // Interface 0 (Comm / ECM control), 1 endpoint, class 0x02 sub 0x06
+        0x09, 0x04, 0x00, 0x00, 0x01, 0x02, 0x06, 0x00, 0x00,
+        // CDC Header functional descriptor (CDC 1.10)
+        0x05, 0x24, 0x00, 0x10, 0x01,
+        // CDC Union functional descriptor (controls iface 0, slaves iface 1)
+        0x05, 0x24, 0x06, 0x00, 0x01,
+        // CDC Ethernet Networking functional descriptor:
+        //   iMACAddress=0x03, bmEthStats=0, wMaxSegmentSize=0x05EA (1514),
+        //   wNumberMCFilters=0, bNumberPowerFilters=0
+        0x0D, 0x24, 0x0F, 0x03, 0x00, 0x00, 0x00, 0x00, 0xEA, 0x05, 0x00, 0x00, 0x00,
+        // Interface 1 alt 0 (Data class, 0 endpoints — disabled state)
+        0x09, 0x04, 0x01, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00,
+        // Interface 1 alt 1 (Data class, 2 bulk endpoints — active state)
+        0x09, 0x04, 0x01, 0x01, 0x02, 0x0A, 0x00, 0x00, 0x00,
+        // Bulk IN endpoint 0x81, MPS 512
+        0x07, 0x05, 0x81, 0x02, 0x00, 0x02, 0x00,
+        // Bulk OUT endpoint 0x02, MPS 512
+        0x07, 0x05, 0x02, 0x02, 0x00, 0x02, 0x00,
+    ];
+
+    let ecm = cdc_ecm::parse_config(cfg);
+    if !ecm.found {
+        println!("  [DEMO 66] FAIL: CDC-ECM control interface not found in blob");
+        return;
+    }
+    let ifaces_ok =
+        ecm.control_iface == 0
+            && ecm.data_iface == 1
+            && ecm.data_alt == 1
+            && ecm.bulk.in_addr == 0x81
+            && ecm.bulk.out_addr == 0x02
+            && ecm.bulk.in_mps == 512
+            && ecm.bulk.out_mps == 512;
+    if ifaces_ok {
+        println!("  [DEMO 66] PASS: routing — control iface 0, data iface 1 alt 1, bulk IN 0x81 / OUT 0x02 (MPS 512)");
+    } else {
+        println!("  [DEMO 66] FAIL: routing — {:?}", ecm);
+        return;
+    }
+    if ecm.i_mac == 3 && ecm.mtu == 1514 {
+        println!("  [DEMO 66] PASS: Ethernet functional — iMAC=3, MTU=1514");
+    } else {
+        println!("  [DEMO 66] FAIL: functional — iMAC={} MTU={}", ecm.i_mac, ecm.mtu);
+        return;
+    }
+
+    // Now decode a MAC string descriptor (USB CDC §5.4: 12 ASCII hex digits
+    // in a UTF-16LE string descriptor). Pretend the device's iMACAddress
+    // resolves to the string "02BADCAFE001" → MAC 02:BA:DC:AF:E0:01.
+    let mac_str: &[u8] = &[
+        26, 0x03, // bLength=26 (2 header + 12*2), bDescriptorType=STRING(0x03)
+        b'0', 0, b'2', 0, b'B', 0, b'A', 0, b'D', 0, b'C', 0,
+        b'A', 0, b'F', 0, b'E', 0, b'0', 0, b'0', 0, b'1', 0,
+    ];
+    let mac = cdc_ecm::parse_mac_string(mac_str);
+    if mac == Some([0x02, 0xBA, 0xDC, 0xAF, 0xE0, 0x01]) {
+        let m = mac.unwrap();
+        println!("  [DEMO 66] PASS: MAC string decoded → {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            m[0], m[1], m[2], m[3], m[4], m[5]);
+        println!("  [DEMO 66] => CDC-ECM ready for a USB-Ethernet dongle on metal; live xHCI bulk endpoints are the follow-up");
+    } else {
+        println!("  [DEMO 66] FAIL: MAC string decode → {:?}", mac);
+    }
 }
 
 /// DEMO 65: 802.11 protocol layer (M11 v1). QEMU has no wireless emulation,
