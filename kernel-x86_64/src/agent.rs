@@ -700,7 +700,7 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
 ///
 /// While this runs, the shell is blocked in the syscall and the interactive
 /// wait loop must not pump the HID ring (it would race our `read_line` pump),
-/// so we hold `AGENT_TUI_ACTIVE` for the duration and clear the screen on exit.
+/// so we hold `FULLSCREEN_APP_ACTIVE` for the duration and clear the screen on exit.
 pub fn run_interactive(_flags: u64) -> u64 {
     use crate::tui::Tui;
     use core::sync::atomic::Ordering;
@@ -719,7 +719,7 @@ pub fn run_interactive(_flags: u64) -> u64 {
         tui.push_error("(no ANTHROPIC_KEY in this build — you can type, but chatting needs a key)");
     }
 
-    crate::AGENT_TUI_ACTIVE.store(true, Ordering::Relaxed);
+    crate::FULLSCREEN_APP_ACTIVE.store(true, Ordering::Relaxed);
 
     let mut out = [0u8; 8192];
     loop {
@@ -744,7 +744,7 @@ pub fn run_interactive(_flags: u64) -> u64 {
         tui.push_assistant(answer);
     }
 
-    crate::AGENT_TUI_ACTIVE.store(false, Ordering::Relaxed);
+    crate::FULLSCREEN_APP_ACTIVE.store(false, Ordering::Relaxed);
     // Tear down the overlay so the shell prompt resumes on a clean screen.
     crate::framebuffer::clear();
     0

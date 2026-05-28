@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_OPEN,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -234,7 +234,7 @@ fn is_builtin(name: &str) -> bool {
     matches!(
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
-            | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent"
+            | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
     )
 }
 
@@ -865,6 +865,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  uptime              ticks since boot");
             println!("  ask QUESTION        ask the OS's Claude agent (one-shot)");
             println!("  agent               open the split-pane agent terminal");
+            println!("  edit FILE           open the modal text editor (vi-style)");
             println!("  fetch URL           HTTP GET (http:// only)");
             println!("  exit [CODE]         leave the shell");
             println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
@@ -878,6 +879,18 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // restores the console afterward. Needs a baked-in ANTHROPIC_KEY
             // for live answers; without one it reports that and returns.
             let rc = unsafe { syscall1(SYS_AGENT, 0) };
+            rc as i32
+        }
+        "edit" => {
+            // Hand off to the kernel-side modal editor (SYS_EDIT). Blocks until
+            // the user quits (`:q`), then the kernel clears the screen and
+            // control returns here.
+            if argv.len() < 2 {
+                println!("edit: usage: edit <file>");
+                return 2;
+            }
+            let p = argv[1].as_bytes();
+            let rc = unsafe { syscall2(SYS_EDIT, p.as_ptr() as u64, p.len() as u64) };
             rc as i32
         }
         _ => exec_external(&argv),

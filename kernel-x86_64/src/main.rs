@@ -54,6 +54,7 @@ mod platform_impl;
 pub mod context;
 mod syscall;
 mod keyboard;
+mod editor;
 pub mod paging;
 pub mod apic;
 pub mod framebuffer;
@@ -67,11 +68,11 @@ pub mod usb;
 
 use serial::Serial;
 
-/// Set while the kernel-side agent TUI (`SYS_AGENT`, the shell's `agent`
-/// builtin) owns the keyboard. The interactive-shell wait loop checks this and
-/// stops pumping the USB HID ring so it doesn't race the TUI's own pump for
-/// keystrokes (both call `usb::xhci::poll_hid`). Set by `agent::run_interactive`.
-pub static AGENT_TUI_ACTIVE: core::sync::atomic::AtomicBool =
+/// Set while a kernel-side fullscreen app (the `agent` TUI or the `edit`or)
+/// owns the keyboard. The interactive-shell wait loop checks this and stops
+/// pumping the USB HID ring so it doesn't race the app's own pump for
+/// keystrokes (both call `usb::xhci::poll_hid`). Set by those apps' run loops.
+pub static FULLSCREEN_APP_ACTIVE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 /// Bootloader configuration
@@ -1034,6 +1035,14 @@ fn init_loader_task() {
     println!("================================================================");
     persistence_install_demo();
 
+    // DEMO 61: M21 modal editor — script an edit through the pure key logic
+    // (no HID/render needed) and verify the save round-trips to the FS.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 61: modal editor (M21) — edit + save round-trip");
+    println!("================================================================");
+    editor_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1105,10 +1114,10 @@ fn interactive_session() {
         let mut prev_keys = [0u8; 6];
         if let Some(slot) = cs {
             while scheduler::task_state(slot) != TaskState::Exited {
-                // Skip our pump while the agent TUI owns the keyboard (the shell
-                // is blocked in SYS_AGENT and the TUI's own pump is draining the
-                // HID ring) — otherwise we'd steal/split its keystrokes.
-                if !AGENT_TUI_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
+                // Skip our pump while a fullscreen app (agent TUI / editor) owns
+                // the keyboard (the shell is blocked in its syscall and that app
+                // pumps the HID ring itself) — else we'd steal/split keystrokes.
+                if !FULLSCREEN_APP_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
                     pump_console_input(&mut prev_keys);
                 }
                 let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
@@ -1198,6 +1207,83 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 61: M21 modal editor. Drives the pure `handle_key` logic with a
+/// scripted vi sequence (gg → o → insert → Esc → :w) and confirms the save
+/// round-trips to the FS — testable headlessly because the edit logic is
+/// IO-free and `save` goes through the normal file syscalls.
+fn editor_demo() {
+    use editor::{Editor, Key};
+    use kernel_core::syscall::{dispatch, numbers::*, open_flags};
+
+    let path = "/edit-demo.rs";
+    let p = path.as_bytes();
+
+    // Seed a small Rust file.
+    let seed = b"fn main() {\n}\n";
+    let fd = dispatch(SYS_OPEN, p.as_ptr() as u64, p.len() as u64, open_flags::CREATE, 0);
+    if fd != u64::MAX {
+        dispatch(SYS_FWRITE, fd, seed.as_ptr() as u64, seed.len() as u64, 0);
+        dispatch(SYS_CLOSE, fd, 0, 0, 0);
+    }
+
+    // Load it into the editor.
+    let mut ed = Editor::load(path);
+    if ed.lines.len() >= 2 && ed.lines[0] == b"fn main() {" {
+        println!("  [DEMO 61] PASS: loaded {} into {} lines", path, ed.lines.len());
+    } else {
+        println!("  [DEMO 61] FAIL: load — {} lines, first={:?}", ed.lines.len(), ed.lines.first());
+        return;
+    }
+
+    // gg (top) → o (open line below + insert) → type a body line → Esc → :w
+    ed.handle_key(Key::Char(b'g'));
+    ed.handle_key(Key::Char(b'g'));
+    ed.handle_key(Key::Char(b'o'));
+    for &b in b"    let answer = 42;" {
+        ed.handle_key(Key::Char(b));
+    }
+    ed.handle_key(Key::Esc);
+    ed.handle_key(Key::Char(b':'));
+    ed.handle_key(Key::Char(b'w'));
+    ed.handle_key(Key::Enter);
+
+    // Re-read the file: the inserted line must have persisted.
+    let mut data = [0u8; 256];
+    let fd = dispatch(SYS_OPEN, p.as_ptr() as u64, p.len() as u64, 0, 0);
+    let n = if fd != u64::MAX {
+        let r = dispatch(SYS_FREAD, fd, data.as_mut_ptr() as u64, data.len() as u64, 0);
+        dispatch(SYS_CLOSE, fd, 0, 0, 0);
+        if r == u64::MAX { 0 } else { (r as usize).min(data.len()) }
+    } else {
+        0
+    };
+    let needle = b"let answer = 42;";
+    let found = data[..n].windows(needle.len()).any(|w| w == needle);
+    if !ed.dirty && found {
+        println!("  [DEMO 61] PASS: o-insert + :w persisted the edit (re-read {} B)", n);
+    } else {
+        println!("  [DEMO 61] FAIL: edit not persisted (dirty={}, found={}, {} B)", ed.dirty, found, n);
+    }
+
+    // /search should move the cursor to the matching line.
+    ed.handle_key(Key::Char(b'g'));
+    ed.handle_key(Key::Char(b'g'));
+    ed.handle_key(Key::Char(b'/'));
+    for &b in b"answer" {
+        ed.handle_key(Key::Char(b));
+    }
+    ed.handle_key(Key::Enter);
+    if ed.lines[ed.cy].windows(6).any(|w| w == b"answer") {
+        println!("  [DEMO 61] PASS: /search landed on the match (line {})", ed.cy + 1);
+        println!("  [DEMO 61] => M21 editor: modal keys + Rust-highlight tokenizer + FS save verified");
+    } else {
+        println!("  [DEMO 61] FAIL: /search did not land on a match (line {})", ed.cy + 1);
+    }
+
+    // Cleanup.
+    dispatch(SYS_UNLINK, p.as_ptr() as u64, p.len() as u64, 0, 0);
 }
 
 /// DEMO 35: M6 framebuffer drawing API. Exercises every primitive

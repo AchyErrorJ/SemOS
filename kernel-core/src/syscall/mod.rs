@@ -143,6 +143,7 @@ pub mod numbers {
     pub const SYS_PS:           u64 = 110; // (buf_ptr, buf_len) -> task record count; 24B/rec
     pub const SYS_ASK:          u64 = 111; // (prompt_ptr, prompt_len, out_ptr, out_len) -> answer len
     pub const SYS_AGENT:        u64 = 112; // (flags) -> 0/err; runs the interactive split-pane agent TUI
+    pub const SYS_EDIT:         u64 = 113; // (path_ptr, path_len) -> 0/err; runs the modal text editor
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -242,6 +243,10 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // Interactive agent terminal (the `agent` builtin) — blocks in the
         // caller's context running the framebuffer TUI chat loop.
         SYS_AGENT => crate::platform::get().run_agent_tui(arg0),
+
+        // Modal text editor (the `edit` builtin) — blocks in the caller's
+        // context running the framebuffer editor over the named file.
+        SYS_EDIT => crate::platform::get().run_editor(arg0, arg1),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),

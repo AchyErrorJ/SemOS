@@ -255,6 +255,20 @@ impl Platform for X86Platform {
         crate::agent::run_interactive(flags)
     }
 
+    fn run_editor(&self, path_ptr: u64, path_len: u64) -> u64 {
+        // The editor's keyboard pump + sleep cadence need the timer; enable
+        // interrupts for the session (iretq restores the Ring-3 caller's flags).
+        x86_64::instructions::interrupts::enable();
+        let bytes = unsafe {
+            core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize)
+        };
+        let path = core::str::from_utf8(bytes).unwrap_or("");
+        if path.is_empty() {
+            return 2;
+        }
+        crate::editor::run(path)
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,

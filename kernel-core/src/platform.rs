@@ -70,6 +70,12 @@ pub trait Platform: Send + Sync + 'static {
     /// Default: unavailable.
     fn run_agent_tui(&self, _flags: u64) -> u64 { 0 }
 
+    /// SYS_EDIT: run the modal text editor over the file named by the user
+    /// pointer/len. Blocks in the caller's syscall context driving a framebuffer
+    /// editor off the real keyboard until the user quits (`:q`). Returns 0 on a
+    /// clean exit, non-zero if it couldn't run. Default: unavailable.
+    fn run_editor(&self, _path_ptr: u64, _path_len: u64) -> u64 { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`
