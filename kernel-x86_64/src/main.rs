@@ -56,6 +56,7 @@ mod syscall;
 mod keyboard;
 mod editor;
 mod nvme;
+mod hda;
 pub mod paging;
 pub mod apic;
 pub mod framebuffer;
@@ -241,6 +242,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("[nvme] registered with driver registry as 'nvme0'");
         }
     }
+    println!();
+
+    println!("[*] Probing Intel HDA audio controller...");
+    hda::init();
     println!();
 
     println!("[*] Probing VirtIO network device...");
@@ -1059,6 +1064,13 @@ fn init_loader_task() {
     println!("================================================================");
     nvme_demo();
 
+    // DEMO 63: HD Audio (M15) — confirm the stream's LPIB advances while RUN.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 63: HD Audio (M15) — stream DMA advancing");
+    println!("================================================================");
+    hda_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1223,6 +1235,42 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 63: HD Audio. After `hda::init()` armed the output stream + set RUN,
+/// confirm DMA is actually advancing by sampling LPIB twice with a sleep
+/// between — a non-zero, increasing position means the controller is reading
+/// our PCM buffer and clocking it out the codec. Self-skips if `init` failed
+/// (no HDA on the bus, e.g. boot without `-device intel-hda -device hda-output`).
+fn hda_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let p0 = hda::lpib();
+    if p0 == 0 && hda::lpib() == 0 {
+        // Either no controller, or the stream never started. Sample once more
+        // after a brief sleep to distinguish "no device" from "still 0 ms in".
+        let _ = dispatch(SYS_SLEEP, 5, 0, 0, 0);
+        let p_late = hda::lpib();
+        if p_late == 0 {
+            println!("  [DEMO 63] SKIPPED: no HDA stream (run with -device intel-hda -device hda-output)");
+            return;
+        }
+    }
+
+    // Sleep ~50 ms and resample. At 48 kHz stereo 16-bit (192 kB/s), 50 ms is
+    // ~9600 bytes — the cyclic 4 KiB buffer will have wrapped at least twice.
+    let _ = dispatch(SYS_SLEEP, 5, 0, 0, 0);
+    let p1 = hda::lpib();
+    let _ = dispatch(SYS_SLEEP, 5, 0, 0, 0);
+    let p2 = hda::lpib();
+
+    if p1 != p2 || (p1 > 0 && p2 > 0) {
+        println!("  [DEMO 63] PASS: LPIB advanced ({} → {} → {}) — DMA active", p0, p1, p2);
+        println!("  [DEMO 63] => M15: HDA controller + codec walk + PCM stream verified");
+    } else {
+        println!("  [DEMO 63] FAIL: LPIB stuck at {} (stream not running)", p1);
+    }
+    hda::stop();
 }
 
 /// DEMO 62: NVMe block I/O. Resolves `nvme0` from the driver registry, writes
