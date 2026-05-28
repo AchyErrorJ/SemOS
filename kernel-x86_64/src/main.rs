@@ -56,6 +56,7 @@ mod syscall;
 mod keyboard;
 mod editor;
 mod nvme;
+mod ahci;
 mod hda;
 mod wireless;
 pub mod paging;
@@ -241,6 +242,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if nvme::init() {
         if nvme::register_with_kernel_core() {
             println!("[nvme] registered with driver registry as 'nvme0'");
+        }
+    }
+    println!();
+
+    println!("[*] Probing AHCI/SATA controller...");
+    if ahci::init() {
+        if ahci::register_with_kernel_core() {
+            println!("[ahci] registered with driver registry as 'sata0'");
         }
     }
     println!();
@@ -1093,6 +1102,13 @@ fn init_loader_task() {
     println!("================================================================");
     cdc_ecm_demo();
 
+    // DEMO 67: AHCI/SATA block I/O via the BlockDevice trait — the T540's path.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 67: AHCI/SATA block read/write via BlockDevice");
+    println!("================================================================");
+    ahci_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1257,6 +1273,54 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 67: AHCI/SATA block I/O. Resolves `sata0` from the driver registry,
+/// writes a pattern to LBA 100, reads it back, verifies byte-for-byte — the
+/// path the T540's internal SATA SSD needs. Self-skips if no AHCI controller
+/// is attached (boot without -device ich9-ahci).
+fn ahci_demo() {
+    use kernel_core::drivers::registry;
+
+    let dev = match registry::get_block("sata0") {
+        Some(d) => d,
+        None => {
+            println!("  [DEMO 67] SKIPPED: no sata0 (run with -device ich9-ahci,id=ahci + -drive id=sata,... + -device ide-hd,drive=sata,bus=ahci.0)");
+            return;
+        }
+    };
+    let bs = dev.block_size();
+    println!("  [DEMO 67] sata0: {} blocks of {} B", dev.block_count(), bs);
+    if bs != 512 {
+        println!("  [DEMO 67] FAIL: unexpected block size {}", bs);
+        return;
+    }
+
+    let mut wbuf = [0u8; 512];
+    let mut rbuf = [0u8; 512];
+    for (i, b) in wbuf.iter_mut().enumerate() {
+        *b = (i as u8) ^ 0xA5;
+    }
+    let lba = 100u64;
+
+    if dev.write_blocks(lba, &wbuf).is_err() {
+        println!("  [DEMO 67] FAIL: write_blocks(LBA {})", lba);
+        return;
+    }
+    println!("  [DEMO 67] PASS: write_blocks wrote 512 B at LBA {} (WRITE DMA EXT)", lba);
+
+    if dev.read_blocks(lba, &mut rbuf).is_err() {
+        println!("  [DEMO 67] FAIL: read_blocks(LBA {})", lba);
+        return;
+    }
+    if rbuf == wbuf {
+        println!("  [DEMO 67] PASS: read_blocks round-trips byte-for-byte (READ DMA EXT)");
+        println!("  [DEMO 67] => AHCI ready for the T540's internal SATA SSD");
+    } else {
+        let i = rbuf.iter().zip(wbuf.iter()).position(|(a, b)| a != b).unwrap_or(0);
+        println!("  [DEMO 67] FAIL: mismatch at byte {} (got 0x{:02X}, want 0x{:02X})",
+            i, rbuf[i], wbuf[i]);
+    }
 }
 
 /// DEMO 66: CDC-ECM protocol layer (M11-prereq). Feeds a realistic CDC-ECM
