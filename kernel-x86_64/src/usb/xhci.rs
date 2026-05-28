@@ -361,17 +361,10 @@ pub fn init() -> bool {
     println!("[xhci] MaxSlots={} MaxPorts={} MaxIntrs={} CSZ={} ScratchpadBufs={}",
         max_slots, max_ports, max_intrs, if csz1 { 1 } else { 0 }, max_scratchpad_bufs);
 
-    if csz1 {
-        // CSZ=1 means 64-byte contexts (modern Intel). Our InputContext
-        // / DeviceContext layout is 32-byte (CSZ=0), which is what
-        // qemu-xhci uses. Adding CSZ=1 support means restoring the
-        // `_csz1_pad: [u32; 8]` fields and align(64) on the inner
-        // structs in usb/device.rs; deferred until we have Intel
-        // hardware in front of us.
-        println!("[xhci] CSZ=1 (64-byte contexts) not supported — abort. \
-            See usb/device.rs for the layout; need to restore the _csz1_pad fields.");
-        return false;
-    }
+    // Pick the right context stride: CSZ=0 → 32 B (qemu-xhci, AMD); CSZ=1 →
+    // 64 B (Intel — incl. T540 HM87 / P1 Z690). InputContext / DeviceContext
+    // are allocated at the max (64 B) stride; accessors honor this.
+    crate::usb::device::set_ctx_size(if csz1 { 64 } else { 32 });
     if max_scratchpad_bufs > MAX_SCRATCHPAD_BUFS {
         println!("[xhci] device asks for {} scratchpad bufs; we only allocated {} — abort",
             max_scratchpad_bufs, MAX_SCRATCHPAD_BUFS);
@@ -740,15 +733,16 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
     unsafe {
         let ic = &mut INPUT_CTX_SLOT1.0;
         // Zero it.
-        *ic = InputContext::zero();
+        ic.reset();
         // Input Control Context: A0 (slot) + A1 (EP0) added.
-        ic.icc_add = (1 << 0) | (1 << 1);
+        ic.input_ctrl_mut().add_flags = (1 << 0) | (1 << 1);
         // Slot context: 1 context entry (EP0 only), root hub port, speed.
-        ic.slot.set_context_entries(1);
-        ic.slot.set_root_hub_port(port);
-        ic.slot.set_speed(speed as u32);
-        // EP0 endpoint context (eps[0] = DCI 1).
-        ic.eps[0].init_control_ep(mps0, ep0_ring_phys, true);
+        let slot = ic.slot_mut();
+        slot.set_context_entries(1);
+        slot.set_root_hub_port(port);
+        slot.set_speed(speed as u32);
+        // EP0 endpoint context (idx 0 = DCI 1).
+        ic.ep_mut(0).init_control_ep(mps0, ep0_ring_phys, true);
     }
     let input_phys = match phys_of(unsafe { &raw const INPUT_CTX_SLOT1 } as u64) {
         Some(p) => p,
@@ -774,7 +768,7 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
         return false;
     }
 
-    let usb_addr = unsafe { DEVICE_CTX_SLOT1.0.slot.usb_device_address() };
+    let usb_addr = unsafe { DEVICE_CTX_SLOT1.0.slot_read().usb_device_address() };
     println!("[xhci] device addressed: slot={} usb_addr={} speed={} mps0={}",
         slot_id, usb_addr, speed, mps0);
 
@@ -876,15 +870,16 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
         let ic = &mut INPUT_CTX_SLOT1.0;
         // Reuse the input context. Add-flag for slot (A0) and the HID EP (Adci).
         // We also need to bump context entries to dci.
-        *ic = InputContext::zero();
-        ic.icc_add = (1 << 0) | (1u32 << dci);
-        ic.slot.set_context_entries(dci as u32);
-        ic.slot.set_root_hub_port(port);
-        ic.slot.set_speed(speed as u32);
-        // EP0 was already configured during AddressDevice — but ConfigureEndpoint
-        // must re-state the slot at minimum; we don't need to re-add EP0 (A1 not set).
+        ic.reset();
+        ic.input_ctrl_mut().add_flags = (1 << 0) | (1u32 << dci);
+        let slot = ic.slot_mut();
+        slot.set_context_entries(dci as u32);
+        slot.set_root_hub_port(port);
+        slot.set_speed(speed as u32);
+        // EP0 was already configured during AddressDevice — ConfigureEndpoint
+        // re-states the slot but doesn't re-add EP0 (A1 not set above).
         // Configure the HID EP at index dci-1 in our eps array.
-        ic.eps[dci - 1].init_interrupt_in_ep(max_packet, interval_log2, hid_ring_phys, true);
+        ic.ep_mut(dci - 1).init_interrupt_in_ep(max_packet, interval_log2, hid_ring_phys, true);
     }
 
     let idx = unsafe { CMD_PROD.enqueue };

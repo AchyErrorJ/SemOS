@@ -10,18 +10,21 @@
 //! xHCI controller indexes by raw byte offset from the base) must
 //! match CSZ.
 //!
-//! We **allocate at 32-byte stride** (matching qemu-xhci, which is
-//! what every demo here gets validated against). At runtime we
-//! *branch* on CSZ in `xhci::probe_xhci`:
-//! - CSZ=0 (qemu-xhci, AMD, legacy): the allocation matches the
-//!   hardware expectation; we use it directly.
-//! - CSZ=1 (modern Intel): we currently FAIL boot with a clear log
-//!   line. Supporting CSZ=1 needs a parallel 64-byte allocation
-//!   (just add the 8 dwords of padding back); deferred until we
-//!   have Intel hardware in front of us.
+//! We **allocate at MAX (64-byte) stride** and **branch the WRITE offsets**
+//! at runtime based on the detected CSZ bit:
+//! - `set_ctx_size(32)` (CSZ=0 — qemu-xhci, AMD, legacy): SlotContext is
+//!   written at offset 32 in InputContext / offset 0 in DeviceContext, EPs
+//!   at +32 stride. The upper half of each 64-byte slot in the buffer is
+//!   unused (controller reads only the first 32).
+//! - `set_ctx_size(64)` (CSZ=1 — modern Intel): SlotContext at offset 64
+//!   in InputContext / offset 0 in DeviceContext, EPs at +64 stride. The
+//!   upper 32 bytes of each 64-byte slot are reserved/ignored by the
+//!   controller; we just leave them zero.
 //!
-//! The check lives in `xhci::probe_xhci` and is the documented branch
-//! point for the metal-side test on Intel.
+//! The branch lives in `xhci::probe_xhci`. Both code paths share the
+//! same `SlotContext` / `EndpointContext` field definitions (32-byte
+//! data formats per spec §6.2.2 / §6.2.3) — only the *placement* in the
+//! buffer differs.
 //!
 //! # USB device descriptor (spec §9.6.1) — separate from xHCI contexts
 //!
@@ -157,57 +160,112 @@ impl EndpointContext {
     }
 }
 
-/// Input Context — used to issue Address Device and Configure Endpoint
-/// commands. CSZ=0 layout: input control context (32 B) || slot
-/// context (32 B) || 31 endpoint contexts at 32-byte stride =
-/// 32 + 32 + 31*32 = **1056 bytes**.
+// ============================================================================
+// CSZ-aware context layout
+// ============================================================================
+//
+// `InputContext` and `DeviceContext` are now raw byte buffers sized for the
+// max (CSZ=1 / 64-byte) layout. Accessors compute the right offset using the
+// runtime-detected `CTX_SIZE`. SlotContext / EndpointContext above remain
+// 32-byte data formats — only their placement in the buffer varies.
+
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+/// Per-controller xHCI context size. Set ONCE during `xhci::init()`; read by
+/// every accessor below. Default 32 keeps the existing CSZ=0 layout for
+/// any pre-init read.
+static CTX_SIZE: AtomicUsize = AtomicUsize::new(32);
+
+/// Set after detecting CSZ in HCCPARAMS1. Must be called once before any
+/// InputContext / DeviceContext access.
+pub fn set_ctx_size(bytes: usize) {
+    debug_assert!(bytes == 32 || bytes == 64, "ctx size must be 32 or 64");
+    CTX_SIZE.store(bytes, Ordering::Relaxed);
+}
+
+pub fn ctx_size() -> usize {
+    CTX_SIZE.load(Ordering::Relaxed)
+}
+
+/// Input Control Context (spec §6.2.5.1) — Drop/Add flags + config value.
+/// Exactly 32 bytes; lives at offset 0 in InputContext. For CSZ=1 the
+/// controller reads 64 bytes here but the upper 32 are reserved/ignored.
+#[repr(C, align(4))]
+pub struct InputControlContext {
+    pub drop_flags: u32,
+    pub add_flags: u32,
+    pub reserved: [u32; 5],
+    /// Low byte = configuration value, others reserved.
+    pub config_value: u32,
+}
+
+/// Max bytes for the CSZ=1 layout. Allocated unconditionally — CSZ=0 just
+/// uses the lower halves and the leftover space is unused.
 ///
-/// `align(64)` is on the OUTER struct because xHCI spec §6.2.5.1
-/// requires the InputContext to start on a 64-byte boundary. The
-/// internal stride is 32 (per the embedded `SlotContext`/`EndpointContext`
-/// being 32 bytes each).
+/// InputContext: 33 contexts (Input Control + Slot + 31 EPs) × 64 = 2112.
+/// DeviceContext: 32 contexts (Slot + 31 EPs) × 64 = 2048.
+const INPUT_CONTEXT_BYTES: usize = 33 * 64;
+const DEVICE_CONTEXT_BYTES: usize = 32 * 64;
+
+/// Input Context — issued for Address Device / Configure Endpoint commands.
+/// CSZ-aware: accessors use `ctx_size()` to compute the right offsets.
 #[repr(C, align(64))]
 pub struct InputContext {
-    /// Input Control Context — D=drop flags, A=add flags. Spec §6.2.5.
-    /// Naturally 32 bytes: 2 flag dwords + 5 reserved dwords + config_value.
-    pub icc_drop: u32,
-    pub icc_add: u32,
-    pub icc_reserved: [u32; 5],
-    pub icc_config_value: u32,
-    pub slot: SlotContext,
-    /// EP0 is at index 0; EP1 OUT=1, EP1 IN=2, ..., EP15 OUT=29, EP15 IN=30.
-    /// Spec §6.2.3 Table 6-16: dci = 2*ep_num + direction (1=IN), with
-    /// EP0 special-cased as dci=1. So our array index = dci - 1.
-    pub eps: [EndpointContext; 31],
+    bytes: [u8; INPUT_CONTEXT_BYTES],
 }
 
 impl InputContext {
     pub const fn zero() -> Self {
-        Self {
-            icc_drop: 0,
-            icc_add: 0,
-            icc_reserved: [0; 5],
-            icc_config_value: 0,
-            slot: SlotContext::zero(),
-            eps: [EndpointContext::zero(); 31],
+        Self { bytes: [0u8; INPUT_CONTEXT_BYTES] }
+    }
+
+    /// Zero the whole buffer (call before each rebuild — sticky bytes from a
+    /// previous command would otherwise live in unused fields).
+    pub fn reset(&mut self) {
+        for b in self.bytes.iter_mut() {
+            *b = 0;
         }
+    }
+
+    /// The Input Control Context is always at offset 0.
+    pub fn input_ctrl_mut(&mut self) -> &mut InputControlContext {
+        unsafe { &mut *(self.bytes.as_mut_ptr() as *mut InputControlContext) }
+    }
+
+    /// Slot Context at offset = `ctx_size`.
+    pub fn slot_mut(&mut self) -> &mut SlotContext {
+        let off = ctx_size();
+        unsafe { &mut *(self.bytes.as_mut_ptr().add(off) as *mut SlotContext) }
+    }
+
+    /// Endpoint Context at index `idx` (0 = EP0 control, then DCI-2..30).
+    /// Offset = `(2 + idx) * ctx_size`.
+    pub fn ep_mut(&mut self, idx: usize) -> &mut EndpointContext {
+        let off = (2 + idx) * ctx_size();
+        unsafe { &mut *(self.bytes.as_mut_ptr().add(off) as *mut EndpointContext) }
     }
 }
 
-/// Device Context — written by hardware, read by software. CSZ=0
-/// layout: slot (32 B) + 31 endpoints (31*32 = 992 B) = **1024 bytes**.
+/// Device Context — written by HW, read by SW. CSZ-aware accessors.
 #[repr(C, align(64))]
 pub struct DeviceContext {
-    pub slot: SlotContext,
-    pub eps: [EndpointContext; 31],
+    bytes: [u8; DEVICE_CONTEXT_BYTES],
 }
 
 impl DeviceContext {
     pub const fn zero() -> Self {
-        Self {
-            slot: SlotContext::zero(),
-            eps: [EndpointContext::zero(); 31],
-        }
+        Self { bytes: [0u8; DEVICE_CONTEXT_BYTES] }
+    }
+
+    /// Slot Context at offset 0.
+    pub fn slot_read(&self) -> &SlotContext {
+        unsafe { &*(self.bytes.as_ptr() as *const SlotContext) }
+    }
+
+    /// Endpoint Context at index `idx`. Offset = `(1 + idx) * ctx_size`.
+    pub fn ep_read(&self, idx: usize) -> &EndpointContext {
+        let off = (1 + idx) * ctx_size();
+        unsafe { &*(self.bytes.as_ptr().add(off) as *const EndpointContext) }
     }
 }
 
