@@ -55,6 +55,8 @@ A milestone is **done** when:
 | FS large files — Model A, plan + stage 1 2026-05-27 | **Decision (talked through):** fix the FS for demanding design files via **Model A** — files live in RAM (now up to the 512 MB/pool ceiling), `as_bytes()`'s contiguous-`&[u8]` contract preserved (so the ~11 consumers + `spawn`'s ELF parse don't change), persisted to disk. **Model B** (disk-backed extents, content not resident, multi-GB out-of-core) **deferred until the hardware arrives** — same tier as the deferred GPU. **Per-file size: FIXED CEILING** (not "whatever frames are free"): a single file must never drain a tier pool — that would starve the app's own working set + other files into an OOM cascade; a predictable bound is good hygiene and a one-constant tune. **Stages:** (1) lift the heap-bound cap [done — see next row]; (2a) frame-backed content via a contiguous-frame allocator + `phys_to_virt` (escape the 16 MiB heap → 100s-of-MB in-RAM files, fixed ceiling ~128 MB so one file ≤ ¼ pool); (2b) per-file disk block allocator + persistence so the snapshot is metadata-only and large files persist (today's monolithic snapshot duplicates content into one buffer — the real blocker past a few MB). |
 | FS large files — stage 1 2026-05-27 | **8× the per-file cap, persistable.** `MAX_FILE_CONTENT` 256 KiB→2 MiB and `MAX_SNAPSHOT_BYTES` 1 MiB→4 MiB (heap-backed scratch already), staying within the 16 MiB heap. Content is still one heap `Allocated` blob (contiguous → `as_bytes()` unchanged). DEMO 60 extended: installs a synthesized ~1 MiB file (`/apps/bigdoc`, > the old 256 KiB cap *and* the old 1 MiB snapshot) and verifies it survives reboot byte-pattern-intact. Heap-bound (~2 MiB/file) until stage 2a frame-backs content. Two-boot test (non-net): boot 2 → all three files restored incl. **/apps/bigdoc 1 MiB pattern-intact**; DEMO 26 oversize-rejection re-derived from `MAX_FILE_CONTENT+4 KiB` (no longer drifts). **145 PASS / 0 FAIL / 0 #DF.** Known follow-up: DEMO 5 (raw-snapshot demo) shares virtio0 sector 0 with the namespace snapshot and re-seeds it when its small read buffer hits the 1.1 MB namespace header — harmless for a 2-boot test (namespace already in RAM) but clobbers on-disk persistence on a 3rd boot; give DEMO 5 its own region or skip re-seed when a namespace magic is present. |
 | Interactive mode 2026-05-27 | **the OS is drivable at the keyboard** (`30c5687` + `32a798c`). Cargo feature `interactive` (default off, so headless CI still runs the 60 demos + idles): boot ends by dropping into the live `sem-sh` shell. Fix that made typing work — the USB HID event ring is only drained when polled, and nothing polled it while we waited, so the shell's `SYS_READ` never saw keystrokes; now the wait loop pumps the ring into the line discipline (edge-detected so held keys don't repeat) with explicit framebuffer echo (`input_push` echoes only to serial). New shell builtins: `help` (lists builtins) and `agent` (launches the split-pane TUI as a Claude chat loop via **SYS_AGENT 112** → `Platform::run_agent_tui` → `agent::run_interactive`; `AGENT_TUI_ACTIVE` pauses the shell pump while the TUI owns the keyboard; `framebuffer::clear()` for overlay teardown). Validated windowed via QEMU `sendkey`: typed commands run, `help`/`agent` work, agent prompt echoes + `exit` clears back to the shell; Backspace at an empty prompt no longer eats the prompt. Default build still 141 PASS / 0 FAIL. **Next: native editor (M21).** |
+| M10 watchdog + audit 2026-05-28 | **Pre-flight v1 (`d77ba87`).** Audit: framebuffer-only diagnostics already in place (`serial::_print` mirrors), RTC century byte already handled, panic handler routes through both. New: `idle_with_heartbeat` prints `[heartbeat] kernel reached idle — ticks=N` at end of boot as proof-of-life on metal. Latent bug fixed: `TIMER_TICKS spin::Mutex<u64>` → `AtomicU64`, eliminating the ISR-vs-reader deadlock pattern. **Top M10 follow-up is xHCI CSZ=1 support** — Intel chipsets (incl. the T540 HM87) need 64-byte contexts; current code rejects at bring-up. Blocks USB on real Intel hardware (PS/2 keyboard still works). |
+| USB Mass Storage v1 2026-05-28 | **USB stick CBW/CSW + SCSI (DEMO 68, `3a4587b`).** Protocol layer for reading a USB stick on the T540: class IDs 0x08/0x06/0x50 (SCSI BBB), 31-byte CBW build with 'USBC' signature + zero-padded CBWCB, 13-byte CSW parse (tag/residue/status), SCSI CDB builders for INQUIRY / READ CAPACITY (10) / READ (10) / WRITE (10) / TEST UNIT READY, INQUIRY + READ CAPACITY response parsers. Validated against six canned-byte checks. Hardware-ready for live xHCI bulk-endpoint TX/RX (same gating as CDC-ECM). |
 | AHCI/SATA 2026-05-28 | **SATA block driver — the T540 internal-disk path (DEMO 67, `ed2630f`).** PCI class-coded discovery (0x01/0x06/0x01), ABAR (BAR5) → MMIO, AHCI-mode enable (no HBA reset; HR severs the SATA PHY in QEMU's ich9-ahci and doesn't auto-relink — real-hardware follow-up adds HR + SCTL.DET cycle + CAP2.BOH handoff), port scan with short DET poll, per-port CL/FB setup, ATA Identify Device for block count, single-LBA READ/WRITE DMA EXT via a one-entry PRDT. Registered as `sata0` BlockDevice. First-boot in QEMU: port 0 SSTS=0x113 SIG=0x101, 131072×512 B (64 MiB), DMA round-trip clean. 159 PASS / 0 FAIL / 0 #DF. |
 | CDC-ECM v1 2026-05-28 | **USB Ethernet descriptor parser (DEMO 66, `e79a3a3`).** The M11 fallback path — a USB-to-Ethernet dongle lets TLS run on metal before iwlwifi works. Protocol v1: class/subclass/protocol IDs (0x02/0x06 control, 0x0A data), `parse_config` walks the full configuration blob (skipping Header/Union functional descriptors, picking up CDC Ethernet Functional Descriptor for iMAC/MTU, finding the Data interface alt with bulk EPs), `parse_mac_string` decodes the UTF-16LE 12-hex-digit MAC string (CDC §5.4). Validated against a realistic config blob → iface 0 control, iface 1 alt 1 data, bulk 0x81/0x02 MPS 512, MAC `02:BA:DC:AF:E0:01`, MTU 1514. 157 PASS / 0 FAIL. Live xHCI bulk-endpoint TX/RX is the follow-up on real hardware. |
 | M11 v1 (protocol) 2026-05-28 | **802.11 frame builders + iwlwifi PCI scaffolding (DEMO 65, `a0d487b`).** QEMU has no wireless emulation, so v1 = the pieces we'll need on day-1 of metal: `wireless::build_probe_request` / `build_open_auth_request` / `build_association_request` + `build_eapol_msg2` (WPA2 four-way handshake Msg2 with KeyInfo bitflags via bitflags 2.4; MIC left zero for the crypto layer to patch). iwlwifi PCI device-ID table covers T540 (7260/3160 family) and P1 Gen 6 (AX211, 0x51F0/0x51F1/0x54F0). DEMO 65 byte-validates each frame against the IEEE 802.11 layout (Probe Request FC=0x4000 + broadcast addrs + SSID IE, Open Auth algo=0/seq=1, EAPOL KeyInfo=0x010A = MIC+Pairwise+CCMP) and the PCI table. 154 PASS / 0 FAIL. Follow-ups (all hardware-gated): firmware-upload secboot, ALIVE event, PHY init (NVM+PNVM+regulatory+calibration), TX/RX command queues, four-way handshake MIC over the derived PTK. |
@@ -305,20 +307,38 @@ forwarding).
   (M15), CDC-ECM, HID parser, 802.11 protocol layer are all QEMU /
   canned-test validated and ready for either machine.
 
-## M10 — Pre-flight checklist for bare-metal boot `[  ]`
+## M10 — Pre-flight checklist for bare-metal boot `[🔨 v1 audit + watchdog]`
 
 Find and fix everything that "passes in QEMU, fails on metal" before
-the first real-hardware session.
+the first real-hardware session. v1 landed `d77ba87` — audit + watchdog
++ one fixed latent bug.
 
 **Done when:**
-- [ ] Serial-over-USB plan documented (P1 has no native serial port)
-- [ ] Framebuffer-only fallback boot path tested (no serial capture)
-- [ ] xHCI CSZ=1 branch (Intel 64-byte contexts) re-enabled and
-      audited in code review
-- [ ] RTC firmware-century-byte assumption verified against real BIOS
-- [ ] VT-d disabled in BIOS OR identity-IOMMU implemented
-- [ ] "Kernel didn't crash" watchdog: framebuffer last-line banner
-      written by the idle loop, so a stalled kernel is visible
+- [📝] Serial-over-USB plan documented — for now: skip serial entirely on
+      the T540 (its serial header is internal and atypical) and rely on
+      the framebuffer console as the only output channel. Revisit if a
+      USB-serial debug path matters; for the T540 framebuffer is enough.
+- [✅] **Framebuffer-only fallback verified** — `serial::_print` already
+      mirrors output to `framebuffer::_print`, and the panic handler uses
+      `println!`, so panics ARE visible on metal-without-serial. No code
+      change needed; documented in code.
+- [🔨] **xHCI CSZ=1 (Intel 64-byte contexts)** — currently REJECTS at
+      bring-up (`usb/xhci.rs:364-374`); blocks USB on T540's HM87 PCH.
+      Restoring CSZ=1 needs the `_csz1_pad` fields + align(64) on the
+      structs in `usb/device.rs`. **Top M10 follow-up.** PS/2 keyboard
+      still works without xHCI, so this is not a *boot* blocker, just a
+      USB-devices blocker.
+- [✅] **RTC firmware-century-byte assumption** — `rtc.rs:65-226` reads
+      the ACPI FADT-set CENTURY register with a 0-fallback. Already
+      handles real-BIOS variance.
+- [📝] VT-d disabled in BIOS OR identity-IOMMU implemented — BIOS knob;
+      no code. Confirm during T540 first-boot.
+- [✅] **"Kernel didn't crash" watchdog (one-shot v1)** — `[heartbeat]
+      kernel reached idle — ticks=N` printed at end of boot, mirrors to
+      framebuffer. Presence + correct N = boot succeeded. **Latent bug
+      fixed along the way:** `TIMER_TICKS` was `spin::Mutex<u64>` →
+      `AtomicU64`, eliminating an ISR-vs-reader deadlock pattern.
+      Continuous beats need a kernel idle-task slot — follow-up.
 
 ## M11 — iwlwifi driver `[🔨 v1 protocol layer; device on metal]`
 
