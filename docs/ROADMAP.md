@@ -368,12 +368,17 @@ else here waits for a T540 in hand.
 - [ ] PHY init: NVM + PNVM + regulatory + channel calibration
 - [ ] WPA2 four-way handshake in software (MIC over derived PTK),
       CCMP encrypt/decrypt offloaded to firmware after keys installed
-- [🔨 protocol] **CDC-ECM USB Ethernet path** as the fallback so the
-      TLS stack can be exercised on metal before Wi-Fi works.
-      Protocol v1 landed `e79a3a3` (DEMO 66): class constants, config
-      descriptor walk (control + Ethernet functional + Data alt with
-      bulk pair), MAC string decode. Live xHCI bulk-endpoint TX/RX is
-      the follow-up — settled with real hardware in hand.
+- [🔨 protocol; bulk now live] **CDC-ECM USB Ethernet path** as the
+      fallback so the TLS stack can be exercised on metal before Wi-Fi
+      works. Protocol v1 landed `e79a3a3` (DEMO 66): class constants,
+      config descriptor walk (control + Ethernet functional + Data alt
+      with bulk pair), MAC string decode. **xHCI bulk-endpoint TX/RX is
+      now live** (`63fd75e`, used by USB Mass Storage DEMO 69), so the
+      remaining work is ~150 lines: a `try_enumerate_cdc_ecm` path that
+      mirrors `try_enumerate_mass_storage`, SET_INTERFACE to the data
+      alt, then push/pull Ethernet frames via `bulk_in_xfer` /
+      `bulk_out_xfer`. Could ship now (QEMU has `-device usb-net`) or
+      wait for the T540 hardware to decide on the exact NetDevice wiring.
 - [ ] DEMO repeats: associate to a hardcoded SSID, get DHCP, redo the
       Anthropic TLS round-trip over real Wi-Fi
 
@@ -457,12 +462,15 @@ QEMU's `-device intel-hda -device hda-output` proved the full path in-tree.
   has a small click at the buffer wrap; choose a buffer length that's a
   whole number of 440 Hz periods to fix).
 
-## M16 — USB HID gamepad `[✅ parser; live xHCI wiring on metal]`
+## M16 — USB HID gamepad `[✅ parser + bulk xHCI ready; needs real gamepad]`
 
-v1 landed `d4b8e2d` (DEMO 64). QEMU has no gamepad device, so v1 ships
-the actually-hard piece — the report descriptor parser — as a pure
-module, validated by canned descriptor + synthetic report. Wiring to a
-real gamepad over xHCI is a small extension once T540/P1 is around.
+v1 landed `d4b8e2d` (DEMO 64): the report descriptor parser as a pure
+module, validated by canned descriptor + synthetic report. QEMU has no
+gamepad device, so live wiring is genuinely hardware-gated. xHCI now has
+the bulk/interrupt-endpoint plumbing it would need (`63fd75e`); the
+remaining work is fetching the device's report descriptor over a USB
+control transfer + routing input reports through the parser → a
+Gamepad input device. Small extension once a real gamepad is plugged in.
 
 **Done when:**
 - [✅] HID report descriptor parser (real one, not boot protocol) —
@@ -737,13 +745,20 @@ If picked up:
 
 ---
 
-# Phase 14 — Self-hosting compilation (COMMITTED PATH, tracked as research)
+# Phase 14 — Self-hosting compilation (M25 ✅, M26 ✅, M27 next)
 
 Goal: rustc + cargo run *on* Semantic OS, building Semantic OS.
 **User-chosen committed path** for kernel self-development. The
 ThinkPad P1 running Semantic OS hosts its entire dev loop — edit,
 build, reboot, no other machine in the loop. Phase 13 M23 (network
 build server) is the fallback if this stalls.
+
+**Progress (2026-05-29):** M25 stdlib complete + live-validated (sync-demo,
+DEMO 70). M26 Cranelift vendored + cg_clif end-to-end (DEMO 71: rustc-
+via-Cranelift → SemOS ELF → SYS_SPAWN → exit 0). The cross-build path
+works today; M27 is moving rustc itself onto SemOS so it drives its own
+compile loop. See [`SELF_HOSTING_PLAN.md`](SELF_HOSTING_PLAN.md) for the
+session-by-session breakdown.
 
 Runs in parallel with Phase 13's M19-M22 + M24 (TTY, shell, editor,
 agent, reboot-into-new-kernel — all still needed regardless of where
@@ -893,13 +908,24 @@ Avoid the LLVM C++ port by adopting the Rust-native codegen.
       library deps). Upstream cg_clif issue — track from the next
       nightly bump.
 
-## M27 — First rustc build on Semantic OS `[  ]`
+## M27 — First rustc build on Semantic OS `[🔨 codegen-backend unblocked; needs rustc-as-binary on metal]`
+
+The cross-build path is already live: `cg-clif-hello.elf` (DEMO 71) is a
+Rust source file compiled by rustc-via-Cranelift on the dev box that
+runs on SemOS via SYS_SPAWN. The remaining work is moving rustc ITSELF
+onto SemOS so it can drive its own compile loop — a different shape of
+problem (rustc-as-a-Rust-program built for `x86_64-unknown-none` against
+`semos-std`, which currently doesn't satisfy all of `std` rustc expects).
 
 **Done when:**
-- [ ] Cargo (built against M25's std) drives a rustc invocation
-      that produces a working binary
+- [✅] Codegen-backend layer unblocked (M26 cg_clif e2e, DEMO 71, `0039b25`)
+- [ ] Cargo (built against `semos-std`) drives a rustc invocation
+      that produces a working binary, ON SemOS
 - [ ] The "hello world" test from M25 compiles and runs end-to-end
       on Semantic OS without the cross-build server
+- [ ] Resolved: `semos-std` reaches enough surface that `rustc_driver`'s
+      `std` dependencies are satisfied (or rustc patched to skip what
+      isn't there). Big lift — separate research project.
 
 ## M28 — Self-bootstrap `[  ]`
 
