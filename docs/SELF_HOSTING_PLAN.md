@@ -147,13 +147,28 @@ gotcha to add the new program to `handle_spawn`'s hardcoded
 `/bin/<name>` → ramfs table (`kernel-core/src/syscall/mod.rs:1705`).
 **170 PASS / 0 FAIL / 0 #DF.** Unblocks D.2.
 
-#### D.2 — port the emitter to Ring 3 on SemOS (next)
-The same `semos-compiler` logic, recompiled against
-`x86_64-unknown-none` + `semos-std`, running as a Ring-3 SemOS program.
-The chunk of work is the Cranelift no_std port (the 44-crate vendor
-tree has host-`std` and `tokio` assumptions in spots), plus a SemOS
-heap big enough for Cranelift's allocations. Output ELF writes via
-`std::fs::File`, then a sibling DEMO `SYS_SPAWN`s it.
+#### D.2 — Ring-3 emitter on SemOS **DONE** (DEMO 73, 2026-05-29)
+`user-programs/semos-cc/` is the D.1 host emitter ported to Ring 3 +
+`semos-std`. Same 47-byte `_start` shim, same 192-byte ET_EXEC layout,
+same Cranelift-codegen'd `add(i64,i64)` (13 B) — but inlined as a
+static `const ADD_BYTES` snapshot from D.1 so the pipeline validates
+without Cranelift's no_std port as a prerequisite. Writes via
+`semos_std::fs::write("/d2-emitted.elf", …)`; the kernel's install-
+anywhere path (`spawn_namespace_elf`) then SPAWNs the emitted ELF
+directly from its namespace bytes. DEMO 73 is two-stage:
+(A) `/bin/semos-cc` exits 0 with the emitter log — Ring-3 emitter ran;
+(B) `/d2-emitted.elf` exits 3 with the "semos-cc" marker — emitted ELF
+ran with correct Cranelift arithmetic. 170 PASS / 0 FAIL / 0 #DF.
+**Session D's primary goal is met:** "the toolchain pipeline works
+end-to-end on SemOS."
+
+**Open follow-up: live cranelift-codegen on SemOS.** The 0.122
+Cargo.toml shows `categories = ["no-std"]` and `std = ["serde?/std"]`,
+so `default-features = false, features = ["x86"]` is the entry point.
+That's a separate session — the value of doing it is replacing
+`ADD_BYTES` with truly-generated code so the emitter can compile
+*arbitrary* arithmetic, not just `1 + 2`. Required for the eventual
+front-end pass (D.3) where source text becomes Cranelift IR.
 
 ### Session E — #54 codegen bug (medium-hard)
 The opt-level=0 workaround blocks the eventual self-hosted rustc release

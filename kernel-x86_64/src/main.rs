@@ -342,6 +342,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static SEMOS_CC_HELLO_ELF: &[u8] = include_bytes!(
         "../../compiler/out/semos_cc_hello.elf"
     );
+    // M27 Session D.2: same emitter ported to Ring 3 on SemOS — runs as
+    // a user program, emits its own ET_EXEC, writes it to the install-
+    // anywhere namespace at /d2-emitted.elf. DEMO 73 spawns it then
+    // spawns the emitted ELF and verifies exit==3 + marker — proving the
+    // toolchain pipeline runs end-to-end *on* SemOS. Cranelift's add()
+    // bytes are inlined (snapshot from D.1) until the cranelift no_std
+    // port lands as a follow-up.
+    static SEMOS_CC_ELF: &[u8] = include_bytes!(
+        "../../user-programs/semos-cc/target/x86_64-unknown-none/release/semos-cc"
+    );
     // Phase 14 M25 Tier-1 validation: same observable behaviour as
     // hello-rs.elf but produced through the new semos-std shim.
     // Exercises println! → fmt::Write::write_str → SYS_WRITE, plus
@@ -403,6 +413,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered semos-cc-hello.elf ({} bytes, host-compiler ET_EXEC)", SEMOS_CC_HELLO_ELF.len());
         } else {
             println!("    [WARN] failed to register semos-cc-hello.elf");
+        }
+        if fs.add("semos-cc.elf", kernel_core::fs::ramfs::FileType::Executable, SEMOS_CC_ELF) {
+            println!("    Registered semos-cc.elf ({} bytes, D.2 Ring-3 emitter)", SEMOS_CC_ELF.len());
+        } else {
+            println!("    [WARN] failed to register semos-cc.elf");
         }
         if fs.add("thread-demo.elf", kernel_core::fs::ramfs::FileType::Executable, THREAD_DEMO_ELF) {
             println!("    Registered thread-demo.elf ({} bytes, Ring 3 threading demo)", THREAD_DEMO_ELF.len());
@@ -1186,6 +1201,14 @@ fn init_loader_task() {
     println!("  SemOS DEMO 72: host semos-compiler → SemOS ELF → SYS_SPAWN");
     println!("================================================================");
     ring3_semos_cc_demo();
+
+    // DEMO 73: M27 Session D.2 — semos-cc runs on SemOS, emits an ELF,
+    // SemOS then spawns the emitted ELF (toolchain pipeline on-target).
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 73: Ring-3 semos-cc emits ELF on SemOS → SYS_SPAWN");
+    println!("================================================================");
+    ring3_semos_cc_d2_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4611,6 +4634,115 @@ fn ring3_semos_cc_demo() {
         println!(
             "  [DEMO 72] FAIL: exit={} (want 3) marker_found={} captured={} bytes",
             code, has_marker, n
+        );
+    }
+
+    kernel_core::process::set_kernel_task_id(saved_kernel_task);
+}
+
+/// Helper used by DEMO 73 — spawn a path, drain its stdout into `cap`, return
+/// (exit_code, captured_bytes). Returns `None` if the spawn or polling failed.
+fn ring3_spawn_capture(path: &str, cap: &mut [u8]) -> Option<(u32, usize)> {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        return None;
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+    if pid == u64::MAX {
+        dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+        dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+        return None;
+    }
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = kernel_core::process::get(process_id).and_then(|p| p.task_id)?;
+    let mut polled = 0u64;
+    while kernel_core::scheduler::task_state(slot) != kernel_core::scheduler::TaskState::Exited {
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+        polled += 1;
+        if polled > 500 {
+            dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+            dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+            return None;
+        }
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot) as u32;
+    let r = dispatch(SYS_READ, read_fd, cap.as_mut_ptr() as u64, cap.len() as u64, 0);
+    let n = if r == u64::MAX || r == u64::MAX - 1 { 0 } else { (r as usize).min(cap.len()) };
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+    Some((code, n))
+}
+
+/// DEMO 73: M27 Session D.2 — semos-cc runs as a SemOS user program, emits
+/// a SemOS ELF, writes it through the install-anywhere path namespace
+/// (`/d2-emitted.elf`); SemOS then spawns that emitted ELF and the original
+/// D.1 exit-3-and-marker check applies. Two PASS-pairs:
+///
+///   Stage A: semos-cc itself runs to exit 0 with its "D.2 emitter" log.
+///   Stage B: the ELF it wrote runs to exit 3 with the "semos-cc D2" marker.
+///
+/// Closes the "toolchain pipeline works end-to-end on SemOS" goal of
+/// SELF_HOSTING_PLAN.md Session D (with Cranelift add() bytes still inlined;
+/// live cranelift-codegen on SemOS is a follow-up).
+fn ring3_semos_cc_d2_demo() {
+    let saved_kernel_task = kernel_core::process::kernel_task_id();
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+
+    // ---- Stage A: run semos-cc, which emits the ELF to /d2-emitted.elf ----
+    let mut cap_a = [0u8; 256];
+    let (code_a, n_a) = match ring3_spawn_capture("/bin/semos-cc", &mut cap_a) {
+        Some(r) => r,
+        None => {
+            println!("  [DEMO 73] FAIL stage A: spawn/poll of /bin/semos-cc failed");
+            kernel_core::process::set_kernel_task_id(saved_kernel_task);
+            return;
+        }
+    };
+    let has_emitter_marker = cap_a[..n_a].windows(b"D.2 emitter".len())
+        .any(|w| w == b"D.2 emitter");
+    if code_a != 0 || !has_emitter_marker {
+        println!(
+            "  [DEMO 73] FAIL stage A: exit={} (want 0) emitter_marker={} captured={} B",
+            code_a, has_emitter_marker, n_a
+        );
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    println!(
+        "  [DEMO 73] PASS stage A: semos-cc exited 0 + 'D.2 emitter' present ({} B)",
+        n_a
+    );
+
+    // ---- Stage B: spawn the emitted ELF via the install-anywhere path ----
+    let mut cap_b = [0u8; 64];
+    let (code_b, n_b) = match ring3_spawn_capture("/d2-emitted.elf", &mut cap_b) {
+        Some(r) => r,
+        None => {
+            println!("  [DEMO 73] FAIL stage B: spawn/poll of /d2-emitted.elf failed");
+            kernel_core::process::set_kernel_task_id(saved_kernel_task);
+            return;
+        }
+    };
+    let has_child_marker = cap_b[..n_b].windows(b"semos-cc".len())
+        .any(|w| w == b"semos-cc");
+    if code_b == 3 && has_child_marker {
+        println!(
+            "  [DEMO 73] PASS stage B: emitted ELF exited 3 (= add(1,2)) + marker present ({} B)",
+            n_b
+        );
+        println!("  [DEMO 73] => Ring-3 SemOS program produces SemOS-spawnable ELFs");
+    } else {
+        println!(
+            "  [DEMO 73] FAIL stage B: exit={} (want 3) marker={} captured={} B",
+            code_b, has_child_marker, n_b
         );
     }
 

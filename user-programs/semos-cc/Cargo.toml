@@ -1,0 +1,23 @@
+[package]
+name = "semos-cc"
+version = "0.1.0"
+edition = "2021"
+
+# Opt out of any parent workspace.
+[workspace]
+
+[[bin]]
+name = "semos-cc"
+path = "src/main.rs"
+
+[dependencies]
+semos-std = { path = "../std-shim" }
+
+[profile.release]
+panic = "abort"
+# opt-level=0 only — task #54: any optimization miscompiles the std-shim
+# syscall path. Same constraint as every other semos-std consumer.
+opt-level = 0
+lto = true
+strip = true
+codegen-units = 1
