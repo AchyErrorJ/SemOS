@@ -14,8 +14,8 @@ code can't bypass it.
 
 ## The headline demo
 
-In a single boot, the kernel runs five demos. Two are particularly
-load-bearing:
+In a single boot, the kernel runs **69 self-tests** end-to-end —
+~165 PASS lines, 0 FAIL, 0 #DF. The two load-bearing security demos:
 
 ```
 ================================================================
@@ -32,116 +32,137 @@ load-bearing:
 ```
 
 DEMO 2 runs in the kernel; DEMO 4 runs the **same security policy** end-
-to-end from a Ring 3 user binary (`user-programs/sem-demo/`, real Rust
-compiled to ELF) through `SYS_SEM_CREATE` → `SYS_SEM_READ` →
-`SYS_LLM_CONTEXT`. Same caller, same byte buffers, two views — chosen
-by the kernel based on intended downstream use, not caller capability.
+to-end from a Ring 3 user binary through `SYS_SEM_CREATE` →
+`SYS_SEM_READ` → `SYS_LLM_CONTEXT`. Same caller, same byte buffers, two
+views — chosen by the kernel based on intended downstream use, not
+caller capability.
 
-A captured serial log of a full boot is in [`docs/boot-demo.log`](docs/boot-demo.log).
+DEMO 56 is the live agent version: a sandboxed shell at security tier 0
+provably **cannot read Secret files** and **cannot modify Public ones**
+even when the LLM driving it tries.
 
-## What runs today
+## What runs today (2026-05-28)
 
-| Demo | Status | Path | What it proves |
-|------|--------|------|----------------|
-| DEMO 0 | active | `user-programs/hello/` | Real Rust no_std ELF crate loaded by the kernel from ramfs and run in Ring 3 (`SYS_WRITE` + `SYS_EXIT`). Toolchain works end-to-end. |
-| DEMO 1 | active | `kernel-core/src/process/elf.rs::create_redact_elf` (hand-assembled) | Ring 3 binary calls `SYS_LLM_REDACT` on a string with PII. Kernel returns the redacted version. |
-| DEMO 2 | active | kernel-side, `kernel-x86_64/src/main.rs::sem_demo_kernel` | Kernel-side `SemanticObject` at Sensitive tier: direct read returns verbatim, `build_from_suids` (the LLM context path) returns redacted. |
-| DEMO 3 | active | same | Same with a Public-tier object — both views verbatim, no redaction. The contrast vs DEMO 2 is the policy made visible. |
-| DEMO 4 | active | `user-programs/sem-demo/` | DEMO 2's policy, **from Ring 3**. Real Rust user crate creates a Sensitive object, reads it back verbatim (caller tier 2 ≥ object tier 2), then asks for `SYS_LLM_CONTEXT` and receives the kernel-redacted version. |
-| DEMO 5 | code only, disabled in boot | `kernel-x86_64/src/main.rs::persistence_demo` | Round-trip a Sensitive `SemanticObject` through the VirtIO block driver to disk and back. The infrastructure is verified independently (see "Known issues"); the integration demo is gated on task #40. |
-| DEMO 6 | code only, disabled in boot | `user-programs/exfil-demo/` | Adversarial: 8 PII-exfiltration attempts via the LLM channel (plain text baseline + 7 obfuscations: base64, [at]/[dot] brackets, whitespace splitting, reversal, hex, non-standard CC separators, split-across-objects). Each attempt creates a Sensitive object, asks the kernel for an LLM-bound view, and substring-checks the result for an attacker-chosen leak indicator. The expected outcome — 1 caught, 7 leaked — is the thesis-grade evidence for *why* rule-based redaction is a baseline and a real on-device intent-aware model is the next step. The crate compiles and the attacks are correct; the kernel currently can't run it reliably under task #40. |
+### Kernel core
+- Preemptive scheduler (LAPIC timer, FPU/SSE save-restore, per-task page tables)
+- Ring 0 / Ring 3 separation via SYSCALL/SYSRET; full Linux x86-64 syscall ABI
+- ELF loader, per-process address spaces, threads + futexes
+- **4-tier security model** with kernel-mediated LLM redaction
+- Persistent FS over a snapshot ring (Namespace → BlockDevice → disk)
 
-Plus the platform-level pieces those exercise:
+### Drivers
+- **Storage**: VirtIO block + **NVMe** + **AHCI/SATA** — three backends behind one `BlockDevice` trait
+- **Network**: VirtIO-net + smoltcp + TLS 1.3 + cert-pinning. **Live HTTPS round-trip to api.anthropic.com** from bare metal.
+- **USB**: xHCI controller (incl. CSZ=1 / 64-byte contexts for Intel), HID boot keyboard, **live Mass Storage with bulk endpoints** (INQUIRY + READ CAPACITY validated against `-device usb-storage`)
+- **Audio**: Intel HD Audio controller + codec walk + 48 kHz 16-bit stereo PCM playback
+- **Framebuffer**: M6 drawing API, M7 TTF rasterization (ttf-parser), M8 2D vector (tiny-skia)
+- **Console**: TTY layer (cooked/raw mode, line editing, scrollback PageUp/PageDown), 2× scaled console font
 
-- **Preemptive scheduling** with Local APIC timer, FPU/SSE save/restore,
-  per-task page tables.
-- **Ring 0 / Ring 3 separation** via `SYSCALL`/`SYSRET`. The
-  `syscall_entry` naked function preserves the full Linux x86-64 syscall
-  ABI (rdi/rsi/rdx/r10/r8/r9 saved across `dispatch`) — see commit log
-  for why this matters.
-- **ELF loader** (`kernel-core/src/process/elf.rs`). Handles `ET_EXEC` +
-  `PT_LOAD` segments with R/W/X permission bits.
-- **Per-process address spaces** (`kernel-x86_64/src/paging.rs`). PML4
-  is a shallow copy of the boot page tables (kernel mappings shared) +
-  fresh user-space subtables. Reaped on slot reuse via
-  `Platform::reap_slot`.
-- **PCI bus enumeration** (`kernel-x86_64/src/pci.rs`) — scans bus 0 via
-  `0xCF8`/`0xCFC`, locates VirtIO at `0x1AF4:0x1001`.
-- **VirtIO Legacy block driver** (`kernel-x86_64/src/virtio/block.rs`) —
-  init handshake, virtqueue setup (size 256, page-aligned 12 KB BSS),
-  3-descriptor-chain read/write, poll completion. Implements
-  `kernel_core::drivers::traits::BlockDevice` and registers as
-  `"virtio0"`.
-- **Snapshot persistence** (`kernel-core/src/storage/snapshot.rs`) — a
-  thin `save_snapshot` / `load_snapshot` API on top of any
-  `BlockDevice`. Verified end-to-end at the raw-sector level.
-- **In-memory ramfs** (`kernel-core/src/fs/ramfs.rs`) with a real FD
-  table and POSIX-shaped `open/read/write/close` syscalls.
-- **Local LLM substrate**: rule-based redaction (`kernel-core/src/llm/redact.rs`),
-  summarization, context builder. Stubbed for the demo; real on-device
-  inference is the obvious next big step.
+### Apps & shell
+- **`sem-sh`** native shell: pipes, redirection, `&&`/`||`, `$VAR`, `$PATH` (`/bin:/apps`), builtins: `echo cd ls cat which env grep ps free uptime ask fetch help agent edit`
+- **`agent`** builtin → split-pane Claude TUI (conversation | activity panes) over the framebuffer, real keyboard input
+- **`edit`** builtin → **modal vi-style text editor** with Rust syntax highlighting, `:w :q :wq`, `/search`, `h j k l + arrows`, `i a A o O x dd gg G`
+- **Interactive mode** (`--features interactive`): land in the live sem-sh after demos with the real keyboard, instead of idling
+- **Persistence**: `SYS_FSYNC` saves the namespace to disk; survived-reboot validation
+
+### Protocol layers ready for hardware
+- **802.11 frame builders** (Probe Request, Open Auth, Association, EAPOL-Key Msg2) + iwlwifi PCI device-ID table (7260 + AX211)
+- **CDC-ECM** descriptor parser + MAC string decode (USB Ethernet fallback path)
+- **USB Mass Storage** CBW/CSW + SCSI Block Commands (live on xHCI as of DEMO 69)
+- **HID report descriptor parser** for gamepad (axes + buttons, signed Logical Min/Max)
+
+### Self-hosting prep
+- `semos-std`: `#[global_allocator]`, `io::{Read,Write}`, `fs::File`, `env`, `sync::{Mutex,Once}`, `thread::spawn + JoinHandle<T>`, `process::Command`, `net::TcpStream`, **`time::{Instant,Duration}`**, **`path::{Path,PathBuf}`**
+- See [`docs/SELF_HOSTING_PLAN.md`](docs/SELF_HOSTING_PLAN.md) for the M25/26/27 roadmap toward rustc-on-metal
+
+## Hardware target
+
+Two-machine bring-up:
+- **Stage 1: ThinkPad T540** (i7-4600M Haswell, 8 GB, 256 GB **SATA** SSD,
+  Win10) — cheap, coreboot-friendly, removable Wi-Fi card. Validates the
+  bootloader + kernel + iwlwifi (7260) + AHCI on real metal.
+- **Stage 2: ThinkPad P1 Gen 6** — i7 Raptor Lake hybrid, Intel Iris Xe iGPU,
+  NVIDIA RTX dGPU. Where GPU work (M14 iGPU / M18 dGPU compute) begins.
+
+Debug-without-serial on metal works via three levels: framebuffer + scrollback,
+**panic-dump to disk** (recover from Windows via `tools/read-panic-log.ps1` —
+no third-party tool needed), and eventually network log streaming over Wi-Fi.
 
 ## Repo layout
 
 ```
-kernel-core/        # platform-independent crate (~11 K LOC)
-                    #   semantic objects, vector index, LLM context builder,
-                    #   redactor, ChaCha20 crypto, ramfs, scheduler,
-                    #   process table, syscall dispatch
-kernel-x86_64/      # x86_64 platform crate (~3.3 K LOC)
-                    #   GDT/TSS, IDT, paging, APIC, SYSCALL/SYSRET,
-                    #   framebuffer, context switch, FPU save/restore,
-                    #   PCI, VirtIO block, platform_impl
+kernel-core/        # platform-independent crate
+                    #   semantic objects, redactor, ChaCha20 crypto, ramfs,
+                    #   path namespace, scheduler, process table, syscall
+                    #   dispatch, TCP/IP (smoltcp), TLS 1.3, snapshot FS
+kernel-x86_64/      # x86_64 platform crate
+                    #   GDT/TSS, IDT, paging, APIC, SYSCALL/SYSRET, FPU,
+                    #   framebuffer + TTF + tiny-skia, context switch, PCI,
+                    #   virtio block + net, NVMe, AHCI, HDA audio, xHCI,
+                    #   agent, editor, panic_dump
 x86_64-runner/      # Windows host tool — wraps the kernel ELF in a
                     # bootloader-0.11 disk image (UEFI + BIOS) for QEMU
-user-programs/      # Real Rust no_std user binaries, compiled to ELF
-                    # and embedded in the ramfs at kernel build time.
-                    # Each is its own crate with a custom linker script
-                    # putting text at USER_CODE_BASE = 0x400000.
-                    #   hello/    — DEMO 0: SYS_WRITE + SYS_EXIT
-                    #   sem-demo/ — DEMO 4: SYS_SEM_CREATE/READ + SYS_LLM_CONTEXT
-docs/               # README artifacts (boot logs, architecture notes)
+user-programs/      # Real Rust no_std user binaries embedded in the
+                    # kernel via include_bytes!. Each builds as its own
+                    # crate with a non-PIE linker script + custom entry.
+                    #   hello/, hello-std/, sem-demo/, sem-sh/, std-shim/
+                    #   net-demo/, std-demo/, thread-demo/, vec-demo/
+                    #   spawn-demo/, exfil-demo/
+tools/              # read-panic-log.ps1 — PowerShell recovery for the
+                    # disk-resident kernel panic dump (no third-party tool)
+docs/               # ROADMAP.md (milestones), SELF_HOSTING_PLAN.md,
+                    # PHASE_*.md briefs, architecture notes
 ```
 
-See [`docs/architecture.md`](docs/architecture.md) for the module-level
-map and the syscall table.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the milestone log (what's
+done, in progress, what's hardware-gated).
 
-## Build and run all the demos
+## Build and run
 
 Toolchain: Rust nightly pinned to `nightly-2026-02-01` (the version the
-bootloader-0.11 crate requires). A single boot runs **DEMOs 1–57** and prints
+bootloader-0.11 crate requires). A single boot runs ~69 demos and prints
 `PASS:` / `FAIL:` lines to the serial log, ending with `All demos complete`.
 
 ```sh
 # 1. Build every user program — they're embedded into the kernel via
-#    include_bytes!, so the kernel build below won't pick up changes until
-#    these are (re)built first.
+#    include_bytes!, so the kernel build below won't pick up changes
+#    until these are (re)built first.
 for p in hello hello-std sem-demo sem-sh net-demo std-demo \
          thread-demo vec-demo spawn-demo exfil-demo; do
   ( cd user-programs/$p && cargo build --release )
 done
 
 # 2. (optional) bake an Anthropic API key for the LIVE agent demos
-#    (48 = 401 round-trip, 49 = agent tool loop, 54 = `ask`). Omit it and
-#    those self-skip / return "no key" — the rest of the suite is unaffected.
-#    The key only ever lands in the gitignored target/ binary, never in git.
+#    (48 = 401 round-trip, 49 = agent tool loop, 54 = `ask`). Omit it
+#    and those self-skip / return "no key" — the rest of the suite is
+#    unaffected. The key only lands in the gitignored target/ binary.
 # export ANTHROPIC_KEY=sk-ant-...
 
 # 3. Build the kernel.
+#    Add `--features interactive` to end boot by handing the keyboard
+#    to a live sem-sh shell instead of idling.
 ( cd kernel-x86_64 && cargo build --release )
 
-# 4. Wrap the kernel ELF into a bootable BIOS+UEFI image.
-#    NOTE: run this from x86_64-runner/ (it's a host tool); running it from
-#    kernel-x86_64/ leaves a STALE image.
+# 4. Wrap the kernel ELF into a bootable BIOS+UEFI image. MUST be from
+#    x86_64-runner/ (it's a host tool); running it from kernel-x86_64/
+#    leaves a STALE image.
 ( cd x86_64-runner && cargo run --release )
 
-# 5. (one-time) a virtio disk for the persistence/FS demos.
-qemu-img create -f raw vdisk.img 16M
+# 5. (one-time) disk images for the storage demos.
+qemu-img create -f raw vdisk.img       16M   # virtio block (persistence)
+qemu-img create -f raw nvme.img        32M   # NVMe (DEMO 62)
+qemu-img create -f raw sata.img        64M   # AHCI/SATA (DEMO 67)
+qemu-img create -f raw ustick.img     128M   # USB Mass Storage (DEMO 69)
 
-# 6. Boot. The full flag set runs ALL demos including the networked ones.
+# 6. Boot. The full flag set runs ALL demos including networked + live USB.
 qemu-system-x86_64 -cpu max \
   -drive format=raw,file=kernel-x86_64/target/x86_64-unknown-none/release/semantic-os-x86_64-bios.img \
-  -drive if=virtio,format=raw,file=vdisk.img \
+  -drive if=virtio,format=raw,file=vdisk.img,cache=writethrough \
+  -drive id=nvm,if=none,format=raw,file=nvme.img \
+  -device nvme,drive=nvm,serial=semos01 \
+  -drive id=satadrv,if=none,format=raw,file=sata.img \
+  -device ich9-ahci,id=ahci -device ide-hd,drive=satadrv,bus=ahci.0 \
+  -device intel-hda -device hda-output \
   -device qemu-xhci -device usb-kbd \
   -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
   -m 256M -serial file:serial.log -display none -no-reboot
@@ -150,18 +171,26 @@ qemu-system-x86_64 -cpu max \
 Flag notes:
 - **`-cpu max`** is required — the crypto stack uses `RDRAND`.
 - **`-netdev user ... -device virtio-net-pci`** (SLIRP) enables the network
-  demos: DNS (34), TLS round-trip to api.anthropic.com (16/48/49), `std::net`
-  (36), and the shell `fetch` (55). Without it, those self-skip.
-- **`-device qemu-xhci -device usb-kbd`** gives a USB keyboard for the TTY /
-  shell-input demos (40/43/51).
-- It runs headless (`-display none`); the serial log is the source of truth.
+  demos: DNS (34), TLS round-trip to api.anthropic.com (16/48/49),
+  `std::net` (36), and the shell `fetch` (55). Without it, those self-skip.
+- **`-device qemu-xhci -device usb-kbd`** gives the HID boot keyboard for
+  TTY/shell demos. Swap `usb-kbd` for `-drive id=ustick,if=none,...` +
+  `-device usb-storage,drive=ustick` to exercise the **live USB Mass
+  Storage** path (DEMO 69) — but only one USB device at a time today
+  (multi-device enumeration is a follow-up).
+- **`-device nvme`**, **`-device ich9-ahci + ide-hd`**, **`-device intel-hda
+  + hda-output`** light up DEMOs 62 (NVMe), 67 (AHCI), 63 (HDA) — each
+  cleanly self-skips if the corresponding device isn't attached.
+- It runs headless (`-display none`); the serial log is the source of
+  truth. Drop `-display none` for a visible QEMU window with the
+  framebuffer console.
 
 Check the result:
 
 ```sh
-grep -c 'PASS:' serial.log        # ~154 with the network up
-grep    'FAIL:' serial.log        # expect no output
-grep 'All demos complete' serial.log
+grep -c 'PASS:'              serial.log   # ~165 with everything attached
+grep    'FAIL:'              serial.log   # expect no output
+grep   'All demos complete'  serial.log
 ```
 
 For GDB on the kernel: also pass `-gdb tcp::1240 -S`, then in another
@@ -169,62 +198,26 @@ shell `gdb -ex "set osabi none" -ex "set architecture i386:x86-64"
 -ex "file kernel-x86_64/target/x86_64-unknown-none/release/semantic-os-x86_64"
 -ex "target remote :1240"`.
 
-> The sections below predate the network/TLS stack, the native Claude agent,
-> the `sem-sh` shell, and most of the current 57-demo suite — see
-> [`docs/ROADMAP.md`](docs/ROADMAP.md) for the up-to-date milestone log
-> (task #40's intermittent `#PF`, noted under "Known issues", was root-caused
-> and fixed; the suite now boots `0 FAIL / 0 #DF`).
+## Status
 
-## Known issues
+This is an **active-development kernel**, validated end-to-end in QEMU
+and being prepared for first metal boot on a T540.
 
-### Task #40 — intermittent kernel `#PF` at RIP=0
+The interesting parts:
 
-After certain demo combinations, a kernel-mode page fault fires with
-`RIP=0`. The cause is *somewhere* on the path between a kernel-mode
-interrupt push of an iret frame and the wrapper's `iretq` reading it
-back; we've ruled out the obvious culprits (`context_switch`'s
-`jmp [rsi+56]` reading 0, null function pointers in `Platform`'s
-vtable, syscall-ABI register clobbers — that last one was a real bug,
-fixed, and dropped the rate from ~20% to 0/30 at one point).
-
-**The kernel recovers**: the page-fault handler kills the offending
-task and the rest of the system keeps running. In the captured boot
-log, you'll see DEMO 2 → recovery → DEMO 3 → recovery → DEMO 4 → DEMO 5
-all complete despite three intermediate `task #40` events.
-
-The `page_fault_handler` carries a verbose state dump (KERNEL_RSP,
-TSS.RSP0, all `CONTEXTS[*]`, 32 quadwords around saved_RSP, the
-`CTX_LOG` ring buffer of recent context switches) that fires only when
-`instruction_pointer == 0`. It's intentional diagnostic, not
-production code.
-
-### DEMO 5 + DEMO 6 are code-complete but disabled in boot
-
-The infrastructure is solid — VirtIO block driver, BlockDevice trait,
-snapshot module, raw-sector persistence all verified independently;
-exfil-demo crate compiles and the 8 attacks are correctly designed.
-But the additional code paths reopen task #40's race window often
-enough that under any of them the kernel can't reliably run the
-Ring-3 demos that *are* working today (DEMOs 0/1/4). Toggling
-DEMO 5 or DEMO 6 back on is a one-line change in
-`kernel-x86_64/src/main.rs::init_loader_task` once task #40 is
-properly fixed.
-
-## Status, honestly
-
-This is an **early-stage kernel**, not a daily driver. The interesting
-parts are:
-
-- The **policy model** (kernel-mediated LLM data flow, tier-based
+- **The policy model** (kernel-mediated LLM data flow, tier-based
   redaction at the syscall boundary) is real and demonstrable from
-  Ring 3.
-- ~33 of ~40 numbered syscalls have real handlers; ~10 are exercised by
-  the boot demos. The rest are correct-on-paper but untested for
-  absence of a user program that calls them.
-- Platform plumbing (paging, scheduling, ELF loading, PCI/VirtIO,
-  framebuffer, APIC) is real and works.
-- The "LLM" services do **rule-based** redaction. A real on-device
-  model is the obvious next milestone for the security thesis.
+  Ring 3 (DEMO 4) and from the live agent shell (DEMO 56).
+- **Live HTTPS to Anthropic** from bare metal (DEMO 48/49) — full TLS
+  1.3, SPKI cert pinning, the works.
+- **Three storage backends** (VirtIO + NVMe + AHCI) all live behind one
+  trait. The T540 will exercise the AHCI path on real silicon; the P1
+  adds NVMe.
+- **Real apps on metal**: a modal editor with syntax highlighting, an
+  agent TUI, persistence across reboot. Not a research toy.
+- The "LLM" services do **rule-based** redaction today. A real on-device
+  inference path (dGPU compute, post-P1) is the obvious next milestone
+  for the security thesis.
 
 ## License
 

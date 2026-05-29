@@ -63,6 +63,7 @@ pub mod rt;
 pub mod sync;
 pub mod thread;
 pub mod time;
+pub mod path;
 
 #[doc(hidden)]
 pub use core as __core;
