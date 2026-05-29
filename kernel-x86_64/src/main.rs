@@ -323,6 +323,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static SYNC_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/sync-demo/target/x86_64-unknown-none/release/sync-demo"
     );
+    // M26 Session C: a hello program compiled with rustc's Cranelift
+    // backend (rustc_codegen_cranelift, via -Z codegen-backend=cranelift).
+    // core/compiler_builtins still go through LLVM (the wildcard
+    // [profile.release.package."*"] override) because cg_clif can't yet
+    // build core's va_end intrinsic — but cg-clif-hello.rs itself is
+    // pure Cranelift output. DEMO 71 SPAWNs it, expects exit 0 + the
+    // marker text on stdout.
+    static CG_CLIF_HELLO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/cg-clif-hello/target/x86_64-unknown-none/release/cg-clif-hello"
+    );
     // Phase 14 M25 Tier-1 validation: same observable behaviour as
     // hello-rs.elf but produced through the new semos-std shim.
     // Exercises println! → fmt::Write::write_str → SYS_WRITE, plus
@@ -374,6 +384,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered sync-demo.elf ({} bytes, Condvar+mpsc+RwLock smoke)", SYNC_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register sync-demo.elf");
+        }
+        if fs.add("cg-clif-hello.elf", kernel_core::fs::ramfs::FileType::Executable, CG_CLIF_HELLO_ELF) {
+            println!("    Registered cg-clif-hello.elf ({} bytes, rustc Cranelift backend)", CG_CLIF_HELLO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register cg-clif-hello.elf");
         }
         if fs.add("thread-demo.elf", kernel_core::fs::ramfs::FileType::Executable, THREAD_DEMO_ELF) {
             println!("    Registered thread-demo.elf ({} bytes, Ring 3 threading demo)", THREAD_DEMO_ELF.len());
@@ -1142,6 +1157,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 70: Ring 3 semos-std::{{Condvar, mpsc, RwLock}}");
     println!("================================================================");
     ring3_sync_demo();
+
+    // DEMO 71: Ring 3 program built by rustc's Cranelift codegen backend.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 71: rustc Cranelift backend → SemOS ELF → SYS_SPAWN");
+    println!("================================================================");
+    ring3_cg_clif_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4407,6 +4429,90 @@ fn threading_futex_test() {
     println!("  [DEMO 27] PASS: SYS_WAITNB non-blocking returned {}", if r == u64::MAX { "MAX (no children)" } else { "0 (no zombies)" });
 
     println!("  [DEMO 27] => Tier 3 scheduler-side primitives green; Ring 3 thread_spawn next");
+}
+
+/// DEMO 71: Ring 3 program built by rustc's Cranelift codegen backend.
+/// Pipes the child's stdout to capture its marker text + reads its exit
+/// code via the scheduler slot. PASS = exit 0 AND the "cg_clif" marker
+/// shows up in captured stdout — proves rustc → cg_clif → ELF → SemOS
+/// runs end-to-end. The pipe-capture pattern mirrors DEMO 45.
+fn ring3_cg_clif_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    // Pipe so we can read the child's stdout. dup2 our stdout to the write
+    // end; the child inherits the FD table on spawn.
+    let saved_kernel_task = kernel_core::process::kernel_task_id();
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        println!("  [DEMO 71] FAIL: SYS_PIPE");
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+
+    let path = "/bin/cg-clif-hello";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    // Restore our stdout regardless of spawn outcome.
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 71] FAIL: SYS_SPAWN({}) returned MAX", path);
+        dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+        dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    println!("  [DEMO 71] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    // Poll the scheduler slot until Exited (the binary is trivial — should
+    // be ~milliseconds), then drain captured stdout.
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 71] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+    let mut polled = 0u64;
+    while kernel_core::scheduler::task_state(slot) != kernel_core::scheduler::TaskState::Exited {
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+        polled += 1;
+        if polled > 500 {
+            println!("  [DEMO 71] FAIL: child didn't exit within 500 ticks");
+            return;
+        }
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot) as u32;
+
+    // Drain the pipe.
+    let mut cap = [0u8; 256];
+    let n = {
+        let r = dispatch(SYS_READ, read_fd, cap.as_mut_ptr() as u64, cap.len() as u64, 0);
+        if r == u64::MAX || r == u64::MAX - 1 { 0 } else { (r as usize).min(cap.len()) }
+    };
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+    let out = &cap[..n];
+    let has_marker = out.windows(b"cg_clif".len()).any(|w| w == b"cg_clif");
+
+    if code == 0 && has_marker {
+        println!(
+            "  [DEMO 71] PASS: cg_clif-hello exited 0 + marker present ({} B captured)",
+            n
+        );
+        println!("  [DEMO 71] => rustc Cranelift backend produces SemOS-spawnable ELFs");
+    } else {
+        println!(
+            "  [DEMO 71] FAIL: exit={} marker_found={} captured={} bytes",
+            code, has_marker, n
+        );
+    }
+
+    kernel_core::process::set_kernel_task_id(saved_kernel_task);
 }
 
 /// DEMO 70: Ring 3 sync-demo — live functional smoke for the new

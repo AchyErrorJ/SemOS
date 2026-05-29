@@ -1,0 +1,37 @@
+# Opts into the unstable Cargo feature that lets us select a non-default
+# codegen backend per-profile. Requires nightly cargo.
+cargo-features = ["codegen-backend"]
+
+[package]
+name = "cg-clif-hello"
+version = "0.1.0"
+edition = "2021"
+
+# Opt out of any parent workspace.
+[workspace]
+
+[[bin]]
+name = "cg-clif-hello"
+path = "src/main.rs"
+
+[profile.release]
+panic = "abort"
+# LTO + strip + opt=z is what hello/ uses with cg_llvm. cg_clif doesn't
+# support LTO, so override; keep panic=abort + opt-level=0 since
+# higher opt levels haven't been validated against the no_std + asm!
+# entry path of our user programs.
+lto = false
+opt-level = 0
+strip = false
+codegen-units = 1
+# Build this crate (and only this crate) with the Cranelift codegen
+# backend instead of the default LLVM. core / compiler_builtins
+# (the build-std deps) stay on LLVM via the wildcard override below —
+# cg_clif on nightly-2026-02-01 doesn't yet support `va_end` (used in
+# `core::ffi::va_list`), so rebuilding core through it fails.
+codegen-backend = "cranelift"
+
+# Force every dependency, including the build-std `core` /
+# `compiler_builtins`, to use the default LLVM backend.
+[profile.release.package."*"]
+codegen-backend = "llvm"
