@@ -1117,6 +1117,14 @@ fn init_loader_task() {
     println!("================================================================");
     usb_msc_demo();
 
+    // DEMO 69: live xHCI bulk endpoints — enumerate a usb-storage device,
+    // read INQUIRY + READ CAPACITY via the CBW/CSW protocol.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 69: live USB Mass Storage on xHCI (bulk endpoints)");
+    println!("================================================================");
+    xhci_msc_demo();
+
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
@@ -1340,6 +1348,43 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         }
         *prev = rep.keys;
     });
+}
+
+/// DEMO 69: live USB Mass Storage on xHCI. The HID-keyboard path falls
+/// through to `try_enumerate_mass_storage` when the device isn't HID; that
+/// runs SET_CONFIGURATION, configures bulk EPs via ConfigureEndpoint, then
+/// fires INQUIRY + READ CAPACITY (10) through CBW/CSW. This demo confirms
+/// the MSC device was enumerated and pulls the inquiry strings out.
+/// Self-skips if no usb-storage attached.
+fn xhci_msc_demo() {
+    let msc = match usb::xhci::enumerated_msc() {
+        Some(m) => m,
+        None => {
+            println!("  [DEMO 69] SKIPPED: no usb-storage enumerated (run QEMU with -drive id=ustick,if=none,format=raw,file=... + -device usb-storage,drive=ustick)");
+            return;
+        }
+    };
+    let vendor = core::str::from_utf8(&msc.inquiry[8..16]).unwrap_or("?").trim();
+    let product = core::str::from_utf8(&msc.inquiry[16..32]).unwrap_or("?").trim();
+    let revision = core::str::from_utf8(&msc.inquiry[32..36]).unwrap_or("?").trim();
+    println!(
+        "  [DEMO 69] PASS: enumerated usb-storage — slot={} bulk IN 0x{:02X} OUT 0x{:02X}",
+        msc.slot_id, msc.in_ep_addr, msc.out_ep_addr,
+    );
+    println!(
+        "  [DEMO 69] PASS: INQUIRY → vendor=\"{}\" product=\"{}\" rev=\"{}\"",
+        vendor, product, revision,
+    );
+    if msc.capacity_blocks > 0 && msc.capacity_bs > 0 {
+        let mib = (msc.capacity_blocks as u64 * msc.capacity_bs as u64) / (1024 * 1024);
+        println!(
+            "  [DEMO 69] PASS: READ CAPACITY → {} blocks × {} B ({} MiB)",
+            msc.capacity_blocks, msc.capacity_bs, mib,
+        );
+        println!("  [DEMO 69] => live xHCI bulk endpoints + Mass Storage CBW/CSW verified");
+    } else {
+        println!("  [DEMO 69] FAIL: READ CAPACITY returned 0 blocks");
+    }
 }
 
 /// DEMO 68: USB Mass Storage protocol. Builds the CBWs for INQUIRY, READ

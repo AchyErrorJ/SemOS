@@ -199,6 +199,25 @@ static mut DMA_BUF: DmaBuf = DmaBuf([0; SETUP_BUF_SIZE]);
 struct HidReportBuf([u8; 64]);
 static mut HID_REPORT_BUF: HidReportBuf = HidReportBuf([0; 64]);
 
+/// Transfer rings + DMA scratch for the bulk path (USB Mass Storage,
+/// CDC-ECM, etc.). One IN ring + one OUT ring is enough for v1 since we
+/// only enumerate one bulk device at a time. The IN/OUT split means the
+/// HC can have a TRB pending on each direction simultaneously.
+static mut BULK_IN_TRANSFER_RING: CommandRing = CommandRing::new();
+static mut BULK_OUT_TRANSFER_RING: CommandRing = CommandRing::new();
+/// Scratch for a single Mass Storage transaction: CBW (31) + max data
+/// (4096; a SCSI INQUIRY response is 36, but page-sized covers READ(10) too)
+/// + CSW (13). Three separate buffers so we can submit independent TRBs.
+#[repr(C, align(64))]
+struct BulkCbwBuf([u8; 64]);
+#[repr(C, align(4096))]
+struct BulkDataBuf([u8; 4096]);
+#[repr(C, align(64))]
+struct BulkCswBuf([u8; 32]);
+static mut BULK_CBW_BUF: BulkCbwBuf = BulkCbwBuf([0; 64]);
+static mut BULK_DATA_BUF: BulkDataBuf = BulkDataBuf([0; 4096]);
+static mut BULK_CSW_BUF: BulkCswBuf = BulkCswBuf([0; 32]);
+
 // ============================================================================
 // Driver state
 // ============================================================================
@@ -238,10 +257,31 @@ static mut CMD_PROD: Producer = Producer::new();
 static mut EVT_CONS: Consumer = Consumer::new();
 static mut EP0_PROD: Producer = Producer::new();
 static mut HID_PROD: Producer = Producer::new();
+static mut BULK_IN_PROD: Producer = Producer::new();
+static mut BULK_OUT_PROD: Producer = Producer::new();
 
 /// Resolved physical address of the head of the HID transfer ring; needed
 /// when we re-arm the Normal TRB and ring the doorbell.
 static mut HID_RING_PHYS: u64 = 0;
+static mut BULK_IN_RING_PHYS: u64 = 0;
+static mut BULK_OUT_RING_PHYS: u64 = 0;
+/// State for the enumerated Mass Storage device. Populated when
+/// `enumerate_mass_storage()` succeeds; consumed by `bulk_in`/`bulk_out`.
+#[derive(Copy, Clone)]
+pub struct MscDevice {
+    pub slot_id: u8,
+    pub in_ep_addr: u8,
+    pub out_ep_addr: u8,
+    pub in_dci: u8,
+    pub out_dci: u8,
+    pub max_packet: u16,
+    pub iface_num: u8,
+    pub config_value: u8,
+    pub inquiry: [u8; 36],   // first 36 bytes of INQUIRY response
+    pub capacity_blocks: u32, // from READ CAPACITY (10) (blocks)
+    pub capacity_bs: u32,     // logical block size
+}
+static mut MSC: Option<MscDevice> = None;
 /// Resolved physical address of the EP0 transfer ring.
 static mut EP0_RING_PHYS: u64 = 0;
 /// Resolved physical address of the command ring.
@@ -819,8 +859,10 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
     let (kbd, iface_num, cfg_val) = match find_boot_keyboard(blob, cfg_desc.b_configuration_value) {
         Some(x) => x,
         None => {
-            println!("[xhci] no HID boot keyboard in configuration");
-            // Stash a record of the device anyway so the DEMO can report something.
+            println!("[xhci] no HID boot keyboard — trying Mass Storage path");
+            // Stash a generic device record first so the DEMOs see vendor/product
+            // even if the MSC enumeration also doesn't match (e.g. it's actually
+            // some other class entirely).
             unsafe {
                 DEVICE = Some(EnumeratedDevice {
                     slot_id, usb_address: usb_addr, port, speed,
@@ -831,6 +873,20 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
                     config_value: cfg_desc.b_configuration_value,
                     interface_number: 0,
                 });
+            }
+            // Try the Mass Storage path. Returns true if it found + configured
+            // an MSC device; false if no MSC interface was in the descriptor.
+            if try_enumerate_mass_storage(slot_id, port, speed, blob,
+                                           cfg_desc.b_configuration_value) {
+                let msc = unsafe { MSC.as_ref().unwrap() };
+                let vendor = core::str::from_utf8(&msc.inquiry[8..16]).unwrap_or("?");
+                let product = core::str::from_utf8(&msc.inquiry[16..32]).unwrap_or("?");
+                let revision = core::str::from_utf8(&msc.inquiry[32..36]).unwrap_or("?");
+                println!(
+                    "[xhci-msc] vendor=\"{}\" product=\"{}\" rev=\"{}\" capacity={} blocks x {} B",
+                    vendor.trim(), product.trim(), revision.trim(),
+                    msc.capacity_blocks, msc.capacity_bs
+                );
             }
             return true;
         }
@@ -1200,4 +1256,335 @@ pub fn poll_hid<F: FnMut(&hid::KeyboardReport)>(mut on_report: F) -> usize {
 
 pub fn enumerated_device() -> Option<EnumeratedDevice> {
     unsafe { DEVICE }
+}
+
+pub fn enumerated_msc() -> Option<MscDevice> {
+    unsafe { MSC }
+}
+
+// ============================================================================
+// Bulk transfers (Mass Storage / CDC-ECM / generic bulk)
+// ============================================================================
+
+/// Submit a single Normal TRB to a bulk transfer ring and synchronously wait
+/// for the matching Transfer Event. `dci` is the device context index of the
+/// endpoint (`2*ep_num + direction`, with direction = 1 for IN, 0 for OUT).
+/// Returns Some(bytes transferred) on SUCCESS / SHORT_PACKET, or None on
+/// error or timeout.
+fn bulk_xfer(
+    slot_id: u8,
+    dci: u8,
+    is_in: bool,
+    buf_phys: u64,
+    len: u32,
+) -> Option<u32> {
+    let info = unsafe { match INFO { Some(i) => i, None => return None } };
+    let (ring, prod) = unsafe {
+        if is_in {
+            (&raw mut BULK_IN_TRANSFER_RING, &mut BULK_IN_PROD)
+        } else {
+            (&raw mut BULK_OUT_TRANSFER_RING, &mut BULK_OUT_PROD)
+        }
+    };
+    // Normal TRB: parameter = buf phys, status = (len << 0) (TRB Transfer Length),
+    // control = trb_type Normal | IOC=1 | ISP=1 (interrupt on short packet).
+    let control = ((trb_type::NORMAL as u32) << 10) | (1u32 << 5) | (1u32 << 2);
+    unsafe {
+        enqueue_command(ring, prod, buf_phys, len, control);
+    }
+    ring_doorbell(info.db_base, slot_id, dci);
+
+    // Poll the event ring for a TRANSFER_EVENT. Bounded to avoid hanging the
+    // boot if the device misbehaves.
+    let mut spins: u32 = 0;
+    loop {
+        if let Some(evt) = poll_event() {
+            if evt.trb_type() == trb_type::TRANSFER_EVENT {
+                let cc = evt.completion_code();
+                if cc == cc::SUCCESS || cc == cc::SHORT_PACKET {
+                    // Residual length: high 8 bits of status are CC, low 24 bits
+                    // are TRB Transfer Length Remaining for a Normal TRB.
+                    let remaining = evt.transfer_remaining();
+                    return Some(len.saturating_sub(remaining));
+                }
+                println!("[xhci] bulk_xfer cc={} dci={} is_in={}", cc, dci, is_in);
+                return None;
+            }
+        }
+        spins = spins.wrapping_add(1);
+        if spins > 200_000_000 {
+            println!("[xhci] bulk_xfer timeout dci={} is_in={}", dci, is_in);
+            return None;
+        }
+        core::hint::spin_loop();
+    }
+}
+
+/// Public: send `len` bytes from `phys` on the device's bulk OUT endpoint.
+pub fn bulk_out_xfer(slot_id: u8, dci: u8, phys: u64, len: u32) -> Option<u32> {
+    bulk_xfer(slot_id, dci, false, phys, len)
+}
+/// Public: receive up to `len` bytes into `phys` on the device's bulk IN endpoint.
+pub fn bulk_in_xfer(slot_id: u8, dci: u8, phys: u64, len: u32) -> Option<u32> {
+    bulk_xfer(slot_id, dci, true, phys, len)
+}
+
+// ============================================================================
+// Configuration descriptor walk for USB Mass Storage SCSI BBB
+// ============================================================================
+
+/// Walk a config descriptor blob looking for a Mass Storage / SCSI / BBB
+/// interface (class 0x08 / subclass 0x06 / protocol 0x50). Returns the
+/// interface's number + bulk IN endpoint addr + bulk OUT endpoint addr +
+/// the IN endpoint's MaxPacketSize, plus the config value.
+fn find_msc_endpoints(blob: &[u8], cfg_val: u8) -> Option<(u8, u8, u8, u16, u8)> {
+    let mut i = 0usize;
+    let mut in_msc_iface = false;
+    let mut iface_num: u8 = 0;
+    let mut in_ep: u8 = 0;
+    let mut out_ep: u8 = 0;
+    let mut mps: u16 = 0;
+    while i + 2 <= blob.len() {
+        let dlen = blob[i] as usize;
+        let dtype = blob[i + 1];
+        if dlen < 2 || i + dlen > blob.len() {
+            break;
+        }
+        let d = &blob[i..i + dlen];
+        match dtype {
+            // INTERFACE descriptor
+            0x04 if dlen >= 9 => {
+                let class = d[5];
+                let sub = d[6];
+                let proto = d[7];
+                if class == 0x08 && sub == 0x06 && proto == 0x50 {
+                    iface_num = d[2];
+                    in_msc_iface = true;
+                } else {
+                    in_msc_iface = false;
+                }
+            }
+            // ENDPOINT descriptor
+            0x05 if dlen >= 7 && in_msc_iface => {
+                let addr = d[2];
+                let attr = d[3] & 0x03;
+                let pkt = u16::from_le_bytes([d[4], d[5]]);
+                if attr == 0x02 {
+                    if addr & 0x80 != 0 && in_ep == 0 {
+                        in_ep = addr;
+                        mps = pkt;
+                    } else if addr & 0x80 == 0 && out_ep == 0 {
+                        out_ep = addr;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += dlen;
+    }
+    if in_ep != 0 && out_ep != 0 {
+        Some((iface_num, in_ep, out_ep, mps, cfg_val))
+    } else {
+        None
+    }
+}
+
+/// Configure the device's two bulk endpoints (IN + OUT) via the
+/// ConfigureEndpoint command. Allocates fresh transfer rings for each and
+/// publishes their phys addresses into the BULK_*_RING_PHYS statics so
+/// `bulk_in_xfer` / `bulk_out_xfer` find them.
+fn configure_bulk_endpoints(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    in_ep: u8,
+    out_ep: u8,
+    mps: u16,
+) -> Option<(u8, u8)> {
+    let info = unsafe { match INFO { Some(i) => i, None => return None } };
+
+    // Endpoint DCIs: IN = 2*N+1, OUT = 2*N.
+    let in_dci = ((in_ep & 0x0F) * 2 + 1) as u8;
+    let out_dci = ((out_ep & 0x0F) * 2) as u8;
+    let max_dci = in_dci.max(out_dci);
+
+    // Translate ring phys + program them on the EPs.
+    let in_phys = phys_of(unsafe { &raw const BULK_IN_TRANSFER_RING } as u64)?;
+    let out_phys = phys_of(unsafe { &raw const BULK_OUT_TRANSFER_RING } as u64)?;
+    unsafe {
+        init_command_ring(&raw mut BULK_IN_TRANSFER_RING, in_phys);
+        init_command_ring(&raw mut BULK_OUT_TRANSFER_RING, out_phys);
+        BULK_IN_PROD = Producer::new();
+        BULK_OUT_PROD = Producer::new();
+        BULK_IN_RING_PHYS = in_phys;
+        BULK_OUT_RING_PHYS = out_phys;
+
+        let ic = &mut INPUT_CTX_SLOT1.0;
+        ic.reset();
+        // Add slot (A0) + both bulk endpoints (Ain_dci, Aout_dci).
+        ic.input_ctrl_mut().add_flags =
+            (1u32 << 0) | (1u32 << in_dci) | (1u32 << out_dci);
+        let slot = ic.slot_mut();
+        slot.set_context_entries(max_dci as u32);
+        slot.set_root_hub_port(port);
+        slot.set_speed(speed as u32);
+        ic.ep_mut((in_dci - 1) as usize).init_bulk_in_ep(mps, in_phys, true);
+        ic.ep_mut((out_dci - 1) as usize).init_bulk_out_ep(mps, out_phys, true);
+    }
+
+    let input_phys = phys_of(unsafe { &raw const INPUT_CTX_SLOT1 } as u64)?;
+
+    let idx = unsafe { CMD_PROD.enqueue };
+    let cmd_phys = cmd_trb_phys_at(idx);
+    let control =
+        ((trb_type::CONFIGURE_ENDPOINT_CMD as u32) << 10) | ((slot_id as u32) << 24);
+    unsafe {
+        enqueue_command(
+            &raw mut COMMAND_RING, &mut CMD_PROD,
+            input_phys, 0, control,
+        );
+    }
+    ring_doorbell(info.db_base, 0, 0);
+    let (cc, _) = wait_command_completion(cmd_phys);
+    if cc != cc::SUCCESS {
+        println!("[xhci] ConfigureEndpoint(bulk) failed: cc={}", cc);
+        return None;
+    }
+    Some((in_dci, out_dci))
+}
+
+/// Run a Mass Storage transaction: build CBW, push it OUT, transfer data,
+/// then read CSW IN. Returns `(data_bytes_transferred, csw_status)`.
+fn msc_transaction(
+    msc: &MscDevice,
+    cbw: &[u8],
+    is_data_in: bool,
+    data_len: u32,
+) -> Option<(u32, u8)> {
+    let cbw_phys = phys_of(unsafe { &raw const BULK_CBW_BUF } as u64)?;
+    let data_phys = phys_of(unsafe { &raw const BULK_DATA_BUF } as u64)?;
+    let csw_phys = phys_of(unsafe { &raw const BULK_CSW_BUF } as u64)?;
+
+    // Stage 1: write CBW into BULK_CBW_BUF and push it on the OUT ring.
+    unsafe {
+        BULK_CBW_BUF.0[..cbw.len()].copy_from_slice(cbw);
+    }
+    bulk_out_xfer(msc.slot_id, msc.out_dci, cbw_phys, cbw.len() as u32)?;
+
+    // Stage 2: data phase (if any). For IN, the device fills BULK_DATA_BUF.
+    let mut data_xferred = 0u32;
+    if data_len > 0 {
+        let n = if is_data_in {
+            bulk_in_xfer(msc.slot_id, msc.in_dci, data_phys, data_len)?
+        } else {
+            bulk_out_xfer(msc.slot_id, msc.out_dci, data_phys, data_len)?
+        };
+        data_xferred = n;
+    }
+
+    // Stage 3: read CSW IN.
+    let csw_n = bulk_in_xfer(msc.slot_id, msc.in_dci, csw_phys, 13)?;
+    if csw_n < 13 {
+        return None;
+    }
+    let status = unsafe { BULK_CSW_BUF.0[12] };
+    Some((data_xferred, status))
+}
+
+/// Issue INQUIRY (36 B) + READ CAPACITY (10) to populate MSC.inquiry +
+/// MSC.capacity_*. Called from the enumeration path after bulk EPs are up.
+fn msc_run_inquiry_and_capacity(msc: &mut MscDevice) -> bool {
+    use crate::usb::mass_storage::{self as msc_proto, scsi};
+    let mut cbw = [0u8; 31];
+
+    // INQUIRY
+    let cdb = scsi::inquiry(36);
+    if msc_proto::build_cbw(&mut cbw, 1, 36, true, 0, &cdb).is_none() {
+        return false;
+    }
+    let (n, st) = match msc_transaction(msc, &cbw, true, 36) {
+        Some(v) => v,
+        None => { println!("[xhci-msc] INQUIRY transaction failed"); return false; }
+    };
+    if st != 0 {
+        println!("[xhci-msc] INQUIRY CSW status={}", st);
+        return false;
+    }
+    unsafe {
+        msc.inquiry.copy_from_slice(&BULK_DATA_BUF.0[..36]);
+    }
+    if n != 36 {
+        println!("[xhci-msc] INQUIRY short read: {} of 36", n);
+    }
+
+    // READ CAPACITY (10) — 8 byte response.
+    let cdb = scsi::read_capacity_10();
+    if msc_proto::build_cbw(&mut cbw, 2, 8, true, 0, &cdb).is_none() {
+        return false;
+    }
+    let (n, st) = match msc_transaction(msc, &cbw, true, 8) {
+        Some(v) => v,
+        None => { println!("[xhci-msc] READ CAPACITY transaction failed"); return false; }
+    };
+    if st != 0 || n < 8 {
+        println!("[xhci-msc] READ CAPACITY CSW status={} n={}", st, n);
+        return false;
+    }
+    let data = unsafe { &BULK_DATA_BUF.0[..8] };
+    let (blocks, bs) = msc_proto::parse_read_capacity_10(data).unwrap_or((0, 0));
+    msc.capacity_blocks = blocks;
+    msc.capacity_bs = bs;
+    true
+}
+
+/// Mass Storage enumeration path. Called from `enumerate_device` after the
+/// HID-keyboard lookup fails. Walks the config descriptor for the SCSI BBB
+/// interface, sets up bulk endpoints, runs INQUIRY + READ CAPACITY, and
+/// stashes the result in `MSC`. Returns true if the device is usable.
+fn try_enumerate_mass_storage(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    blob: &[u8],
+    cfg_val: u8,
+) -> bool {
+    let (iface_num, in_ep, out_ep, mps, cfg_val) = match find_msc_endpoints(blob, cfg_val) {
+        Some(x) => x,
+        None => return false,
+    };
+
+    if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, cfg_val as u16, 0, 0) {
+        println!("[xhci-msc] SET_CONFIGURATION failed");
+        return false;
+    }
+
+    let (in_dci, out_dci) = match configure_bulk_endpoints(slot_id, port, speed, in_ep, out_ep, mps) {
+        Some(d) => d,
+        None => return false,
+    };
+
+    println!(
+        "[xhci-msc] bulk endpoints configured: iface {} IN 0x{:02X} OUT 0x{:02X} MPS {} (DCIs IN={} OUT={})",
+        iface_num, in_ep, out_ep, mps, in_dci, out_dci
+    );
+
+    let mut msc = MscDevice {
+        slot_id,
+        in_ep_addr: in_ep,
+        out_ep_addr: out_ep,
+        in_dci,
+        out_dci,
+        max_packet: mps,
+        iface_num,
+        config_value: cfg_val,
+        inquiry: [0u8; 36],
+        capacity_blocks: 0,
+        capacity_bs: 0,
+    };
+    if !msc_run_inquiry_and_capacity(&mut msc) {
+        return false;
+    }
+
+    unsafe { MSC = Some(msc); }
+    true
 }

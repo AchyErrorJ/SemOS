@@ -140,6 +140,42 @@ impl EndpointContext {
         self.dw4 = 8;
     }
 
+    /// Configure as a Bulk IN endpoint (Mass Storage, CDC-ECM, etc.). EP type=6.
+    /// `max_packet_size` is bMaxPacketSize0 from the endpoint descriptor — for
+    /// full-/high-speed bulk on QEMU's usb-storage / usb-net this is 512.
+    pub fn init_bulk_in_ep(
+        &mut self,
+        max_packet_size: u16,
+        tr_dequeue_phys: u64,
+        dequeue_cycle_state: bool,
+    ) {
+        const EP_TYPE_BULK_IN: u32 = 6;
+        const CERR: u32 = 3;
+        self.dw1 = (CERR << 1) | (EP_TYPE_BULK_IN << 3) | ((max_packet_size as u32) << 16);
+        let dcs = if dequeue_cycle_state { 1u32 } else { 0u32 };
+        self.dw2 = dcs | ((tr_dequeue_phys & 0xFFFF_FFF0) as u32);
+        self.dw3 = (tr_dequeue_phys >> 32) as u32;
+        // Average TRB length — a generous default that covers typical SCSI/Ethernet
+        // transfers; the spec only requires this to be non-zero.
+        self.dw4 = max_packet_size as u32;
+    }
+
+    /// Configure as a Bulk OUT endpoint. EP type=2. Same fields as bulk IN.
+    pub fn init_bulk_out_ep(
+        &mut self,
+        max_packet_size: u16,
+        tr_dequeue_phys: u64,
+        dequeue_cycle_state: bool,
+    ) {
+        const EP_TYPE_BULK_OUT: u32 = 2;
+        const CERR: u32 = 3;
+        self.dw1 = (CERR << 1) | (EP_TYPE_BULK_OUT << 3) | ((max_packet_size as u32) << 16);
+        let dcs = if dequeue_cycle_state { 1u32 } else { 0u32 };
+        self.dw2 = dcs | ((tr_dequeue_phys & 0xFFFF_FFF0) as u32);
+        self.dw3 = (tr_dequeue_phys >> 32) as u32;
+        self.dw4 = max_packet_size as u32;
+    }
+
     /// Configure as an Interrupt-IN endpoint (HID keyboard). EP type=7.
     pub fn init_interrupt_in_ep(
         &mut self,

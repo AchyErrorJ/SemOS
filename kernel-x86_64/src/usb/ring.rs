@@ -60,6 +60,9 @@ impl Trb {
     #[inline] pub fn trb_type(&self) -> u8 { ((self.control >> 10) & 0x3F) as u8 }
     /// Completion code (bits 31:24 of status) — only meaningful on event TRBs.
     #[inline] pub fn completion_code(&self) -> u8 { ((self.status >> 24) & 0xFF) as u8 }
+    /// TRB Transfer Length Remaining (bits 23:0 of status) on Transfer Events —
+    /// bytes the HC did NOT move (useful for short bulk reads).
+    #[inline] pub fn transfer_remaining(&self) -> u32 { self.status & 0x00FF_FFFF }
     /// Slot ID (bits 31:24 of control) — only meaningful on certain event TRBs.
     #[inline] pub fn slot_id(&self) -> u8 { ((self.control >> 24) & 0xFF) as u8 }
     /// Endpoint ID (bits 21:16 of control) — only on Transfer Events.
