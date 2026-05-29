@@ -333,6 +333,15 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static CG_CLIF_HELLO_ELF: &[u8] = include_bytes!(
         "../../user-programs/cg-clif-hello/target/x86_64-unknown-none/release/cg-clif-hello"
     );
+    // M27 Session D.1: the first ELF assembled directly by *our* host
+    // compiler (compiler/) — Cranelift-codegen'd `add(i64,i64)` body
+    // glued to a hand-emitted `_start` shim and wrapped in an ET_EXEC
+    // header, all without invoking rustc or a linker. _start calls
+    // add(1, 2) and exits with the result; DEMO 72 asserts exit==3 +
+    // marker on stdout. Build with: cd compiler && cargo run.
+    static SEMOS_CC_HELLO_ELF: &[u8] = include_bytes!(
+        "../../compiler/out/semos_cc_hello.elf"
+    );
     // Phase 14 M25 Tier-1 validation: same observable behaviour as
     // hello-rs.elf but produced through the new semos-std shim.
     // Exercises println! → fmt::Write::write_str → SYS_WRITE, plus
@@ -389,6 +398,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered cg-clif-hello.elf ({} bytes, rustc Cranelift backend)", CG_CLIF_HELLO_ELF.len());
         } else {
             println!("    [WARN] failed to register cg-clif-hello.elf");
+        }
+        if fs.add("semos-cc-hello.elf", kernel_core::fs::ramfs::FileType::Executable, SEMOS_CC_HELLO_ELF) {
+            println!("    Registered semos-cc-hello.elf ({} bytes, host-compiler ET_EXEC)", SEMOS_CC_HELLO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register semos-cc-hello.elf");
         }
         if fs.add("thread-demo.elf", kernel_core::fs::ramfs::FileType::Executable, THREAD_DEMO_ELF) {
             println!("    Registered thread-demo.elf ({} bytes, Ring 3 threading demo)", THREAD_DEMO_ELF.len());
@@ -1164,6 +1178,14 @@ fn init_loader_task() {
     println!("  SemOS DEMO 71: rustc Cranelift backend → SemOS ELF → SYS_SPAWN");
     println!("================================================================");
     ring3_cg_clif_demo();
+
+    // DEMO 72: M27 Session D.1 — host semos-compiler assembles an ET_EXEC
+    // directly from Cranelift bytes (no rustc, no linker) and SemOS runs it.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 72: host semos-compiler → SemOS ELF → SYS_SPAWN");
+    println!("================================================================");
+    ring3_semos_cc_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4508,6 +4530,86 @@ fn ring3_cg_clif_demo() {
     } else {
         println!(
             "  [DEMO 71] FAIL: exit={} marker_found={} captured={} bytes",
+            code, has_marker, n
+        );
+    }
+
+    kernel_core::process::set_kernel_task_id(saved_kernel_task);
+}
+
+/// DEMO 72: M27 Session D.1 — the first SemOS executable assembled by
+/// *our* host compiler (semos-compiler in compiler/). The ELF contains
+/// a hand-emitted x86_64 `_start` shim that calls a Cranelift-lowered
+/// `add(1, 2)` and exits with the result. PASS = exit == 3 (proves
+/// Cranelift's lea-add ran inside Ring 3) AND "semos-cc" appears in
+/// captured stdout (proves the shim ran SYS_WRITE through a real ELF
+/// mapping). Pipe-capture pattern mirrors DEMO 71.
+fn ring3_semos_cc_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let saved_kernel_task = kernel_core::process::kernel_task_id();
+    kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+
+    let mut fds = [0u64; 2];
+    if dispatch(SYS_PIPE, fds.as_mut_ptr() as u64, 0, 0, 0) != 0 {
+        println!("  [DEMO 72] FAIL: SYS_PIPE");
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    dispatch(SYS_DUP2, write_fd, 1, 0, 0);
+
+    let path = "/bin/semos-cc-hello";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    dispatch(SYS_DUP2, 0, 1, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 72] FAIL: SYS_SPAWN({}) returned MAX", path);
+        dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+        dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(saved_kernel_task);
+        return;
+    }
+    println!("  [DEMO 72] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 72] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+    let mut polled = 0u64;
+    while kernel_core::scheduler::task_state(slot) != kernel_core::scheduler::TaskState::Exited {
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
+        polled += 1;
+        if polled > 500 {
+            println!("  [DEMO 72] FAIL: child didn't exit within 500 ticks");
+            return;
+        }
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot) as u32;
+
+    let mut cap = [0u8; 256];
+    let n = {
+        let r = dispatch(SYS_READ, read_fd, cap.as_mut_ptr() as u64, cap.len() as u64, 0);
+        if r == u64::MAX || r == u64::MAX - 1 { 0 } else { (r as usize).min(cap.len()) }
+    };
+    dispatch(SYS_CLOSE, read_fd, 0, 0, 0);
+    dispatch(SYS_CLOSE, write_fd, 0, 0, 0);
+    let out = &cap[..n];
+    let has_marker = out.windows(b"semos-cc".len()).any(|w| w == b"semos-cc");
+
+    if code == 3 && has_marker {
+        println!(
+            "  [DEMO 72] PASS: semos-cc-hello exited 3 (= add(1,2)) + marker present ({} B captured)",
+            n
+        );
+        println!("  [DEMO 72] => host semos-compiler produces SemOS-spawnable ELFs");
+    } else {
+        println!(
+            "  [DEMO 72] FAIL: exit={} (want 3) marker_found={} captured={} bytes",
             code, has_marker, n
         );
     }

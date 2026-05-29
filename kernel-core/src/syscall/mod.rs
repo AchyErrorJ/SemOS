@@ -1703,6 +1703,7 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
                 "sem-sh"    => "sem-sh.elf",
                 "sync-demo" => "sync-demo.elf",
                 "cg-clif-hello" => "cg-clif-hello.elf",
+                "semos-cc-hello" => "semos-cc-hello.elf",
                 _ => return u64::MAX,
             }
         } else if fs.find(stripped).is_some() {

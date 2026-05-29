@@ -132,6 +132,29 @@ This is **enormously simpler than full rustc**:
 The goal is "the toolchain pipeline works end-to-end on SemOS." Full
 rustc-builds-rustc is M27 proper and waits for the toolchain to firm up.
 
+#### D.1 — host emits an ET_EXEC directly **DONE** (DEMO 72, 2026-05-29)
+Closes Session B's "NEXT" note (`compiler/src/main.rs`'s pre-D.1
+comment). `semos-compiler` now lowers an `add(i64,i64)` IR function with
+Cranelift, hand-emits a 47-byte `_start` shim that calls `add(1,2)`
+through System V (`mov edi,1 / mov esi,2 / call rel32` → Cranelift) and
+exits with the result, and wraps the whole thing in a 192-byte ET_EXEC
+at entry `0x400078` — no `cranelift-object`, no linker. ELF lands at
+`compiler/out/semos_cc_hello.elf` (gitignored); the kernel
+`include_bytes!`s it. DEMO 72 asserts exit==3 (Cranelift's `lea
+rax,[rdi+rsi]` ran in Ring 3) AND captured stdout contains "semos-cc"
+(the hand-emitted SYS_WRITE went through a real ELF mapping). One-line
+gotcha to add the new program to `handle_spawn`'s hardcoded
+`/bin/<name>` → ramfs table (`kernel-core/src/syscall/mod.rs:1705`).
+**170 PASS / 0 FAIL / 0 #DF.** Unblocks D.2.
+
+#### D.2 — port the emitter to Ring 3 on SemOS (next)
+The same `semos-compiler` logic, recompiled against
+`x86_64-unknown-none` + `semos-std`, running as a Ring-3 SemOS program.
+The chunk of work is the Cranelift no_std port (the 44-crate vendor
+tree has host-`std` and `tokio` assumptions in spots), plus a SemOS
+heap big enough for Cranelift's allocations. Output ELF writes via
+`std::fs::File`, then a sibling DEMO `SYS_SPAWN`s it.
+
 ### Session E — #54 codegen bug (medium-hard)
 The opt-level=0 workaround blocks the eventual self-hosted rustc release
 build. Open work: figure out which codegen pass mis-handles the syscall

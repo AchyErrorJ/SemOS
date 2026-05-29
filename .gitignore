@@ -2,6 +2,9 @@
 target/
 **/target/
 
+# Compiler-emitted SemOS ELFs (M27 D.1; build with: cd compiler && cargo run)
+compiler/out/
+
 # QEMU runtime output
 qemu-serial.log
 qemu-int.log
