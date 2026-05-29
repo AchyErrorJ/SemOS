@@ -58,6 +58,7 @@ A milestone is **done** when:
 | xHCI CSZ=1 2026-05-28 | **64-byte context layout for Intel chipsets (`8821df1`).** Previous boot-time REJECT on CSZ=1 is gone. `InputContext`/`DeviceContext` are now raw byte buffers at max stride (2112/2048 B, align(64)); accessors (`input_ctrl_mut`, `slot_mut`, `ep_mut(idx)`, `slot_read`, `ep_read(idx)`) compute offsets via `CTX_SIZE` set once at xhci bring-up (`set_ctx_size(if csz1 {64} else {32})`). 32-byte `SlotContext`/`EndpointContext` data formats unchanged — only their placement varies. **`TIMER_TICKS` is also now `AtomicU64`** (was `spin::Mutex<u64>`, latent ISR-vs-reader deadlock found while building the M10 watchdog). qemu-xhci (CSZ=0) regression-clean: 165 PASS / 0 FAIL / 0 #DF. Unblocks USB enumeration on the T540 HM87 (Intel CSZ=1). |
 | M10 watchdog + audit 2026-05-28 | **Pre-flight v1 (`d77ba87`).** Audit: framebuffer-only diagnostics already in place (`serial::_print` mirrors), RTC century byte already handled, panic handler routes through both. New: `idle_with_heartbeat` prints `[heartbeat] kernel reached idle — ticks=N` at end of boot as proof-of-life on metal. Latent bug fixed: `TIMER_TICKS spin::Mutex<u64>` → `AtomicU64`, eliminating the ISR-vs-reader deadlock pattern. **Top M10 follow-up is xHCI CSZ=1 support** — Intel chipsets (incl. the T540 HM87) need 64-byte contexts; current code rejects at bring-up. Blocks USB on real Intel hardware (PS/2 keyboard still works). |
 | USB Mass Storage v1 2026-05-28 | **USB stick CBW/CSW + SCSI (DEMO 68, `3a4587b`).** Protocol layer for reading a USB stick on the T540: class IDs 0x08/0x06/0x50 (SCSI BBB), 31-byte CBW build with 'USBC' signature + zero-padded CBWCB, 13-byte CSW parse (tag/residue/status), SCSI CDB builders for INQUIRY / READ CAPACITY (10) / READ (10) / WRITE (10) / TEST UNIT READY, INQUIRY + READ CAPACITY response parsers. Validated against six canned-byte checks. Hardware-ready for live xHCI bulk-endpoint TX/RX (same gating as CDC-ECM). |
+| M26 cg_clif e2e 2026-05-29 | **rustc Cranelift backend → SemOS ELF → SYS_SPAWN (DEMO 71, `0039b25`).** Real rustc-on-cg_clif acceptance: a Rust source file compiled with the rustup-distributed `rustc-codegen-cranelift-preview` component (1.95.0-nightly) on our pinned toolchain produces a 13,688-byte ELF that runs in Ring 3 and writes its marker via SYS_WRITE before SYS_EXIT(0). `user-programs/cg-clif-hello/` opts in via `cargo-features = ["codegen-backend"]` + `[profile.release] codegen-backend = "cranelift"`; core/compiler_builtins stay on LLVM via `[profile.release.package."*"] codegen-backend = "llvm"` because cg_clif can't yet lower core's `va_end`. DEMO 71 pipes stdout, polls for Exited, checks exit==0 AND captured stdout contains "cg_clif". 169 PASS / 0 FAIL. Closes the "vendor + JIT + emit a real ELF on SemOS" goal; rustc-on-metal is unblocked at the codegen-backend layer. |
 | M26 vendor + smoke 2026-05-29 | **Cranelift vendored + JIT smoke (`f1b2635`).** New `compiler/` host crate depends on cranelift-codegen + cranelift-frontend + cranelift-module + cranelift-object 0.122; `cargo vendor --versioned-dirs` pulled in 44 crates (~25 MB) into `compiler/vendor/` for deterministic offline builds. `compiler/.cargo/config.toml` overrides the repo-root's aarch64 default (ARM-phase leftover) since semos-compiler is a HOST tool. Smoke test builds an IR `i64 add(i64,i64)`, verifies, lowers to x86_64 — emits a 13-byte System V function (`push rbp; mov rbp,rsp; lea rax,[rdi+rsi]; mov rsp,rbp; pop rbp; ret`). The Cranelift pipeline is now live in the tree. Next: wrap cranelift-object output into a SemOS ET_EXEC (entry 0x400000, _start hooking SYS_EXIT), so the emitted code runs via SYS_SPAWN — multi-session integration with our linker.ld + non-PIE layout. |
 | M25 sync live-smoke 2026-05-29 | **Ring 3 sync-demo + DEMO 70 (`f087124`)** — `user-programs/sync-demo/` exercises the new sync surface end-to-end on metal-equivalent QEMU: Condvar wakeup fires (state goes 0→42 across thread boundary), mpsc 1..=5 ordering + disconnect (sum=15, then RecvError after last sender drops), RwLock holds 2 concurrent readers + writer succeeds after they drop. Exit 0 = full pass; 0x71..0x74 are stage-specific failure codes. 167 PASS / 0 FAIL. Closes the "compile-validated, never functionally smoked" follow-up from M25. |
 | M25 stdlib complete 2026-05-29 | **`semos-std` finished (`7276f07`)** — Session A of `docs/SELF_HOSTING_PLAN.md` is done. Adds Condvar (futex seq-counter, no lost-wakeup) + RwLock (one u32 state: bit 31 writer, bits 30:0 reader count; CAS + futex_wait on contention) + mpsc (multi-producer single-consumer channel on Mutex<VecDeque<T>> + Condvar; sender clonable; last-sender-drop or receiver-drop wakes the other side with Disconnected/SendError) + HashMap+HashSet via vendored `hashbrown` 0.15 (`default-features = false` for no_std + alloc; deterministic default hasher) + BTreeMap/BTreeSet/VecDeque re-exports. All 10 user programs still build, kernel still 165 PASS / 0 FAIL with sem-sh embedded. Follow-up: a small Ring-3 `sync-demo` to functionally smoke-test Condvar wakeups + mpsc ordering on metal (the types compile, but live wakeup correctness needs a real producer/consumer test). M26 (Cranelift vendoring) is now the next gate toward rustc-on-metal. |
@@ -851,7 +852,7 @@ optimization miscompiles the `asm!`-based syscall wrappers.
 - [✅] `std::env`, `std::path`, `std::time`, `std::collections`, `std::sync::mpsc` — `env` done; `time::{Instant,Duration}` over SYS_TIME (`ef3a3fc`); `path::{Path,PathBuf}` lexical (`d77256d`); `collections::{HashMap,HashSet}` via vendored `hashbrown` 0.15 + `BTreeMap/BTreeSet/VecDeque` from `alloc` (`7276f07`); `mpsc` MPSC channel on Mutex+Condvar+VecDeque (`7276f07`)
 - [✅] A "hello world" program built against this std runs on Semantic OS — hello-std/vec-demo/std-demo (DEMO 29–31)
 
-## M26 — Cranelift backend integration `[🔨 vendored + host smoke; cg_clif + SemOS-ELF emitter next]`
+## M26 — Cranelift backend integration `[✅ cg_clif end-to-end on SemOS]`
 
 Avoid the LLVM C++ port by adopting the Rust-native codegen.
 
@@ -877,14 +878,20 @@ Avoid the LLVM C++ port by adopting the Rust-native codegen.
       `i64 add(i64, i64)`, verifies, lowers to x86_64 — emits a 13-byte
       textbook System V function (push rbp; mov rbp,rsp; lea rax,[rdi+rsi];
       mov rsp,rbp; pop rbp; ret).
-- [ ] `rustc_codegen_cranelift` similarly vendored / patched (Session C of
-      `docs/SELF_HOSTING_PLAN.md`)
-- [ ] **SemOS ET_EXEC emitter**: wrap cranelift-object output into a
-      kernel-spawnable ELF (entry at USER_CODE_BASE=0x400000, `_start`
-      calling `SYS_EXIT(0)`) — integrates with our linker.ld + non-PIE
-      layout. ~200-400 lines, Session D-equivalent.
-- [ ] Smoke-on-metal: cranelift-emitted ELF runs via `SYS_SPAWN` on
-      SemOS and exits with the expected code.
+- [✅] **`rustc_codegen_cranelift` wired in** (`0039b25`) — via the
+      rustup-distributed `rustc-codegen-cranelift-preview` component on
+      our pinned nightly-2026-02-01. Avoids vendoring rustc-internal
+      crates (which aren't on crates.io); `cargo build -Z codegen-backend`
+      + `[profile.release] codegen-backend = "cranelift"` is enough. core
+      / compiler_builtins stay on LLVM via a wildcard package override
+      (cg_clif can't yet lower core's `va_end` intrinsic).
+- [✅] **Smoke-on-metal**: `cg-clif-hello.elf` (13,688 B, produced by
+      rustc with the Cranelift backend) `SYS_SPAWN`s on SemOS, writes
+      its marker via `SYS_WRITE`, and exits with code 0. DEMO 71 PASS.
+- [ ] Patches needed for cg_clif to lower `va_end` (so build-std also
+      uses it; today it's a wildcard LLVM override for the standard
+      library deps). Upstream cg_clif issue — track from the next
+      nightly bump.
 
 ## M27 — First rustc build on Semantic OS `[  ]`
 

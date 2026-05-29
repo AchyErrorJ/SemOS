@@ -103,10 +103,21 @@ verify ordering / wakeups / shared-state correctness.
   `target = "x86_64-pc-windows-msvc"` in `compiler/.cargo/config.toml`
   — semos-compiler is a HOST tool that needs std.
 
-### Session C — `cg_clif` (rustc Cranelift backend) (~1 session)
-`rustc_codegen_cranelift` is rustc's drop-in alternative to cg_llvm. It's
-maintained, smaller than LLVM, and `no_std`-friendly. Vendor it into
-`vendor/cg_clif`; patch its build script to find our vendored Cranelift.
+### Session C — `cg_clif` (rustc Cranelift backend) **DONE** (`0039b25`)
+Pragmatic approach: instead of vendoring `rustc_codegen_cranelift`'s
+sources (which depend on rustc-internal crates not on crates.io and would
+be a multi-session lift), use the rustup-distributed
+`rustc-codegen-cranelift-preview` component for our pinned nightly. It
+ships `rustc_codegen_cranelift-1.95.0-nightly.dll` as a drop-in backend.
+
+- `user-programs/cg-clif-hello/` opts in via `cargo-features =
+  ["codegen-backend"]` + `[profile.release] codegen-backend = "cranelift"`.
+- core / compiler_builtins stay on LLVM via a wildcard package override
+  (cg_clif can't yet lower `core::ffi::va_list::va_end` on this nightly;
+  the wildcard sidesteps that).
+- Build: `cargo +nightly-2026-02-01 build --release -Z codegen-backend`.
+- The resulting ELF is `SYS_SPAWN`-able like any other user binary —
+  DEMO 71 confirms it runs, writes its marker, and exits 0.
 
 ### Session D — a tiny rustc-on-SemOS proof-of-concept (~2 sessions)
 Build a **minimal** rustc binary (or skip rustc entirely and use a simpler
