@@ -81,7 +81,9 @@ $rLen    = [BitConverter]::ToUInt32($buf, 24)
 $reason  = [System.Text.Encoding]::ASCII.GetString($buf, 28, $rLen)
 
 Write-Host "SemOS panic dump (version $version)" -ForegroundColor Yellow
-$secs = [math]::Round($tick / 100, 1)
+# Kernel timer = SCHEDULER_TICK_HZ ≈ 62 Hz (LAPIC bus / 16 / 1e6 on QEMU).
+# Real hardware may differ slightly; this estimate is informational.
+$secs = [math]::Round($tick / 62, 1)
 Write-Host "Tick at panic: $tick (~${secs}s since boot)"
 Write-Host ""
 Write-Host "Panic reason:" -ForegroundColor Yellow

@@ -9,9 +9,12 @@
 
 use crate::arch::{syscall0, SYS_TIME};
 
-/// Kernel scheduler tick rate. Matches `kernel_core::scheduler::TICK_HZ`.
-const TICKS_PER_SEC: u64 = 100;
-const MILLIS_PER_TICK: u128 = 10;
+/// Kernel scheduler tick rate, matching `kernel_core::scheduler::SCHEDULER_TICK_HZ`.
+/// On QEMU's LAPIC this is the configured ~62.5 Hz (1 GHz / 16 / 1e6). On real
+/// hardware the LAPIC bus clock varies and the actual rate may drift — same
+/// caveat that lives in the kernel-core source-of-truth.
+const TICKS_PER_SEC: u64 = 62;
+const MILLIS_PER_TICK: u128 = 1000 / 62; // ~16 ms; loses precision but matches reality
 
 /// A span of time, internally stored as ticks (10 ms granularity).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -31,8 +34,9 @@ impl Duration {
     }
 
     pub const fn from_millis(m: u64) -> Self {
-        // 10 ms per tick — round to nearest tick.
-        Self { ticks: (m + 5) / 10 }
+        // ~16 ms per tick @ 62 Hz — round to nearest tick.
+        // ticks = m * 62 / 1000, rounded.
+        Self { ticks: (m * TICKS_PER_SEC + 500) / 1000 }
     }
 
     pub const fn as_secs(&self) -> u64 {

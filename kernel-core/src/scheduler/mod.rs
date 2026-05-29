@@ -437,6 +437,38 @@ pub fn task_state(slot: usize) -> TaskState {
     }
 }
 
+/// Read a slot's name (debug). Returns "" for invalid slots.
+pub fn task_name(slot: usize) -> &'static str {
+    if slot >= MAX_TASKS { return ""; }
+    unsafe {
+        let tasks = &raw const TASKS;
+        (*tasks)[slot].name
+    }
+}
+
+/// Read a slot's run_count — how many times pick_next has picked it
+/// (incremented on every transition into Running). Useful to confirm
+/// whether the scheduler is actually visiting a slot, vs. visiting it
+/// but the task's first instruction failing silently.
+pub fn task_run_count(slot: usize) -> u64 {
+    if slot >= MAX_TASKS { return 0; }
+    unsafe {
+        let tasks = &raw const TASKS;
+        (*tasks)[slot].run_count
+    }
+}
+
+/// Read a slot's BlockReason — debug accessor for the platform crate's
+/// scheduler diagnostics (kernel-core has no println!, so the platform
+/// walks slots itself and prints).
+pub fn task_block_reason(slot: usize) -> BlockReason {
+    if slot >= MAX_TASKS { return BlockReason::None; }
+    unsafe {
+        let tasks = &raw const TASKS;
+        (*tasks)[slot].block_reason
+    }
+}
+
 /// Read a slot's exit code. Only meaningful when `task_state(slot)` is
 /// `Exited` — otherwise 0.
 pub fn task_exit_code(slot: usize) -> u64 {

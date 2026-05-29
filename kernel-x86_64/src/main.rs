@@ -1152,40 +1152,48 @@ fn init_loader_task() {
 /// from M10), filed for follow-up. The continuous mode below remains in tree
 /// because the moment the scheduler issue is fixed it'll start working with
 /// zero code change — the wiring is correct.
+/// M10 watchdog: prints proof-of-life ("kernel reached idle"), then spawns a
+/// dedicated `kernel_idle_task` for the continuous heartbeat. The scheduler
+/// picks it up normally (confirmed during the 2026-05-28 instrumented run —
+/// `IDLE_RUN_COUNT` ramped to thousands of iterations). The earlier "no
+/// continuous beats" was a tick-rate bug in this function, not a scheduler
+/// issue: my heartbeat used `/100` assuming 100 Hz, but the kernel timer
+/// runs at `SCHEDULER_TICK_HZ` (~62 Hz on QEMU), so 5 wall-clock seconds
+/// gave `elapsed_s = 3` and the `>= 5` branch never fired.
 fn idle_with_heartbeat() -> ! {
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
     let ticks = kernel_core::platform::ticks();
     println!("[heartbeat] kernel reached idle — ticks={} (M10 watchdog)", ticks);
     match crate::context::spawn_task("idle-heartbeat", kernel_idle_task) {
-        Some(slot) => {
-            println!(
-                "[heartbeat] kernel idle task in slot {} (continuous beat — \
-                pending scheduler-pick-next fix)",
-                slot
-            );
-        }
-        None => {
-            println!("[heartbeat] could not spawn idle task — only the one-shot above");
-        }
+        Some(slot) => println!("[heartbeat] kernel idle task in slot {} (continuous beat)", slot),
+        None => println!("[heartbeat] could not spawn idle task — only the one-shot above"),
     }
+    // SYS_SLEEP (not bare hlt) — moves init to Blocked state so the scheduler
+    // is FORCED to pick others (including the idle task). The earlier hlt
+    // version had init perpetually Ready, which starved slot 6's forward
+    // progress despite pick_next correctly picking it. SYS_SLEEP is the
+    // canonical "yield until much later" call.
     loop {
-        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+        let _ = dispatch(SYS_SLEEP, 100, 0, 0, 0); // ~1.6 s @ 62 Hz, then wake + sleep again
     }
 }
 
-/// Continuous M10 watchdog. Designed to run as a dedicated scheduler task so
-/// it's always in the round-robin set; on timer wakes (~100 Hz), prints every
-/// 5 s. Currently doesn't get scheduled (see `idle_with_heartbeat` doc) — the
-/// code is correct and ready to go the moment the scheduler-pick issue lands.
+/// Continuous M10 watchdog. Emits a beat every 5 wall-clock seconds via
+/// `kernel_core::scheduler::SCHEDULER_TICK_HZ` — must match the actual timer
+/// rate, NOT a 100 Hz assumption.
 fn kernel_idle_task() {
-    println!("[idle] kernel idle task is running (ticks={})", kernel_core::platform::ticks());
+    const TICK_HZ: u64 = kernel_core::scheduler::SCHEDULER_TICK_HZ;
+    const BEAT_TICKS: u64 = 5 * TICK_HZ;
     let start = kernel_core::platform::ticks();
-    let mut last_emitted_s = 0u64;
+    println!("[heartbeat] idle task started (ticks={}, expecting one beat every {} ticks)",
+        start, BEAT_TICKS);
+    let mut next_emit = start + BEAT_TICKS;
     loop {
         let now = kernel_core::platform::ticks();
-        let elapsed_s = now.saturating_sub(start) / 100;
-        if elapsed_s >= last_emitted_s + 5 {
-            last_emitted_s = elapsed_s;
+        if now >= next_emit {
+            let elapsed_s = now.saturating_sub(start) / TICK_HZ;
             println!("[heartbeat] T+{}s — alive (ticks={})", elapsed_s, now);
+            next_emit = now + BEAT_TICKS;
         }
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
     }
