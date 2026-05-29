@@ -59,6 +59,7 @@ mod nvme;
 mod ahci;
 mod hda;
 mod wireless;
+mod panic_dump;
 pub mod paging;
 pub mod apic;
 pub mod framebuffer;
@@ -6080,9 +6081,24 @@ fn enable_sse() {
 /// Panic handler
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    use core::fmt::Write;
+
     println!();
     println!("!!! KERNEL PANIC !!!");
     println!("{}", info);
+
+    // Best-effort: format the panic message into a stack buffer and persist a
+    // panic snapshot (scrollback ring + reason) to the end of the first
+    // available block device, so it can be recovered post-mortem from another
+    // OS (HxD / dd to the last 130 sectors; look for "PANICLOG" magic).
+    let mut reason_buf = [0u8; 384];
+    let mut w = panic_dump::BufWriter { buf: &mut reason_buf, n: 0 };
+    let _ = write!(&mut w, "{}", info);
+    let written = w.n;
+    match panic_dump::dump(&reason_buf[..written]) {
+        Some(name) => println!("[panic-dump] wrote panic snapshot to {}; recover with HxD at last 130 sectors", name),
+        None => println!("[panic-dump] no block device available — only the framebuffer print above"),
+    }
 
     loop {
         x86_64::instructions::hlt();

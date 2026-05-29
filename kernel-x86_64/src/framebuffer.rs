@@ -372,6 +372,20 @@ static mut SCROLLBACK_BUF: ScrollbackBuf = ScrollbackBuf([0; SCROLLBACK_SIZE]);
 use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 static SCROLLBACK_HEAD: AtomicU64 = AtomicU64::new(0);
 
+/// Current monotonic write head into the scrollback ring (not modulo'd).
+/// Exposed so the panic-dump path can snapshot the ring without copying it
+/// into a 64 KiB intermediate buffer.
+pub fn scrollback_head() -> u64 {
+    SCROLLBACK_HEAD.load(AtomicOrdering::Relaxed)
+}
+
+/// Raw pointer to the scrollback ring's first byte. Use with
+/// `(head + i) & (SCROLLBACK_SIZE - 1)` for the actual index. Read-only
+/// via `read_volatile`; do not write through this pointer.
+pub fn scrollback_buf_ptr() -> *const u8 {
+    (&raw const SCROLLBACK_BUF) as *const u8
+}
+
 /// Append a single byte to the scrollback ring. Lock-free; safe because
 /// `serial::_print` already runs inside `without_interrupts`.
 fn scrollback_push(byte: u8) {
