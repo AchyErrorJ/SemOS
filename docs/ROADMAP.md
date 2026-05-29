@@ -334,12 +334,17 @@ the first real-hardware session. v1 landed `d77ba87` — audit + watchdog
       handles real-BIOS variance.
 - [📝] VT-d disabled in BIOS OR identity-IOMMU implemented — BIOS knob;
       no code. Confirm during T540 first-boot.
-- [✅] **"Kernel didn't crash" watchdog (one-shot v1)** — `[heartbeat]
-      kernel reached idle — ticks=N` printed at end of boot, mirrors to
-      framebuffer. Presence + correct N = boot succeeded. **Latent bug
-      fixed along the way:** `TIMER_TICKS` was `spin::Mutex<u64>` →
-      `AtomicU64`, eliminating an ISR-vs-reader deadlock pattern.
-      Continuous beats need a kernel idle-task slot — follow-up.
+- [✅] **"Kernel didn't crash" watchdog — CONTINUOUS** (`34baed1`). The
+      dedicated `kernel_idle_task` (slot 6) prints `[heartbeat] T+Ns —
+      alive (ticks=N)` every 5 s forever; init uses `loop { SYS_SLEEP(N) }`
+      so the scheduler is forced to give the idle task full slices.
+      Real bugs fixed in the chase: (1) `TIMER_TICKS` was `spin::Mutex<u64>`,
+      latent ISR-vs-reader deadlock; now `AtomicU64`. (2) The tick rate is
+      `SCHEDULER_TICK_HZ = 62`, not 100; `semos_std::time` + the panic-log
+      recovery script also fixed. The original "scheduler pick_next bug"
+      claim was misdiagnosed — instrumentation showed the scheduler was
+      fine; `hlt`-only idle was just too coarse to give slot 6 forward
+      progress. See [[bug_scheduler_picknext_freshly_spawned]] memory.
 
 ## M11 — iwlwifi driver `[🔨 v1 protocol layer; device on metal]`
 
