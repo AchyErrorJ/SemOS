@@ -43,7 +43,7 @@ extern crate alloc as core_alloc;
 // `use semos_std::vec::Vec` exactly as they'd `use std::vec::Vec`.
 // NOTE: alloc's `sync` (Arc) is re-exported from inside our own `sync`
 // module (which also adds Mutex/Once), so it's not listed here.
-pub use core_alloc::{boxed, collections, format, rc, string, vec};
+pub use core_alloc::{boxed, format, rc, string, vec};
 
 // Re-export core surface so downstream programs can do `use semos_std::fmt`
 // the way they'd `use std::fmt`. Keeps the migration cost from raw-syscall
@@ -64,6 +64,8 @@ pub mod sync;
 pub mod thread;
 pub mod time;
 pub mod path;
+pub mod mpsc;
+pub mod collections;
 
 #[doc(hidden)]
 pub use core as __core;

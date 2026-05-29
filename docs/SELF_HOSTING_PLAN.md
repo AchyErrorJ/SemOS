@@ -28,11 +28,23 @@ Already wired (DEMOs 29–32 + the editor + sem-sh all build against this):
 | **`time::{Instant, Duration}`** | **`time.rs`** | **new this session — over `SYS_TIME`** |
 
 ### Still missing in `semos-std`
-- `sync::Condvar`, `sync::RwLock` — futex-based; `SYS_FUTEX_WAIT/WAKE`
-  exist, just needs wiring.
-- `std::path::Path`/`PathBuf` lexical impl.
-- `std::collections::HashMap` (need a portable hasher — `ahash` no_std works).
-- `std::sync::mpsc` channels — built on Mutex + Condvar.
+- ~~`sync::Condvar`, `sync::RwLock`~~ — **done** (futex-backed; seq-counter
+  Condvar avoids lost-wakeup, RwLock uses one u32 state word with bit 31
+  = writer / bits 30:0 = reader count).
+- ~~`std::path::Path`/`PathBuf` lexical impl.~~ — **done.**
+- ~~`std::collections::HashMap`~~ — **done** via vendored `hashbrown` 0.15
+  (no_std + alloc; default hasher under no_std is deterministic — fine
+  for non-adversarial use). `HashSet`, `BTreeMap`, `BTreeSet`, `VecDeque`
+  also re-exported under `semos_std::collections`.
+- ~~`std::sync::mpsc` channels~~ — **done.** Multi-producer single-consumer,
+  built on `Mutex<VecDeque<T>>` + `Condvar`. `Sender::send`,
+  `Receiver::{recv, try_recv}`, `channel()`, sender clonable, last-sender-
+  drop wakes the receiver to `RecvError`.
+- **Follow-up — live functional smoke**: the new types compile in and
+  the existing thread/sync demos still pass, but no DEMO yet exercises
+  the new types directly. Worth a small `sync-demo` Ring-3 program that
+  spawns a producer + consumer to validate condvar wakeups + mpsc
+  ordering on real hardware.
 
 ### M26 — Cranelift
 Per ROADMAP: prep done (placeholders + briefs); vendoring not yet.

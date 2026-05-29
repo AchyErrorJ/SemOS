@@ -11,6 +11,14 @@ description = "Minimal std-shim over Semantic OS syscalls (Phase 14 M25 Tier 1)"
 name = "semos_std"
 path = "src/lib.rs"
 
+[dependencies]
+# Re-exported as `semos_std::collections::HashMap`. `default-features = false`
+# skips the std Cargo feature so it builds on no_std + alloc, which is what
+# we have. The "ahash" Cargo feature also pulls in `getrandom` (needs OS
+# entropy syscalls); skip — we use the default hasher under no_std which
+# is a deterministic state, sufficient for non-adversarial maps.
+hashbrown = { version = "0.15", default-features = false }
+
 [profile.release]
 opt-level = "z"
 lto = true
