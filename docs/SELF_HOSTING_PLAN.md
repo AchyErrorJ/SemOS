@@ -87,17 +87,21 @@ mostly satisfied. Each is a single file in `user-programs/std-shim/src/`:
 DEMO per piece is mechanical: spawn two threads, one produces, one consumes,
 verify ordering / wakeups / shared-state correctness.
 
-### Session B — Cranelift vendoring (~1 session)
-Two crates to drop into `vendor/`:
-- `cranelift-codegen` + `cranelift-frontend` (the JIT/AOT compiler core).
-- `cranelift-object` (writes .o files; needed for AOT).
-
-These build on stable Rust with `no_std` + alloc. The wrinkle: they expect
-`std::collections::HashMap` — so Session A's HashMap is a prereq.
-
-Set up: `cargo new vendor/cranelift-codegen`-style placeholder is already
-there (per the ROADMAP "Cranelift sources fully vendored — one agent session
-in a less-restricted env"). Actually do the vendoring.
+### Session B — Cranelift vendoring **DONE** (`f1b2635`)
+- `compiler/` host crate created with cranelift-codegen + cranelift-
+  frontend + cranelift-module + cranelift-object as deps (all 0.122,
+  bump together — they share types).
+- `cargo vendor --versioned-dirs` pulled in 44 transitive crates
+  (~25 MB) into `compiler/vendor/`. `.cargo/config.toml` wires the
+  vendored-sources backend; builds are now deterministic offline.
+- Host-side smoke (`semos-compiler` binary): builds an IR function
+  `i64 add(i64, i64)`, runs `verify_function`, compiles to x86_64,
+  emits 13 bytes of textbook System V (`push rbp; mov rbp,rsp; lea
+  rax,[rdi+rsi]; mov rsp,rbp; pop rbp; ret`).
+- One real gotcha: had to override the repo-root `.cargo/config.toml`'s
+  `target = "aarch64-unknown-none"` (ARM-phase leftover) with
+  `target = "x86_64-pc-windows-msvc"` in `compiler/.cargo/config.toml`
+  — semos-compiler is a HOST tool that needs std.
 
 ### Session C — `cg_clif` (rustc Cranelift backend) (~1 session)
 `rustc_codegen_cranelift` is rustc's drop-in alternative to cg_llvm. It's
