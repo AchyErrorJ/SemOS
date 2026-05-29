@@ -1,0 +1,15 @@
+# Use the vendored Cranelift + transitive deps in vendor/ so the build is
+# deterministic offline. Generated alongside `cargo vendor` (M26).
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
+
+# `semos-compiler` is a HOST tool (runs on Windows during dev to AOT-compile
+# user programs for SemOS). Override the repo-root `.cargo/config.toml`
+# which still sets `target = "aarch64-unknown-none"` from the early ARM
+# phase. Without this we try to build Cranelift for bare-metal aarch64,
+# which fails because Cranelift needs std.
+[build]
+target = "x86_64-pc-windows-msvc"

@@ -1,0 +1,23 @@
+[package]
+name = "semos-compiler"
+version = "0.0.1"
+edition = "2021"
+description = "Cranelift integration for SemOS — Phase 14 M26."
+
+# Opt out of any parent workspace (kernel-x86_64 etc. already excluded).
+[workspace]
+
+[[bin]]
+name = "semos-compiler"
+path = "src/main.rs"
+
+[dependencies]
+# Cranelift JIT/AOT pipeline. cranelift-frontend builds IR; cranelift-codegen
+# lowers it to machine code; cranelift-object writes ELF object files (the
+# eventual path to producing a SemOS ET_EXEC). Pinned to a recent release —
+# bump together since they share types.
+cranelift-codegen = "0.122"
+cranelift-frontend = "0.122"
+cranelift-module = "0.122"
+cranelift-object = "0.122"
+target-lexicon = "0.13"
