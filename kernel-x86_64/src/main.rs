@@ -317,6 +317,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static THREAD_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/thread-demo/target/x86_64-unknown-none/release/thread-demo"
     );
+    // M25 sync surface validation: live exercise of Condvar wakeup +
+    // mpsc ordering + RwLock concurrent readers. Compiled against the
+    // semos-std shim; runs as DEMO 70 and exits with 0 on full pass.
+    static SYNC_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/sync-demo/target/x86_64-unknown-none/release/sync-demo"
+    );
     // Phase 14 M25 Tier-1 validation: same observable behaviour as
     // hello-rs.elf but produced through the new semos-std shim.
     // Exercises println! → fmt::Write::write_str → SYS_WRITE, plus
@@ -363,6 +369,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered exfil-demo.elf ({} bytes, adversarial exfil demo)", EXFIL_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register exfil-demo.elf");
+        }
+        if fs.add("sync-demo.elf", kernel_core::fs::ramfs::FileType::Executable, SYNC_DEMO_ELF) {
+            println!("    Registered sync-demo.elf ({} bytes, Condvar+mpsc+RwLock smoke)", SYNC_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register sync-demo.elf");
         }
         if fs.add("thread-demo.elf", kernel_core::fs::ramfs::FileType::Executable, THREAD_DEMO_ELF) {
             println!("    Registered thread-demo.elf ({} bytes, Ring 3 threading demo)", THREAD_DEMO_ELF.len());
@@ -1124,6 +1135,13 @@ fn init_loader_task() {
     println!("  SemOS DEMO 69: live USB Mass Storage on xHCI (bulk endpoints)");
     println!("================================================================");
     xhci_msc_demo();
+
+    // DEMO 70: Ring 3 sync-demo — functional smoke for Condvar + mpsc + RwLock.
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 70: Ring 3 semos-std::{{Condvar, mpsc, RwLock}}");
+    println!("================================================================");
+    ring3_sync_demo();
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4389,6 +4407,61 @@ fn threading_futex_test() {
     println!("  [DEMO 27] PASS: SYS_WAITNB non-blocking returned {}", if r == u64::MAX { "MAX (no children)" } else { "0 (no zombies)" });
 
     println!("  [DEMO 27] => Tier 3 scheduler-side primitives green; Ring 3 thread_spawn next");
+}
+
+/// DEMO 70: Ring 3 sync-demo — live functional smoke for the new
+/// semos-std::sync::{Condvar, RwLock} + semos-std::mpsc types. The
+/// user binary runs the four sub-tests (Condvar wakeup, mpsc 1..=5
+/// ordering, mpsc disconnect, RwLock 2-reader+writer) and exits with
+/// 0 on full pass / 0x71..0x74 on stage-specific failure (table in
+/// user-programs/sync-demo/src/main.rs). Same scheduler-slot polling
+/// pattern as DEMO 28.
+fn ring3_sync_demo() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let path = "/bin/sync-demo";
+    let pid = dispatch(SYS_SPAWN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if pid == u64::MAX {
+        println!("  [DEMO 70] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 70] PASS: SYS_SPAWN({}) → PID {}", path, pid);
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 70] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+
+    // sync-demo's Condvar test sleeps ~20 ticks; full run completes in well
+    // under 200 ticks of wall time. 1000 = generous; fail fast on regression.
+    let mut polled = 0u64;
+    loop {
+        if kernel_core::scheduler::task_state(slot) == kernel_core::scheduler::TaskState::Exited {
+            break;
+        }
+        if polled > 1000 {
+            println!("  [DEMO 70] FAIL: sync-demo didn't exit within 1000 ticks");
+            return;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+    let code = kernel_core::scheduler::task_exit_code(slot) as u32;
+    match code {
+        0 => {
+            println!("  [DEMO 70] PASS: sync-demo exited 0 (Condvar + mpsc + RwLock all live)");
+            println!("  [DEMO 70] => semos-std M25 sync surface functionally validated on metal");
+        }
+        0x71 => println!("  [DEMO 70] FAIL: Condvar wakeup didn't fire (exit 0x71)"),
+        0x72 => println!("  [DEMO 70] FAIL: mpsc ordering / sum (exit 0x72)"),
+        0x73 => println!("  [DEMO 70] FAIL: mpsc disconnect not delivered (exit 0x73)"),
+        0x74 => println!("  [DEMO 70] FAIL: RwLock concurrent readers / writer (exit 0x74)"),
+        _ => println!("  [DEMO 70] FAIL: sync-demo exited 0x{:X} (unexpected)", code),
+    }
 }
 
 /// DEMO 28: Ring 3 thread spawn end-to-end via thread-demo.elf.
