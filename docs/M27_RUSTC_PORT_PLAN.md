@@ -87,7 +87,38 @@ output (the SemOS target). No cross-compilation.
 **Implication:** the target-triple parsing, target-spec loading, sysroot
 search paths all get hardcoded.
 
-These six decisions probably halve the work. They also commit you to a
+### 1.7 — cg_clif emits ET_EXEC directly; drop the external-linker path
+**Added 2026-05-30 after Phase 1 recon (R2 + R4 both surfaced this).**
+**Decision:** don't port `rustc_codegen_ssa::back::link` at all. cg_clif
+already produces full ET_EXEC bytes (proven in semos-cc D.1/D.2). Have
+semos-rustc bypass the SSA link step and consume cg_clif's output
+directly.
+**Implication:** rustc has no in-process linker — everything currently
+routes through `Command::new(linker).spawn()` at
+`rustc_codegen_ssa/src/back/link.rs:1593`. With this decision we skip
+that whole subsystem.
+
+### 1.8 — drop i18n entirely; hardcode English diagnostics
+**Added 2026-05-30 after Phase 1 recon (R3 surfaced).**
+**Decision:** drop fluent-bundle + unic-langid + intl-memoizer + 4 ICU
+crates (~7 externals, ~5 sessions of port work). Gut `rustc_errors`'s
+fluent loader; return hardcoded English message strings.
+**Implication:** diagnostic quality regresses (no localization, no
+fluent-style formatting) but stays usable. Saves ~5 sessions.
+
+### 1.9 — FatalError → abort the process; accept the limitation
+**Added 2026-05-30 after Phase 1 recon (R4 surfaced as the one
+unresolved blocker B1).**
+**Decision:** accept that any FatalError terminates the whole rustc
+invocation. rustc uses `panic_any(FatalError)` + `catch_unwind` for
+compiler errors as control flow at 68 sites across 20 files;
+semos-std panics abort. Document the user-facing limitation:
+"one error per compile."
+**Implication:** rustc on SemOS is one-error-per-compile in v1. Real
+fix requires a SemOS stack-unwinder (3-5 kernel sessions, out-of-scope
+for M27). Revisit when stack-unwinding becomes a kernel priority.
+
+These nine decisions probably halve the work. They also commit you to a
 fork that diverges from upstream rustc — you'll need to rebase
 periodically if upstream lands important bug fixes.
 
@@ -132,30 +163,31 @@ mitigation" blockers, the project's strategy needs rethinking. The
 decision points above already address LLVM, libloading, and rayon —
 if there's a fourth, it has to be addressed before Phase 2 starts.
 
-### Phase 2 — Foundation crates (sequential, me + 1 agent, ~3-5 sessions)
+### Phase 2 — Foundation crates (split into 2a + 2b post Phase 1 recon)
 
-Goal: port the bottom of the dep graph — the crates that almost every
-other rustc crate depends on. These have to be solid before parallel
-work above them makes sense.
+R1 found a cycle through `rustc_errors → rustc_ast`. Foundation work
+splits accordingly.
 
-Likely foundation crates:
-- `rustc_data_structures` — sync primitives, sharded maps, hash sets.
-  This is where rayon abstraction lives. Single-threaded shim goes here.
-- `rustc_serialize` — serde-like for rustc's metadata format.
-- `rustc_span` — source-location tracking.
-- `rustc_errors` — diagnostic emission.
-- `rustc_macros` — proc-macros used internally (paradoxical: we don't
-  support proc-macros at runtime, but rustc *itself* needs them at
-  build time, on the host).
-- `rustc_index` — newtyped index containers.
-- `rustc_arena` — bump allocators.
+#### Phase 2a — Pure foundation (parallel, ~6 agents, 1-2 calendar-sessions)
+14 zero-rustc-dep crates. Trivially parallel.
 
-These are sequential because mistakes here propagate upward. Me +
-1 agent, alternating: agent drafts patches, I integrate and validate.
+- `rustc_data_structures` — the heavy one. Rayon shim + flock/memmap/
+  jobserver stubs land here. R4 B4 (rustc_thread_pool stub, ~50 lines)
+  also sits here. **2-3 sessions.**
+- `rustc_serialize`, `rustc_span`, `rustc_errors`, `rustc_macros`,
+  `rustc_index`, `rustc_arena` — foundation utilities. **0.5-1 session
+  each.**
+- ~7 zero-rustc-dep utility crates R1 itemized — minor patches each.
+
+#### Phase 2b — Cycle-breakers (sequential, me + 1 agent, ~3-5 sessions)
+`rustc_ast` + `rustc_lint_defs` + `rustc_errors` need to land together
+due to the ast↔errors cycle. Sequential treatment with careful
+integration.
 
 **Stop condition for Phase 2:** if `rustc_data_structures` can't be
 made single-threaded without rewriting the query system, the whole
-project's strategy needs rethinking.
+project's strategy needs rethinking. R4 B4 says the stub is ~50 lines
+so this risk is low.
 
 ### Phase 3 — Middle layer (parallel, 4-6 agents, ~10-15 sessions)
 
