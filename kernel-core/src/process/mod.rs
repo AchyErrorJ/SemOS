@@ -908,7 +908,9 @@ pub fn spawn_from_elf_with_args(
     // is decoupled here: 64 KiB is ample for the std-shim programs (their
     // threads get their own stacks) at 16 frames each.
     let stack_top = elf_info.stack_top as u64;
-    const USER_PROC_STACK_SIZE: u64 = 64 * 1024;
+    // D.2 port: 64 KiB → 1 MiB to give Cranelift's regalloc recursion
+    // (and other compiler-class workloads) breathing room.
+    const USER_PROC_STACK_SIZE: u64 = 1024 * 1024;
     let stack_size = USER_PROC_STACK_SIZE;
     let user_rsp = match platform.map_user_stack(cr3, stack_top, stack_size) {
         Some(rsp) => rsp,
