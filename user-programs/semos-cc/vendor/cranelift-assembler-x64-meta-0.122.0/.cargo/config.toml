@@ -1,0 +1,7 @@
+# D.2 port: meta crates are HOST code generators (build-deps); override
+# the parent semos-cc/.cargo/config.toml's target=x86_64-unknown-none
+# so they compile for the host where std is available.
+[build]
+target = "x86_64-pc-windows-msvc"
+
+[unstable]

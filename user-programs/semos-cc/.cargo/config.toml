@@ -1,6 +1,22 @@
 [build]
 target = "x86_64-unknown-none"
 
+[host]
+linker = "rust-lld"
+
 [unstable]
-build-std = ["core", "compiler_builtins"]
+# Don't propagate [build] target to host-context builds (build scripts +
+# their deps + proc-macros). Without this, cargo invokes the host
+# code-generator deps (cranelift-srcgen, cranelift-assembler-x64-meta)
+# with --target x86_64-unknown-none, which has no std and breaks them.
+host-config = true
+target-applies-to-host = false
+# alloc added for Cranelift — needs Box/Vec/String.
+build-std = ["core", "alloc", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
+
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

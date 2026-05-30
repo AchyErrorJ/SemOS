@@ -13,6 +13,11 @@ path = "src/main.rs"
 [dependencies]
 semos-std = { path = "../std-shim" }
 
+# Cranelift no_std port — in progress per PORT_LOG.md.
+cranelift-codegen = { version = "0.122", default-features = false, features = ["x86", "core"] }
+cranelift-frontend = { version = "0.122", default-features = false, features = ["core"] }
+target-lexicon = { version = "0.13", default-features = false }
+
 [profile.release]
 panic = "abort"
 # opt-level=0 only — task #54: any optimization miscompiles the std-shim
