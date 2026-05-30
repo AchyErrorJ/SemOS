@@ -159,10 +159,12 @@ impl PageTable {
 /// has ample headroom. The fuller fix — free PT frames on every process exit —
 /// is still a separate refactor (`reclaim_dead_address_spaces` exists for it).
 ///
-/// M27 D.2-followup: 2048→8192 (32 MiB) to accommodate the Cranelift-bearing
-/// semos-cc (~5.4 MiB ELF mapped + page tables) running after the rest of the
-/// demo cascade has consumed its share of the pool.
-const MAX_PT_FRAMES: usize = 8192;
+/// M27 D.2-followup: 2048→32768 (128 MiB) to accommodate the Cranelift-
+/// bearing semos-cc — ~5.4 MiB ELF mapped + user heap that grows on-demand
+/// via SYS_MMAP_ANON as Cranelift allocates during IR construction +
+/// codegen. Without enough headroom the user-heap mmap returns null and
+/// semos-cc panics inside the Cranelift compile path.
+const MAX_PT_FRAMES: usize = 32768;
 
 /// Pool of pre-allocated 4KB frames for page table structures.
 /// These come from the kernel's usable memory, separate from the security pools.

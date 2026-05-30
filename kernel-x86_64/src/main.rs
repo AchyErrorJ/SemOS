@@ -4697,7 +4697,7 @@ fn ring3_semos_cc_d2_demo() {
     kernel_core::process::set_kernel_task_id(Some(kernel_core::scheduler::current_task_index()));
 
     // ---- Stage A: run semos-cc, which emits the ELF to /d2-emitted.elf ----
-    let mut cap_a = [0u8; 256];
+    let mut cap_a = [0u8; 1024];
     let (code_a, n_a) = match ring3_spawn_capture("/bin/semos-cc", &mut cap_a) {
         Some(r) => r,
         None => {
@@ -4713,6 +4713,17 @@ fn ring3_semos_cc_d2_demo() {
             "  [DEMO 73] FAIL stage A: exit={} (want 0) emitter_marker={} captured={} B",
             code_a, has_emitter_marker, n_a
         );
+        // Dump captured stdout for diagnostic.
+        println!("  [DEMO 73] captured stdout:");
+        if let Ok(s) = core::str::from_utf8(&cap_a[..n_a]) {
+            for line in s.lines() {
+                println!("    | {}", line);
+            }
+        } else {
+            for b in &cap_a[..n_a] {
+                println!("    {:02X}", b);
+            }
+        }
         kernel_core::process::set_kernel_task_id(saved_kernel_task);
         return;
     }

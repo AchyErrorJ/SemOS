@@ -87,6 +87,7 @@ fn build_add_function() -> Function {
 /// Returns the bytes (or panics — there's nothing to recover from on
 /// SemOS if the compiler itself fails).
 fn compile_add_bytes() -> Vec<u8> {
+    println!("semos-cc: STAGE 2: parsing target triple");
     let triple: Triple = "x86_64-unknown-none"
         .parse()
         .expect("parse target triple");
@@ -99,14 +100,18 @@ fn compile_add_bytes() -> Vec<u8> {
         .expect("set is_pic");
     let flags = settings::Flags::new(flag_builder);
 
+    println!("semos-cc: STAGE 3: building x86_64 ISA");
     let isa = isa::lookup(triple)
         .expect("isa lookup")
         .finish(flags)
         .expect("isa finish");
 
+    println!("semos-cc: STAGE 4a: building IR");
     let func = build_add_function();
+    println!("semos-cc: STAGE 4b: verifying IR");
     verify_function(&func, isa.as_ref()).expect("verify add");
 
+    println!("semos-cc: STAGE 4c: lowering to machine code");
     let mut ctx = Context::for_function(func);
     let compiled = ctx
         .compile(isa.as_ref(), &mut Default::default())
@@ -214,9 +219,9 @@ main!(fn main() {
     println!("semos-cc: D.2 emitter — building SemOS ELF on SemOS");
 
     // Lower add() via live Cranelift codegen — no inlined snapshot.
-    println!("semos-cc: invoking Cranelift to compile add(i64,i64)");
+    println!("semos-cc: STAGE 1: invoking Cranelift to compile add(i64,i64)");
     let add_bytes = compile_add_bytes();
-    println!("semos-cc: Cranelift emitted {} bytes for add()", add_bytes.len());
+    println!("semos-cc: STAGE 5: Cranelift emitted {} bytes for add()", add_bytes.len());
 
     // call rel32: end-of-call (shim offset 37) → start of add (= SHIM_LEN + marker)
     let rel32: i32 = (SHIM_LEN as i32 - 37) + MARKER.len() as i32;

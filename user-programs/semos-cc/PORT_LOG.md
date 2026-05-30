@@ -167,11 +167,60 @@ to semos-cc/Cargo.toml) and flips `default = ["std"]` to `default = []`.
 - **`core::sync::OnceLock` doesn't exist** — only `std::sync::OnceLock`.
   Provide a local shim or vendor `spin::Once`.
 
-## What still needs work
+## What still needs work — DEMO 73 PASS
 
-- **Heap tuning at runtime** (the open issue above). Probably bumping
-  semos-std's heap from 16 MiB to ~64 MiB, and verifying Cranelift
-  doesn't panic-on-alloc-failure mid-compile.
-- **Kernel-level kept changes:** `MAX_PT_FRAMES` 2048→8192 in
-  `kernel-x86_64/src/paging.rs` so 5.4 MiB ELFs can be mapped.
-- **DEMO 73 PASS:** to land once the runtime crash is fixed.
+The DEMO 73 stage-A failure mode under live Cranelift is **not heap
+exhaustion** (turned out heap bump didn't move the needle). Diagnostic
+captured stdout via a 1 KiB cap_a buffer shows semos-cc reaches:
+
+    semos-cc: STAGE 4c: lowering to machine code
+
+— i.e. it enters Cranelift's `Context::compile` — and then the task
+exits with code `0xFA00_0497` (4,194,433,559). That code is **not** the
+kernel's fault-kill sentinel (`0xFA01_FA17`) and there are no `INVALID
+OPCODE` / `page fault` prints on serial — so the kernel isn't killing
+semos-cc. semos-cc is calling SYS_EXIT itself with that value. But it
+also isn't going through `process::exit(101)` (the panic handler path)
+or `process::exit(0)` (clean main-return path).
+
+Hypotheses to investigate next session:
+
+1. `core::intrinsics::abort()` (or `core::hint::unreachable_unchecked`)
+   somewhere in Cranelift's codegen path, which on x86_64 emits `ud2` →
+   triggers #UD → kernel kill path. But we'd expect 0xFA01_FA17 then,
+   not 0xFA00_0497, and we'd see the kernel's "INVALID OPCODE in user
+   task" log. So this likely isn't it.
+
+2. A `Result::unwrap_unchecked` on an unexpected error variant where
+   the variant payload contains the bytes 0xFA00_0497 — i.e. the exit
+   code is incidentally the bit pattern of a stack-resident value
+   when a non-returning function call mangled rsp/rip.
+
+3. `__rust_alloc_error_handler` is being lowered by build-std to
+   `abort()` (newer nightlies do this when no `#[alloc_error_handler]`
+   is set) and abort takes a non-101 code path on no_std. Probably the
+   most fruitful angle — define an explicit `#[alloc_error_handler]`
+   in semos-std that routes through the panic handler.
+
+4. Stack overflow during Cranelift's regalloc. Cranelift's recursive
+   passes can use deep stacks; semos-cc's user stack might be too
+   small. Bumping `STACK_SIZE` in `kernel-core/src/process/elf.rs`
+   (currently 64 KiB) is worth a try.
+
+### Kernel-level changes kept from this session
+
+- `MAX_PT_FRAMES` 2048 → 32768 (128 MiB) in `kernel-x86_64/src/paging.rs`.
+  Needed for the 5.4 MiB semos-cc ELF mapping; doesn't fix the runtime
+  crash but is a prerequisite.
+- DEMO 73 stage-A failure now dumps captured stdout to serial for
+  diagnostic. `cap_a` buffer also bumped 256 → 1024 B.
+
+### Where to resume
+
+Start with hypothesis 3 (alloc_error_handler) and 4 (stack size):
+- Add `#[alloc_error_handler] fn oom(...) -> !` to `semos-std/src/lib.rs`
+  that calls `panic!("alloc failure: {:?}", layout)`. If the exit code
+  becomes 101, alloc failure is the cause and we need a bigger heap or
+  a non-bump allocator.
+- Bump per-task `STACK_SIZE` in `kernel-core/src/process/elf.rs` from
+  64 KiB to 1 MiB. If the exit code changes, stack was the issue.
