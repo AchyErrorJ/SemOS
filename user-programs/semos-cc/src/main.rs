@@ -21,8 +21,15 @@
 #![no_std]
 #![no_main]
 
+use cranelift_codegen::ir::types::I64;
+use cranelift_codegen::ir::{AbiParam, Function, InstBuilder, Signature, UserFuncName};
+use cranelift_codegen::isa;
+use cranelift_codegen::settings::{self, Configurable};
+use cranelift_codegen::{verify_function, Context};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use semos_std::vec::Vec;
 use semos_std::{fs, main, println};
+use target_lexicon::Triple;
 
 // ---- SemOS user layout (must match kernel-x86_64::paging::user_layout) ----
 const USER_CODE_BASE: u64 = 0x400000;
@@ -49,22 +56,63 @@ const MARKER: &[u8] = b"semos-cc D2\n";
 /// D.1 host emitter.
 const SHIM_LEN: usize = 47;
 
-/// Cranelift's `i64 add(i64, i64) { a + b }` at opt-level=speed, byte-for-byte
-/// snapshot from D.1's host compiler:
-///   55                   push rbp
-///   48 89 E5             mov rbp, rsp
-///   48 8D 04 37          lea rax, [rdi + rsi*1]
-///   48 89 EC             mov rsp, rbp
-///   5D                   pop rbp
-///   C3                   ret
-///
-/// Hardcoded here because Cranelift-on-SemOS is the next sub-step — keeping
-/// the bytes static lets D.2 validate the rest of the pipeline (ELF
-/// emission, FS write, install-anywhere spawn) independently of the
-/// Cranelift no_std port.
-const ADD_BYTES: &[u8] = &[
-    0x55, 0x48, 0x89, 0xE5, 0x48, 0x8D, 0x04, 0x37, 0x48, 0x89, 0xEC, 0x5D, 0xC3,
-];
+/// Build Cranelift IR for `i64 add(i64, i64) { a + b }` — same IR the
+/// D.1 host compiler used; Cranelift will lower it to the System V
+/// add function the `_start` shim calls.
+fn build_add_function() -> Function {
+    let mut sig = Signature::new(isa::CallConv::SystemV);
+    sig.params.push(AbiParam::new(I64));
+    sig.params.push(AbiParam::new(I64));
+    sig.returns.push(AbiParam::new(I64));
+
+    let mut func = Function::with_name_signature(UserFuncName::user(0, 0), sig);
+    let mut fbc = FunctionBuilderContext::new();
+    {
+        let mut b = FunctionBuilder::new(&mut func, &mut fbc);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        b.seal_block(entry);
+
+        let a = b.block_params(entry)[0];
+        let bb = b.block_params(entry)[1];
+        let sum = b.ins().iadd(a, bb);
+        b.ins().return_(&[sum]);
+        b.finalize();
+    }
+    func
+}
+
+/// Lower the add() IR to x86_64 machine bytes via Cranelift's codegen.
+/// Returns the bytes (or panics — there's nothing to recover from on
+/// SemOS if the compiler itself fails).
+fn compile_add_bytes() -> Vec<u8> {
+    let triple: Triple = "x86_64-unknown-none"
+        .parse()
+        .expect("parse target triple");
+    let mut flag_builder = settings::builder();
+    flag_builder
+        .set("opt_level", "speed")
+        .expect("set opt_level");
+    flag_builder
+        .set("is_pic", "false")
+        .expect("set is_pic");
+    let flags = settings::Flags::new(flag_builder);
+
+    let isa = isa::lookup(triple)
+        .expect("isa lookup")
+        .finish(flags)
+        .expect("isa finish");
+
+    let func = build_add_function();
+    verify_function(&func, isa.as_ref()).expect("verify add");
+
+    let mut ctx = Context::for_function(func);
+    let compiled = ctx
+        .compile(isa.as_ref(), &mut Default::default())
+        .expect("compile add");
+    compiled.code_buffer().to_vec()
+}
 
 /// Where to write the emitted ELF. Install-anywhere (any absolute path that
 /// isn't `/bin/<name>`) routes through `spawn_namespace_elf`, so the kernel
@@ -165,10 +213,15 @@ fn emit_elf(shim: &[u8], marker: &[u8], add_bytes: &[u8]) -> Vec<u8> {
 main!(fn main() {
     println!("semos-cc: D.2 emitter — building SemOS ELF on SemOS");
 
+    // Lower add() via live Cranelift codegen — no inlined snapshot.
+    println!("semos-cc: invoking Cranelift to compile add(i64,i64)");
+    let add_bytes = compile_add_bytes();
+    println!("semos-cc: Cranelift emitted {} bytes for add()", add_bytes.len());
+
     // call rel32: end-of-call (shim offset 37) → start of add (= SHIM_LEN + marker)
     let rel32: i32 = (SHIM_LEN as i32 - 37) + MARKER.len() as i32;
     let shim = emit_start_shim(rel32);
-    let elf = emit_elf(&shim, MARKER, ADD_BYTES);
+    let elf = emit_elf(&shim, MARKER, &add_bytes);
 
     println!("semos-cc: emitted {} B ELF (entry 0x{:X})", elf.len(), ENTRY_VADDR);
 

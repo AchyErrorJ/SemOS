@@ -16,7 +16,32 @@ use cranelift_assembler_x64 as asm;
 use regalloc2::{MachineEnv, PReg, PRegSet};
 use smallvec::{SmallVec, smallvec};
 use alloc::borrow::ToOwned;
-use core::sync::OnceLock;
+// D.2 port: core::sync::OnceLock doesn't exist; provide a tiny single-init
+// shim sufficient for the `static MACHINE_ENV` cache below. Not thread-safe
+// — Cranelift on SemOS runs in a single Ring-3 process today.
+use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+#[allow(non_camel_case_types)]
+struct OnceLock<T> {
+    init: AtomicBool,
+    data: UnsafeCell<MaybeUninit<T>>,
+}
+unsafe impl<T: Sync> Sync for OnceLock<T> {}
+impl<T> OnceLock<T> {
+    const fn new() -> Self {
+        Self { init: AtomicBool::new(false), data: UnsafeCell::new(MaybeUninit::uninit()) }
+    }
+    fn get_or_init<F: FnOnce() -> T>(&self, f: F) -> &T {
+        if !self.init.load(Ordering::Acquire) {
+            let v = f();
+            unsafe { (*self.data.get()).write(v); }
+            self.init.store(true, Ordering::Release);
+        }
+        unsafe { (*self.data.get()).assume_init_ref() }
+    }
+}
 
 /// Support for the x64 ABI from the callee side (within a function body).
 pub(crate) type X64Callee = Callee<X64ABIMachineSpec>;

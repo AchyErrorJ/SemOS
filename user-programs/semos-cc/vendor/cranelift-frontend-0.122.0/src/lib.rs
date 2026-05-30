@@ -155,6 +155,9 @@
 #![deny(missing_docs)]
 #![no_std]
 
+// D.2 port: macro_use so `vec![]` is available in this crate's modules
+// without explicit `use alloc::vec;` everywhere.
+#[macro_use]
 extern crate alloc;
 
 #[cfg(feature = "std")]
@@ -164,7 +167,7 @@ extern crate std;
 #[cfg(not(feature = "std"))]
 use hashbrown::{HashMap, HashSet};
 #[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
+use core::collections::{HashMap, HashSet};
 
 pub use crate::frontend::{FuncInstBuilder, FunctionBuilder, FunctionBuilderContext};
 pub use crate::switch::Switch;

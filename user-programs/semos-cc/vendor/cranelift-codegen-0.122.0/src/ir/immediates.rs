@@ -11,6 +11,31 @@ use core::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Sub};
 use core::str::FromStr;
 use core::{i32, u32};
 use cranelift_entity::{Signed, Unsigned};
+
+// D.2 port: f32/f64 don't have sqrt/ceil/floor/trunc/round_ties_even
+// methods in core (only in std), so route them through libm. The
+// `ieee_float!` macro below relies on these via method-call syntax.
+trait FloatExt {
+    fn sqrt(self) -> Self;
+    fn ceil(self) -> Self;
+    fn floor(self) -> Self;
+    fn trunc(self) -> Self;
+    fn round_ties_even(self) -> Self;
+}
+impl FloatExt for f32 {
+    fn sqrt(self) -> f32 { libm::sqrtf(self) }
+    fn ceil(self) -> f32 { libm::ceilf(self) }
+    fn floor(self) -> f32 { libm::floorf(self) }
+    fn trunc(self) -> f32 { libm::truncf(self) }
+    fn round_ties_even(self) -> f32 { libm::roundevenf(self) }
+}
+impl FloatExt for f64 {
+    fn sqrt(self) -> f64 { libm::sqrt(self) }
+    fn ceil(self) -> f64 { libm::ceil(self) }
+    fn floor(self) -> f64 { libm::floor(self) }
+    fn trunc(self) -> f64 { libm::trunc(self) }
+    fn round_ties_even(self) -> f64 { libm::roundeven(self) }
+}
 #[cfg(feature = "enable-serde")]
 use serde_derive::{Deserialize, Serialize};
 

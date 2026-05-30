@@ -158,7 +158,11 @@ impl PageTable {
 /// this pool is bumped to 2048 (8 MiB reserved) so the non-reaping demo cascade
 /// has ample headroom. The fuller fix — free PT frames on every process exit —
 /// is still a separate refactor (`reclaim_dead_address_spaces` exists for it).
-const MAX_PT_FRAMES: usize = 2048;
+///
+/// M27 D.2-followup: 2048→8192 (32 MiB) to accommodate the Cranelift-bearing
+/// semos-cc (~5.4 MiB ELF mapped + page tables) running after the rest of the
+/// demo cascade has consumed its share of the pool.
+const MAX_PT_FRAMES: usize = 8192;
 
 /// Pool of pre-allocated 4KB frames for page table structures.
 /// These come from the kernel's usable memory, separate from the security pools.

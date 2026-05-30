@@ -153,6 +153,13 @@ default-features = false
 version = "0.4.8"
 default-features = false
 
+[dependencies.libm]
+# D.2 port: f32/f64 sqrt/ceil/floor/trunc/round_ties_even via libm
+# since `core` doesn't carry these methods (only `std` does). Used by
+# the FloatExt trait at the top of src/ir/immediates.rs.
+version = "0.2"
+default-features = false
+
 [dependencies.postcard]
 version = "1.0.8"
 features = ["alloc"]

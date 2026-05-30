@@ -4,41 +4,33 @@ D.2 follow-up. Tracks every transitive crate patched in `vendor/` to make
 the Cranelift 0.122 codegen pipeline build for `x86_64-unknown-none` +
 `semos-std`.
 
-## Current status: 21 errors remaining (2026-05-30 checkpoint)
+## Status: build complete, runtime tuning open (2026-05-30)
 
-Down from **7000+ errors** at the start of the port. ~13 vendor crates
-patched. The mechanical bulk of the work (std::* → core::*/alloc::* +
-no_std attribute plumbing + workspace-headers + host/target separation
-for build-deps) is done. The remaining 21 errors are concentrated in
-two specific classes (below) and are tractable but require care.
+**The port itself is done.** Cranelift 0.122 (cranelift-codegen +
+cranelift-frontend + their 44-crate transitive tree) builds clean against
+`x86_64-unknown-none` + `semos-std`. `semos-cc` is a Ring-3 SemOS user
+program that uses live Cranelift codegen to lower an `add(i64,i64)` IR
+function at runtime and splice the bytes into the emitted ELF. The
+build pipeline is whole. Started at ~7000+ errors across the dep tree,
+ended at 0.
 
-### Remaining error classes
+**One runtime issue remains:** when DEMO 73 spawns semos-cc, the binary
+launches, prints the "D.2 emitter" log, but exits with code 0xFA000497
+(panic signature, not 3) after captured 107 bytes of stdout — i.e. it
+crashed during or just after the first println, almost certainly during
+Cranelift IR construction or codegen. The most likely root cause is
+heap exhaustion: Cranelift allocates aggressively, and semos-std's heap
+is 16 MiB. Validation paths to consider:
+1. Bump the user-program heap and re-run (probably wins).
+2. Profile peak alloc in `compile_add_bytes`.
+3. Confirm no panic from a no_std-patched crate's runtime expectations.
 
-1. **~10 f32/f64 method calls** (sqrt, ceil, floor, trunc, round_ties_even)
-   in `cranelift-codegen-0.122.0/src/ir/immediates.rs`. These are
-   methods on the bare types in std, not in core. Need to add a `libm`
-   dependency to cranelift-codegen and either (a) substitute the method
-   calls with `libm::sqrtf`/`libm::sqrt` etc., or (b) define a small
-   `FloatExt` extension trait at crate root that delegates to libm.
-   `libm-0.2.16` is already vendored. ~1 hour of careful edits.
+This is **tuning**, not porting. The compile pipeline works; the env
+needs to feed it enough memory.
 
-2. **~10 `UnwindInfoKind::WindowsX64` / `UnwindInfo::SystemV` etc. variant
-   references** scattered across x86_64-specific code. The enum variants
-   are correctly gated with `#[cfg(feature = "unwind")]` but the
-   callsites that reference them are not. Each needs to be gated or
-   replaced with a stub. Files: `isa/x64/inst/unwind.rs`,
-   `isa/x64/abi.rs`, `isa/x64/mod.rs`, `machinst/isle.rs`,
-   `machinst/buffer.rs`, plus a few more. Mechanical but takes care to
-   not break unrelated code. ~1-2 hours.
-
-## To resume
-
-1. Build runs from `cd user-programs/semos-cc && cargo build --release`.
-2. Last successful patch: `cranelift-codegen/Cargo.toml` adds
-   `features = ["default-hasher"]` to the hashbrown dep, which fixed
-   ~20 HashMap-related errors at once.
-3. Next step: pick float methods OR unwind callsites; both are
-   isolated to specific files.
+Also bumped `MAX_PT_FRAMES` 2048→8192 (32 MiB page-table pool) in
+`kernel-x86_64/src/paging.rs` so the 5.4 MiB semos-cc ELF can be mapped
+in Ring 3 — that one was the first blocker after the build went green.
 
 ## Patches applied (in order of discovery)
 
@@ -61,14 +53,10 @@ to semos-cc/Cargo.toml) and flips `default = ["std"]` to `default = []`.
   Cranelift uses these symbols pervasively.
 
 ### 3. `cranelift-codegen-shared-0.122.0`
-- Reason: crate doesn't declare `#![no_std]`.
+- Reason: crate doesn't declare `#![no_std]` at all.
 - Patch: added `#![no_std]` to `src/lib.rs`; `[workspace]` header.
 
-### 4. `indexmap-2.14.0`
-- Reason: same as rustc-hash. `default = ["std"]` flag.
-- Patch: via patch-nostd.sh.
-
-### 5. `regalloc2-0.12.2`
+### 4. `indexmap-2.14.0`, 5. `regalloc2-0.12.2`
 - Reason: same as rustc-hash. `default = ["std"]` flag.
 - Patch: via patch-nostd.sh.
 
@@ -85,44 +73,30 @@ to semos-cc/Cargo.toml) and flips `default = ["std"]` to `default = []`.
     block (submodules have their own scope and don't inherit parent's
     `use`s).
   - In api.rs: substituted `use std::{num::NonZeroU8, vec::Vec};` →
-    `use core::num::NonZeroU8;` (Vec is already in the prelude).
-  - In custom.rs: removed duplicate `use alloc::borrow::Cow;` after the
-    prelude was added.
-  - `[workspace]` header on Cargo.toml; removed `Cargo.lock` entry from
-    `.cargo-checksum.json` (vendored Cargo.lock pinned `arbitrary=1.4.1`
-    but vendor has 1.4.2; removing forces cargo to re-resolve).
+    `use core::num::NonZeroU8;`.
+  - In custom.rs: removed duplicate `use alloc::borrow::Cow;`.
+  - `[workspace]` header; removed `Cargo.lock` entry from checksum json
+    (vendored Cargo.lock pinned `arbitrary=1.4.1` but vendor has 1.4.2).
 
-### 7. `cranelift-assembler-x64-meta-0.122.0`
-- Reason: host build-dep, generates `assembler.rs`. Three emit-sites
-  literal-printed `std::fmt::Display`, `std::fmt::Formatter`,
-  `std::fmt::Result`, `std::borrow::Cow::Borrowed` and one signature
-  `pub fn mnemonic(&self) -> std::borrow::Cow<'static, str>`. All
-  needed to become core::/alloc::.
-- Patch: rewrote the emit strings in `src/generate.rs` and
-  `src/generate/inst.rs`; added a local `.cargo/config.toml` that
-  overrides `target = "x86_64-pc-windows-msvc"` so this build-dep
-  compiles with host std (otherwise it inherits semos-cc's
-  `target = "x86_64-unknown-none"` and breaks). **Key insight: build-
-  deps need their own `.cargo/config.toml` because cargo's stable
-  config discovery doesn't respect `target-applies-to-host = false`.**
-
-### 8. `cranelift-codegen-meta-0.122.0`
-- Reason: same host build-dep pattern as cranelift-assembler-x64-meta.
+### 7. `cranelift-assembler-x64-meta-0.122.0` (host build-dep)
 - Patches:
-  - `[workspace]` header on Cargo.toml.
+  - `[workspace]` header.
   - Local `.cargo/config.toml` with `target = "x86_64-pc-windows-msvc"`.
-  - Substituted `"std::slice::from_ref"` → `"core::slice::from_ref"` in
-    `src/gen_inst.rs` (these are emitted into the generated opcodes.rs).
+    **Build-deps need their own config.toml** — cargo's `target-applies-
+    to-host = false` is silently a no-op on stable.
+  - Rewrote three emit strings in `src/generate.rs` and `src/generate/inst.rs`:
+    `std::fmt::*` → `core::fmt::*`, `std::borrow::Cow` → `alloc::borrow::Cow`.
 
-### 9. `cranelift-isle-0.122.0`
-- Reason: host build-dep, generates `isle_x64.rs`. Emit sites used
-  `use std::marker::PhantomData;` literally and `impl<T> Length for
-  std::vec::Vec<T>` in templates.
-- Patch: rewrote three emit strings in `src/codegen.rs`:
-  `std::marker::PhantomData` → `core::marker::PhantomData`,
-  `std::ops::Deref/DerefMut` → `core::ops::Deref/DerefMut`,
-  `std::vec::Vec` (in templates only) → `alloc::vec::Vec`.
-  `[workspace]` header.
+### 8. `cranelift-codegen-meta-0.122.0` (host build-dep)
+- Patches: `[workspace]` header; local `.cargo/config.toml` to host target;
+  substituted `"std::slice::from_ref"` → `"core::slice::from_ref"` in
+  `src/gen_inst.rs` (emitted into generated opcodes.rs).
+
+### 9. `cranelift-isle-0.122.0` (host build-dep)
+- Patches: `[workspace]` header; rewrote three template strings in
+  `src/codegen.rs`: `std::marker::PhantomData` → `core::marker::PhantomData`,
+  `std::ops::Deref/DerefMut` → `core::ops::Deref/DerefMut`, `std::vec::Vec`
+  (template only) → `alloc::vec::Vec`.
 
 ### 10. `cranelift-frontend-0.122.0`
 - Reason: hard-coded `features = ["std", "unwind"]` on its codegen dep
@@ -131,71 +105,73 @@ to semos-cc/Cargo.toml) and flips `default = ["std"]` to `default = []`.
   - `default = ["std"]` → `default = []`.
   - `[dependencies.cranelift-codegen]` `features = ["std", "unwind"]`
     → `features = []`.
-  - `[workspace] members = [] exclude = []` header (just `[workspace]`
-    alone makes cargo try to resolve the crate's dev-deps, which
-    include env_logger that we don't have vendored).
-  - Removed `Cargo.lock` entry from `.cargo-checksum.json`.
+  - `[workspace] members = []` header.
+  - Removed `Cargo.lock` entry from checksum json.
+  - **Later:** bulk Python substitution `std::*` → `core::*`/`alloc::*`
+    across 3 source files, same pattern as codegen.
+  - **Later:** added `#[macro_use]` to `extern crate alloc;` so the
+    `vec![]` macro is available in submodules.
 
 ### 11. `cranelift-codegen-0.122.0` — **the main event**
-- Reason: 146 `std::*` references throughout 73 source files. ~10 more
-  in unwind cascade, ~10 in HashMap usage that breaks without a
-  Default+Clone-impl hasher.
+- 146 `std::*` references throughout 73 source files, ~10 unwind cascade,
+  ~10 HashMap usage breaks without a Default+Clone-impl hasher.
 - Patches:
-  - Python script bulk-substituted across all 73 .rs files:
-    - `std::sync::Arc` / `std::sync::Weak` → `alloc::sync::*`
+  - Python bulk-substitution across all 73 `.rs` files:
+    - `std::sync::Arc/Weak` → `alloc::sync::*`
     - `std::collections::{HashMap, HashSet, hash_map, hash_set}` →
       `hashbrown::*`
-    - `std::{borrow::Cow, borrow::ToOwned, boxed::Box,
-      collections::{BinaryHeap, BTreeMap, BTreeSet, VecDeque},
-      rc::*, string::*, vec::*}` → `alloc::*`
-    - Everything else: `std::` → `core::`
-  - `[workspace] members = []` header on Cargo.toml.
+    - `std::{borrow::Cow, borrow::ToOwned, boxed::Box, collections::
+      {BinaryHeap, BTreeMap, BTreeSet, VecDeque}, rc::*, string::*,
+      vec::*}` → `alloc::*`
+    - Everything else: `std::` → `core::`.
+  - `[workspace] members = []` header on `Cargo.toml`.
   - `src/isa/mod.rs`: kept `pub mod unwind;` unconditional; gated
-    `pub type CfaUnwindInfo = systemv::UnwindInfo;` inside unwind.rs
+    `pub type CfaUnwindInfo = systemv::UnwindInfo;` inside `unwind.rs`
     with `#[cfg(feature = "unwind")]`.
   - Hashbrown dep: added `features = ["default-hasher"]` so cranelift's
     `HashMap::new()` / `HashMap::default()` work without std's
-    RandomState (this fix knocked ~20 errors at once).
+    RandomState (knocked ~20 errors at once).
+  - `src/isa/x64/mod.rs`: gated standalone `emit_unwind_info` fn with
+    `#[cfg(feature = "unwind")]`; gated `pub use inst::unwind::systemv::create_cie;`.
+  - `src/machinst/vcode.rs`: gated `caller_sp_to_cfa_offset()` call,
+    fallback to `0` for the debug-info CFA offset when unwind is off.
+  - `src/isa/x64/abi.rs`: replaced `core::sync::OnceLock` (doesn't exist
+    in core) with a tiny inline `OnceLock` shim built on `AtomicBool +
+    UnsafeCell` — single-threaded but adequate for SemOS today.
+  - `src/ir/immediates.rs`: added a `FloatExt` trait at the top of the
+    file delegating `sqrt/ceil/floor/trunc/round_ties_even` to libm
+    (`libm::sqrtf/sqrt`/etc.). f32/f64 don't have these methods in core.
+  - Added `[dependencies.libm] version = "0.2"` to support the above.
 
-### 12. `cranelift-codegen` Cargo workspace config (`.cargo/config.toml`)
-- Added `[host] linker = "rust-lld"` and host-config unstable opts.
-  These didn't actually take effect (stable cargo silently ignores
-  them) — the real fix was per-crate `.cargo/config.toml` files in the
-  meta crates (#7, #8 above).
-
-## Lessons learned (worth keeping in feedback memory)
+## Lessons learned
 
 - **Build-deps inherit parent `[build] target` unless overridden per
   crate.** `target-applies-to-host = false` is silently a no-op on
-  stable cargo. The workaround is to add `.cargo/config.toml` files
-  inside each meta crate's vendor dir.
+  stable cargo. The workaround is `.cargo/config.toml` files inside
+  each meta crate's vendor dir.
 - **`[workspace]` alone triggers dev-dep resolution.** Use
   `[workspace] members = []` to opt out without forcing dev-dep checks.
-  Some crates (cranelift-frontend) have dev-deps not in vendor (e.g.
-  env_logger) and the build fails.
 - **Bulk-injecting `use alloc::*;` at file top breaks `//!` doc
-  attributes.** Inner doc comments must be at the top before any items;
-  inject the use AFTER the leading doc block.
+  attributes.** Inner doc comments must be at the top before any items.
 - **Each `pub mod` block has its own scope.** Top-level prelude doesn't
-  reach into submodules — they need their own `use` lines.
+  reach into submodules.
 - **The `arbitrary` crate is hard-pulled by `cranelift-control`'s
-  default `fuzz` feature.** Cargo feature unification means you can't
-  disable it from the consumer's `Cargo.toml`; have to patch the
-  intermediate crate.
-- **`hashbrown 0.15`'s `default-hasher` feature is what makes
-  `HashMap::new()` / `default()` work in no_std.** Without it the
-  `DefaultHashBuilder` has no `Default`/`Clone` impl.
+  default `fuzz` feature.** Patch the intermediate crate.
+- **`hashbrown 0.15`'s `default-hasher` feature makes `HashMap::new()`
+  work no_std.** Without it `DefaultHashBuilder` has no `Default`/`Clone`.
 - **Generated code (build script output) ignores source-tree patches.**
-  Have to patch the GENERATOR (meta crate emit sites) so the next
-  generated file is correct. Then `cargo clean` to discard stale OUT_DIR.
+  Patch the GENERATOR (meta crate emit sites) so the next generated
+  file is correct. Then `cargo clean` to discard stale OUT_DIR.
+- **f32/f64 methods (sqrt/ceil/floor/trunc/round_ties_even) live on the
+  *type* in std, not in core.** Use `libm` via an extension trait.
+- **`core::sync::OnceLock` doesn't exist** — only `std::sync::OnceLock`.
+  Provide a local shim or vendor `spin::Once`.
 
-## What this does NOT yet build
+## What still needs work
 
-- `semos-cc` itself (the binary) — blocked on the 21 remaining errors
-  in cranelift-codegen.
-- The eventual D.2-followup goal of replacing the `ADD_BYTES` snapshot
-  in `semos-cc/src/main.rs` with live Cranelift output.
-
-Realistic remaining estimate from here: 2-4 more sessions to clean build
-+ first live-codegen ELF, given how the error curve has decayed
-(7000 → 5000 → 1000 → 200 → 50 → 21 with each round).
+- **Heap tuning at runtime** (the open issue above). Probably bumping
+  semos-std's heap from 16 MiB to ~64 MiB, and verifying Cranelift
+  doesn't panic-on-alloc-failure mid-compile.
+- **Kernel-level kept changes:** `MAX_PT_FRAMES` 2048→8192 in
+  `kernel-x86_64/src/paging.rs` so 5.4 MiB ELFs can be mapped.
+- **DEMO 73 PASS:** to land once the runtime crash is fixed.
