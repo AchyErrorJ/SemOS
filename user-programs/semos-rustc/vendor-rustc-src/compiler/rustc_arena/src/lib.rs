@@ -21,12 +21,20 @@
 #![feature(unwrap_infallible)]
 // tidy-alphabetical-end
 
-use std::alloc::Layout;
-use std::cell::{Cell, RefCell};
-use std::marker::PhantomData;
-use std::mem::{self, MaybeUninit};
-use std::ptr::{self, NonNull};
-use std::{cmp, intrinsics, slice};
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
+
+use core::alloc::Layout;
+use core::cell::{Cell, RefCell};
+use core::marker::PhantomData;
+use core::mem::{self, MaybeUninit};
+use core::ptr::{self, NonNull};
+use core::{cmp, intrinsics, slice};
+
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 use smallvec::SmallVec;
 
@@ -514,7 +522,7 @@ impl DroplessArena {
         let slice = self.alloc_slice(string.as_bytes());
 
         // SAFETY: the result has a copy of the same valid UTF-8 bytes.
-        unsafe { std::str::from_utf8_unchecked(slice) }
+        unsafe { core::str::from_utf8_unchecked(slice) }
     }
 
     /// # Safety
@@ -632,7 +640,7 @@ pub macro declare_arena([$($a:tt $name:ident: $ty:ty,)*]) {
         #[allow(clippy::mut_from_ref)]
         fn allocate_from_iter(
             arena: &'tcx Arena<'tcx>,
-            iter: impl ::std::iter::IntoIterator<Item = Self>,
+            iter: impl ::core::iter::IntoIterator<Item = Self>,
         ) -> &'tcx mut [Self];
     }
 
@@ -647,7 +655,7 @@ pub macro declare_arena([$($a:tt $name:ident: $ty:ty,)*]) {
         #[allow(clippy::mut_from_ref)]
         fn allocate_from_iter(
             arena: &'tcx Arena<'tcx>,
-            iter: impl ::std::iter::IntoIterator<Item = Self>,
+            iter: impl ::core::iter::IntoIterator<Item = Self>,
         ) -> &'tcx mut [Self] {
             arena.dropless.alloc_from_iter(iter)
         }
@@ -656,7 +664,7 @@ pub macro declare_arena([$($a:tt $name:ident: $ty:ty,)*]) {
         impl<'tcx> ArenaAllocatable<'tcx, rustc_arena::IsNotCopy> for $ty {
             #[inline]
             fn allocate_on(self, arena: &'tcx Arena<'tcx>) -> &'tcx mut Self {
-                if !::std::mem::needs_drop::<Self>() {
+                if !::core::mem::needs_drop::<Self>() {
                     arena.dropless.alloc(self)
                 } else {
                     arena.$name.alloc(self)
@@ -667,9 +675,9 @@ pub macro declare_arena([$($a:tt $name:ident: $ty:ty,)*]) {
             #[allow(clippy::mut_from_ref)]
             fn allocate_from_iter(
                 arena: &'tcx Arena<'tcx>,
-                iter: impl ::std::iter::IntoIterator<Item = Self>,
+                iter: impl ::core::iter::IntoIterator<Item = Self>,
             ) -> &'tcx mut [Self] {
-                if !::std::mem::needs_drop::<Self>() {
+                if !::core::mem::needs_drop::<Self>() {
                     arena.dropless.alloc_from_iter(iter)
                 } else {
                     arena.$name.alloc_from_iter(iter)
@@ -688,7 +696,7 @@ pub macro declare_arena([$($a:tt $name:ident: $ty:ty,)*]) {
         // Any type that impls `Copy` can have slices be arena-allocated in the `DroplessArena`.
         #[inline]
         #[allow(clippy::mut_from_ref)]
-        pub fn alloc_slice<T: ::std::marker::Copy>(&self, value: &[T]) -> &mut [T] {
+        pub fn alloc_slice<T: ::core::marker::Copy>(&self, value: &[T]) -> &mut [T] {
             if value.is_empty() {
                 return &mut [];
             }
@@ -706,7 +714,7 @@ pub macro declare_arena([$($a:tt $name:ident: $ty:ty,)*]) {
         #[allow(clippy::mut_from_ref)]
         pub fn alloc_from_iter<T: ArenaAllocatable<'tcx, C>, C>(
             &'tcx self,
-            iter: impl ::std::iter::IntoIterator<Item = T>,
+            iter: impl ::core::iter::IntoIterator<Item = T>,
         ) -> &mut [T] {
             T::allocate_from_iter(self, iter)
         }
@@ -718,5 +726,9 @@ pub macro declare_arena([$($a:tt $name:ident: $ty:ty,)*]) {
 pub struct IsCopy;
 pub struct IsNotCopy;
 
-#[cfg(test)]
+// M27: tests module disabled — it relies on `extern crate test;`,
+// `thread_local!`, and runs against std. Tests are run on the host
+// rust toolchain pre-port; on the SemOS target there's no test harness.
+// Re-enable when a no_std test harness lands.
+#[cfg(all(test, feature = "rustc_arena_tests"))]
 mod tests;

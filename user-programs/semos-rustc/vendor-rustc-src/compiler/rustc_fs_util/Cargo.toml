@@ -1,3 +1,6 @@
+[workspace]
+members = []
+
 [package]
 name = "rustc_fs_util"
 version = "0.0.0"
@@ -5,5 +8,9 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
+# M27: tempfile is an external R3 PATCH crate — vendor + no_std-patch pending
+# in parent's externals queue. Keep the dep declared so the public API surface
+# (TempDirBuilder etc.) stays intact for downstream callers; the actual
+# tempfile-using sites are marked stub-pending inside src/lib.rs.
 tempfile = "3.7.1"
 # tidy-alphabetical-end
