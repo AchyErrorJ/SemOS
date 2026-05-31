@@ -1164,3 +1164,100 @@ the prior session-end notes suggested.
       ET_EXEC) the codegen_ssa::back::link subsystem is skipped
       entirely, so Phase 4 is lighter than the plan's original
       estimate.
+
+---
+
+## 2026-05-31 — Phase 4 (codegen tier) launch + first-wave bounce
+
+User said "start phase 4" right after Phase 3 closure. Crate scope:
+- rustc_codegen_ssa (ARCHITECTURAL — drop back::link per §1.7)
+- rustc_mir_transform (95 files / 34k LOC, MECHANICAL)
+- rustc_mir_build + rustc_mir_dataflow + rustc_monomorphize (~74 files cluster)
+- rustc_metadata (ARCHITECTURAL — drop libloading per §1.2) + rustc_passes
+
+7 crates / 258 files / ~115k LOC total — smaller than Phase 3 (322k LOC).
+
+### First wave (F1-F4) — late-bounce, partial work landed
+
+Launched 4 agents in parallel. All 4 hit session limit at "resets
+1:50pm Toronto" with low-token reports (1.4-3k each, 42-65 tool uses,
+4-6 min duration each — shorter than Wave 2's ~10 min). The 4-agent
+parallel pattern remains a real bucket-depletion risk even after the
+recovery-wave success — bucket state degrades faster than I track.
+
+User manually integrated partial agent outputs as commit `97a7b75`
+(411 insertions / 25 deletions / 21 files): F1 rustc_codegen_ssa
+(Cargo + lib + back/mod + base + traits/backend, with §1.7 whole-
+module cfg-gates on back/{link, linker, command, apple}); F2
+rustc_mir_transform (Cargo + lib + dump_mir + dest_prop + pass_
+manager, with dump_mir cfg-gated); F3 rustc_mir_build (Cargo + lib
+only); F4 rustc_passes 6 files (check_attr + check_export + dead +
+diagnostic_items + Cargo + lib) — rustc_metadata entirely untouched.
+F1/F2/F4 notes survived in `docs/m27-port/4/F{1,2,4}-*.md` (F3
+didn't write a note before bouncing).
+
+### Recovery wave (G1-G4) in flight
+
+Launched 4 recovery agents armed with F1/F2/F4 notes as line-precise
+recipes:
+- G1: rustc_codegen_ssa remainder (~49 files)
+- G2: rustc_mir_transform remainder (~90 files)
+- G3: rustc_mir_build remainder + rustc_mir_dataflow (untouched) +
+  rustc_monomorphize (untouched)
+- G4: rustc_metadata (untouched) + rustc_passes remainder
+
+#### G2 returned first (textbook recipe-following)
+
+| Agent | Crates | LOC | Tokens | T/LOC | Duration | Status |
+|-------|--------|----:|-------:|------:|---------:|--------|
+| G2 | rustc_mir_transform remainder (31 files) | ~34k | 108,407 | 2-3 | ~10 min | COMPLETE |
+
+G2's note: "F2's pre-port survey + substitution table made this the
+textbook B1 LARGE-but-THIN cheap follow-up. Final `\bstd::` grep across
+the crate confirms only F2's cfg-gates + doc comments remain." No
+new R4 markers; pure mechanical substitution. The pre-port-survey-
+in-§0 pattern (F2 wrote it before patching, with a global grep count)
+is worth folding into HANDOFF_TEMPLATE as an optional addition for
+LARGE-but-THIN heuristic-driven crates.
+
+#### G3 returned second
+
+| Agent | Crates | LOC | Tokens | T/LOC | Duration | Status |
+|-------|--------|----:|-------:|------:|---------:|--------|
+| G3 | mir_build remainder + mir_dataflow + monomorphize | ~14k | 172,102 | 3.9 | ~14 min | COMPLETE |
+
+G3 surfaced a **RECIPE addendum**: `semos_std::path::PathBuf` is its
+own struct (not a `std::path::PathBuf` re-export). So cross-crate
+signature swaps like E4's IntoDiagArg `Option<semos_std::path::PathBuf>`
+only work when the **caller's source-of-PathBuf** has also been
+ported. In G3's `rustc_monomorphize/partitioning.rs` the caller chain
+still flows through `rustc_session`'s `std::path::PathBuf`, so G3
+cfg-gated the dump functions instead of swapping signatures. This
+nuances the "PathBuf swap is free" lesson — it's free WITHIN a crate's
+own impls but NOT across crate boundaries until the upstream crate
+is ported too.
+
+G3 also flagged an R3 dep: `regex` crate is imported by
+`mir_dataflow/framework/graphviz.rs` and used in the SemOS-build code
+path inside the `regex!` macro. Cargo.toml dep flip to
+`default-features = false` will be needed.
+
+#### G1 + G4 in flight
+
+As of this log entry: rustc_codegen_ssa has 24 modified files in
+main (G1 mid-stream), rustc_metadata has 10 (G4 mid-stream),
+rustc_passes has 7 (G4 picked up after F4's 6 leftover files — there
+may be overlap to deduplicate). G1 and G4 haven't sent completion
+notifications yet.
+
+### Lessons in flight
+
+1. **Don't wait until wave-close to log.** User flagged this — Phase
+   1-3's pattern of batch-logging at wave-end is fine when the session
+   completes cleanly, but unsafe when the session itself might bounce
+   mid-orchestration. Switch to incremental log writes for the rest of
+   the M27 port.
+2. **CWD drift trap** confirmed again this session — Bash's persistent
+   working directory carried me into a worktree path. Codified in
+   EXPERIMENT_LOG previously; keep `cd /f/Software/ArmKernel3` at the
+   head of any git invocation or `git -C` explicitly.
