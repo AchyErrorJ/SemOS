@@ -118,6 +118,28 @@ pub fn set_var(key: &str, val: &str) -> Result<(), ()> {
     set(key.as_bytes(), val.as_bytes())
 }
 
+/// `std::env::var_os`-shaped. SemOS uses UTF-8 throughout so the OS-
+/// string return type aliases `String` (see `ffi::OsString`). Added
+/// 2026-05-30 for M27 R2 — 10+ rustc_* crates use `env::var_os` to
+/// read configuration without forcing UTF-8 validation.
+pub fn var_os(key: &str) -> Option<crate::ffi::OsString> {
+    var(key)
+}
+
+/// `std::env::vars`-shaped iterator — returns an empty iterator on
+/// SemOS today because the kernel doesn't expose a "list all env
+/// vars" syscall yet. Provided so callers compile against the same
+/// shape they'd use with std. Replace with a real iterator when
+/// SYS_LIST_ENV lands.
+pub fn vars() -> core::iter::Empty<(String, String)> {
+    core::iter::empty()
+}
+
+/// `std::env::vars_os`-shaped — same emptiness rationale as `vars`.
+pub fn vars_os() -> core::iter::Empty<(crate::ffi::OsString, crate::ffi::OsString)> {
+    core::iter::empty()
+}
+
 /// `std::env::current_dir`-shaped: returns the CWD as an owned String.
 pub fn current_dir_string() -> Option<String> {
     let mut buf = [0u8; 512];
