@@ -501,7 +501,8 @@ call. R2 was second — produced the longest report.
 | A5 | rustc_index + rustc_serialize | ~5,513 | 194,784 | 35 | 111 | 563 s | §1.3 (drop incremental) applied — odht/dep_graph cfg'd out. SourceFileHashAlgorithm enum is ABI-visible (R4 hint) |
 | A6 | rustc_macros + rustc_index_macros + rustc_type_ir_macros + rustc_fluent_macro | 0 source edits | 101,141 | n/a | 105 | 425 s | Proc-macros host-only; just `.cargo/config.toml` + workspace headers. Pioneered the `git show main:` workaround |
 | A2 | rustc_span (partial, 13/18 files) | ~2,300 | 274,856 | 120 | 136 | 1,272 s | Highest token consumer. Recipe for the remaining 5 files documented for A2-followup |
-| **Phase 2a total** | **14 crates patched** | **~13,134 source LOC** | **873,692** | **~67 avg** | **616** | **~3.7 hrs sum (~50 min wall parallel)** | |
+| A2-followup | rustc_span (5 remaining files) | ~10,000 | 136,384 | **14** | 94 | 554 s | Most efficient yet — A2's pre-documented recipes turned this into recipe-application. Surfaced semos_std::path API gap (Cow<Path>, Component::Normal, etc.) for Phase 2b |
+| **Phase 2a total** | **rustc_span complete; 14 crates patched** | **~23,134 source LOC** | **1,010,076** | **~44 avg** | **710** | **~3.8 hrs sum (~70 min wall parallel)** | |
 
 A4 was the most efficient at 31 tokens/LOC, because the four crates
 were small and mechanical and A4 just ran the standard recipe. A2 was
@@ -512,24 +513,35 @@ in full-file rewrites (no merge access).
 
 ### Session-wide running total (Phase 1 + Phase 2a so far)
 
-**Tokens spent on agents: 1,596,440.**
-**LOC patched: ~13,134 (Phase 2a, excluding A6's zero-source-edit work).**
+**Tokens spent on agents: 1,732,824.** (updated after A2-followup)
+**LOC patched: ~23,134.** (rustc_span now complete; was 13k at the
+previous update.)
 
-Roughly **~80 tokens per ported LOC** on average across the whole
+Roughly **~75 tokens per ported LOC** on average across the whole
 session (recon + port + integration). The recon weight (722k tokens,
-~45% of total) is the front-loaded cost; subsequent phases should
-hover closer to A4/A5's 31-35 tokens/LOC since they won't need the
-characterization work.
+~42% of total now) is the front-loaded cost; subsequent phases should
+hover closer to A4/A5/A2-followup's 14-35 tokens/LOC since they won't
+need the characterization work.
+
+**A2-followup as the most-important data point so far:** at 14 tokens/
+LOC, it's the cheapest non-zero-source agent in the whole run.
+Mechanism: A2's notes gave it a *line-precise recipe* per file, so
+the followup didn't have to re-derive any classification. Lesson:
+**pre-documenting recipes for the predecessor's deferred work is
+worth ~10× efficiency on the followup.** Generalizable to any future
+"A is too big to finish in one agent" situation.
 
 ### Forecast for Phase 2b + Phase 3 + Phase 4
 
-Using A2's 120 tokens/LOC as the upper bound (for hard crates) and
-A4's 31 as lower bound, and the plan's estimate of ~770 k LOC of
-post-§1 internal rustc crates to port:
+Using A2's 120 tokens/LOC as the upper bound (for hard novel crates)
+and A2-followup's 14 as lower bound (for recipe-following work), and
+the plan's estimate of ~770 k LOC of post-§1 internal rustc crates
+to port:
 
-- **Conservative**: 770k LOC × 120 t/LOC = 92.4M tokens
-- **Optimistic**: 770k LOC × 31 t/LOC = 23.9M tokens
-- **Mixed (using A4 + A5 + A3 weighted average ~50 t/LOC)**: 38.5M tokens
+- **Conservative** (everything novel): 770k LOC × 120 t/LOC = 92.4M tokens
+- **Optimistic** (everything recipe-following): 770k LOC × 14 t/LOC = 10.8M tokens
+- **Mixed** (assume 60% novel-class, 40% recipe-following weighted at A2/A2-followup): 770k × (0.6×120 + 0.4×14) = ~59.7M tokens
+- **Recon-weighted mixed** (using A4/A5/A3 avg ~50 t/LOC for the bulk + A2-class for the hard 20%): 770k × (0.8×50 + 0.2×120) ≈ 49M tokens
 
 For a sense of scale: at the current session rate (~1.6M tokens for
 foundation tier ≈ 13k LOC = 1.7% of post-§1 internal rustc), the full
