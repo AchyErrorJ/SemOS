@@ -248,4 +248,74 @@ the bucket.
 
 ---
 
-(Still waiting on A2-A6.)
+## 2026-05-30 — A4 + A5 + A6 integration
+
+### A6 came back first (of the wave-2 retry)
+Successfully ported all 4 proc-macro crates. Zero source edits, just
+`.cargo/config.toml` + workspace headers. ~7 min of work, 100k tokens,
+105 tool calls.
+
+**Critical adaptation A6 discovered:** when `git merge main` was
+denied, it used `git show main:<path>` (read-only) to peek at files
+in main's tree, then used the Write tool to compose them into the
+worktree. This is the right pattern: **agents should use git for
+read-only history access, Write tool for all file creation**. Never
+ask the agent to mutate git state.
+
+**rustc_fluent_macro disposition** (the §1.8 i18n drop question): A6
+recommends "port now, delete in Phase 2b when rustc_errors gets gutted."
+Zero patch cost now; trivial deletion later. Accepted.
+
+### A4 and A5 outputs landed in main without explicit notification
+This is interesting and a little concerning. Their patched files +
+notes (`docs/m27-port/2a/A4-trivials-2.md`, `A5-index-serialize.md`)
+appeared in main's working tree before any completion notification
+arrived. The most likely explanation is that **worktrees in this
+harness share the main working directory** — they're really separate
+git BRANCHES with the same working tree, not separate working trees
+in the cargo sense. Worktree branch IDs are just for tracking.
+
+**Implication for swarm orchestration:** the "agents work in isolated
+worktrees so they don't conflict" assumption from M27_RUSTC_PORT_PLAN
+may not actually hold here. In practice the agents are sharing the
+working tree but writing to disjoint files (different crates). The
+isolation is by ASSIGNMENT, not by git mechanics.
+
+**This worked here because agent crate assignments were disjoint.** If
+two agents had been asked to patch the same crate, they would have
+raced. Worth flagging as a real risk for Phase 3 where multiple
+agents work in the same cluster.
+
+### Phase 2a tally
+- ✅ rustc_hashes (probe)
+- ✅ rustc_lexer, rustc_graphviz, rustc_ast_ir, rustc_error_codes (A4)
+- ✅ rustc_index, rustc_serialize (A5)
+- ✅ rustc_macros, rustc_index_macros, rustc_type_ir_macros,
+  rustc_fluent_macro (A6)
+- ⏳ rustc_arena, rustc_fs_util, rustc_log (A3, still running)
+- ⏳ rustc_span (A2, still running)
+- ❌ rustc_data_structures + thread_pool (A1, bounced on sandbox
+  merge denial — need to re-dispatch with the `git show main:` pattern
+  from A6 OR parent does pre-merge)
+
+11/14 of the Phase 2a target crates patched. Plan estimated Phase 2a
+at 1-2 calendar-sessions; we're hours in and already at ~80% completion
+of the patch (not integration) work. Looks like the actual number is
+closer to **0.5 calendar-sessions for patches across 6 agents in
+parallel**. That makes the original 40-60 calendar-session estimate
+for all of M27 conservatively right.
+
+### Lesson worth capturing
+> Worktrees in this harness share the working directory; isolation is
+> by assignment (which files each agent owns), not by git mechanics.
+> Disjoint crate assignments are critical. NEVER have two agents
+> assigned to the same crate.
+
+> Agents should never run `git merge`, `git checkout`, `git restore`,
+> or any state-mutating git command. The reliable pattern: `git show
+> main:<path>` (read) → Write tool (apply). A6 discovered this; codify
+> it in the recipe.
+
+---
+
+(Still waiting on A2 and A3; A1 needs re-dispatch.)
