@@ -132,6 +132,20 @@ periodically if upstream lands important bug fixes.
 Each phase has a stop condition. If you hit it, don't push through —
 re-plan.
 
+### See also (mandatory reading for any new agent)
+- `docs/m27-port/RECIPE.md` — the consolidated canonical port recipe,
+  including all corrections discovered during Phase 1+2a (skip
+  `.cargo-checksum.json` for rustc-src, `cfg(target_os = "none")`
+  host/target split, `git show main:` for read-only access, semos-std
+  surface inventory, R4 marker handling).
+- `docs/m27-port/HANDOFF_TEMPLATE.md` — the standard agent notes
+  format. The §3 Deferred Work line-precise section is worth ~10×
+  efficiency on followup work; populate it carefully if you can't
+  finish in one agent run.
+- `docs/m27-port/EXPERIMENT_LOG.md` — the running diary with
+  per-agent token/LOC costs, lessons learned, sandbox quirks, and
+  incident history.
+
 ### Phase 1 — Recon (parallel, 3-4 agents, ~1 session calendar time)
 
 Goal: map the dep graph, classify crates by porting cost, identify the
