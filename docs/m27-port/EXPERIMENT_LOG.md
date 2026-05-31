@@ -318,4 +318,71 @@ for all of M27 conservatively right.
 
 ---
 
-(Still waiting on A2 and A3; A1 needs re-dispatch.)
+## 2026-05-30 — A3 + A4 + A5 final tally + thread_local landed
+
+### A3 came in independently
+Used the same A6 read-from-main pattern. Files written to its OWN
+worktree (different from A4/A5/A6 which wrote to main paths). Had to
+cherry-pick from worktree → main. Confirmed: each agent's write-target
+choice was independent — some chose worktree paths, some chose main
+paths.
+
+**Refined lesson:** the "worktrees share working directory" was a
+partial truth. The mechanism is that worktrees have separate git
+indices but Bash `cd` to main paths still hits main's working tree.
+Agents that resolved paths relative to their worktree wrote there;
+agents that resolved to main paths wrote there. Both worked, but
+required different cherry-pick treatment.
+
+### A3 pattern worth codifying
+- `cfg(target_os = "none")` to gate SemOS-target patches while
+  preserving host build paths. Two of A3's three crates used it
+  (rustc_fs_util, rustc_log).
+- `pub macro` items emitting `::std::*` tokens need rewriting to
+  `::core::*` (caught in declare_arena!).
+- `core::error::Error` is stable since 1.81 — direct substitute.
+- MARK-class crates (rustc_fs_util) preserve host body, shim SemOS
+  body with `// M27 R4 Bx` markers + `io::Error(Unsupported)`
+  returns where surface isn't ready yet.
+
+### rustc_graphviz partial state to flag
+A4 (re-run) confirmed rustc_graphviz uses `core::io::Write` /
+`core::io::Result` which **don't exist in stable Rust** — only std
+has them, not core. Needs a semos_std::io shim. A4 documented three
+parent-side resolution options (inject `use semos_std::io;`, replace
+`core::io` → `semos_std::io` directly, or vendor `core2`). Cleanest
+is probably the second — semos_std::io exists and has the right shape.
+Marked as Phase 2b work, not a blocker for the rest of Phase 2a.
+
+### Phase 2a tally — 14/14 of foundation crates done
+- ✅ rustc_hashes (probe)
+- ✅ rustc_lexer, rustc_graphviz (partial — io shim pending),
+  rustc_ast_ir, rustc_error_codes (A4)
+- ✅ rustc_index, rustc_serialize (A5)
+- ✅ rustc_macros, rustc_index_macros, rustc_type_ir_macros,
+  rustc_fluent_macro (A6)
+- ✅ rustc_arena, rustc_fs_util (MARK-class), rustc_log (R3 stub) (A3)
+- ❌ rustc_data_structures + thread_pool (A1, bounced — re-dispatch
+  needed with the A6 git-show-main pattern)
+- ⏳ rustc_span (A2, still running ~30 min in)
+
+### parent-side semos-std additions still rolling
+- ✅ sync::OnceLock<T>
+- ✅ process::abort_with_code(i32)
+- ✅ path::Path::canonicalize_lexical()
+- ✅ ffi::OsString + ffi::OsStr (UTF-8 aliases)
+- ✅ thread::LocalKey<T> + thread_local! macro (single-threaded
+  variant). Just landed.
+- ⏳ env::var_os (small extension)
+
+### Calendar-time observation
+Phase 2a's patch work (14 crates across 6 agents) finished in
+~50 minutes of actual elapsed time. Plan estimated 1-2 calendar-
+sessions. **Multi-agent parallelism appears to compress the schedule
+substantially when the tasks are well-isolated.** Phase 3 (24-25
+crates per cluster) should scale similarly if isolation holds.
+
+---
+
+(Still waiting on A2 — rustc_span — the largest foundation crate.
+A1 re-dispatch deferred until A2 returns or the user signals.)
