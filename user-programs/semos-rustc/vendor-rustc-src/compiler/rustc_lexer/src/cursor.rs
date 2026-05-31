@@ -1,4 +1,4 @@
-use std::str::Chars;
+use core::str::Chars;
 
 pub enum FrontmatterAllowed {
     Yes,

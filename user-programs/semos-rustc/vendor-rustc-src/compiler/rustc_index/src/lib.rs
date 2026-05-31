@@ -3,6 +3,10 @@
 #![cfg_attr(feature = "nightly", feature(extend_one, step_trait, test))]
 #![cfg_attr(feature = "nightly", feature(new_range_api))]
 // tidy-alphabetical-end
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
 
 pub mod bit_set;
 #[cfg(feature = "nightly")]
@@ -35,7 +39,7 @@ pub use vec::IndexVec;
 #[cfg(not(feature = "rustc_randomized_layouts"))]
 macro_rules! static_assert_size {
     ($ty:ty, $size:expr) => {
-        const _: [(); $size] = [(); ::std::mem::size_of::<$ty>()];
+        const _: [(); $size] = [(); ::core::mem::size_of::<$ty>()];
     };
 }
 
@@ -45,7 +49,7 @@ macro_rules! static_assert_size {
     ($ty:ty, $size:expr) => {
         // no effect other than using the statements.
         // struct sizes are not deterministic under randomized layouts
-        const _: (usize, usize) = ($size, ::std::mem::size_of::<$ty>());
+        const _: (usize, usize) = ($size, ::core::mem::size_of::<$ty>());
     };
 }
 

@@ -1,6 +1,6 @@
-use std::iter::Step;
-use std::marker::PhantomData;
-use std::ops::{Bound, Range, RangeBounds};
+use core::iter::Step;
+use core::marker::PhantomData;
+use core::ops::{Bound, Range, RangeBounds};
 
 use smallvec::SmallVec;
 
@@ -59,7 +59,7 @@ impl<I: Idx> IntervalSet<I> {
     }
 
     /// Iterates through intervals stored in the set, in order.
-    pub fn iter_intervals(&self) -> impl Iterator<Item = std::ops::Range<I>>
+    pub fn iter_intervals(&self) -> impl Iterator<Item = core::ops::Range<I>>
     where
         I: Step,
     {
@@ -97,8 +97,8 @@ impl<I: Idx> IntervalSet<I> {
                     // The first range which ends *non-adjacently* to our start.
                     // And we can ensure that left <= right.
                     let left = self.map.partition_point(|l| l.1 + 1 < start);
-                    let min = std::cmp::min(self.map[left].0, start);
-                    let max = std::cmp::max(prev_end, end);
+                    let min = core::cmp::min(self.map[left].0, start);
+                    let max = core::cmp::max(prev_end, end);
                     self.map[right] = (min, max);
                     if left != right {
                         self.map.drain(left..right);
@@ -269,7 +269,7 @@ impl<I: Idx> IntervalSet<I> {
             return None;
         };
         let (_, prev_end) = &self.map[last];
-        if start <= *prev_end { Some(I::new(std::cmp::min(*prev_end, end) as usize)) } else { None }
+        if start <= *prev_end { Some(I::new(core::cmp::min(*prev_end, end) as usize)) } else { None }
     }
 
     pub fn insert_all(&mut self) {

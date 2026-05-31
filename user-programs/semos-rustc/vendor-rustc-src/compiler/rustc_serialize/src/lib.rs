@@ -10,6 +10,10 @@
 #![feature(never_type)]
 #![feature(sized_hierarchy)]
 // tidy-alphabetical-end
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
 
 // Allows macros to refer to this crate as `::rustc_serialize`.
 #[cfg(test)]

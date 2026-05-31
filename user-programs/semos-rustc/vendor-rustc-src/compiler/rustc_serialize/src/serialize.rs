@@ -1,14 +1,22 @@
 //! Support code for encoding and decoding types.
 
-use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::hash::{BuildHasher, Hash};
-use std::marker::{PhantomData, PointeeSized};
-use std::num::NonZero;
-use std::path;
-use std::rc::Rc;
-use std::sync::Arc;
+use alloc::borrow::{Cow, ToOwned};
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::rc::Rc;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::cell::{Cell, RefCell};
+use core::hash::{BuildHasher, Hash};
+use core::marker::{PhantomData, PointeeSized};
+use core::num::NonZero;
+// M27 §1.3: incremental compilation dropped — `path::{Path,PathBuf}` Encodable/Decodable
+// impls cfg'd out below (no semos-std PathBuf). `std::collections::{HashMap,HashSet}`
+// Encodable/Decodable impls also cfg'd out: alloc has no HashMap, hashbrown is not a
+// Cargo.toml dep of this crate, and the recipe is patch-only. Downstream callers
+// already use `FxHashMap`/`FxHashSet` (rustc_hashes wrappers around hashbrown) at
+// most sites; the rest are incremental-cache adjacent (R1 / SYNTHESIS).
 
 use rustc_hashes::{Hash64, Hash128};
 use smallvec::{Array, SmallVec};
@@ -126,7 +134,7 @@ pub trait Decoder {
     #[inline]
     fn read_char(&mut self) -> char {
         let bits = self.read_u32();
-        std::char::from_u32(bits).unwrap()
+        core::char::from_u32(bits).unwrap()
     }
 
     #[inline]
@@ -136,7 +144,7 @@ pub trait Decoder {
         assert!(bytes[len] == STR_SENTINEL);
         // SAFETY: the presence of `STR_SENTINEL` gives us high (but not
         // perfect) confidence that the bytes we just read truly are UTF-8.
-        unsafe { std::str::from_utf8_unchecked(&bytes[..len]) }
+        unsafe { core::str::from_utf8_unchecked(&bytes[..len]) }
     }
 
     #[inline]
@@ -454,24 +462,10 @@ macro_rules! tuple {
 
 tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
 
-impl<S: Encoder> Encodable<S> for path::Path {
-    fn encode(&self, e: &mut S) {
-        self.to_str().unwrap().encode(e);
-    }
-}
-
-impl<S: Encoder> Encodable<S> for path::PathBuf {
-    fn encode(&self, e: &mut S) {
-        path::Path::encode(self, e);
-    }
-}
-
-impl<D: Decoder> Decodable<D> for path::PathBuf {
-    fn decode(d: &mut D) -> path::PathBuf {
-        let bytes: String = Decodable::decode(d);
-        path::PathBuf::from(bytes)
-    }
-}
+// M27 §1.3: incremental compilation dropped; std::path::{Path,PathBuf} Encodable/Decodable
+// impls cfg'd out — semos-std does not yet expose `path::PathBuf::canonicalize`
+// (R2 top-5 deferred) and the metadata layer never serializes Path values directly.
+// Callers serialize paths via String today.
 
 impl<S: Encoder, T: Encodable<S> + Copy> Encodable<S> for Cell<T> {
     fn encode(&self, s: &mut S) {
@@ -610,6 +604,13 @@ where
     }
 }
 
+// M27 §1.3: HashMap/HashSet Encodable/Decodable impls cfg'd out — `std::collections::
+// {HashMap,HashSet}` is unavailable in no_std, hashbrown is not a Cargo.toml dep here
+// (recipe is patch-only), and downstream uses go through `FxHashMap`/`FxHashSet`
+// (hashbrown re-exports under different type name) rather than std's HashMap.
+// Re-add either by (a) plumbing hashbrown in via Cargo.toml in a parent-owned pass,
+// or (b) adding `impl Encodable for FxHashMap` aliases in rustc_data_structures.
+#[cfg(any())]
 impl<E: Encoder, K, V, S> Encodable<E> for HashMap<K, V, S>
 where
     K: Encodable<E> + Eq,
@@ -625,6 +626,7 @@ where
     }
 }
 
+#[cfg(any())]
 impl<D: Decoder, K, V, S> Decodable<D> for HashMap<K, V, S>
 where
     K: Decodable<D> + Hash + Eq,
@@ -637,6 +639,7 @@ where
     }
 }
 
+#[cfg(any())]
 impl<E: Encoder, T, S> Encodable<E> for HashSet<T, S>
 where
     T: Encodable<E> + Eq,
@@ -650,6 +653,7 @@ where
     }
 }
 
+#[cfg(any())]
 impl<D: Decoder, T, S> Decodable<D> for HashSet<T, S>
 where
     T: Decodable<D> + Hash + Eq,

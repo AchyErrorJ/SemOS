@@ -1,9 +1,12 @@
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::rc::Rc;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::marker::PhantomData;
 #[cfg(not(feature = "nightly"))]
-use std::mem;
-use std::ops::{BitAnd, BitAndAssign, BitOrAssign, Bound, Not, Range, RangeBounds, Shl};
-use std::rc::Rc;
-use std::{fmt, iter, slice};
+use core::mem;
+use core::ops::{BitAnd, BitAndAssign, BitOrAssign, Bound, Not, Range, RangeBounds, Shl};
+use core::{fmt, iter, slice};
 
 use Chunk::*;
 #[cfg(feature = "nightly")]
@@ -1779,7 +1782,7 @@ impl FiniteBitSetTy for u32 {
     }
 }
 
-impl std::fmt::Debug for FiniteBitSet<u32> {
+impl core::fmt::Debug for FiniteBitSet<u32> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:032b}", self.0)
     }

@@ -1,8 +1,9 @@
-use std::borrow::{Borrow, BorrowMut};
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut, RangeBounds};
-use std::{fmt, slice, vec};
+use alloc::borrow::{Borrow, BorrowMut};
+use alloc::vec::{self, Vec};
+use core::hash::Hash;
+use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut, RangeBounds};
+use core::{fmt, slice};
 
 #[cfg(feature = "nightly")]
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
@@ -146,9 +147,9 @@ impl<I: Idx, T> IndexVec<I, T> {
         range: R,
     ) -> impl Iterator<Item = (I, T)> {
         let begin = match range.start_bound() {
-            std::ops::Bound::Included(i) => *i,
-            std::ops::Bound::Excluded(i) => i.checked_add(1).unwrap(),
-            std::ops::Bound::Unbounded => 0,
+            core::ops::Bound::Included(i) => *i,
+            core::ops::Bound::Excluded(i) => i.checked_add(1).unwrap(),
+            core::ops::Bound::Unbounded => 0,
         };
         self.raw.drain(range).enumerate().map(move |(n, t)| (I::new(begin + n), t))
     }

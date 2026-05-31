@@ -3,7 +3,11 @@
 
 // tidy-alphabetical-start
 #![deny(rustdoc::invalid_codeblock_attributes)]
+#![no_std]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
 
 // This higher-order macro defines the error codes that are in use. It is used
 // in the `rustc_errors` crate. Removed error codes are listed in the comment

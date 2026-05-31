@@ -1,8 +1,8 @@
-use std::fmt;
-use std::marker::PhantomData;
-use std::ops::{Index, IndexMut, RangeBounds};
-use std::slice::GetDisjointMutError::*;
-use std::slice::{self, SliceIndex};
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::{Index, IndexMut, RangeBounds};
+use core::slice::GetDisjointMutError::*;
+use core::slice::{self, SliceIndex};
 
 use crate::{Idx, IndexVec, IntoSliceIdx};
 

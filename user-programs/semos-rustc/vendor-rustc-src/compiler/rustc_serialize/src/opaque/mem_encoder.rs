@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use super::IntEncodedWithFixedSize;
 use crate::{Encodable, Encoder, leb128};
 

@@ -271,11 +271,25 @@
 
 // tidy-alphabetical-start
 #![doc(test(attr(allow(unused_variables), deny(warnings), allow(internal_features))))]
+#![no_std]
 // tidy-alphabetical-end
 
-use std::borrow::Cow;
-use std::io;
-use std::io::prelude::*;
+#[macro_use]
+extern crate alloc;
+
+use alloc::borrow::Cow;
+use alloc::string::String;
+use alloc::vec::Vec;
+// NOTE (M27 Phase 2a A4 port): `std::io` is needed for `io::Write` / `io::Result`
+// trait and result types used by render/render_opts. Stable `core::io` does
+// not exist. The parent's Phase 2a integration step must redirect this to
+// `semos_std::io` (e.g., add `semos-std` as a Cargo dep and substitute
+// `core::io` → `semos_std::io` here, OR add a top-level `use semos_std::io;`
+// shim). For now the path is rewritten to `core::io` per recipe; this WILL
+// fail to compile against stable core until the redirect is applied. See
+// `docs/m27-port/2a/A4-trivials-2.md` for the full rationale.
+use core::io;
+use core::io::prelude::*;
 
 use LabelText::*;
 

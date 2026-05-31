@@ -1,34 +1,31 @@
-use std::fs::File;
-use std::io::{self, Write};
-use std::marker::PhantomData;
-use std::ops::Range;
-use std::path::{Path, PathBuf};
+use alloc::borrow::ToOwned;
+use alloc::vec::Vec;
+use core::marker::PhantomData;
+use core::ops::Range;
 
 // This code is very hot and uses lots of arithmetic, avoid overflow checks for performance.
 // See https://github.com/rust-lang/rust/pull/119440#issuecomment-1874255727
 use crate::int_overflow::DebugStrictAdd;
 use crate::leb128;
-use crate::serialize::{Decodable, Decoder, Encodable, Encoder};
+use crate::serialize::{Decodable, Decoder};
 
 pub mod mem_encoder;
 
 // -----------------------------------------------------------------------------
-// Encoder
+// Encoder (FileEncoder removed — see §1.3 note below)
 // -----------------------------------------------------------------------------
-
-pub type FileEncodeResult = Result<usize, (PathBuf, io::Error)>;
 
 pub const MAGIC_END_BYTES: &[u8] = b"rust-end-file";
 
-/// The size of the buffer in `FileEncoder`.
-const BUF_SIZE: usize = 64 * 1024;
-
-/// `FileEncoder` encodes data to file via fixed-size buffer.
-///
-/// There used to be a `MemEncoder` type that encoded all the data into a
-/// `Vec`. `FileEncoder` is better because its memory use is determined by the
-/// size of the buffer, rather than the full length of the encoded data, and
-/// because it doesn't need to reallocate memory along the way.
+// M27 §1.3: incremental compilation dropped — `FileEncoder` cfg'd out.
+// `FileEncoder` was the on-disk buffered writer used by both the rmeta path and
+// the incremental cache writer. semos-rustc's metadata path uses `MemEncoder`
+// (mem_encoder.rs) exclusively; the rmeta blob is handed to the kernel as a
+// `Vec<u8>` rather than written through `std::fs::File`. Re-enabling FileEncoder
+// would require semos-std `std::fs::File` + `std::io::Write` surface (not in
+// R2 top-5; out of scope for v1). Also drops `FileEncodeResult`, `BUF_SIZE`,
+// `IntEncodedWithFixedSize::Encodable<FileEncoder>`, and the `Drop` debug check.
+#[cfg(any())]
 pub struct FileEncoder {
     // The input buffer. For adequate performance, we need to be able to write
     // directly to the unwritten region of the buffer, without calling copy_from_slice.
@@ -47,6 +44,7 @@ pub struct FileEncoder {
     finished: bool,
 }
 
+#[cfg(any())]
 impl FileEncoder {
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         // File::create opens the file for writing only. When -Zmeta-stats is enabled, the metadata
@@ -199,7 +197,7 @@ impl FileEncoder {
     }
 }
 
-#[cfg(debug_assertions)]
+#[cfg(any())]
 impl Drop for FileEncoder {
     fn drop(&mut self) {
         if !std::thread::panicking() {
@@ -217,6 +215,7 @@ macro_rules! write_leb128 {
     };
 }
 
+#[cfg(any())]
 impl Encoder for FileEncoder {
     write_leb128!(emit_usize, usize, write_usize_leb128);
     write_leb128!(emit_u128, u128, write_u128_leb128);
@@ -385,7 +384,7 @@ impl<'a> Decoder for MemDecoder<'a> {
         }
         // SAFETY: We just checked if this range is in-bounds above.
         unsafe {
-            let slice = std::slice::from_raw_parts(self.current, bytes);
+            let slice = core::slice::from_raw_parts(self.current, bytes);
             self.current = self.current.add(bytes);
             slice
         }
@@ -415,6 +414,9 @@ impl<'a> Decoder for MemDecoder<'a> {
 
 // Specialize encoding byte slices. This specialization also applies to encoding `Vec<u8>`s, etc.,
 // since the default implementations call `encode` on their slices internally.
+// M27 §1.3: `impl Encodable<FileEncoder> for [u8]` cfg'd out (FileEncoder gone).
+// MemEncoder's [u8] specialization lives in mem_encoder.rs.
+#[cfg(any())]
 impl Encodable<FileEncoder> for [u8] {
     fn encode(&self, e: &mut FileEncoder) {
         Encoder::emit_usize(e, self.len());
@@ -438,6 +440,9 @@ impl IntEncodedWithFixedSize {
     pub const ENCODED_SIZE: usize = 8;
 }
 
+// M27 §1.3: `impl Encodable<FileEncoder> for IntEncodedWithFixedSize` cfg'd out
+// (FileEncoder gone). MemEncoder's IntEncodedWithFixedSize impl lives in mem_encoder.rs.
+#[cfg(any())]
 impl Encodable<FileEncoder> for IntEncodedWithFixedSize {
     #[inline]
     fn encode(&self, e: &mut FileEncoder) {

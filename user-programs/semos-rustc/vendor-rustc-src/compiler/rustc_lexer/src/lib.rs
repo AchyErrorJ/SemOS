@@ -23,7 +23,11 @@
 // We want to be able to build this crate with a stable compiler,
 // so no `#![feature]` attributes should be added.
 #![deny(unstable_features)]
+#![no_std]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
 
 mod cursor;
 
@@ -331,7 +335,7 @@ pub fn tokenize(
     frontmatter_allowed: FrontmatterAllowed,
 ) -> impl Iterator<Item = Token> {
     let mut cursor = Cursor::new(input, frontmatter_allowed);
-    std::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         let token = cursor.advance_token();
         if token.kind != TokenKind::Eof { Some(token) } else { None }
     })

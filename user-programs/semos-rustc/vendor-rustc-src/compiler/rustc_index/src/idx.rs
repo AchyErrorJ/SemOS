@@ -1,7 +1,7 @@
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops;
-use std::slice::SliceIndex;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::ops;
+use core::slice::SliceIndex;
 
 /// Represents some newtyped `usize` wrapper.
 ///

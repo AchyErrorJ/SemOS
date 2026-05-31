@@ -1,0 +1,5 @@
+# M27 §1.5: proc-macros are HOST build-deps; override the parent
+# semos-rustc/.cargo/config.toml's target=x86_64-unknown-none so they
+# compile for the host (where std is available).
+[build]
+target = "x86_64-pc-windows-msvc"

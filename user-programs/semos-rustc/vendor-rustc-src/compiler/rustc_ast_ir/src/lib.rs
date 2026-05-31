@@ -9,9 +9,13 @@
 #![cfg_attr(feature = "nightly", allow(internal_features))]
 #![cfg_attr(feature = "nightly", feature(never_type))]
 #![cfg_attr(feature = "nightly", feature(rustc_attrs))]
+#![no_std]
 // tidy-alphabetical-end
 
-use std::fmt;
+#[macro_use]
+extern crate alloc;
+
+use core::fmt;
 
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
