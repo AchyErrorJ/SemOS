@@ -18,7 +18,6 @@ arrayvec = { version = "0.7", default-features = false }
 bitflags = "2.4.1"
 either = { version = "1.0", default-features = false }
 elsa = "1.11.0"
-ena = "0.14.3"
 indexmap = { version = "2.12.1", default-features = false }
 rustc-hash = { version = "2.0.0", default-features = false }
 rustc_arena = { path = "../rustc_arena" }
@@ -42,6 +41,7 @@ tracing = { version = "0.1", default-features = false }
 # rustc-stable-hash 0.1.0 is unconditionally std (recon flagged);
 # host-only for now until vendor+patch in a later iteration.
 [target.'cfg(not(target_os = "none"))'.dependencies]
+ena = "0.14.3"
 jobserver_crate = { version = "0.1.28", package = "jobserver" }
 measureme = "12.0.1"
 parking_lot = "0.12"

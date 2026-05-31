@@ -42,12 +42,20 @@ rustc_trait_selection = { path = "../rustc_trait_selection" }
 semos-std = { path = "../../../../std-shim" }
 serde_json = "1.0.59"
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
-tempfile = "3.2"
 thin-vec = { version = "0.2.12", default-features = false }
-thorin-dwp = "0.9"
 tracing = { version = "0.1", default-features = false }
-wasm-encoder = "0.219"
 # tidy-alphabetical-end
+
+# Phase 5b Stage E iter 4: host-only deps that pull non-no_std crates
+# transitively. tempfile pulls once_cell; thorin-dwp pulls memmap2 + std
+# I/O; wasm-encoder pulls leb128 + std encoders. F1+G1 already §1.7-
+# gated back/{link,linker,command,archive,rpath,apple} as whole modules;
+# remaining back/* (write,lto,metadata) sites that touch these crates
+# already cfg-split their usages.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+tempfile = "3.2"
+thorin-dwp = "0.9"
+wasm-encoder = "0.219"
 
 [target.'cfg(unix)'.dependencies]
 # tidy-alphabetical-start

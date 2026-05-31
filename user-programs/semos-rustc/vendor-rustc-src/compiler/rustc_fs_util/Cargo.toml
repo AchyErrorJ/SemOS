@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-# M27: tempfile is an external R3 PATCH crate — vendor + no_std-patch pending
-# in parent's externals queue. Keep the dep declared so the public API surface
-# (TempDirBuilder etc.) stays intact for downstream callers; the actual
-# tempfile-using sites are marked stub-pending inside src/lib.rs.
-tempfile = "3.7.1"
 # tidy-alphabetical-end
+
+# Phase 5b Stage E iter 4: tempfile pulls once_cell (245 errors) transitively.
+# Host-gate tempfile so the SemOS-target build doesn't pull it; the rustc_fs_util
+# body's tempfile-using sites already have cfg(not(target_os = "none")) splits.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+tempfile = "3.7.1"

@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 # tidy-alphabetical-start
 # tidy-alphabetical-end
+
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

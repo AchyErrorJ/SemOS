@@ -20,4 +20,7 @@ categories = ["concurrency"]
 # crossbeam-utils / smallvec are no longer needed.
 [dependencies]
 
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+
 [dev-dependencies]

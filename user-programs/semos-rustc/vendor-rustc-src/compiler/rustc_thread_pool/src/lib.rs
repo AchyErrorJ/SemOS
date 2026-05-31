@@ -29,25 +29,44 @@
 //! will see them serialized. This is acceptable per M27 §1.4.
 
 #![cfg_attr(test, allow(unused_crate_dependencies))]
+// M27 Phase 5b Stage E iter 4: A1's Phase 2a stub kept the upstream
+// `use std::*` lines, which broke the SemOS-target build. Apply the
+// D1 cfg_attr pattern + cfg-split each std use with semos_std/core/
+// alloc on SemOS target, std on host.
+#![cfg_attr(target_os = "none", no_std)]
 
-use std::any::Any;
-use std::cell::Cell;
-use std::error::Error;
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fmt, io};
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use core::any::Any;
+use core::cell::Cell;
+use core::error::Error;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::fmt;
+
+#[cfg(not(target_os = "none"))]
+use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
 
 pub mod tlv {
     //! Single-threaded `TLV` shim. Upstream stores a `*const ()` in
     //! TLS to thread query state through `rayon::scope`. With one
     //! thread we just use a static `Cell` behind a `with` accessor.
 
-    use std::cell::Cell;
+    use core::cell::Cell;
 
     // M27 §1.4: upstream uses `thread_local!`. SemOS Ring-3 is
     // single-threaded per process, so a plain static (wrapped behind
     // the same accessor name) is sufficient.
-    thread_local!(pub static TLV: Cell<*const ()> = const { Cell::new(core::ptr::null()) });
+    #[cfg(not(target_os = "none"))]
+    std::thread_local!(pub static TLV: Cell<*const ()> = const { Cell::new(core::ptr::null()) });
+    #[cfg(target_os = "none")]
+    semos_std::thread_local!(pub static TLV: Cell<*const ()> = const { Cell::new(core::ptr::null()) });
 
     #[derive(Copy, Clone)]
     pub(crate) struct Tlv(pub(crate) *const ());
