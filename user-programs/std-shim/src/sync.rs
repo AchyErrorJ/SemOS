@@ -342,6 +342,49 @@ impl<T> Drop for OnceLock<T> {
 }
 
 // ---------------------------------------------------------------------
+// LazyLock<T> — `std::sync::LazyLock` over OnceLock + fn() -> T
+// ---------------------------------------------------------------------
+//
+// rustc and several externals expect `LazyLock<T, fn() -> T>` (or a
+// closure init). v1 limits the init to a `fn` pointer (not a closure)
+// since that's what makes a static `LazyLock::new(|| {...})` const-
+// constructible without dropping into a generic closure capture.
+// Multiple rustc_* crates rely on this exact shape (C3 flagged it as
+// the LazyLock gap).
+
+/// `std::sync::LazyLock`-shaped lazy-initialized cell. The init `fn`
+/// runs once on first `Deref` (or `force`), and the value persists.
+pub struct LazyLock<T> {
+    cell: OnceLock<T>,
+    init: fn() -> T,
+}
+
+unsafe impl<T: Send + Sync> Sync for LazyLock<T> {}
+
+impl<T> LazyLock<T> {
+    /// Build a LazyLock backed by `init`. Const so it can be a static.
+    pub const fn new(init: fn() -> T) -> Self {
+        Self {
+            cell: OnceLock::new(),
+            init,
+        }
+    }
+
+    /// Force initialization and return a reference. Mirrors std's
+    /// `LazyLock::force`.
+    pub fn force(this: &Self) -> &T {
+        this.cell.get_or_init(this.init)
+    }
+}
+
+impl<T> Deref for LazyLock<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        Self::force(self)
+    }
+}
+
+// ---------------------------------------------------------------------
 // Condvar — futex-backed condition variable (seq-number style)
 // ---------------------------------------------------------------------
 //

@@ -105,12 +105,38 @@ pub fn set_current_dir(path: &[u8]) -> Result<(), ()> {
 // functions above remain for callers avoiding allocation.
 // ---------------------------------------------------------------------
 
-/// `std::env::var`-shaped: returns the value of env var `key`, or None
-/// if unset. Value capped at 512 bytes (the kernel's env block size).
-pub fn var(key: &str) -> Option<String> {
+/// `std::env::VarError`-shaped. SemOS is UTF-8 throughout (all kernel
+/// strings are valid UTF-8), so `NotUnicode` exists only for source
+/// compatibility — it will never be returned. Added 2026-05-31 for M27
+/// Phase 3 C3 (4+ rustc_* sites read `env::var`'s Result shape; the
+/// adapter pattern is cleaner as a real enum here).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VarError {
+    /// The key was not set in the environment.
+    NotPresent,
+    /// The value was not valid UTF-8 (unreachable on SemOS today; kept
+    /// for source-compat with std).
+    NotUnicode(crate::ffi::OsString),
+}
+
+impl core::fmt::Display for VarError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            VarError::NotPresent => f.write_str("environment variable not found"),
+            VarError::NotUnicode(_) => f.write_str("environment variable was not valid unicode"),
+        }
+    }
+}
+
+/// `std::env::var`-shaped: returns the value of env var `key`, or
+/// `Err(VarError::NotPresent)` if unset. Value capped at 512 bytes
+/// (the kernel's env block size).
+pub fn var(key: &str) -> Result<String, VarError> {
     let mut buf = [0u8; 512];
-    let n = get(key.as_bytes(), &mut buf)?;
-    Some(String::from_utf8_lossy(&buf[..n]).to_string())
+    match get(key.as_bytes(), &mut buf) {
+        Some(n) => Ok(String::from_utf8_lossy(&buf[..n]).to_string()),
+        None => Err(VarError::NotPresent),
+    }
 }
 
 /// `std::env::set_var`-shaped.
@@ -123,7 +149,7 @@ pub fn set_var(key: &str, val: &str) -> Result<(), ()> {
 /// 2026-05-30 for M27 R2 — 10+ rustc_* crates use `env::var_os` to
 /// read configuration without forcing UTF-8 validation.
 pub fn var_os(key: &str) -> Option<crate::ffi::OsString> {
-    var(key)
+    var(key).ok()
 }
 
 /// `std::env::vars`-shaped iterator — returns an empty iterator on

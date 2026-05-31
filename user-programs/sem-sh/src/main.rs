@@ -844,7 +844,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // No syscall enumerates the env block, so `env KEY...` prints the
             // named vars (bare `env` is a no-op for now).
             for key in &argv[1..] {
-                if let Some(v) = env::var(key) {
+                if let Ok(v) = env::var(key) {
                     println!("{}={}", key, v);
                 }
             }
@@ -916,7 +916,7 @@ fn exec_external(argv: &[String]) -> i32 {
     // Bare name: search $PATH (apps installed in any PATH dir are runnable by
     // name — "always on path"). Default covers the system /bin and a
     // conventional /apps install dir.
-    let path_var = env::var("PATH").unwrap_or_else(|| String::from("/bin:/apps"));
+    let path_var = env::var("PATH").unwrap_or_else(|_| String::from("/bin:/apps"));
     for dir in path_var.split(':') {
         if dir.is_empty() {
             continue;
