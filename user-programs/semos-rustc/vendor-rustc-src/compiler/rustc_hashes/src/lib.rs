@@ -13,8 +13,13 @@
 //! connect the fact that they can only be produced by a `StableHasher` to their
 //! `Encode`/`Decode` impls.
 
-use std::fmt;
-use std::ops::BitXorAssign;
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
+
+use core::fmt;
+use core::ops::BitXorAssign;
 
 use rustc_stable_hash::{FromStableHash, SipHasher128Hash as StableHasherHash};
 
@@ -81,8 +86,8 @@ pub struct Hash128 {
 //
 // This also allows using Hash128-containing types in UnHash-based hashmaps, which would otherwise
 // debug_assert! that we're hashing more than a single u64.
-impl std::hash::Hash for Hash128 {
-    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+impl core::hash::Hash for Hash128 {
+    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         h.write_u64(self.truncate().as_u64());
     }
 }
