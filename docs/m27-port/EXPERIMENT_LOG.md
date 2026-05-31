@@ -1692,3 +1692,61 @@ Cumulative this session: 17 commits, ~6.9M tokens. Stage E continues
 the recon-estimated grind. Significant single-iter wins (serde 5829
 clear) interspersed with iteration-shuffle when one host-gate opens
 a different code path.
+
+### Stage E iter 6 (commit `83d4957`)
+
+Two host-gates:
+- **ena in rustc_type_ir**: ena was pulling log 100 errors via
+  rustc_infer's UnificationTable. Phase 4 G3 had host-gated ena
+  in rustc_data_structures (iter 4); same dep slipped through via
+  type_ir.
+- **tracing-core + tracing-subscriber + tracing-tree in rustc_log**:
+  the rustc_log crate body is already a SemOS-stub returning Ok(());
+  these telemetry crates only get used on host. Moving them to
+  [target.'cfg(not(target_os = "none"))'.dependencies] cuts the
+  most direct path. (Indirect path through tracing 0.1 still active
+  in 45 rustc_* crates.)
+
+Cleared this iter: log + parking_lot_core. 16 externals remaining:
+- **once_cell (245)** STILL via tracing-core ← tracing v0.1.44.
+  `default-features=false` on tracing in 45 rustc_* crates doesn't
+  propagate to tracing-core's `std` feature (which is its own crate
+  with `default = ["std"]`). Cargo feature unification doesn't auto-
+  remove transitive default features.
+- **anstyle (156)** via annotate-snippets ← rustc_fluent_macro
+  (proc-macro crate — host-only at build time, but cargo includes
+  proc-macro deps in lockfile resolution for the workspace).
+- Smaller no_std-stragglers: stable_deref_trait (17), rustc-stable-
+  hash (31), constant_time_eq (5), crypto-common, either, indexmap,
+  memchr, scoped-tls (7), getrandom (3), crc32fast (21), getopts
+  (165), termize (10).
+
+### Iter 7+ open work — the fundamental wall
+
+The remaining once_cell + anstyle + getopts + the no_std-stragglers
+all need one of three approaches:
+
+1. **[patch.crates-io] overrides at workspace root** swapping
+   tracing-core / annotate-snippets / getopts / etc. for forked
+   versions that respect `default-features=false` end-to-end. The
+   tracing-core fork would set `default = []` and remove the
+   once_cell dep entirely. ~1 session per crate to fork + patch.
+
+2. **Vendor + no_std-patch** the worst offenders (Cranelift PORT_LOG
+   template). ~3 sessions per per recon estimate; locks our version
+   indefinitely.
+
+3. **Drop the parent dep at the source level**. E.g. rustc_fluent_macro
+   doesn't strictly need annotate-snippets for its primary purpose
+   (generating diagnostic-id constants); could be refactored. But
+   recipe-following: minimize source changes per §1.8.
+
+Approach 1 is the most leveraged: one [patch.crates-io] entry per
+crate, applied once at the workspace root, covers all transitive
+consumers. Worth ~2-3 focused sessions to land for tracing-core +
+annotate-snippets + the 5 smaller stragglers.
+
+Cumulative this session: 18 commits, ~7M tokens. Stage E grind
+continues; each iter clears 1-3 externals + sometimes uncovers
+re-surface chains. The fundamental wall is now the
+non-default-features-aware transitive resolution.
