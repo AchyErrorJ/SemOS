@@ -386,3 +386,31 @@ crates per cluster) should scale similarly if isolation holds.
 
 (Still waiting on A2 — rustc_span — the largest foundation crate.
 A1 re-dispatch deferred until A2 returns or the user signals.)
+
+---
+
+## 2026-05-30 — R2 top-6 semos-std surface complete
+
+env::var_os + vars + vars_os landed. That's the last of R2's top-six
+high-priority semos-std additions. Six commits total for the surface
+work:
+
+- `18d80dd` sync::OnceLock<T> + process::abort_with_code(i32)
+- `4a9af1d` path::Path::canonicalize_lexical() + ffi::OsString/OsStr
+- `f4d1a60` thread::LocalKey<T> + thread_local!
+- `7ebc0f7` env::var_os + vars + vars_os
+
+All built clean against x86_64-unknown-none. Pure additions, zero API
+breakage. semos-std's surface area for the rustc port now covers what
+the recon agents flagged. Anything beyond this (path canonicalization
+that touches the FS, multi-threaded TLS, full env-listing) is
+deliberately out of v1 scope per the M27 plan §1.
+
+When Phase 2b/3 agents try to integrate the marked sites (`// M27 R4 Bx`
+markers the Phase 2a agents left), they'll find the API now exists and
+can do a straight substitution instead of a TODO. That's the integration
+acceleration the recon predicted.
+
+---
+
+(Last waiting on A2 — rustc_span. ~40 min in and counting.)
