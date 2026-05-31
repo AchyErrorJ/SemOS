@@ -27,8 +27,15 @@
 //! of a `RefCell`. This is appropriate when interior mutability is not
 //! required.
 
+use core::hash::{BuildHasher, Hash};
+
+// M27: HashMap from std on host; hashbrown on the SemOS target. The
+// `HashMapExt::insert_same` impl below works against either since
+// hashbrown's API matches std's surface.
+#[cfg(not(target_os = "none"))]
 use std::collections::HashMap;
-use std::hash::{BuildHasher, Hash};
+#[cfg(target_os = "none")]
+use hashbrown::HashMap;
 
 pub use parking_lot::{
     MappedRwLockReadGuard as MappedReadGuard, MappedRwLockWriteGuard as MappedWriteGuard,
@@ -58,7 +65,7 @@ mod worker_local;
 mod atomic {
     // Most hosts can just use a regular AtomicU64.
     #[cfg(target_has_atomic = "64")]
-    pub use std::sync::atomic::AtomicU64;
+    pub use core::sync::atomic::AtomicU64;
 
     // Some 32-bit hosts don't have AtomicU64, so use a fallback.
     #[cfg(not(target_has_atomic = "64"))]
@@ -66,7 +73,7 @@ mod atomic {
 }
 
 mod mode {
-    use std::sync::atomic::{AtomicU8, Ordering};
+    use core::sync::atomic::{AtomicU8, Ordering};
 
     const UNINITIALIZED: u8 = 0;
     const DYN_NOT_THREAD_SAFE: u8 = 1;

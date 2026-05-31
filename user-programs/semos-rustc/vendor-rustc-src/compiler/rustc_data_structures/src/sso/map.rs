@@ -1,6 +1,6 @@
-use std::fmt;
-use std::hash::Hash;
-use std::ops::Index;
+use core::fmt;
+use core::hash::Hash;
+use core::ops::Index;
 
 use arrayvec::ArrayVec;
 use either::Either;

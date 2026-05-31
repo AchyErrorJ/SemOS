@@ -1,4 +1,4 @@
-use std::cmp::max;
+use core::cmp::max;
 
 use super::*;
 use crate::fx::FxHashMap;

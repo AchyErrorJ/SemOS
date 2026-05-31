@@ -1,8 +1,8 @@
-use std::cmp::Ordering;
-use std::fmt::{self, Debug};
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::ptr;
+use core::cmp::Ordering;
+use core::fmt::{self, Debug};
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
+use core::ptr;
 
 use crate::stable_hasher::{HashStable, StableHasher};
 

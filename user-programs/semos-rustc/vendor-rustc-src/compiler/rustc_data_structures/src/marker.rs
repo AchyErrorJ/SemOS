@@ -1,182 +1,308 @@
-use std::alloc::Allocator;
-use std::marker::PointeeSized;
+// M27 Phase 2a A1: split marker.rs body on cfg(target_os = "none").
+// Host build keeps the full upstream surface (with std type-specific
+// negative impls and `already_send!`/`already_sync!` lists). SemOS
+// target ships only the core trait + alloc-class impls, since std
+// types like `std::env::Args`, `std::sync::Mutex<T>`, `std::backtrace::
+// Backtrace`, etc. are not available.
 
-#[diagnostic::on_unimplemented(message = "`{Self}` doesn't implement `DynSend`. \
-            Add it to `rustc_data_structures::marker` or use `IntoDynSyncSend` if it's already `Send`")]
-// This is an auto trait for types which can be sent across threads if `sync::is_dyn_thread_safe()`
-// is true. These types can be wrapped in a `FromDyn` to get a `Send` type. Wrapping a
-// `Send` type in `IntoDynSyncSend` will create a `DynSend` type.
-pub unsafe auto trait DynSend {}
+#[cfg(not(target_os = "none"))]
+mod imp_std {
+    use std::alloc::Allocator;
+    use std::marker::PointeeSized;
 
-#[diagnostic::on_unimplemented(message = "`{Self}` doesn't implement `DynSync`. \
-            Add it to `rustc_data_structures::marker` or use `IntoDynSyncSend` if it's already `Sync`")]
-// This is an auto trait for types which can be shared across threads if `sync::is_dyn_thread_safe()`
-// is true. These types can be wrapped in a `FromDyn` to get a `Sync` type. Wrapping a
-// `Sync` type in `IntoDynSyncSend` will create a `DynSync` type.
-pub unsafe auto trait DynSync {}
+    #[diagnostic::on_unimplemented(message = "`{Self}` doesn't implement `DynSend`. \
+                Add it to `rustc_data_structures::marker` or use `IntoDynSyncSend` if it's already `Send`")]
+    pub unsafe auto trait DynSend {}
 
-// Same with `Sync` and `Send`.
-unsafe impl<T: DynSync + ?Sized + PointeeSized> DynSend for &T {}
+    #[diagnostic::on_unimplemented(message = "`{Self}` doesn't implement `DynSync`. \
+                Add it to `rustc_data_structures::marker` or use `IntoDynSyncSend` if it's already `Sync`")]
+    pub unsafe auto trait DynSync {}
 
-macro_rules! impls_dyn_send_neg {
-    ($([$t1: ty $(where $($generics1: tt)*)?])*) => {
-        $(impl$(<$($generics1)*>)? !DynSend for $t1 {})*
-    };
+    unsafe impl<T: DynSync + ?Sized + PointeeSized> DynSend for &T {}
+
+    macro_rules! impls_dyn_send_neg {
+        ($([$t1: ty $(where $($generics1: tt)*)?])*) => {
+            $(impl$(<$($generics1)*>)? !DynSend for $t1 {})*
+        };
+    }
+
+    impls_dyn_send_neg!(
+        [std::env::Args]
+        [std::env::ArgsOs]
+        [*const T where T: ?Sized + PointeeSized]
+        [*mut T where T: ?Sized + PointeeSized]
+        [std::ptr::NonNull<T> where T: ?Sized + PointeeSized]
+        [std::rc::Rc<T, A> where T: ?Sized, A: Allocator]
+        [std::rc::Weak<T, A> where T: ?Sized, A: Allocator]
+        [std::sync::MutexGuard<'_, T> where T: ?Sized]
+        [std::sync::RwLockReadGuard<'_, T> where T: ?Sized]
+        [std::sync::RwLockWriteGuard<'_, T> where T: ?Sized]
+        [std::io::StdoutLock<'_>]
+        [std::io::StderrLock<'_>]
+    );
+
+    #[cfg(any(
+        unix,
+        target_os = "hermit",
+        all(target_vendor = "fortanix", target_env = "sgx"),
+        target_os = "solid_asp3",
+        target_os = "wasi",
+        target_os = "xous"
+    ))]
+    impl !DynSend for std::env::VarsOs {}
+
+    macro_rules! already_send {
+        ($([$ty: ty])*) => {
+            $(unsafe impl DynSend for $ty where Self: Send {})*
+        };
+    }
+
+    already_send!(
+        [std::backtrace::Backtrace][std::io::Stdout][std::io::Stderr][std::io::Error][std::fs::File][std::panic::Location<'_>]
+            [rustc_arena::DroplessArena][jobserver_crate::Client][jobserver_crate::HelperThread]
+            [crate::memmap::Mmap][crate::profiling::SelfProfiler][crate::owned_slice::OwnedSlice]
+    );
+
+    macro_rules! impl_dyn_send {
+        ($($($attr: meta)* [$ty: ty where $($generics2: tt)*])*) => {
+            $(unsafe impl<$($generics2)*> DynSend for $ty {})*
+        };
+    }
+
+    impl_dyn_send!(
+        [std::sync::atomic::AtomicPtr<T> where T]
+        [std::sync::Mutex<T> where T: ?Sized+ DynSend]
+        [std::sync::mpsc::Sender<T> where T: DynSend]
+        [std::sync::Arc<T> where T: ?Sized + DynSync + DynSend]
+        [std::sync::Weak<T> where T: ?Sized + DynSync + DynSend]
+        [std::sync::LazyLock<T, F> where T: DynSend, F: DynSend]
+        [std::collections::HashSet<K, S> where K: DynSend, S: DynSend]
+        [std::collections::HashMap<K, V, S> where K: DynSend, V: DynSend, S: DynSend]
+        [std::collections::BTreeMap<K, V, A> where K: DynSend, V: DynSend, A: std::alloc::Allocator + Clone + DynSend]
+        [Vec<T, A> where T: DynSend, A: std::alloc::Allocator + DynSend]
+        [Box<T, A> where T: ?Sized + DynSend, A: std::alloc::Allocator + DynSend]
+        [crate::sync::RwLock<T> where T: DynSend]
+        [crate::tagged_ptr::TaggedRef<'a, P, T> where 'a, P: Sync, T: Send + crate::tagged_ptr::Tag]
+        [rustc_arena::TypedArena<T> where T: DynSend]
+        [hashbrown::HashTable<T> where T: DynSend]
+        [indexmap::IndexSet<V, S> where V: DynSend, S: DynSend]
+        [indexmap::IndexMap<K, V, S> where K: DynSend, V: DynSend, S: DynSend]
+        [thin_vec::ThinVec<T> where T: DynSend]
+        [smallvec::SmallVec<A> where A: smallvec::Array + DynSend]
+    );
+
+    macro_rules! impls_dyn_sync_neg {
+        ($([$t1: ty $(where $($generics1: tt)*)?])*) => {
+            $(impl$(<$($generics1)*>)? !DynSync for $t1 {})*
+        };
+    }
+
+    impls_dyn_sync_neg!(
+        [std::env::Args]
+        [std::env::ArgsOs]
+        [*const T where T: ?Sized + PointeeSized]
+        [*mut T where T: ?Sized + PointeeSized]
+        [std::cell::Cell<T> where T: ?Sized]
+        [std::cell::RefCell<T> where T: ?Sized]
+        [std::cell::UnsafeCell<T> where T: ?Sized]
+        [std::ptr::NonNull<T> where T: ?Sized + PointeeSized]
+        [std::rc::Rc<T, A> where T: ?Sized, A: Allocator]
+        [std::rc::Weak<T, A> where T: ?Sized, A: Allocator]
+        [std::cell::OnceCell<T> where T]
+        [std::sync::mpsc::Receiver<T> where T]
+        [std::sync::mpsc::Sender<T> where T]
+    );
+
+    #[cfg(any(
+        unix,
+        target_os = "hermit",
+        all(target_vendor = "fortanix", target_env = "sgx"),
+        target_os = "solid_asp3",
+        target_os = "wasi",
+        target_os = "xous"
+    ))]
+    impl !DynSync for std::env::VarsOs {}
+
+    macro_rules! already_sync {
+        ($([$ty: ty])*) => {
+            $(unsafe impl DynSync for $ty where Self: Sync {})*
+        };
+    }
+
+    already_sync!(
+        [std::sync::atomic::AtomicBool][std::sync::atomic::AtomicUsize][std::sync::atomic::AtomicU8]
+            [std::sync::atomic::AtomicU32][std::backtrace::Backtrace][std::io::Error][std::fs::File][std::panic::Location<'_>]
+            [jobserver_crate::Client][jobserver_crate::HelperThread][crate::memmap::Mmap]
+            [crate::profiling::SelfProfiler][crate::owned_slice::OwnedSlice]
+    );
+
+    #[cfg(target_has_atomic = "64")]
+    already_sync!([std::sync::atomic::AtomicU64]);
+
+    #[cfg(not(target_has_atomic = "64"))]
+    already_sync!([portable_atomic::AtomicU64]);
+
+    macro_rules! impl_dyn_sync {
+        ($($($attr: meta)* [$ty: ty where $($generics2: tt)*])*) => {
+            $(unsafe impl<$($generics2)*> DynSync for $ty {})*
+        };
+    }
+
+    impl_dyn_sync!(
+        [std::sync::atomic::AtomicPtr<T> where T]
+        [std::sync::OnceLock<T> where T: DynSend + DynSync]
+        [std::sync::Mutex<T> where T: ?Sized + DynSend]
+        [std::sync::Arc<T> where T: ?Sized + DynSync + DynSend]
+        [std::sync::Weak<T> where T: ?Sized + DynSync + DynSend]
+        [std::sync::LazyLock<T, F> where T: DynSend + DynSync, F: DynSend]
+        [std::collections::HashSet<K, S> where K: DynSync, S: DynSync]
+        [std::collections::HashMap<K, V, S> where K: DynSync, V: DynSync, S: DynSync]
+        [std::collections::BTreeMap<K, V, A> where K: DynSync, V: DynSync, A: std::alloc::Allocator + Clone + DynSync]
+        [Vec<T, A> where T: DynSync, A: std::alloc::Allocator + DynSync]
+        [Box<T, A> where T: ?Sized + DynSync, A: std::alloc::Allocator + DynSync]
+        [crate::sync::RwLock<T> where T: DynSend + DynSync]
+        [crate::sync::WorkerLocal<T> where T: DynSend]
+        [crate::intern::Interned<'a, T> where 'a, T: DynSync]
+        [crate::tagged_ptr::TaggedRef<'a, P, T> where 'a, P: Sync, T: Sync + crate::tagged_ptr::Tag]
+        [parking_lot::lock_api::Mutex<R, T> where R: DynSync, T: ?Sized + DynSend]
+        [parking_lot::lock_api::RwLock<R, T> where R: DynSync, T: ?Sized + DynSend + DynSync]
+        [hashbrown::HashTable<T> where T: DynSync]
+        [indexmap::IndexSet<V, S> where V: DynSync, S: DynSync]
+        [indexmap::IndexMap<K, V, S> where K: DynSync, V: DynSync, S: DynSync]
+        [smallvec::SmallVec<A> where A: smallvec::Array + DynSync]
+        [thin_vec::ThinVec<T> where T: DynSync]
+    );
 }
 
-// Consistent with `std`
-impls_dyn_send_neg!(
-    [std::env::Args]
-    [std::env::ArgsOs]
-    [*const T where T: ?Sized + PointeeSized]
-    [*mut T where T: ?Sized + PointeeSized]
-    [std::ptr::NonNull<T> where T: ?Sized + PointeeSized]
-    [std::rc::Rc<T, A> where T: ?Sized, A: Allocator]
-    [std::rc::Weak<T, A> where T: ?Sized, A: Allocator]
-    [std::sync::MutexGuard<'_, T> where T: ?Sized]
-    [std::sync::RwLockReadGuard<'_, T> where T: ?Sized]
-    [std::sync::RwLockWriteGuard<'_, T> where T: ?Sized]
-    [std::io::StdoutLock<'_>]
-    [std::io::StderrLock<'_>]
-);
+// M27 R4 B2 + B5: SemOS target has no std::env::Args / std::sync::Mutex
+// / std::backtrace::Backtrace / parking_lot lock_api / measureme. The
+// upstream marker.rs lists exist purely to bridge std-side types into
+// the DynSend/DynSync auto-trait system. With single-threaded rustc
+// per §1.4 these annotations are descriptive — the compile produces
+// the same code either way. We therefore ship just the trait
+// definitions + alloc-only impls + FromDyn/IntoDynSyncSend wrappers
+// here. The hashbrown/indexmap/smallvec/thin_vec impls cover the path
+// hot enough to matter.
+#[cfg(target_os = "none")]
+mod imp_none {
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+    use core::marker::PointeeSized;
 
-#[cfg(any(
-    unix,
-    target_os = "hermit",
-    all(target_vendor = "fortanix", target_env = "sgx"),
-    target_os = "solid_asp3",
-    target_os = "wasi",
-    target_os = "xous"
-))]
-// Consistent with `std`, `env_imp::Env` is `!Sync` in these platforms
-impl !DynSend for std::env::VarsOs {}
+    #[diagnostic::on_unimplemented(message = "`{Self}` doesn't implement `DynSend`. \
+                Add it to `rustc_data_structures::marker` or use `IntoDynSyncSend` if it's already `Send`")]
+    pub unsafe auto trait DynSend {}
 
-macro_rules! already_send {
-    ($([$ty: ty])*) => {
-        $(unsafe impl DynSend for $ty where Self: Send {})*
-    };
+    #[diagnostic::on_unimplemented(message = "`{Self}` doesn't implement `DynSync`. \
+                Add it to `rustc_data_structures::marker` or use `IntoDynSyncSend` if it's already `Sync`")]
+    pub unsafe auto trait DynSync {}
+
+    unsafe impl<T: DynSync + ?Sized + PointeeSized> DynSend for &T {}
+
+    macro_rules! impls_dyn_send_neg {
+        ($([$t1: ty $(where $($generics1: tt)*)?])*) => {
+            $(impl$(<$($generics1)*>)? !DynSend for $t1 {})*
+        };
+    }
+    impls_dyn_send_neg!(
+        [*const T where T: ?Sized + PointeeSized]
+        [*mut T where T: ?Sized + PointeeSized]
+        [core::ptr::NonNull<T> where T: ?Sized + PointeeSized]
+        [alloc::rc::Rc<T> where T: ?Sized]
+        [alloc::rc::Weak<T> where T: ?Sized]
+    );
+
+    macro_rules! already_send {
+        ($([$ty: ty])*) => {
+            $(unsafe impl DynSend for $ty where Self: Send {})*
+        };
+    }
+    already_send!(
+        [rustc_arena::DroplessArena]
+        [crate::owned_slice::OwnedSlice]
+    );
+
+    macro_rules! impl_dyn_send {
+        ($($($attr: meta)* [$ty: ty where $($generics2: tt)*])*) => {
+            $(unsafe impl<$($generics2)*> DynSend for $ty {})*
+        };
+    }
+    impl_dyn_send!(
+        [core::sync::atomic::AtomicPtr<T> where T]
+        [alloc::sync::Arc<T> where T: ?Sized + DynSync + DynSend]
+        [alloc::sync::Weak<T> where T: ?Sized + DynSync + DynSend]
+        [Vec<T> where T: DynSend]
+        [Box<T> where T: ?Sized + DynSend]
+        [crate::sync::RwLock<T> where T: DynSend]
+        [crate::tagged_ptr::TaggedRef<'a, P, T> where 'a, P: Sync, T: Send + crate::tagged_ptr::Tag]
+        [rustc_arena::TypedArena<T> where T: DynSend]
+        [hashbrown::HashTable<T> where T: DynSend]
+        [indexmap::IndexSet<V, S> where V: DynSend, S: DynSend]
+        [indexmap::IndexMap<K, V, S> where K: DynSend, V: DynSend, S: DynSend]
+        [thin_vec::ThinVec<T> where T: DynSend]
+        [smallvec::SmallVec<A> where A: smallvec::Array + DynSend]
+    );
+
+    macro_rules! impls_dyn_sync_neg {
+        ($([$t1: ty $(where $($generics1: tt)*)?])*) => {
+            $(impl$(<$($generics1)*>)? !DynSync for $t1 {})*
+        };
+    }
+    impls_dyn_sync_neg!(
+        [*const T where T: ?Sized + PointeeSized]
+        [*mut T where T: ?Sized + PointeeSized]
+        [core::cell::Cell<T> where T: ?Sized]
+        [core::cell::RefCell<T> where T: ?Sized]
+        [core::cell::UnsafeCell<T> where T: ?Sized]
+        [core::ptr::NonNull<T> where T: ?Sized + PointeeSized]
+        [alloc::rc::Rc<T> where T: ?Sized]
+        [alloc::rc::Weak<T> where T: ?Sized]
+        [core::cell::OnceCell<T> where T]
+    );
+
+    macro_rules! already_sync {
+        ($([$ty: ty])*) => {
+            $(unsafe impl DynSync for $ty where Self: Sync {})*
+        };
+    }
+    already_sync!(
+        [core::sync::atomic::AtomicBool][core::sync::atomic::AtomicUsize][core::sync::atomic::AtomicU8]
+            [core::sync::atomic::AtomicU32]
+            [crate::owned_slice::OwnedSlice]
+    );
+
+    #[cfg(target_has_atomic = "64")]
+    already_sync!([core::sync::atomic::AtomicU64]);
+
+    macro_rules! impl_dyn_sync {
+        ($($($attr: meta)* [$ty: ty where $($generics2: tt)*])*) => {
+            $(unsafe impl<$($generics2)*> DynSync for $ty {})*
+        };
+    }
+    impl_dyn_sync!(
+        [core::sync::atomic::AtomicPtr<T> where T]
+        [alloc::sync::Arc<T> where T: ?Sized + DynSync + DynSend]
+        [alloc::sync::Weak<T> where T: ?Sized + DynSync + DynSend]
+        [Vec<T> where T: DynSync]
+        [Box<T> where T: ?Sized + DynSync]
+        [crate::sync::RwLock<T> where T: DynSend + DynSync]
+        [crate::sync::WorkerLocal<T> where T: DynSend]
+        [crate::intern::Interned<'a, T> where 'a, T: DynSync]
+        [crate::tagged_ptr::TaggedRef<'a, P, T> where 'a, P: Sync, T: Sync + crate::tagged_ptr::Tag]
+        [hashbrown::HashTable<T> where T: DynSync]
+        [indexmap::IndexSet<V, S> where V: DynSync, S: DynSync]
+        [indexmap::IndexMap<K, V, S> where K: DynSync, V: DynSync, S: DynSync]
+        [smallvec::SmallVec<A> where A: smallvec::Array + DynSync]
+        [thin_vec::ThinVec<T> where T: DynSync]
+    );
 }
 
-// These structures are already `Send`.
-already_send!(
-    [std::backtrace::Backtrace][std::io::Stdout][std::io::Stderr][std::io::Error][std::fs::File][std::panic::Location<'_>]
-        [rustc_arena::DroplessArena][jobserver_crate::Client][jobserver_crate::HelperThread]
-        [crate::memmap::Mmap][crate::profiling::SelfProfiler][crate::owned_slice::OwnedSlice]
-);
+#[cfg(not(target_os = "none"))]
+pub use imp_std::*;
+#[cfg(target_os = "none")]
+pub use imp_none::*;
 
-macro_rules! impl_dyn_send {
-    ($($($attr: meta)* [$ty: ty where $($generics2: tt)*])*) => {
-        $(unsafe impl<$($generics2)*> DynSend for $ty {})*
-    };
-}
-
-impl_dyn_send!(
-    [std::sync::atomic::AtomicPtr<T> where T]
-    [std::sync::Mutex<T> where T: ?Sized+ DynSend]
-    [std::sync::mpsc::Sender<T> where T: DynSend]
-    [std::sync::Arc<T> where T: ?Sized + DynSync + DynSend]
-    [std::sync::Weak<T> where T: ?Sized + DynSync + DynSend]
-    [std::sync::LazyLock<T, F> where T: DynSend, F: DynSend]
-    [std::collections::HashSet<K, S> where K: DynSend, S: DynSend]
-    [std::collections::HashMap<K, V, S> where K: DynSend, V: DynSend, S: DynSend]
-    [std::collections::BTreeMap<K, V, A> where K: DynSend, V: DynSend, A: std::alloc::Allocator + Clone + DynSend]
-    [Vec<T, A> where T: DynSend, A: std::alloc::Allocator + DynSend]
-    [Box<T, A> where T: ?Sized + DynSend, A: std::alloc::Allocator + DynSend]
-    [crate::sync::RwLock<T> where T: DynSend]
-    [crate::tagged_ptr::TaggedRef<'a, P, T> where 'a, P: Sync, T: Send + crate::tagged_ptr::Tag]
-    [rustc_arena::TypedArena<T> where T: DynSend]
-    [hashbrown::HashTable<T> where T: DynSend]
-    [indexmap::IndexSet<V, S> where V: DynSend, S: DynSend]
-    [indexmap::IndexMap<K, V, S> where K: DynSend, V: DynSend, S: DynSend]
-    [thin_vec::ThinVec<T> where T: DynSend]
-    [smallvec::SmallVec<A> where A: smallvec::Array + DynSend]
-);
-
-macro_rules! impls_dyn_sync_neg {
-    ($([$t1: ty $(where $($generics1: tt)*)?])*) => {
-        $(impl$(<$($generics1)*>)? !DynSync for $t1 {})*
-    };
-}
-
-// Consistent with `std`
-impls_dyn_sync_neg!(
-    [std::env::Args]
-    [std::env::ArgsOs]
-    [*const T where T: ?Sized + PointeeSized]
-    [*mut T where T: ?Sized + PointeeSized]
-    [std::cell::Cell<T> where T: ?Sized]
-    [std::cell::RefCell<T> where T: ?Sized]
-    [std::cell::UnsafeCell<T> where T: ?Sized]
-    [std::ptr::NonNull<T> where T: ?Sized + PointeeSized]
-    [std::rc::Rc<T, A> where T: ?Sized, A: Allocator]
-    [std::rc::Weak<T, A> where T: ?Sized, A: Allocator]
-    [std::cell::OnceCell<T> where T]
-    [std::sync::mpsc::Receiver<T> where T]
-    [std::sync::mpsc::Sender<T> where T]
-);
-
-#[cfg(any(
-    unix,
-    target_os = "hermit",
-    all(target_vendor = "fortanix", target_env = "sgx"),
-    target_os = "solid_asp3",
-    target_os = "wasi",
-    target_os = "xous"
-))]
-// Consistent with `std`, `env_imp::Env` is `!Sync` in these platforms
-impl !DynSync for std::env::VarsOs {}
-
-macro_rules! already_sync {
-    ($([$ty: ty])*) => {
-        $(unsafe impl DynSync for $ty where Self: Sync {})*
-    };
-}
-
-// These structures are already `Sync`.
-already_sync!(
-    [std::sync::atomic::AtomicBool][std::sync::atomic::AtomicUsize][std::sync::atomic::AtomicU8]
-        [std::sync::atomic::AtomicU32][std::backtrace::Backtrace][std::io::Error][std::fs::File][std::panic::Location<'_>]
-        [jobserver_crate::Client][jobserver_crate::HelperThread][crate::memmap::Mmap]
-        [crate::profiling::SelfProfiler][crate::owned_slice::OwnedSlice]
-);
-
-// Use portable AtomicU64 for targets without native 64-bit atomics
-#[cfg(target_has_atomic = "64")]
-already_sync!([std::sync::atomic::AtomicU64]);
-
-#[cfg(not(target_has_atomic = "64"))]
-already_sync!([portable_atomic::AtomicU64]);
-
-macro_rules! impl_dyn_sync {
-    ($($($attr: meta)* [$ty: ty where $($generics2: tt)*])*) => {
-        $(unsafe impl<$($generics2)*> DynSync for $ty {})*
-    };
-}
-
-impl_dyn_sync!(
-    [std::sync::atomic::AtomicPtr<T> where T]
-    [std::sync::OnceLock<T> where T: DynSend + DynSync]
-    [std::sync::Mutex<T> where T: ?Sized + DynSend]
-    [std::sync::Arc<T> where T: ?Sized + DynSync + DynSend]
-    [std::sync::Weak<T> where T: ?Sized + DynSync + DynSend]
-    [std::sync::LazyLock<T, F> where T: DynSend + DynSync, F: DynSend]
-    [std::collections::HashSet<K, S> where K: DynSync, S: DynSync]
-    [std::collections::HashMap<K, V, S> where K: DynSync, V: DynSync, S: DynSync]
-    [std::collections::BTreeMap<K, V, A> where K: DynSync, V: DynSync, A: std::alloc::Allocator + Clone + DynSync]
-    [Vec<T, A> where T: DynSync, A: std::alloc::Allocator + DynSync]
-    [Box<T, A> where T: ?Sized + DynSync, A: std::alloc::Allocator + DynSync]
-    [crate::sync::RwLock<T> where T: DynSend + DynSync]
-    [crate::sync::WorkerLocal<T> where T: DynSend]
-    [crate::intern::Interned<'a, T> where 'a, T: DynSync]
-    [crate::tagged_ptr::TaggedRef<'a, P, T> where 'a, P: Sync, T: Sync + crate::tagged_ptr::Tag]
-    [parking_lot::lock_api::Mutex<R, T> where R: DynSync, T: ?Sized + DynSend]
-    [parking_lot::lock_api::RwLock<R, T> where R: DynSync, T: ?Sized + DynSend + DynSync]
-    [hashbrown::HashTable<T> where T: DynSync]
-    [indexmap::IndexSet<V, S> where V: DynSync, S: DynSync]
-    [indexmap::IndexMap<K, V, S> where K: DynSync, V: DynSync, S: DynSync]
-    [smallvec::SmallVec<A> where A: smallvec::Array + DynSync]
-    [thin_vec::ThinVec<T> where T: DynSync]
-);
+use core::marker::PointeeSized;
 
 pub fn assert_dyn_sync<T: ?Sized + PointeeSized + DynSync>() {}
 pub fn assert_dyn_send<T: ?Sized + PointeeSized + DynSend>() {}
@@ -214,7 +340,7 @@ unsafe impl<T: DynSend> Send for FromDyn<T> {}
 // `FromDyn` is `Sync` if `T` is `DynSync`, since it ensures that sync::is_dyn_thread_safe() is true.
 unsafe impl<T: DynSync> Sync for FromDyn<T> {}
 
-impl<T> std::ops::Deref for FromDyn<T> {
+impl<T> core::ops::Deref for FromDyn<T> {
     type Target = T;
 
     #[inline(always)]
@@ -223,7 +349,7 @@ impl<T> std::ops::Deref for FromDyn<T> {
     }
 }
 
-impl<T> std::ops::DerefMut for FromDyn<T> {
+impl<T> core::ops::DerefMut for FromDyn<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
@@ -239,7 +365,7 @@ pub struct IntoDynSyncSend<T: ?Sized + PointeeSized>(pub T);
 unsafe impl<T: ?Sized + PointeeSized + Send> DynSend for IntoDynSyncSend<T> {}
 unsafe impl<T: ?Sized + PointeeSized + Sync> DynSync for IntoDynSyncSend<T> {}
 
-impl<T> std::ops::Deref for IntoDynSyncSend<T> {
+impl<T> core::ops::Deref for IntoDynSyncSend<T> {
     type Target = T;
 
     #[inline(always)]
@@ -248,7 +374,7 @@ impl<T> std::ops::Deref for IntoDynSyncSend<T> {
     }
 }
 
-impl<T> std::ops::DerefMut for IntoDynSyncSend<T> {
+impl<T> core::ops::DerefMut for IntoDynSyncSend<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0

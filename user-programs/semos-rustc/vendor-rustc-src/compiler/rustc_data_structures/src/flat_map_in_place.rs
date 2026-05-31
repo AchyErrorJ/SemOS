@@ -1,4 +1,5 @@
-use std::{mem, ptr};
+use alloc::vec::Vec;
+use core::{mem, ptr};
 
 use smallvec::{Array, SmallVec};
 use thin_vec::ThinVec;

@@ -1,5 +1,5 @@
-use std::cmp::Ordering;
-use std::mem;
+use core::cmp::Ordering;
+use core::mem;
 
 use rustc_index::{Idx, IndexVec};
 

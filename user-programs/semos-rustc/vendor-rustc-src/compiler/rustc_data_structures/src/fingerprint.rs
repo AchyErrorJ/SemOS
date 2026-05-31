@@ -1,4 +1,5 @@
-use std::hash::{Hash, Hasher};
+use alloc::string::String;
+use core::hash::{Hash, Hasher};
 
 use rustc_hashes::Hash64;
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
@@ -112,8 +113,8 @@ impl Fingerprint {
     }
 }
 
-impl std::fmt::Display for Fingerprint {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Fingerprint {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(formatter, "{:x}-{:x}", self.0, self.1)
     }
 }
@@ -200,9 +201,9 @@ impl<D: Decoder> Decodable<D> for Fingerprint {
 #[derive(Eq, PartialEq, Ord, PartialOrd, Debug, Clone, Copy, Hash)]
 pub struct PackedFingerprint(Fingerprint);
 
-impl std::fmt::Display for PackedFingerprint {
+impl core::fmt::Display for PackedFingerprint {
     #[inline]
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Copy to avoid taking reference to packed field.
         let copy = self.0;
         copy.fmt(formatter)

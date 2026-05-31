@@ -38,12 +38,33 @@
 #![feature(unwrap_infallible)]
 // tidy-alphabetical-end
 
+// M27 Phase 2a A1: no_std + alloc. Host build paths still need `std`
+// for parking_lot/jobserver/measureme/tempfile/stacker/memmap2 (host
+// targets only — see cfg(not(target_os = "none")) gates in the
+// affected modules). On the SemOS target (`x86_64-unknown-none`) the
+// crate is fully no_std + alloc.
+#![cfg_attr(target_os = "none", no_std)]
+
+#[macro_use]
+extern crate alloc;
+
+// On host builds we still need std for the modules that aren't gated.
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
 // Temporarily re-export `assert_matches!`, so that the rest of the compiler doesn't
 // have to worry about it being moved to a different module in std during stabilization.
 // FIXME(#151359): Remove this when `feature(assert_matches)` is stable in stage0.
 // (This doesn't necessarily need to be fixed during the beta bump itself.)
+//
+// M27 R4 B2: on SemOS target there is no `std::assert_matches`; pull
+// from core (stable since 1.82 via assert_matches feature gate).
+#[cfg(not(target_os = "none"))]
 pub use std::assert_matches::{assert_matches, debug_assert_matches};
-use std::fmt;
+#[cfg(target_os = "none")]
+pub use core::assert_matches::{assert_matches, debug_assert_matches};
+
+use core::fmt;
 
 pub use atomic_ref::AtomicRef;
 pub use ena::{snapshot_vec, undo_log, unify};
@@ -123,6 +144,10 @@ impl<F: FnOnce()> Drop for OnDrop<F> {
 }
 
 /// This is a marker for a fatal compiler error used with `resume_unwind`.
+///
+/// M27 R4 B1: on SemOS this marker is still recognized by
+/// `rustc_span::fatal_error`'s catch_fatal_errors shim, which on the
+/// `target_os = "none"` build returns `Ok(f())` and aborts on raise.
 pub struct FatalErrorMarker;
 
 /// Turns a closure that takes an `&mut Formatter` into something that can be display-formatted.
@@ -146,11 +171,14 @@ pub fn make_display(f: impl Fn(&mut fmt::Formatter<'_>) -> fmt::Result) -> impl 
 #[doc(hidden)]
 pub fn __noop_fix_for_windows_dllimport_issue() {}
 
+/// `external_bitflags_debug!` — emits a `Debug` impl for an externally
+/// declared bitflags type. The emitted tokens reference
+/// `::core::fmt::*` so the macro works in downstream no_std crates.
 #[macro_export]
 macro_rules! external_bitflags_debug {
     ($Name:ident) => {
-        impl ::std::fmt::Debug for $Name {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        impl ::core::fmt::Debug for $Name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 ::bitflags::parser::to_writer(self, f)
             }
         }

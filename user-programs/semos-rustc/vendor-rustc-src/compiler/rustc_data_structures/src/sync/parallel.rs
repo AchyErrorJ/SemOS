@@ -1,10 +1,64 @@
 //! This module defines parallel operations that are implemented in
 //! one way for the serial compiler, and another way the parallel compiler.
 
+// M27 R4 B1: `catch_unwind` on SemOS (panic=abort) is a no-op that
+// just runs the closure. The local definitions below give the same
+// signatures core::panic does so the body below compiles unchanged on
+// both targets. On host we re-export the real ones.
+#[cfg(not(target_os = "none"))]
 use std::any::Any;
+#[cfg(not(target_os = "none"))]
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
-
+#[cfg(not(target_os = "none"))]
 use parking_lot::Mutex;
+
+#[cfg(target_os = "none")]
+use alloc::boxed::Box;
+#[cfg(target_os = "none")]
+use core::any::Any;
+#[cfg(target_os = "none")]
+use core::cell::RefCell;
+
+// M27 R4 B1 — SemOS shim for catch_unwind/resume_unwind: with
+// panic=abort, the closure either runs to completion or kills the
+// process, so we never observe an Err arm.
+#[cfg(target_os = "none")]
+pub struct AssertUnwindSafe<T>(pub T);
+#[cfg(target_os = "none")]
+impl<T> AssertUnwindSafe<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+#[cfg(target_os = "none")]
+fn catch_unwind<F: FnOnce() -> R, R>(f: AssertUnwindSafe<F>) -> Result<R, Box<dyn Any + Send>> {
+    Ok((f.0)())
+}
+
+#[cfg(target_os = "none")]
+fn resume_unwind(_payload: Box<dyn Any + Send>) -> ! {
+    semos_std::process::abort()
+}
+
+// M27 R4 B2: SemOS Mutex shim — single-threaded RefCell with the
+// parking_lot-like `lock`/`into_inner` API. The Lock/RwLock types on
+// the SemOS target should ultimately route through this same shim;
+// this minimal `Mutex` covers the parallel.rs usage of `panic` storage.
+#[cfg(target_os = "none")]
+struct Mutex<T>(RefCell<T>);
+#[cfg(target_os = "none")]
+impl<T> Mutex<T> {
+    fn new(t: T) -> Self {
+        Mutex(RefCell::new(t))
+    }
+    fn lock(&self) -> core::cell::RefMut<'_, T> {
+        self.0.borrow_mut()
+    }
+    fn into_inner(self) -> T {
+        self.0.into_inner()
+    }
+}
 
 use crate::FatalErrorMarker;
 use crate::sync::{DynSend, DynSync, FromDyn, IntoDynSyncSend, mode};
@@ -163,7 +217,7 @@ fn par_slice<I: DynSend>(
     let state = State {
         for_each: FromDyn::from(for_each),
         guard,
-        group: std::cmp::max(items.len() / 128, 1),
+        group: core::cmp::max(items.len() / 128, 1),
     };
     par_rec(items, &state)
 }

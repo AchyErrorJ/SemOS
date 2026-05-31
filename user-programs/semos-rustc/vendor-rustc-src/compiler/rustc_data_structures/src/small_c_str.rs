@@ -1,5 +1,6 @@
-use std::ffi;
-use std::ops::Deref;
+use alloc::vec::Vec;
+use core::ffi;
+use core::ops::Deref;
 
 use smallvec::SmallVec;
 

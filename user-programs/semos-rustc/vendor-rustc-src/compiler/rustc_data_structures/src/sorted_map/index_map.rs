@@ -1,6 +1,6 @@
 //! A variant of `SortedMap` that preserves insertion order.
 
-use std::hash::{Hash, Hasher};
+use core::hash::{Hash, Hasher};
 
 use rustc_index::{Idx, IndexVec};
 

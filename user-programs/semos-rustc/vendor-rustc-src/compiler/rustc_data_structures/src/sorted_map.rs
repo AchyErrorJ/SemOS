@@ -1,9 +1,10 @@
-use std::borrow::Borrow;
-use std::cmp::Ordering;
-use std::fmt::Debug;
-use std::iter::TrustedLen;
-use std::mem;
-use std::ops::{Bound, Index, IndexMut, RangeBounds};
+use alloc::vec::Vec;
+use core::borrow::Borrow;
+use core::cmp::Ordering;
+use core::fmt::Debug;
+use core::iter::TrustedLen;
+use core::mem;
+use core::ops::{Bound, Index, IndexMut, RangeBounds};
 
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext};
 

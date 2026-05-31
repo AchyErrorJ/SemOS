@@ -69,11 +69,19 @@
 //! step, we compress the vector to remove completed and error nodes, which
 //! aren't needed anymore.
 
-use std::cell::Cell;
+use alloc::vec::Vec;
+use core::cell::Cell;
+use core::fmt::Debug;
+use core::hash;
+use core::marker::PhantomData;
+
+// M27: `Entry` on host is std::collections::hash_map::Entry; on the
+// SemOS target rustc-hash's FxHashMap is hashbrown-backed so the entry
+// type comes from hashbrown.
+#[cfg(not(target_os = "none"))]
 use std::collections::hash_map::Entry;
-use std::fmt::Debug;
-use std::hash;
-use std::marker::PhantomData;
+#[cfg(target_os = "none")]
+use hashbrown::hash_map::Entry;
 
 use thin_vec::ThinVec;
 use tracing::debug;

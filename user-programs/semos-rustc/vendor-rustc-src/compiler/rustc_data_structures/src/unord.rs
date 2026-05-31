@@ -2,11 +2,20 @@
 //! ordering. This is a useful property for deterministic computations, such
 //! as required by the query system.
 
-use std::borrow::{Borrow, BorrowMut};
+use alloc::vec::Vec;
+use core::borrow::{Borrow, BorrowMut};
+use core::hash::Hash;
+use core::iter::{Product, Sum};
+use core::ops::Index;
+
+// M27: on host the upstream uses std::collections::hash_map::{Entry,
+// OccupiedError}. With rustc-hash in no_std mode, FxHashMap is
+// hashbrown-backed; pull the entry types from hashbrown so the
+// SemOS-target build resolves.
+#[cfg(not(target_os = "none"))]
 use std::collections::hash_map::{Entry, OccupiedError};
-use std::hash::Hash;
-use std::iter::{Product, Sum};
-use std::ops::Index;
+#[cfg(target_os = "none")]
+use hashbrown::hash_map::{Entry, OccupiedError};
 
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext};

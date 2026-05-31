@@ -4,12 +4,12 @@
 //! We assert that the tag and the reference type is compatible at compile
 //! time.
 
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::num::NonZero;
-use std::ops::Deref;
-use std::ptr::NonNull;
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::num::NonZero;
+use core::ops::Deref;
+use core::ptr::NonNull;
 
 use crate::aligned::Aligned;
 use crate::stable_hasher::{HashStable, StableHasher};

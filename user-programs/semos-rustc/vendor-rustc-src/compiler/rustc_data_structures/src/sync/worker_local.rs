@@ -1,8 +1,8 @@
-use std::cell::{Cell, OnceCell};
-use std::num::NonZero;
-use std::ops::Deref;
-use std::ptr;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::cell::{Cell, OnceCell};
+use core::num::NonZero;
+use core::ops::Deref;
+use core::ptr;
 
 use parking_lot::Mutex;
 

@@ -5,7 +5,8 @@
 //! mismatches where we have two versions of the same crate that were
 //! compiled from distinct sources.
 
-use std::fmt;
+use alloc::string::String;
+use core::fmt;
 
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext};
 

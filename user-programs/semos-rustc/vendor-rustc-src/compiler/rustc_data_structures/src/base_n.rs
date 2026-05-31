@@ -1,7 +1,7 @@
 //! Converts unsigned integers into a string representation with some base.
 //! Bases up to and including 36 can be used for case-insensitive things.
 
-use std::{ascii, fmt};
+use core::{ascii, fmt};
 
 #[cfg(test)]
 mod tests;
@@ -21,7 +21,7 @@ pub struct BaseNString {
     buf: [ascii::Char; 128],
 }
 
-impl std::ops::Deref for BaseNString {
+impl core::ops::Deref for BaseNString {
     type Target = str;
 
     fn deref(&self) -> &str {

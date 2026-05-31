@@ -1,7 +1,7 @@
-use std::borrow::{Borrow, BorrowMut};
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::ops;
+use core::borrow::{Borrow, BorrowMut};
+use core::hash::Hash;
+use core::marker::PhantomData;
+use core::ops;
 
 use crate::fx::FxHashMap;
 pub use crate::undo_log::Snapshot;

@@ -1,6 +1,7 @@
-use std::borrow::Borrow;
-use std::hash::{Hash, Hasher};
-use std::{iter, mem};
+use alloc::boxed::Box;
+use core::borrow::Borrow;
+use core::hash::{Hash, Hasher};
+use core::{iter, mem};
 
 use either::Either;
 use hashbrown::hash_table::{Entry, HashTable};

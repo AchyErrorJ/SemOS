@@ -1,5 +1,5 @@
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 /// This is essentially an `AtomicPtr` but is guaranteed to always be valid
 pub struct AtomicRef<T: 'static>(AtomicPtr<T>, PhantomData<&'static T>);
@@ -16,7 +16,7 @@ impl<T: 'static> AtomicRef<T> {
     }
 }
 
-impl<T: 'static> std::ops::Deref for AtomicRef<T> {
+impl<T: 'static> core::ops::Deref for AtomicRef<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         // We never allow storing anything but a `'static` reference so it's safe to lend

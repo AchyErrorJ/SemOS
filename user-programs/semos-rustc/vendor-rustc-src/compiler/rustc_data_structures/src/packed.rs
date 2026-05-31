@@ -1,5 +1,5 @@
-use std::cmp::Ordering;
-use std::fmt;
+use core::cmp::Ordering;
+use core::fmt;
 
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 

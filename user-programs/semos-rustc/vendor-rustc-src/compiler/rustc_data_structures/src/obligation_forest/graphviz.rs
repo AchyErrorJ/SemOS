@@ -1,7 +1,22 @@
+// M27 R4 B2 + B5: env::var_os and fs::File reside on host; on SemOS
+// we route through semos_std equivalents. graphviz dumping is
+// diagnostic-only and gated by the `DUMP_OBLIGATION_FOREST_GRAPHVIZ`
+// env var — on SemOS the var lookup returns None so we never touch
+// the FS surface.
+#[cfg(not(target_os = "none"))]
 use std::env::var_os;
+#[cfg(not(target_os = "none"))]
 use std::fs::File;
+#[cfg(not(target_os = "none"))]
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(target_os = "none")]
+use semos_std::env::var_os;
+#[cfg(target_os = "none")]
+use semos_std::fs::File;
+#[cfg(target_os = "none")]
+use semos_std::path::Path;
 
 use rustc_graphviz as dot;
 

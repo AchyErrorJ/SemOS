@@ -2,7 +2,7 @@
 //!
 //! FIXME: <https://github.com/Gankra/thin-vec/pull/66> is merged, this can be removed.
 
-use std::{ptr, slice};
+use core::{ptr, slice};
 
 use thin_vec::ThinVec;
 

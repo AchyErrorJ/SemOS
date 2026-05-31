@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 
 use rustc_index::Idx;
 use rustc_index::bit_set::DenseBitSet;

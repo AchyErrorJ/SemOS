@@ -1,6 +1,6 @@
-use std::borrow::Borrow;
-use std::ops::Deref;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::borrow::Borrow;
+use core::ops::Deref;
 
 /// An owned slice.
 ///

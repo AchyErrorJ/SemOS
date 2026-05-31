@@ -1,8 +1,16 @@
-use std::hash::BuildHasherDefault;
+use core::hash::BuildHasherDefault;
 
 pub use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 
+// M27: upstream uses std::collections::hash_map::Entry here. With
+// rustc-hash's no_std fallback (see semos-cc PORT_LOG patch #2),
+// FxHashMap is hashbrown-backed; `StdEntry` therefore comes from
+// hashbrown. The host build retains std semantics because rustc-hash's
+// `std` feature is gated by the host's default feature set.
+#[cfg(not(target_os = "none"))]
 pub type StdEntry<'a, K, V> = std::collections::hash_map::Entry<'a, K, V>;
+#[cfg(target_os = "none")]
+pub type StdEntry<'a, K, V> = hashbrown::hash_map::Entry<'a, K, V, BuildHasherDefault<FxHasher>>;
 
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<FxHasher>>;
 pub type FxIndexSet<V> = indexmap::IndexSet<V, BuildHasherDefault<FxHasher>>;

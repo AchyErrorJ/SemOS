@@ -8,9 +8,10 @@
 //! Typical examples would include: minimum element in SCC, maximum element
 //! reachable from it, etc.
 
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::ops::Range;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::ops::Range;
 
 use rustc_index::{Idx, IndexSlice, IndexVec};
 use tracing::{debug, instrument, trace};

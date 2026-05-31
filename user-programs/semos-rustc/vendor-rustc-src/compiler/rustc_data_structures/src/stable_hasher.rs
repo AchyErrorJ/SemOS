@@ -1,7 +1,7 @@
-use std::hash::{BuildHasher, Hash, Hasher};
-use std::marker::PhantomData;
-use std::mem;
-use std::num::NonZero;
+use core::hash::{BuildHasher, Hash, Hasher};
+use core::marker::PhantomData;
+use core::mem;
+use core::num::NonZero;
 
 use rustc_index::bit_set::{self, DenseBitSet};
 use rustc_index::{Idx, IndexSlice, IndexVec};

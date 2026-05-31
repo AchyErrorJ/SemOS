@@ -55,7 +55,7 @@ impl<T> Frozen<T> {
     }
 }
 
-impl<T> std::ops::Deref for Frozen<T> {
+impl<T> core::ops::Deref for Frozen<T> {
     type Target = T;
 
     fn deref(&self) -> &T {

@@ -1,9 +1,9 @@
-use std::cell::UnsafeCell;
-use std::intrinsics::likely;
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use core::cell::UnsafeCell;
+use core::intrinsics::likely;
+use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::sync::{DynSend, DynSync, ReadGuard, RwLock, WriteGuard};
 

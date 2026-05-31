@@ -1,4 +1,5 @@
-use std::ops::ControlFlow;
+use alloc::vec::Vec;
+use core::ops::ControlFlow;
 
 use rustc_index::bit_set::DenseBitSet;
 use rustc_index::{IndexSlice, IndexVec};

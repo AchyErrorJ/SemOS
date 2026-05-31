@@ -1,7 +1,8 @@
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::mem;
-use std::ops::Deref;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::mem;
+use core::ops::Deref;
 
 use rustc_index::bit_set::BitMatrix;
 

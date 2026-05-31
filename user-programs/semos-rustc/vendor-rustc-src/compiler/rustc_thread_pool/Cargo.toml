@@ -1,3 +1,6 @@
+[workspace]
+members = []
+
 [package]
 name = "rustc_thread_pool"
 version = "0.0.0"
@@ -5,48 +8,19 @@ authors = [
     "Niko Matsakis <niko@alum.mit.edu>",
     "Josh Stone <cuviper@gmail.com>",
 ]
-description = "Core APIs for Rayon - fork for rustc"
+description = "Core APIs for Rayon - fork for rustc (M27 SemOS: stubbed to ~50-line single-threaded shim per plan §1.4 + R4 B4)"
 license = "MIT OR Apache-2.0"
 edition = "2021"
 readme = "README.md"
 keywords = ["parallel", "thread", "concurrency", "join", "performance"]
 categories = ["concurrency"]
 
+# M27 §1.4 + R4 B4: SemOS targets a single-threaded rustc. The rayon
+# fork is replaced with a ~50-line shim in src/lib.rs that preserves
+# the public API surface (Scope, ThreadPool, ThreadPoolBuilder, join,
+# scope, spawn, broadcast, mark_blocked/unblocked, current_thread_index,
+# tlv module) but runs everything sequentially. crossbeam-deque /
+# crossbeam-utils / smallvec are no longer needed.
 [dependencies]
-crossbeam-deque = "0.8"
-crossbeam-utils = "0.8"
-smallvec = "1.8.1"
 
 [dev-dependencies]
-rand = "0.9"
-rand_xorshift = "0.4"
-scoped-tls = "1.0"
-
-[target.'cfg(unix)'.dev-dependencies]
-libc = "0.2"
-
-[[test]]
-name = "stack_overflow_crash"
-path = "tests/stack_overflow_crash.rs"
-
-# NB: having one [[test]] manually defined means we need to declare them all
-
-[[test]]
-name = "double_init_fail"
-path = "tests/double_init_fail.rs"
-
-[[test]]
-name = "init_zero_threads"
-path = "tests/init_zero_threads.rs"
-
-[[test]]
-name = "scope_join"
-path = "tests/scope_join.rs"
-
-[[test]]
-name = "simple_panic"
-path = "tests/simple_panic.rs"
-
-[[test]]
-name = "scoped_threadpool"
-path = "tests/scoped_threadpool.rs"

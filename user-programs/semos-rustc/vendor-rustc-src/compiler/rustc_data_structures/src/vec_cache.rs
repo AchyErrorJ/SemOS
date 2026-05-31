@@ -6,9 +6,10 @@
 //!
 //! This is currently used for query caching.
 
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
 use rustc_index::Idx;
 

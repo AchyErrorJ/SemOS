@@ -1,13 +1,18 @@
-// This is the amount of bytes that need to be left on the stack before increasing the size.
-// It must be at least as large as the stack required by any code that does not call
-// `ensure_sufficient_stack`.
+// M27 Phase 2a A1 + R4 B3: stack growth.
+// Upstream uses `stacker::maybe_grow` to allocate a fresh stack chunk
+// when recursive descent (parsing, trait selection, MIR build) gets
+// close to the red zone. Option B in the recon's blocker write-up:
+// stub to no-op + bump the user stack at the kernel level.
+//
+// Host build path is unchanged.
+
+#[cfg(not(target_os = "none"))]
 const RED_ZONE: usize = 100 * 1024; // 100k
 
-// Only the first stack that is pushed, grows exponentially (2^n * STACK_PER_RECURSION) from then
-// on. This flag has performance relevant characteristics. Don't set it too high.
+#[cfg(not(target_os = "none"))]
 #[cfg(not(target_os = "aix"))]
 const STACK_PER_RECURSION: usize = 1024 * 1024; // 1MB
-// LLVM for AIX doesn't feature TCO, increase recursion size for workaround.
+#[cfg(not(target_os = "none"))]
 #[cfg(target_os = "aix")]
 const STACK_PER_RECURSION: usize = 16 * 1024 * 1024; // 16MB
 
@@ -17,6 +22,19 @@ const STACK_PER_RECURSION: usize = 16 * 1024 * 1024; // 16MB
 ///
 /// Should not be sprinkled around carelessly, as it causes a little bit of overhead.
 #[inline]
+#[cfg(not(target_os = "none"))]
 pub fn ensure_sufficient_stack<R>(f: impl FnOnce() -> R) -> R {
     stacker::maybe_grow(RED_ZONE, STACK_PER_RECURSION, f)
+}
+
+/// M27 R4 B3 — SemOS-target no-op shim for stacker. Risk: deeply
+/// recursive callers (rustc_trait_selection's normalize, MIR build,
+/// parser) may overflow the user stack. Mitigation: rely on the
+/// kernel-side USER_PROC_STACK_SIZE bump (already at 1 MiB; may need
+/// to go higher for hello-world). Real fix is vendoring psm + a
+/// SemOS x86_64 backend (Option A), tracked for follow-up.
+#[inline]
+#[cfg(target_os = "none")]
+pub fn ensure_sufficient_stack<R>(f: impl FnOnce() -> R) -> R {
+    f()
 }

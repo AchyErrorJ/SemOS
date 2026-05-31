@@ -1,7 +1,7 @@
 //! This module implements a lock which only uses synchronization if `might_be_dyn_thread_safe` is true.
 //! It implements `DynSend` and `DynSync` instead of the typical `Send` and `Sync` traits.
 
-use std::fmt;
+use core::fmt;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
@@ -9,11 +9,11 @@ pub enum Mode {
     Sync,
 }
 
-use std::cell::{Cell, UnsafeCell};
-use std::intrinsics::unlikely;
-use std::marker::PhantomData;
-use std::mem::ManuallyDrop;
-use std::ops::{Deref, DerefMut};
+use core::cell::{Cell, UnsafeCell};
+use core::intrinsics::unlikely;
+use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
+use core::ops::{Deref, DerefMut};
 
 use parking_lot::RawMutex;
 use parking_lot::lock_api::RawMutex as _;
