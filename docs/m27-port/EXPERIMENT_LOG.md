@@ -502,7 +502,8 @@ call. R2 was second — produced the longest report.
 | A6 | rustc_macros + rustc_index_macros + rustc_type_ir_macros + rustc_fluent_macro | 0 source edits | 101,141 | n/a | 105 | 425 s | Proc-macros host-only; just `.cargo/config.toml` + workspace headers. Pioneered the `git show main:` workaround |
 | A2 | rustc_span (partial, 13/18 files) | ~2,300 | 274,856 | 120 | 136 | 1,272 s | Highest token consumer. Recipe for the remaining 5 files documented for A2-followup |
 | A2-followup | rustc_span (5 remaining files) | ~10,000 | 136,384 | **14** | 94 | 554 s | Most efficient yet — A2's pre-documented recipes turned this into recipe-application. Surfaced semos_std::path API gap (Cow<Path>, Component::Normal, etc.) for Phase 2b |
-| **Phase 2a total** | **rustc_span complete; 14 crates patched** | **~23,134 source LOC** | **1,010,076** | **~44 avg** | **710** | **~3.8 hrs sum (~70 min wall parallel)** | |
+| A1-retry | rustc_data_structures + rustc_thread_pool (stub) | ~15,172 (incl. 600-LOC stub replacing 7,476-LOC rayon fork) | 299,253 | **20** | 156 | 1,110 s | Heroic single-agent run that closed Phase 2a. Six modules used the cfg(target_os="none") split. Deferred parking_lot bits in sync.rs to Phase 2b with line-precise notes |
+| **Phase 2a total** | **16 crates complete; rustc_span 18/18** | **~38,306 source LOC** | **1,309,329** | **~34 avg** | **866** | **~5.6 hrs sum (~90 min wall parallel)** | **PHASE 2a CLOSED** |
 
 A4 was the most efficient at 31 tokens/LOC, because the four crates
 were small and mechanical and A4 just ran the standard recipe. A2 was
@@ -511,11 +512,12 @@ biggest foundation crate, hit multiple architectural decisions
 (FatalError, scoped_tls, hash consolidation), and had to read+write
 in full-file rewrites (no merge access).
 
-### Session-wide running total (Phase 1 + Phase 2a so far)
+### Session-wide running total (Phase 1 + Phase 2a CLOSED)
 
-**Tokens spent on agents: 1,732,824.** (updated after A2-followup)
-**LOC patched: ~23,134.** (rustc_span now complete; was 13k at the
-previous update.)
+**Tokens spent on agents: 2,032,077.**
+**LOC patched: ~38,306.** (Phase 2a foundation tier complete.)
+**Average across all port work (Phase 2a only, excluding recon):
+34 tokens/LOC.**
 
 Roughly **~75 tokens per ported LOC** on average across the whole
 session (recon + port + integration). The recon weight (722k tokens,
@@ -563,3 +565,67 @@ A2-followup will be appended on completion.
 ---
 
 (Logging on.)
+
+---
+
+## 2026-05-30 — PHASE 2a CLOSED
+
+A1 retry came back ~3 hours after the session started. A heroic
+single-agent run: rustc_thread_pool stubbed (~600 lines replacing the
+7,476-line vendored rayon fork) AND rustc_data_structures fully ported
+(33 source files + 6 architectural-class modules using the
+`cfg(target_os = "none")` host/target body split).
+
+299,253 tokens at 20 t/LOC — second-most-efficient port agent after
+A2-followup (14 t/LOC). That ratio (recipe-following at 14, novel-
+class-but-with-good-context at 20) is the band Phase 3 should aim
+for.
+
+A1 deferred parking_lot-gated bits in `sync.rs` + `sync/lock.rs` +
+`sync/freeze.rs` to Phase 2b with line-precise notes (per the
+HANDOFF_TEMPLATE we just codified). Recommended approach: collapse
+`Mode::Sync` → `Mode::NoSync` on SemOS (~1 session). Per the recipe
+just landed, the followup should hit ~14-20 t/LOC.
+
+**Phase 2a final tally:** 16 crates closed (foundation tier
+complete) at **34 average tokens/LOC** across ~38,306 LOC patched
+and 1,309,329 tokens spent on port agents (Phase 1 recon adds
+722,748 tokens). The recon estimate of 40-60 calendar-sessions for
+the full port stays consistent; the token side of the forecast
+tightens toward the **mixed-weighted ~50M token estimate** with this
+data point.
+
+**Calendar-time observation refined:** Phase 2a took ~90 minutes of
+wall-clock time with 6-7 parallel agents (plus ~30 min of probe +
+re-dispatch). That's 1/3 of an 8-hour day. The 1-2 month calendar
+estimate for the full M27 port assumes agents are not running 24/7;
+if they were, the math would close in much faster. Treating ~10
+parallel-agent-hours per real calendar day as the practical capacity
+seems right based on this run.
+
+### What changes for Phase 2b
+The remaining Phase 2 work splits two ways:
+1. **rustc_ast + rustc_lint_defs + rustc_errors** (the cycle) —
+   sequential, ~3-5 sessions per the plan. The RECIPE codification
+   should make this cheaper than A1/A2 were because of established
+   patterns.
+2. **A1 + A2 deferred work** — line-precise recipes already
+   documented for parking_lot collapse (A1) and PathBuf API extension
+   (A2-followup). These are followup-class work at ~14-20 t/LOC.
+
+Both can run in parallel — Phase 2b's cycle work is in a different
+file set than the parking_lot/PathBuf followups.
+
+---
+
+## Phase 2a → Phase 2b transition checklist
+
+- [x] All 14 originally-targeted Phase 2a crates patched
+- [x] rustc_data_structures + rustc_thread_pool stub (A1 retry)
+- [x] semos-std surface covers R2's top-6 + scoped_thread_local!
+- [x] RECIPE.md + HANDOFF_TEMPLATE.md codified
+- [x] Per-agent token costs tabulated
+- [ ] Phase 2b cycle plan (3 crates × sequential ports)
+- [ ] Decide: launch Phase 2b now or wait for user signal
+- [ ] Parent action items: rustc-stable-hash vendor patch, tracing
+      stack vendoring, PathBuf API extension
