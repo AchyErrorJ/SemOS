@@ -211,4 +211,41 @@ That removes the dependency on agent-side `git merge` permission.
 
 ---
 
-(Will append as A2-A6 come back.)
+## 2026-05-30 — parent-side semos-std additions (in flight)
+
+While waiting for A2-A6 to bounce or land, did the parent-only work
+the recon agents specifically asked for. Each addition is a small
+commit so the experiment log can show one-shot acceptance per API.
+
+### Landed
+- `sync::OnceLock<T>` — futex-backed, mirrors std exactly. Lifted from
+  the local shim Cranelift used at D.2. 8+ rustc_* crates expect this
+  symbol (R2 top-5). Commit `18d80dd`.
+- `process::abort_with_code(i32)` — supports §1.9 FatalError → process
+  abort with a chosen exit code. Commit `18d80dd`.
+- `Path::canonicalize_lexical()` → `PathBuf` — collapses `.` and `..`
+  without touching FS. Different name from std's `canonicalize`
+  because that one is fs-resolving; rustc has both lexical and fs
+  uses, callers will pick. Commit `<above>`.
+- `ffi::OsString` (= `String`) + `ffi::OsStr` (= `str`) aliases. SemOS
+  is UTF-8 everywhere; opaque-byte-container use cases (rustc) work.
+  Commit `<above>`.
+
+### What this unblocks
+When the Phase 2a agents come back and try to apply the
+`// M27 R4 B5: needs semos-std PathBuf/OsString shim` markers their
+prompts told them to leave, those markers can be removed in the
+integration pass — the API is now there. Same for the OnceLock TODOs
+inside rustc_data_structures.
+
+### Still pending (in priority order)
+- `thread::LocalKey<T>` + `thread_local!` macro — single-threaded
+  variant. 5+ rustc crates need it. More complex because of the macro.
+- `env::var_os` — trivial extension on top of existing `env::var`.
+
+Will land both once it's clear the agent fleet isn't competing for
+the bucket.
+
+---
+
+(Still waiting on A2-A6.)
