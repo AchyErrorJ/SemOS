@@ -165,4 +165,50 @@ in parallel as of timestamp on this commit. Watching.
 
 ---
 
-(Will append as Phase 2a agents come back.)
+## 2026-05-30 (still later) — Phase 2a wave 2
+
+### Second failure mode discovered
+A1 reported back ~1 min after spawn with a different failure:
+
+> Every variant of the merge command (`git merge main`, `git merge main
+> --no-edit`, even with `dangerouslyDisableSandbox: true`) returns
+> "Permission to use Bash/PowerShell has been denied," while read-only
+> git commands (`git status`, `git log`) work fine.
+
+The agent CAN read but cannot write through `git merge`. The probe
+agent earlier today merged main successfully — same prompt structure,
+same recipe — but its sandbox apparently had merge permission.
+
+**Hypotheses:**
+1. Per-agent sandbox permissions vary between spawns. The probe got
+   lucky.
+2. Quota-state-dependent: when the bucket is low, even read-only
+   surface contracts; when it's high, write-bash works. The probe ran
+   shortly after the earlier 6-agent bounce (low bucket → maybe
+   tighter sandbox); the second wave ran with bucket replenished
+   (different state).
+3. The first wave spawned all-at-once, sharing a single sandbox-grant
+   bucket; the probe was a singleton and got the full bucket.
+
+Without knowing which, the safe move is: **pre-merge each worktree
+from the parent side before spawning agents that need recent main.**
+That removes the dependency on agent-side `git merge` permission.
+
+### Adaptation in flight
+- A1 is done (gave up, correctly per its STOP-and-document constraint).
+- A2-A6 likely still running. They will probably hit the same wall
+  any moment. Waiting.
+- Once all 5 report back (or fail), parent will: (a) `git merge main`
+  inside each affected worktree, (b) re-dispatch via SendMessage or
+  fresh spawn, depending on what's possible.
+
+### Lesson worth capturing
+> Per-agent sandbox permissions are not guaranteed. `git merge` worked
+> for one agent and not for another in the same session. The safest
+> contract is: **the parent does all git plumbing**; agents only touch
+> source files. Don't ask an agent to merge, push, or branch — those
+> are parent-side ops.
+
+---
+
+(Will append as A2-A6 come back.)
