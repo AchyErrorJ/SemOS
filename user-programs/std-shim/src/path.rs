@@ -269,3 +269,152 @@ impl Deref for PathBuf {
     type Target = Path;
     fn deref(&self) -> &Path { self.as_path() }
 }
+
+// ---------------------------------------------------------------------
+// M27 R4 B5 — extended PathBuf surface for rustc port.
+//
+// A2-followup found that source_map.rs's FilePathMapping needs
+// components(), Component::Normal, strip_prefix, as_os_str, and Cow<Path>.
+// Adding lexical-only versions of each below. None of these touch the FS.
+// ---------------------------------------------------------------------
+
+/// Components of a path, mirroring `std::path::Component` shape (minus
+/// the Windows Prefix variants since SemOS is POSIX-only). Yielded by
+/// `Path::components()`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Component<'a> {
+    /// The root directory `/`.
+    RootDir,
+    /// A reference to the current directory: `.`
+    CurDir,
+    /// A reference to the parent directory: `..`
+    ParentDir,
+    /// A normal component, e.g. `foo` in `/foo/bar`.
+    Normal(&'a str),
+}
+
+impl<'a> Component<'a> {
+    /// As the underlying string slice. Matches `std::path::Component::as_os_str`'s
+    /// shape — returns the OsStr-equivalent (which is `&str` on SemOS).
+    pub fn as_os_str(&self) -> &'a str {
+        match *self {
+            Component::RootDir => "/",
+            Component::CurDir => ".",
+            Component::ParentDir => "..",
+            Component::Normal(s) => s,
+        }
+    }
+
+    /// Same as `as_os_str` but typed as `&str` directly (callers that
+    /// already know they're on SemOS can skip the OsStr alias).
+    pub fn as_str(&self) -> &'a str {
+        self.as_os_str()
+    }
+}
+
+/// Iterator over a path's components. Lexical only — never touches the FS.
+#[derive(Clone)]
+pub struct Components<'a> {
+    inner: &'a str,
+    yielded_root: bool,
+}
+
+impl<'a> Components<'a> {
+    /// Convert the remainder back to a `&Path`.
+    pub fn as_path(&self) -> &'a Path {
+        Path::new(self.inner)
+    }
+}
+
+impl<'a> Iterator for Components<'a> {
+    type Item = Component<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        // Emit RootDir first if the path is absolute.
+        if !self.yielded_root && self.inner.starts_with(SEP) {
+            self.yielded_root = true;
+            self.inner = self.inner.trim_start_matches(SEP);
+            return Some(Component::RootDir);
+        }
+        // Skip leading separators (collapse runs of "/").
+        self.inner = self.inner.trim_start_matches(SEP);
+        if self.inner.is_empty() {
+            return None;
+        }
+        // Find next separator.
+        let (head, tail) = match self.inner.find(SEP) {
+            Some(idx) => (&self.inner[..idx], &self.inner[idx..]),
+            None => (self.inner, ""),
+        };
+        self.inner = tail;
+        Some(match head {
+            "." => Component::CurDir,
+            ".." => Component::ParentDir,
+            s => Component::Normal(s),
+        })
+    }
+}
+
+/// Error returned by `Path::strip_prefix` when the prefix doesn't match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StripPrefixError;
+
+impl Path {
+    /// Iterator over path components.
+    pub fn components(&self) -> Components<'_> {
+        Components {
+            inner: &self.inner,
+            yielded_root: false,
+        }
+    }
+
+    /// `std::path::Path::strip_prefix`-shaped. Returns the remainder of
+    /// the path after `prefix` is removed; errors if the path doesn't
+    /// start with `prefix`. Comparison is component-by-component.
+    pub fn strip_prefix<P: AsRef<Path>>(&self, prefix: P) -> Result<&Path, StripPrefixError> {
+        let prefix = prefix.as_ref();
+        // Quick path: empty prefix returns self unchanged.
+        if prefix.is_empty() {
+            return Ok(self);
+        }
+        // Walk both component iterators in lockstep.
+        let mut self_iter = self.components();
+        let mut pre_iter = prefix.components();
+        loop {
+            match (self_iter.next(), pre_iter.next()) {
+                (Some(a), Some(b)) if a == b => continue,
+                (_, Some(_)) => return Err(StripPrefixError),
+                (_, None) => break,
+            }
+        }
+        // Remainder: skip leading separators.
+        let rest = self_iter.as_path().as_str().trim_start_matches(SEP);
+        Ok(Path::new(rest))
+    }
+
+    /// Returns the path as a `&str` — equivalent to std's
+    /// `Path::as_os_str` since SemOS is UTF-8 everywhere.
+    pub fn as_os_str(&self) -> &str {
+        &self.inner
+    }
+}
+
+// Allow `Cow<Path>` to work by implementing ToOwned. std does the same
+// thing — alloc's Cow<'_, Path> requires Path: ToOwned<Owned = PathBuf>
+// and PathBuf: Borrow<Path>.
+impl core::borrow::Borrow<Path> for PathBuf {
+    fn borrow(&self) -> &Path {
+        self.as_path()
+    }
+}
+
+impl core_alloc::borrow::ToOwned for Path {
+    type Owned = PathBuf;
+    fn to_owned(&self) -> PathBuf {
+        PathBuf { inner: self.inner.to_owned() }
+    }
+}
+
+// Re-export Cow under `path` for the rustc callers' `use semos_std::path::Cow;`
+// pattern. They use `Cow<Path>` exclusively here, so this saves them
+// having to import alloc::borrow::Cow separately.
+pub use core_alloc::borrow::Cow;
