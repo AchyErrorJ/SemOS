@@ -15,7 +15,8 @@ use core_alloc::string::String;
 use core_alloc::vec::Vec;
 use crate::arch::{
     SYS_OPEN, SYS_CLOSE, SYS_FREAD, SYS_FWRITE, SYS_UNLINK, SYS_MKDIR,
-    syscall1, syscall2, syscall3,
+    SYS_RENAME, SYS_STATX,
+    syscall1, syscall2, syscall3, syscall4,
 };
 use crate::io::{self, Read, Write};
 
@@ -190,4 +191,80 @@ pub fn create_dir(path: &str) -> io::Result<()> {
 pub fn remove_file(path: &str) -> io::Result<()> {
     let r = unsafe { syscall2(SYS_UNLINK, path.as_ptr() as u64, path.len() as u64) };
     if r == 0 { Ok(()) } else { Err(io::Error::other()) }
+}
+
+/// `std::fs::rename`-shaped. Atomic at the object level (SUID preserved).
+/// (Phase 4 G4 flagged.) Backed by SYS_RENAME from Phase 14 Tier 2.
+pub fn rename<P: AsRef<str>, Q: AsRef<str>>(from: P, to: Q) -> io::Result<()> {
+    let f = from.as_ref();
+    let t = to.as_ref();
+    let r = unsafe {
+        syscall4(
+            SYS_RENAME,
+            f.as_ptr() as u64,
+            f.len() as u64,
+            t.as_ptr() as u64,
+            t.len() as u64,
+        )
+    };
+    if r == 0 { Ok(()) } else { Err(io::Error::other()) }
+}
+
+/// `std::fs::copy`-shaped. Reads `from` to memory then writes to `to`.
+/// Returns bytes copied. (Phase 4 G1 flagged.) Not atomic — `to` is
+/// created+truncated then filled.
+pub fn copy<P: AsRef<str>, Q: AsRef<str>>(from: P, to: Q) -> io::Result<u64> {
+    let bytes = read(from.as_ref())?;
+    write(to.as_ref(), &bytes)?;
+    Ok(bytes.len() as u64)
+}
+
+// ---------------------------------------------------------------------
+// StatX — file metadata (Phase 14 Tier 2, SYS_STATX 38)
+// ---------------------------------------------------------------------
+
+/// File metadata. Layout mirrors the kernel's `StatX` struct byte-for-byte
+/// (kernel-core/src/syscall/mod.rs); SYS_STATX writes into this directly.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StatX {
+    pub size: u64,
+    pub suid_high: u64,
+    pub suid_low: u64,
+    pub created_at: u64,
+    pub modified_at: u64,
+    /// 0=Binary, 1=Text, 2=Vector, 3=Directory, 4=Reference.
+    pub file_type: u32,
+    /// 0=Public, 1=Internal, 2=Sensitive, 3=Secret.
+    pub tier: u32,
+    pub _reserved: [u64; 3],
+}
+
+impl StatX {
+    pub fn is_dir(&self) -> bool { self.file_type == 3 }
+    pub fn is_file(&self) -> bool { self.file_type != 3 }
+    pub fn len(&self) -> u64 { self.size }
+    pub fn modified(&self) -> u64 { self.modified_at }
+    pub fn created(&self) -> u64 { self.created_at }
+}
+
+/// `std::fs::metadata`-shaped (subset). Returns the StatX or None if
+/// the path doesn't exist / stat fails. (Phase 4 G4 flagged.)
+pub fn stat(path: &str) -> Option<StatX> {
+    let mut out = StatX::default();
+    let r = unsafe {
+        syscall3(
+            SYS_STATX,
+            path.as_ptr() as u64,
+            path.len() as u64,
+            &mut out as *mut StatX as u64,
+        )
+    };
+    if r == 0 { Some(out) } else { None }
+}
+
+/// `std::fs::metadata`-shaped Result variant — for callers using the
+/// `Result<Metadata>` shape directly.
+pub fn metadata(path: &str) -> io::Result<StatX> {
+    stat(path).ok_or(io::Error::other())
 }

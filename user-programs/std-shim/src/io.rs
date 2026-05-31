@@ -10,30 +10,68 @@ use core_alloc::string::String;
 use core_alloc::vec::Vec;
 use crate::arch::{SYS_WRITE, syscall2};
 
-/// I/O error. Minimal today — wraps a numeric code. `ErrorKind`-style
-/// classification is a follow-up once shim callers need to branch on it.
+/// `std::io::ErrorKind`-shaped classification. Subset — extend as
+/// rustc + cg_clif callers need more variants. (G4 of Phase 4 flagged
+/// ErrorKind::Unsupported as the immediate need for §1.5-stubs.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    NotFound,
+    PermissionDenied,
+    AlreadyExists,
+    InvalidInput,
+    InvalidData,
+    UnexpectedEof,
+    WriteZero,
+    Interrupted,
+    Other,
+    /// Operation not supported on this target (SemOS-specific stub returns).
+    Unsupported,
+}
+
+/// I/O error — now carries an `ErrorKind` + an optional numeric code +
+/// an optional static message. Mirrors `std::io::Error` shape for the
+/// subset of patterns rustc + cg_clif use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Error {
+    kind: ErrorKind,
     code: i32,
+    msg: Option<&'static str>,
 }
 
 impl Error {
     pub const fn from_raw(code: i32) -> Self {
-        Self { code }
+        Self { kind: ErrorKind::Other, code, msg: None }
     }
+
+    /// `std::io::Error::new(ErrorKind, msg)`-shaped. Takes a static str
+    /// message (no allocation needed for typical rustc error patterns).
+    /// (G4 of Phase 4 flagged.)
+    pub const fn new(kind: ErrorKind, msg: &'static str) -> Self {
+        Self { kind, code: -1, msg: Some(msg) }
+    }
+
     /// Generic "operation failed" — used where the kernel only gives us
     /// a u64::MAX sentinel with no further detail.
     pub const fn other() -> Self {
-        Self { code: -1 }
+        Self { kind: ErrorKind::Other, code: -1, msg: None }
     }
+
     pub const fn raw_code(&self) -> i32 {
         self.code
+    }
+
+    /// Returns the `ErrorKind` classification of this error.
+    pub const fn kind(&self) -> ErrorKind {
+        self.kind
     }
 }
 
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "io error (code {})", self.code)
+        match self.msg {
+            Some(m) => write!(f, "io error: {} (kind={:?})", m, self.kind),
+            None => write!(f, "io error (kind={:?}, code={})", self.kind, self.code),
+        }
     }
 }
 
@@ -188,6 +226,44 @@ pub fn stdout() -> Stdout {
 /// shares the SYS_WRITE sink with Stdout today.
 pub fn stderr() -> Stderr {
     Stderr
+}
+
+/// `impl io::Write for Vec<u8>` — std has this; many rustc + cg_clif
+/// callers `write!(buf, ...)` against a Vec buffer. (G1 of Phase 4
+/// flagged as the canonical pattern.)
+impl Write for Vec<u8> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+}
+
+/// `impl io::Read for &[u8]` — std has this. Lets callers use a byte
+/// slice as a Read source for pattern-matching paths that take
+/// `impl io::Read`.
+impl Read for &[u8] {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let n = core::cmp::min(buf.len(), self.len());
+        buf[..n].copy_from_slice(&self[..n]);
+        *self = &self[n..];
+        Ok(n)
+    }
+}
+
+/// `std::io::copy`-shaped. Reads from `reader` and writes to `writer`
+/// until EOF; returns total bytes copied. (G1 of Phase 4 flagged.)
+pub fn copy<R: Read + ?Sized, W: Write + ?Sized>(reader: &mut R, writer: &mut W) -> Result<u64> {
+    let mut buf = [0u8; 4096];
+    let mut total = 0u64;
+    loop {
+        match reader.read(&mut buf)? {
+            0 => return Ok(total),
+            n => {
+                writer.write_all(&buf[..n])?;
+                total += n as u64;
+            }
+        }
+    }
 }
 
 /// `print!` — writes to stdout, no newline.

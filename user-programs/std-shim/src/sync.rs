@@ -17,6 +17,12 @@ use crate::arch::{SYS_FUTEX_WAIT, SYS_FUTEX_WAKE, syscall2};
 // like `std::sync::Arc` (alloc owns the Arc impl; std just re-exports).
 pub use core_alloc::sync::Arc;
 
+// Re-export `mpsc` here under `sync::` to mirror std's path
+// (`std::sync::mpsc::*`). The actual impl lives at `crate::mpsc`; this
+// is just a path-discoverability fix. (Phase 4 G1 flagged that
+// `semos_std::sync::mpsc` wasn't finding the existing module.)
+pub use crate::mpsc;
+
 // Mutex state values.
 const UNLOCKED: u32 = 0;
 const LOCKED: u32 = 1;

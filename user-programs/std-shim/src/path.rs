@@ -396,6 +396,90 @@ impl Path {
     pub fn as_os_str(&self) -> &str {
         &self.inner
     }
+
+    /// `std::path::Path::display`-shaped. Returns a value that
+    /// `core::fmt::Display`'s as the path. On SemOS this is trivially
+    /// the underlying str — there's no OsStr-to-str conversion needed.
+    /// (G4 of Phase 4 flagged this as the dominant Phase 5 prep gap;
+    /// rustc has 20+ sites.)
+    pub fn display(&self) -> Display<'_> {
+        Display { inner: &self.inner }
+    }
+
+    /// Does the path resolve to an existing FS entry? Hits the kernel
+    /// via SYS_STATX (Phase 14 Tier 2). Returns false on any error
+    /// (e.g. permission, not found) — same as `std::path::Path::exists`.
+    pub fn exists(&self) -> bool {
+        crate::fs::stat(&self.inner).is_some()
+    }
+
+    /// Is the path a directory according to the FS? Returns false if
+    /// the path doesn't exist or stat fails.
+    pub fn is_dir(&self) -> bool {
+        match crate::fs::stat(&self.inner) {
+            Some(s) => s.is_dir(),
+            None => false,
+        }
+    }
+
+    /// Is the path a regular file? Returns false if the path doesn't
+    /// exist, isn't a regular file, or stat fails.
+    pub fn is_file(&self) -> bool {
+        match crate::fs::stat(&self.inner) {
+            Some(s) => s.is_file(),
+            None => false,
+        }
+    }
+
+    /// `std::path::Path::metadata`-shaped — returns the StatX info or
+    /// `Err(io::Error::other())` if stat fails. (G4 of Phase 4 flagged.)
+    pub fn metadata(&self) -> crate::io::Result<crate::fs::StatX> {
+        crate::fs::stat(&self.inner).ok_or(crate::io::Error::other())
+    }
+}
+
+/// Wrapper that implements `Display` for `Path`, returned by `Path::display()`.
+pub struct Display<'a> {
+    inner: &'a str,
+}
+
+impl core::fmt::Display for Display<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self.inner, f)
+    }
+}
+
+impl core::fmt::Debug for Display<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.inner)
+    }
+}
+
+impl PathBuf {
+    /// Forwarding wrapper so callers writing `path_buf.display()` work.
+    pub fn display(&self) -> Display<'_> {
+        self.as_path().display()
+    }
+
+    /// Forwarding wrapper so `path_buf.exists()` works without `.as_path()`.
+    pub fn exists(&self) -> bool {
+        self.as_path().exists()
+    }
+
+    /// Forwarding wrapper.
+    pub fn is_dir(&self) -> bool {
+        self.as_path().is_dir()
+    }
+
+    /// Forwarding wrapper.
+    pub fn is_file(&self) -> bool {
+        self.as_path().is_file()
+    }
+
+    /// Forwarding wrapper.
+    pub fn metadata(&self) -> crate::io::Result<crate::fs::StatX> {
+        self.as_path().metadata()
+    }
 }
 
 // Allow `Cow<Path>` to work by implementing ToOwned. std does the same
