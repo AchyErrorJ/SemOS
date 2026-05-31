@@ -16,7 +16,7 @@ rustc_middle = { path = "../rustc_middle" }
 rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
-serde = "1"
-serde_json = "1"
+serde = { version = "1", default-features = false, features = ["alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end

@@ -40,8 +40,15 @@ use crate::ty::{
 mod basic_blocks;
 mod consts;
 pub mod coverage;
+// Phase 5b Stage E iter 5: gsgdt-using modules cfg-gated host-only
+// because gsgdt's Cargo.toml pulls serde without default-features=false,
+// forcing serde/std workspace-wide. These produce MIR debug dump output
+// which is host-only diagnostics anyway.
+#[cfg(not(target_os = "none"))]
 mod generic_graph;
+#[cfg(not(target_os = "none"))]
 pub mod generic_graphviz;
+#[cfg(not(target_os = "none"))]
 pub mod graphviz;
 pub mod interpret;
 pub mod mono;
@@ -61,7 +68,9 @@ pub use statement::*;
 pub use syntax::*;
 pub use terminator::*;
 
+#[cfg(not(target_os = "none"))]
 pub use self::generic_graph::graphviz_safe_def_name;
+#[cfg(not(target_os = "none"))]
 pub use self::graphviz::write_mir_graphviz;
 pub use self::pretty::{MirDumper, PassWhere, display_allocation, write_mir_pretty};
 

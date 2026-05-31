@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 # tidy-alphabetical-start
 bitflags = "2.4.1"
-odht = { version = "0.3.1", features = ["nightly"] }
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_attr_parsing = { path = "../rustc_attr_parsing" }
@@ -34,11 +33,15 @@ semos-std = { path = "../../../../std-shim" }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
 
-# M27 §1.2: libloading + tempfile gated to host-only (plugin loader is dead on
-# SemOS since semos-rustc statically links cg_clif and never loads proc-macros).
+# M27 §1.2 + Phase 5b Stage E iter 5: host-only deps.
+# libloading + tempfile gated since the plugin loader is dead on SemOS
+# (semos-rustc statically links cg_clif and never loads proc-macros).
+# odht pulls crc32fast + std I/O; incremental compilation is dropped per
+# §1.3 so odht use sites are dead on target.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 # tidy-alphabetical-start
 libloading = "0.8.0"
+odht = { version = "0.3.1", features = ["nightly"] }
 tempfile = "3.7.1"
 # tidy-alphabetical-end
 

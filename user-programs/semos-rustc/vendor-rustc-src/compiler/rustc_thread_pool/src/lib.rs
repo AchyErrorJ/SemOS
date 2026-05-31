@@ -65,8 +65,10 @@ pub mod tlv {
     // the same accessor name) is sufficient.
     #[cfg(not(target_os = "none"))]
     std::thread_local!(pub static TLV: Cell<*const ()> = const { Cell::new(core::ptr::null()) });
+    // M27: semos_std::thread_local! doesn't support `const { }` initializer
+    // syntax — drop it, the closure init is cheap and called once.
     #[cfg(target_os = "none")]
-    semos_std::thread_local!(pub static TLV: Cell<*const ()> = const { Cell::new(core::ptr::null()) });
+    semos_std::thread_local! { pub static TLV: Cell<*const ()> = Cell::new(core::ptr::null()); }
 
     #[derive(Copy, Clone)]
     pub(crate) struct Tlv(pub(crate) *const ());

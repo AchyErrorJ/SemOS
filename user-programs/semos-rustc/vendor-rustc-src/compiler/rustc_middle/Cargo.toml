@@ -7,10 +7,13 @@ edition = "2024"
 # tidy-alphabetical-start
 bitflags = { version = "2.4.1", default-features = false }
 either = { version = "1.5.0", default-features = false }
-gsgdt = "0.1.2"
 polonius-engine = "0.13.0"
 rustc_abi = { path = "../rustc_abi" }
 rustc_apfloat = "0.2.0"
+# Phase 5b Stage E iter 5: gsgdt 0.1.2 pulls serde without default-features
+# = false, which forces serde/std workspace-wide (cargo feature unification).
+# gsgdt is used only by mir/{generic_graph, graphviz}.rs which produce MIR
+# dump output for debugging — host-only. Cfg-gate accordingly.
 rustc_arena = { path = "../rustc_arena" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_ast_ir = { path = "../rustc_ast_ir" }
@@ -38,6 +41,12 @@ smallvec = { version = "1.8.1", default-features = false, features = ["union", "
 thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+# Phase 5b Stage E iter 5: gsgdt forces serde/std via feature unification.
+# Host-only since the use sites (mir/generic_graph.rs + mir/graphviz.rs) are
+# debug MIR-dump output paths.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+gsgdt = "0.1.2"
 
 [features]
 # tidy-alphabetical-start

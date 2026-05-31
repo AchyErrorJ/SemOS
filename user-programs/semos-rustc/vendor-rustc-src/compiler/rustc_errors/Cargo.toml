@@ -19,8 +19,8 @@ rustc_lint_defs = { path = "../rustc_lint_defs" }
 rustc_macros = { path = "../rustc_macros" }
 rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
-serde = { version = "1.0.125", features = ["derive"] }
-serde_json = "1.0.59"
+serde = { version = "1.0.125", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.59", default-features = false, features = ["alloc"] }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
 

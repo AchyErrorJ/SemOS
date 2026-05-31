@@ -12,3 +12,6 @@ edition = "2024"
 # body's tempfile-using sites already have cfg(not(target_os = "none")) splits.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 tempfile = "3.7.1"
+
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

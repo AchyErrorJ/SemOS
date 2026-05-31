@@ -40,7 +40,7 @@ rustc_trait_selection = { path = "../rustc_trait_selection" }
 # target. assert_module_sources.rs IntoDiagArg, errors.rs Path/PathBuf,
 # back/metadata.rs Path, back/write.rs Path/Path/fs/io/thread/etc.
 semos-std = { path = "../../../../std-shim" }
-serde_json = "1.0.59"
+serde_json = { version = "1.0.59", default-features = false, features = ["alloc"] }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
