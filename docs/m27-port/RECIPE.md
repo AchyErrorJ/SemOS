@@ -184,31 +184,29 @@ for all four.
 
 ---
 
-## 2. semos-std surface (current as of 2026-05-30)
+## 2. semos-std surface (current as of 2026-05-31)
 
 Stuff you can use without leaving a marker:
 
 | Category | API | Module path |
 |----------|-----|-------------|
 | Sync | `OnceLock<T>` (futex-backed), `Mutex<T>`, `Once`, `Condvar`, `RwLock<T>`, `Arc<T>` | `semos_std::sync` |
-| Thread | `LocalKey<T>` + `thread_local!` macro (single-threaded variant), `ScopedKey<T>` + `scoped_thread_local!` macro, `spawn`, `JoinHandle<T>`, `sleep_ticks`, `sleep_ms` | `semos_std::thread` |
+| Thread | `LocalKey<T>` + `thread_local!` macro (single-threaded variant) **plus 1.73 sugar for `LocalKey<Cell<T>>::{get,set,take,replace}` + `LocalKey<RefCell<T>>::{with_borrow,with_borrow_mut}`**, `ScopedKey<T>` + `scoped_thread_local!` macro, `spawn`, `JoinHandle<T>`, `sleep_ticks`, `sleep_ms` | `semos_std::thread` |
 | Process | `exit(i32)`, `abort()`, `abort_with_code(i32)`, `Command`, `Child`, `ExitStatus` | `semos_std::process` |
 | FFI | `OsString` (= `String`), `OsStr` (= `str`), `OsStrExt::to_os_string` | `semos_std::ffi` |
 | Env | `args()`, `var(key)`, `var_os(key)`, `vars()`, `vars_os()`, `set_var`, `current_dir_string` | `semos_std::env` |
-| Path | `Path::new`, `Path::parent`, `Path::file_name`, `Path::extension`, `Path::file_stem`, `Path::join`, `Path::canonicalize_lexical()`, `PathBuf` (push/pop/extension), basic AsRef/PartialEq | `semos_std::path` |
+| Path | `Path::new`, `Path::parent`, `Path::file_name`, `Path::extension`, `Path::file_stem`, `Path::join`, `Path::canonicalize_lexical()`, `Path::components()`, `Component`, `Path::strip_prefix()`, `Path::as_os_str()`, `Cow<Path>`, `PathBuf` (push/pop/extension), basic AsRef/PartialEq | `semos_std::path` |
 | FS | `File` (Read+Write+Drop), `OpenOptions`, `read`, `read_to_string`, `write`, `create_dir`, `remove_file` | `semos_std::fs` |
-| IO | `Read`/`Write` traits, `Stdout`, `Stderr` | `semos_std::io` |
+| IO | `Read`/`Write` traits, `Stdout` + `stdout()`, `Stderr` + `stderr()` (shared SYS_WRITE sink) | `semos_std::io` |
 | Net | TcpStream, address types | `semos_std::net` |
 | Collections | re-exports of alloc + hashbrown | `semos_std::collections` |
 | Time | basic Duration, sleep | `semos_std::time` |
 
 **Known gaps** (leave markers, don't try to substitute):
 
-- `semos_std::path` is **lexical-only**. Missing for advanced rustc
-  callers: `Cow<Path>`, `path.components()`, `path::Component`,
-  `path.strip_prefix()`, `path.as_os_str()` returning the raw OsStr,
-  full `PathBuf::canonicalize` that hits the FS. Add these to semos-std
-  when Phase 2b consolidates.
+- `semos_std::path::Path::canonicalize` that hits the FS — only the
+  lexical variant exists. Most rustc sites we've seen are lexical;
+  flag the rest.
 - `semos_std::io::ErrorKind` and `io::Error::other(msg)` not yet
   exposed. Subset is provided as anonymous `io::Error::other()`.
 - `tracing` ecosystem (rustc_log uses it) — not vendored. Stub with

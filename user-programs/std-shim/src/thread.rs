@@ -199,6 +199,49 @@ impl<T: 'static> LocalKey<T> {
     }
 }
 
+// std added these LocalKey<Cell<T>> shortcut methods in 1.73 so callers
+// could write `KEY.get()` / `KEY.set(x)` instead of `KEY.with(|c|
+// c.get())`. rustc uses them; mirror the surface so we don't force
+// rewrites at every call site (M27 R4 B3-followup recipe §7.2).
+
+impl<T: Copy + 'static> LocalKey<core::cell::Cell<T>> {
+    /// Get the contained `Copy` value.
+    pub fn get(&'static self) -> T {
+        self.with(|c| c.get())
+    }
+
+    /// Replace the contained value.
+    pub fn set(&'static self, value: T) {
+        self.with(|c| c.set(value));
+    }
+}
+
+impl<T: 'static> LocalKey<core::cell::Cell<T>> {
+    /// Replace the contained value, returning the previous one.
+    pub fn replace(&'static self, value: T) -> T {
+        self.with(|c| c.replace(value))
+    }
+}
+
+impl<T: Default + 'static> LocalKey<core::cell::Cell<T>> {
+    /// Take the contained value, leaving `T::default()` behind.
+    pub fn take(&'static self) -> T {
+        self.with(|c| c.take())
+    }
+}
+
+impl<T: 'static> LocalKey<core::cell::RefCell<T>> {
+    /// Run `f` with a shared borrow of the inner RefCell.
+    pub fn with_borrow<R, F: FnOnce(&T) -> R>(&'static self, f: F) -> R {
+        self.with(|cell| f(&cell.borrow()))
+    }
+
+    /// Run `f` with an exclusive borrow of the inner RefCell.
+    pub fn with_borrow_mut<R, F: FnOnce(&mut T) -> R>(&'static self, f: F) -> R {
+        self.with(|cell| f(&mut cell.borrow_mut()))
+    }
+}
+
 /// `std::thread_local!`-shaped macro. Single-threaded variant: each
 /// declared static becomes a process-wide lazy cell (see `LocalKey`).
 ///

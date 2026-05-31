@@ -106,10 +106,7 @@ fn write_tt(
             reset_cursor();
         }
         MdTree::HorizontalRule => {
-            // M27 R4 B2: semos_std::thread::LocalKey<Cell<T>> has no inherent
-            // `get`/`set` — those are std-only sugar added in 1.73. Use
-            // `.with(|c| c.get())` to access the underlying Cell.
-            (0..WIDTH.with(|c| c.get())).for_each(|_| buf.write_all(b"-").unwrap());
+            (0..WIDTH.get()).for_each(|_| buf.write_all(b"-").unwrap());
             reset_cursor();
         }
         MdTree::Heading(n, stream) => {
@@ -160,8 +157,7 @@ fn reset_opt_style(buf: &mut Vec<u8>, style: Option<Style>) -> io::Result<()> {
 
 /// End of that block, just wrap the line
 fn reset_cursor() {
-    // M27 R4 B2: semos_std::thread::LocalKey has no `set` shortcut.
-    CURSOR.with(|c| c.set(0));
+    CURSOR.set(0);
 }
 
 /// Change to be generic on Write for testing. If we have a link URL, we don't
@@ -187,8 +183,7 @@ fn write_wrapping(
                 buf.write_all(ind_ws)?;
                 cur.set(indent);
             }
-            // M27 R4 B2: see above re LocalKey<Cell<T>>.
-            let ch_count = WIDTH.with(|c| c.get()) - cur.get();
+            let ch_count = WIDTH.get() - cur.get();
             let mut iter = to_write.char_indices();
             let Some((end_idx, _ch)) = iter.nth(ch_count) else {
                 // Write entire line

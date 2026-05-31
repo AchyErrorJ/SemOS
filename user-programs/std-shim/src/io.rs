@@ -149,6 +149,47 @@ impl Write for Stdout {
     }
 }
 
+/// Stderr sink. On SemOS the kernel exposes a single serial console via
+/// SYS_WRITE (fd=1), so Stderr currently shares the Stdout pipe; the
+/// type exists separately so rustc's `io::Stderr` / `let s = io::stderr()`
+/// patterns resolve without rewrites (M27 R4 B3-followup recommendation).
+/// A real split sink can come later if SYS_WRITE grows an fd parameter.
+pub struct Stderr;
+
+impl core::fmt::Write for Stderr {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let n = write_str(s);
+        if n == u64::MAX {
+            Err(core::fmt::Error)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Write for Stderr {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        let n = unsafe { syscall2(SYS_WRITE, buf.as_ptr() as u64, buf.len() as u64) };
+        if n == u64::MAX {
+            Err(Error::other())
+        } else {
+            Ok(n as usize)
+        }
+    }
+}
+
+/// Factory mirroring `std::io::stdout()`. Returns a fresh handle by
+/// value (cheap — Stdout is a unit type).
+pub fn stdout() -> Stdout {
+    Stdout
+}
+
+/// Factory mirroring `std::io::stderr()`. Same caveat as [`Stderr`]:
+/// shares the SYS_WRITE sink with Stdout today.
+pub fn stderr() -> Stderr {
+    Stderr
+}
+
 /// `print!` — writes to stdout, no newline.
 ///
 /// Uses fully-qualified `core::fmt::Write::write_fmt` so it stays
