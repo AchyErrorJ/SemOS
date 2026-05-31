@@ -470,3 +470,84 @@ Both running.
 
 (A1 retry + A2-followup in flight. Plus thread_local + scoped_tls now
 both in semos-std.)
+
+---
+
+## 2026-05-30 — Token / LOC accounting (retroactive)
+
+User asked if I was tracking tokens vs LOC. Wasn't. Starting now,
+back-filling from the agent completion notifications.
+
+### Phase 1 — recon (no LOC ported, characterized the whole tree)
+
+| Agent | Tokens | Tool uses | Duration | Output |
+|-------|-------:|----------:|---------:|-------|
+| R1 dep graph | 174,686 | 220 | 893 s | 942-line report on 77 crates |
+| R2 std surface | 185,752 | 61 | 462 s | 2,497-line report |
+| R3 externals | 142,245 | 142 | 468 s | 390-line report |
+| R4 blockers | 220,065 | 149 | 822 s | 580-line report |
+| **Phase 1 total** | **722,748** | **572** | **41 min wall (parallel)** | **4,409 lines, 0 LOC ported** |
+
+R4 was the most expensive — read the most files, made the gatekeeper
+call. R2 was second — produced the longest report.
+
+### Phase 2a — port agents (LOC ported = patched-against-recipe)
+
+| Agent | Crate(s) | Source LOC | Tokens | Tokens/LOC | Tool uses | Duration | Notes |
+|-------|----------|----------:|-------:|----------:|----------:|---------:|-------|
+| Probe | rustc_hashes | 131 | 62,829 | 480 | 50 | 285 s | Verified session limit cleared; ran the recipe end-to-end on smallest crate |
+| A3 | rustc_arena + rustc_fs_util + rustc_log | ~1,354 | 120,686 | 89 | 78 | 610 s | Introduced `cfg(target_os = "none")` host/target split pattern |
+| A4 | rustc_lexer + rustc_graphviz + rustc_ast_ir + rustc_error_codes | ~3,836 | 119,396 | 31 | 136 | 663 s | Re-run; original A4 already integrated. Discovered `core::io::Write` doesn't exist (graphviz partial) |
+| A5 | rustc_index + rustc_serialize | ~5,513 | 194,784 | 35 | 111 | 563 s | §1.3 (drop incremental) applied — odht/dep_graph cfg'd out. SourceFileHashAlgorithm enum is ABI-visible (R4 hint) |
+| A6 | rustc_macros + rustc_index_macros + rustc_type_ir_macros + rustc_fluent_macro | 0 source edits | 101,141 | n/a | 105 | 425 s | Proc-macros host-only; just `.cargo/config.toml` + workspace headers. Pioneered the `git show main:` workaround |
+| A2 | rustc_span (partial, 13/18 files) | ~2,300 | 274,856 | 120 | 136 | 1,272 s | Highest token consumer. Recipe for the remaining 5 files documented for A2-followup |
+| **Phase 2a total** | **14 crates patched** | **~13,134 source LOC** | **873,692** | **~67 avg** | **616** | **~3.7 hrs sum (~50 min wall parallel)** | |
+
+A4 was the most efficient at 31 tokens/LOC, because the four crates
+were small and mechanical and A4 just ran the standard recipe. A2 was
+the most expensive at 120 tokens/LOC because rustc_span is the
+biggest foundation crate, hit multiple architectural decisions
+(FatalError, scoped_tls, hash consolidation), and had to read+write
+in full-file rewrites (no merge access).
+
+### Session-wide running total (Phase 1 + Phase 2a so far)
+
+**Tokens spent on agents: 1,596,440.**
+**LOC patched: ~13,134 (Phase 2a, excluding A6's zero-source-edit work).**
+
+Roughly **~80 tokens per ported LOC** on average across the whole
+session (recon + port + integration). The recon weight (722k tokens,
+~45% of total) is the front-loaded cost; subsequent phases should
+hover closer to A4/A5's 31-35 tokens/LOC since they won't need the
+characterization work.
+
+### Forecast for Phase 2b + Phase 3 + Phase 4
+
+Using A2's 120 tokens/LOC as the upper bound (for hard crates) and
+A4's 31 as lower bound, and the plan's estimate of ~770 k LOC of
+post-§1 internal rustc crates to port:
+
+- **Conservative**: 770k LOC × 120 t/LOC = 92.4M tokens
+- **Optimistic**: 770k LOC × 31 t/LOC = 23.9M tokens
+- **Mixed (using A4 + A5 + A3 weighted average ~50 t/LOC)**: 38.5M tokens
+
+For a sense of scale: at the current session rate (~1.6M tokens for
+foundation tier ≈ 13k LOC = 1.7% of post-§1 internal rustc), the full
+Phase 2-4 port projects to **20-60 million tokens** depending on how
+the hard crates land. Across the planned 4-6 agents per parallel wave,
+spread across 1-2 months, that's a real but quantifiable budget.
+
+The recon's 1-2 month / 40-60 session estimate looks consistent with
+this token math. Each agent "session" averages 100-200k tokens; 40-60
+sessions × 4-6 agents in parallel ≈ 16-72M tokens for the whole port.
+The recon estimate sits in that range.
+
+### Logging cadence going forward
+Will record each agent's tokens / tool uses / LOC patched in the
+table above as they come in. The above table covers everything
+through A2 + A6 (the most recent completed wave); A1 retry and
+A2-followup will be appended on completion.
+
+---
+
+(Logging on.)
