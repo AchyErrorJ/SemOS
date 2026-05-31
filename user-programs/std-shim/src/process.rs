@@ -35,6 +35,15 @@ pub fn abort() -> ! {
     exit(101)
 }
 
+/// Abnormal termination with a caller-chosen exit code. The recon
+/// agents (R4 B1 + R2) flagged that rustc's FatalError path needs a
+/// way to exit with a specific code distinct from the panic default
+/// (101); see M27 §1.9 (one-error-per-compile v1). Mirrors what
+/// std's `std::process::abort_with_code` would be if it existed.
+pub fn abort_with_code(code: i32) -> ! {
+    exit(code)
+}
+
 /// Mirrors the kernel's `#[repr(C)] SpawnArgs` (syscall/mod.rs). Passed by
 /// pointer in SYS_SPAWN's 4th argument; the kernel reads argv/envp blobs
 /// from the pointed-to layout while the caller's CR3 is still active.

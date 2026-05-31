@@ -217,6 +217,131 @@ impl Default for Once {
 }
 
 // ---------------------------------------------------------------------
+// OnceLock<T> — futex-backed lazy-initialized cell holding a T
+// ---------------------------------------------------------------------
+//
+// M27 D.2-followup discovered we needed a no_std OnceLock for Cranelift.
+// We wrote a local shim there (cranelift-codegen/src/isa/x64/abi.rs) and
+// the recon agents confirmed 8+ rustc_* crates also want it. Lifted
+// into semos-std as the canonical shim — futex-aware (so it's safe for
+// concurrent first-call across multiple threads) rather than the
+// single-threaded AtomicBool+UnsafeCell version Cranelift used.
+//
+// API mirrors `std::sync::OnceLock`:
+// - `new()` const-fn empty cell
+// - `get()` → Option<&T>
+// - `get_or_init(f)` → &T, runs f exactly once across callers
+// - `set(value)` → Result<(), T> (Err if already initialized)
+
+const LOCK_EMPTY: u32 = 0;
+const LOCK_INITIALIZING: u32 = 1;
+const LOCK_INITIALIZED: u32 = 2;
+
+/// `std::sync::OnceLock`-shaped lazy-initialized cell holding a `T`.
+/// Initialization runs exactly once, with concurrent callers parking
+/// on the futex until the first finishes.
+pub struct OnceLock<T> {
+    state: AtomicU32,
+    value: UnsafeCell<core::mem::MaybeUninit<T>>,
+}
+
+// Safety: the state-machine + futex serialize all access to `value`.
+// Readers only ever see `value` after it's been written and state is
+// LOCK_INITIALIZED (with Acquire ordering).
+unsafe impl<T: Send + Sync> Sync for OnceLock<T> {}
+unsafe impl<T: Send> Send for OnceLock<T> {}
+
+impl<T> OnceLock<T> {
+    pub const fn new() -> Self {
+        Self {
+            state: AtomicU32::new(LOCK_EMPTY),
+            value: UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+        }
+    }
+
+    /// Returns `Some(&T)` if already initialized, else `None`.
+    pub fn get(&self) -> Option<&T> {
+        if self.state.load(Ordering::Acquire) == LOCK_INITIALIZED {
+            Some(unsafe { (*self.value.get()).assume_init_ref() })
+        } else {
+            None
+        }
+    }
+
+    /// Returns a reference to the value, initializing it via `f` if
+    /// not yet initialized. `f` runs at most once across all callers.
+    pub fn get_or_init<F: FnOnce() -> T>(&self, f: F) -> &T {
+        // Fast path: already initialized.
+        if self.state.load(Ordering::Acquire) == LOCK_INITIALIZED {
+            return unsafe { (*self.value.get()).assume_init_ref() };
+        }
+        loop {
+            match self.state.compare_exchange(
+                LOCK_EMPTY,
+                LOCK_INITIALIZING,
+                Ordering::Acquire,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    // We won — run init, publish, wake waiters.
+                    let v = f();
+                    unsafe { (*self.value.get()).write(v); }
+                    self.state.store(LOCK_INITIALIZED, Ordering::Release);
+                    futex_wake_all(&self.state);
+                    return unsafe { (*self.value.get()).assume_init_ref() };
+                }
+                Err(LOCK_INITIALIZED) => {
+                    return unsafe { (*self.value.get()).assume_init_ref() };
+                }
+                Err(_) => {
+                    // Another caller is initializing; park until done.
+                    futex_wait(&self.state, LOCK_INITIALIZING);
+                }
+            }
+        }
+    }
+
+    /// Sets the value if uninitialized. Returns the input value as
+    /// `Err(value)` if already initialized.
+    pub fn set(&self, value: T) -> Result<(), T> {
+        if self.state.compare_exchange(
+            LOCK_EMPTY,
+            LOCK_INITIALIZING,
+            Ordering::Acquire,
+            Ordering::Acquire,
+        ).is_ok() {
+            unsafe { (*self.value.get()).write(value); }
+            self.state.store(LOCK_INITIALIZED, Ordering::Release);
+            futex_wake_all(&self.state);
+            Ok(())
+        } else {
+            // Either INITIALIZING or INITIALIZED. Wait if initializing
+            // so the caller doesn't race; then report the slot full.
+            while self.state.load(Ordering::Acquire) == LOCK_INITIALIZING {
+                futex_wait(&self.state, LOCK_INITIALIZING);
+            }
+            Err(value)
+        }
+    }
+}
+
+impl<T> Default for OnceLock<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Drop for OnceLock<T> {
+    fn drop(&mut self) {
+        if self.state.load(Ordering::Relaxed) == LOCK_INITIALIZED {
+            unsafe {
+                (*self.value.get()).assume_init_drop();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
 // Condvar — futex-backed condition variable (seq-number style)
 // ---------------------------------------------------------------------
 //
