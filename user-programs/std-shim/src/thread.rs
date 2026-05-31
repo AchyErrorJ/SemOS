@@ -149,3 +149,82 @@ where
         tid_valid: true,
     }
 }
+
+// ---------------------------------------------------------------------
+// LocalKey<T> + thread_local! macro — M27 R4 B2.
+//
+// SemOS Ring-3 processes are single-threaded today (futures over
+// SYS_THREAD_SPAWN don't get parallelism — they multiplex on the
+// single hardware context the kernel hands a user process). For the
+// rustc port that's fine: the rustc model assumes thread-local
+// storage but we can collapse it to "lazy-init a single process-wide
+// cell". If/when we add real multi-threading, replace this LocalKey
+// with one that indexes per-tid.
+// ---------------------------------------------------------------------
+
+/// `std::thread::LocalKey`-shaped thread-local accessor. On SemOS
+/// (single-threaded Ring 3), this is a process-wide lazy cell — the
+/// init function runs the first time `.with()` is called and the
+/// value persists for the rest of the process.
+pub struct LocalKey<T: 'static> {
+    inner: crate::sync::OnceLock<T>,
+    init: fn() -> T,
+}
+
+impl<T: 'static> LocalKey<T> {
+    /// Build a LocalKey from an init function. Usually invoked by the
+    /// `thread_local!` macro rather than directly.
+    pub const fn new(init: fn() -> T) -> Self {
+        Self {
+            inner: crate::sync::OnceLock::new(),
+            init,
+        }
+    }
+
+    /// Run `f` with a reference to the thread-local value, initializing
+    /// it if this is the first access.
+    pub fn with<R, F: FnOnce(&T) -> R>(&'static self, f: F) -> R {
+        let v = self.inner.get_or_init(self.init);
+        f(v)
+    }
+
+    /// Like `with` but returns `Err(())` instead of initializing if
+    /// the value hasn't been touched yet. Provided for parity with
+    /// `std::thread::LocalKey::try_with`.
+    pub fn try_with<R, F: FnOnce(&T) -> R>(&'static self, f: F) -> Result<R, ()> {
+        match self.inner.get() {
+            Some(v) => Ok(f(v)),
+            None => Err(()),
+        }
+    }
+}
+
+/// `std::thread_local!`-shaped macro. Single-threaded variant: each
+/// declared static becomes a process-wide lazy cell (see `LocalKey`).
+///
+/// Usage:
+/// ```ignore
+/// semos_std::thread_local! {
+///     static FOO: u32 = 42;
+///     pub static BAR: alloc::string::String = alloc::string::String::new();
+/// }
+/// ```
+///
+/// `with` and `try_with` mirror `std::thread::LocalKey` for source
+/// compatibility — the rustc crates that import this expect the same
+/// shape.
+#[macro_export]
+macro_rules! thread_local {
+    () => {};
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $ty:ty = $init:expr; $($rest:tt)*) => {
+        $(#[$attr])*
+        $vis static $name: $crate::thread::LocalKey<$ty> =
+            $crate::thread::LocalKey::new(|| $init);
+        $crate::thread_local! { $($rest)* }
+    };
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $ty:ty = $init:expr) => {
+        $(#[$attr])*
+        $vis static $name: $crate::thread::LocalKey<$ty> =
+            $crate::thread::LocalKey::new(|| $init);
+    };
+}
