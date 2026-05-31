@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
-use std::ops::{Index, IndexMut};
+use alloc::collections::VecDeque;
+use core::ops::{Index, IndexMut};
 
 /// A view onto a finite range of an infinitely long sequence of T.
 ///

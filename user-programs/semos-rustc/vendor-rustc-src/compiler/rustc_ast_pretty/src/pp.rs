@@ -135,9 +135,9 @@
 mod convenience;
 mod ring;
 
-use std::borrow::Cow;
-use std::collections::VecDeque;
-use std::{cmp, iter};
+use alloc::borrow::Cow;
+use alloc::collections::VecDeque;
+use core::{cmp, iter};
 
 use ring::RingBuffer;
 
@@ -318,7 +318,7 @@ impl Printer {
             let right = self.buf.push(BufEntry { token: Token::End, size: -1 });
             self.scan_stack.push_back(right);
         }
-        std::mem::forget(b)
+        core::mem::forget(b)
     }
 
     fn scan_break(&mut self, token: BreakToken) {

@@ -1,3 +1,5 @@
+use alloc::string::{String, ToString};
+
 use rustc_ast::token::TokenKind;
 use rustc_span::symbol::{Symbol, kw, sym};
 

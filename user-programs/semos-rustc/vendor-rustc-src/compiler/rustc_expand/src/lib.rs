@@ -1,3 +1,4 @@
+#![no_std]
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![cfg_attr(bootstrap, feature(array_windows))]
@@ -10,10 +11,17 @@
 #![feature(yeet_expr)]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+
 mod build;
 mod errors;
 mod mbe;
 mod placeholders;
+// M27 §1.5: proc-macro server (load+drive client-side dylib via mpsc).
+// Production body is host-only on SemOS v1 (no dlopen). Module is
+// retained on the SemOS target as a thin shape-preserving stub via
+// the in-file cfg gates inside proc_macro_server.rs.
 mod proc_macro_server;
 mod stats;
 

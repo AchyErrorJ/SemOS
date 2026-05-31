@@ -1,7 +1,9 @@
 //! Utilities for rendering escape sequence errors as diagnostics.
 
-use std::iter::once;
-use std::ops::Range;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter::once;
+use core::ops::Range;
 
 use rustc_errors::{Applicability, DiagCtxtHandle, ErrorGuaranteed};
 use rustc_literal_escaper::{EscapeError, Mode};

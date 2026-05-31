@@ -8,12 +8,21 @@
 #![feature(if_let_guard)]
 #![feature(iter_intersperse)]
 #![feature(iter_order_by)]
+#![no_std]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::str::Utf8Error;
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+use core::str::Utf8Error;
 
 use rustc_ast as ast;
 use rustc_ast::token;
@@ -117,14 +126,26 @@ pub fn new_parser_from_file<'a>(
 ) -> Result<Parser<'a>, Vec<Diag<'a>>> {
     let sm = psess.source_map();
     let source_file = sm.load_file(path).unwrap_or_else(|e| {
-        let msg = format!("couldn't read `{}`: {}", path.display(), e);
+        // M27 R4 B5: Path::display() returns a Display wrapper on std; on
+        // SemOS Path is a &str newtype so we use as_str() directly.
+        #[cfg(not(target_os = "none"))]
+        let path_disp = path.display().to_string();
+        #[cfg(target_os = "none")]
+        let path_disp = alloc::string::ToString::to_string(path.as_str());
+        let msg = format!("couldn't read `{}`: {}", path_disp, e);
         let mut err = psess.dcx().struct_fatal(msg);
-        if let Ok(contents) = std::fs::read(path)
+        // M27 R4 B5: std::fs::read split host/target. On SemOS, semos_std::fs::read
+        // takes &str rather than &Path, so we route through path.as_str().
+        #[cfg(not(target_os = "none"))]
+        let read_result = std::fs::read(path);
+        #[cfg(target_os = "none")]
+        let read_result = semos_std::fs::read(path.as_str());
+        if let Ok(contents) = read_result
             && let Err(utf8err) = String::from_utf8(contents.clone())
         {
             utf8_error(
                 sm,
-                &path.display().to_string(),
+                &path_disp,
                 sp,
                 &mut err,
                 utf8err.utf8_error(),

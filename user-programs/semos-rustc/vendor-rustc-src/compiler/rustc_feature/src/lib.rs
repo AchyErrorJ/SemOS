@@ -11,6 +11,11 @@
 //! even if it is stabilized or removed, *do not remove it*. Instead, move the
 //! symbol to the `accepted` or `removed` modules respectively.
 
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
+
 mod accepted;
 mod builtin_attrs;
 mod removed;
@@ -19,7 +24,7 @@ mod unstable;
 #[cfg(test)]
 mod tests;
 
-use std::num::NonZero;
+use core::num::NonZero;
 
 use rustc_span::Symbol;
 
@@ -53,15 +58,26 @@ impl UnstableFeatures {
     /// If `krate` is [`Some`], then setting `RUSTC_BOOTSTRAP=krate` will enable the nightly
     /// features. Otherwise, only `RUSTC_BOOTSTRAP=1` will work.
     pub fn from_environment(krate: Option<&str>) -> Self {
-        Self::from_environment_value(krate, std::env::var("RUSTC_BOOTSTRAP"))
+        // M27 R4 B5: semos_std::env::var returns Option<String> (no VarError on
+        // SemOS today; parent integrator to add VarError shim per the
+        // rustc_log precedent). Synthesize a Result-shaped value so the
+        // helper below keeps the same signature shape.
+        #[cfg(not(target_os = "none"))]
+        let env_var = std::env::var("RUSTC_BOOTSTRAP");
+        #[cfg(target_os = "none")]
+        let env_var: Result<alloc::string::String, ()> = match semos_std::env::var("RUSTC_BOOTSTRAP") {
+            Some(s) => Ok(s),
+            None => Err(()),
+        };
+        Self::from_environment_value(krate, env_var)
     }
 
     /// Avoid unsafe `std::env::set_var()` by allowing tests to inject
     /// `std::env::var("RUSTC_BOOTSTRAP")` with the `env_var_rustc_bootstrap`
     /// arg.
-    fn from_environment_value(
+    fn from_environment_value<E>(
         krate: Option<&str>,
-        env_var_rustc_bootstrap: Result<String, std::env::VarError>,
+        env_var_rustc_bootstrap: Result<alloc::string::String, E>,
     ) -> Self {
         // `true` if this is a feature-staged build, i.e., on the beta or stable channel.
         let disable_unstable_features =

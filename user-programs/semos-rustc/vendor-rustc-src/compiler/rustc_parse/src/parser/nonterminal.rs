@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 use rustc_ast::token::NtExprKind::*;
 use rustc_ast::token::NtPatKind::*;
 use rustc_ast::token::{self, InvisibleOrigin, MetaVarKind, NonterminalKind, Token};

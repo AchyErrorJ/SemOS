@@ -16,7 +16,10 @@ mod ty;
 pub mod asm;
 pub mod cfg_select;
 
-use std::{fmt, mem, slice};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::{fmt, mem, slice};
 
 use attr_wrapper::{AttrWrapper, UsePreAttrPos};
 pub use diagnostics::AttemptLocalParseRecovery;
@@ -53,12 +56,15 @@ use tracing::debug;
 use crate::errors::{self, IncorrectVisibilityRestriction, NonStringAbiLiteral};
 use crate::exp;
 
-#[cfg(test)]
+// M27: tests gated host-only (uses std::io::prelude, std::sync::Mutex with
+// `.lock().unwrap()` Result-API, AutoStream<Box<dyn Write + Send>>, etc. —
+// incompatible with the semos_std surface). Host `cargo test` still runs them.
+#[cfg(all(test, not(target_os = "none")))]
 mod tests;
 
 // Ideally, these tests would be in `rustc_ast`. But they depend on having a
 // parser, so they are here.
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tokenstream {
     mod tests;
 }

@@ -1,5 +1,6 @@
-use std::borrow::Cow;
-use std::mem;
+use alloc::borrow::Cow;
+use alloc::vec::Vec;
+use core::mem;
 
 use rustc_ast::token::Token;
 use rustc_ast::tokenstream::{

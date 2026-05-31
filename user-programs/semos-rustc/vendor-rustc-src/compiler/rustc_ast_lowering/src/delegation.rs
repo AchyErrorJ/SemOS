@@ -36,7 +36,7 @@
 //! In case of discrepancy with callee function the `UnsupportedDelegation` error will
 //! also be emitted during HIR ty lowering.
 
-use std::iter;
+use core::iter;
 
 use ast::visit::Visitor;
 use hir::def::{DefKind, PartialRes, Res};

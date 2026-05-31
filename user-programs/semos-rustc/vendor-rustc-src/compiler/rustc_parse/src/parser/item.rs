@@ -1,5 +1,8 @@
-use std::fmt::Write;
-use std::mem;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt::Write;
+use core::mem;
 
 use ast::token::IdentIsRaw;
 use rustc_ast::ast::*;

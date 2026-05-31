@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use rustc_ast::{self as ast, *};
 use rustc_hir::def::{DefKind, PartialRes, PerNS, Res};

@@ -1,4 +1,6 @@
-use std::mem;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::mem;
 
 use ast::token::IdentIsRaw;
 use rustc_ast::token::{self, MetaVarKind, Token, TokenKind};

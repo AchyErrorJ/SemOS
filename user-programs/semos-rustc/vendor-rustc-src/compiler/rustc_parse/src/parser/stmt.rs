@@ -1,6 +1,9 @@
-use std::borrow::Cow;
-use std::mem;
-use std::ops::Bound;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::mem;
+use core::ops::Bound;
 
 use ast::Label;
 use rustc_ast as ast;

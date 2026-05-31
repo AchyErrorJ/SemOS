@@ -30,13 +30,23 @@
 //! get confused if the spans from leaf AST nodes occur in multiple places
 //! in the HIR, especially for multiple identifiers.
 
+// M27 Phase 3 C2: rustc_ast_lowering runs against semos_std (no full std)
+// on the SemOS-host build. `#![no_std]` MUST be the first inner attribute,
+// before the `#![feature(...)]` block (per A2-followup / B1 lib.rs lesson).
+#![no_std]
 // tidy-alphabetical-start
 #![feature(box_patterns)]
 #![feature(if_let_guard)]
 // tidy-alphabetical-end
 
-use std::mem;
-use std::sync::Arc;
+// M27 Phase 3 C2: alloc prelude — provides Vec/String/Box/format!/vec!
+// crate-wide. The `#[macro_use]` reaches vec!/format! into submodules
+// without per-file imports.
+#[macro_use]
+extern crate alloc;
+
+use core::mem;
+use alloc::sync::Arc;
 
 use rustc_ast::node_id::NodeMap;
 use rustc_ast::{self as ast, *};
@@ -371,8 +381,8 @@ enum ImplTraitPosition {
     OffsetOf,
 }
 
-impl std::fmt::Display for ImplTraitPosition {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ImplTraitPosition {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let name = match self {
             ImplTraitPosition::Path => "paths",
             ImplTraitPosition::Variable => "the type of variable bindings",
@@ -632,21 +642,21 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     ) {
         let owner_id = self.owner_id(owner);
 
-        let current_attrs = std::mem::take(&mut self.attrs);
-        let current_bodies = std::mem::take(&mut self.bodies);
-        let current_define_opaque = std::mem::take(&mut self.define_opaque);
+        let current_attrs = core::mem::take(&mut self.attrs);
+        let current_bodies = core::mem::take(&mut self.bodies);
+        let current_define_opaque = core::mem::take(&mut self.define_opaque);
         let current_ident_and_label_to_local_id =
-            std::mem::take(&mut self.ident_and_label_to_local_id);
+            core::mem::take(&mut self.ident_and_label_to_local_id);
 
         #[cfg(debug_assertions)]
-        let current_node_id_to_local_id = std::mem::take(&mut self.node_id_to_local_id);
-        let current_trait_map = std::mem::take(&mut self.trait_map);
-        let current_owner = std::mem::replace(&mut self.current_hir_id_owner, owner_id);
+        let current_node_id_to_local_id = core::mem::take(&mut self.node_id_to_local_id);
+        let current_trait_map = core::mem::take(&mut self.trait_map);
+        let current_owner = core::mem::replace(&mut self.current_hir_id_owner, owner_id);
         let current_local_counter =
-            std::mem::replace(&mut self.item_local_id_counter, hir::ItemLocalId::new(1));
-        let current_impl_trait_defs = std::mem::take(&mut self.impl_trait_defs);
-        let current_impl_trait_bounds = std::mem::take(&mut self.impl_trait_bounds);
-        let current_delayed_lints = std::mem::take(&mut self.delayed_lints);
+            core::mem::replace(&mut self.item_local_id_counter, hir::ItemLocalId::new(1));
+        let current_impl_trait_defs = core::mem::take(&mut self.impl_trait_defs);
+        let current_impl_trait_bounds = core::mem::take(&mut self.impl_trait_bounds);
+        let current_delayed_lints = core::mem::take(&mut self.delayed_lints);
 
         // Do not reset `next_node_id` and `node_id_to_def_id`:
         // we want `f` to be able to refer to the `LocalDefId`s that the caller created.
@@ -687,11 +697,11 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     }
 
     fn make_owner_info(&mut self, node: hir::OwnerNode<'hir>) -> &'hir hir::OwnerInfo<'hir> {
-        let attrs = std::mem::take(&mut self.attrs);
-        let mut bodies = std::mem::take(&mut self.bodies);
-        let define_opaque = std::mem::take(&mut self.define_opaque);
-        let trait_map = std::mem::take(&mut self.trait_map);
-        let delayed_lints = std::mem::take(&mut self.delayed_lints).into_boxed_slice();
+        let attrs = core::mem::take(&mut self.attrs);
+        let mut bodies = core::mem::take(&mut self.bodies);
+        let define_opaque = core::mem::take(&mut self.define_opaque);
+        let trait_map = core::mem::take(&mut self.trait_map);
+        let delayed_lints = core::mem::take(&mut self.delayed_lints).into_boxed_slice();
 
         #[cfg(debug_assertions)]
         for (id, attrs) in attrs.iter() {

@@ -76,12 +76,16 @@
 //! This is equivalent to `#[repr(C, packed)]` and results in a single `AttributeKind::Repr`
 //! containing both `C` and `packed` annotations.
 
+#![no_std]
 // tidy-alphabetical-start
 #![feature(decl_macro)]
 #![feature(if_let_guard)]
 #![feature(iter_intersperse)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
 
 #[macro_use]
 /// All the individual attribute parsers for each of rustc's built-in attributes.

@@ -9,9 +9,16 @@
 // so no `#![feature]` attributes should be added.
 #![deny(unstable_features)]
 #![doc(test(attr(deny(warnings), allow(internal_features))))]
+#![no_std]
 // tidy-alphabetical-end
 
-use std::ops::Range;
+#[macro_use]
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::ops::Range;
 
 pub use Alignment::*;
 pub use Count::*;

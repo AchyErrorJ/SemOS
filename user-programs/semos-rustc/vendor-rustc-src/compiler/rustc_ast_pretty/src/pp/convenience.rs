@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::pp::{
     BeginToken, BoxMarker, BreakToken, Breaks, IndentStyle, Printer, SIZE_INFINITY, Token,

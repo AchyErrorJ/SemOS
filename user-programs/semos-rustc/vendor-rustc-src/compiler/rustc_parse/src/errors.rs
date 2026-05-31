@@ -1,7 +1,13 @@
 // ignore-tidy-filelength
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+#[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
 
 use rustc_ast::token::Token;
 use rustc_ast::util::parser::ExprPrecedence;

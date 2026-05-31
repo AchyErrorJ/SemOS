@@ -1,5 +1,8 @@
 // ignore-tidy-filelength
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::mem;
 use core::ops::{Bound, ControlFlow};
 
@@ -2654,14 +2657,14 @@ impl<'a> Parser<'a> {
                             ),
                         let_else_sub: None,
                     });
-                    std::mem::replace(right, this.mk_expr_err(binop_span.shrink_to_hi(), guar))
+                    core::mem::replace(right, this.mk_expr_err(binop_span.shrink_to_hi(), guar))
                 }
                 ExprKind::Block(_, None) => {
                     let guar = this.dcx().emit_err(errors::IfExpressionMissingCondition {
                         if_span: lo.with_neighbor(cond.span).shrink_to_hi(),
                         block_span: self.psess.source_map().start_point(cond_span),
                     });
-                    std::mem::replace(&mut cond, this.mk_expr_err(cond_span.shrink_to_hi(), guar))
+                    core::mem::replace(&mut cond, this.mk_expr_err(cond_span.shrink_to_hi(), guar))
                 }
                 _ => {
                     return None;

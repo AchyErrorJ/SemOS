@@ -1,6 +1,6 @@
-use std::mem;
-use std::ops::ControlFlow;
-use std::sync::Arc;
+use core::mem;
+use core::ops::ControlFlow;
+use alloc::sync::Arc;
 
 use rustc_ast::*;
 use rustc_ast_pretty::pprust::expr_to_string;
@@ -636,7 +636,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
         overall_span: Span,
     ) -> &'hir hir::Expr<'hir> {
         let constructor = self.arena.alloc(self.expr_lang_item_path(method_span, lang_item));
-        self.expr_call(overall_span, constructor, std::slice::from_ref(expr))
+        self.expr_call(overall_span, constructor, core::slice::from_ref(expr))
     }
 
     fn lower_arm(&mut self, arm: &Arm) -> hir::Arm<'hir> {
@@ -1273,7 +1273,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
             self.stmt_let_pat(None, whole_span, Some(rhs), pat, hir::LocalSource::AssignDesugar);
 
         // `a = lhs1; b = lhs2;`.
-        let stmts = self.arena.alloc_from_iter(std::iter::once(destructure_let).chain(assignments));
+        let stmts = self.arena.alloc_from_iter(core::iter::once(destructure_let).chain(assignments));
 
         // Wrap everything in a block.
         hir::ExprKind::Block(self.block_all(whole_span, stmts, None), None)
@@ -1754,7 +1754,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
             let wrapped_yielded = self.expr_call_lang_item_fn(
                 desugar_span,
                 hir::LangItem::AsyncGenReady,
-                std::slice::from_ref(yielded),
+                core::slice::from_ref(yielded),
             );
             let yield_expr = self.arena.alloc(
                 self.expr(span, hir::ExprKind::Yield(wrapped_yielded, hir::YieldSource::Yield)),

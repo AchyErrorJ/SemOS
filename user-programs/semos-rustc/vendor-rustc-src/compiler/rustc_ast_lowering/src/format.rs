@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use rustc_ast::*;
 use rustc_data_structures::fx::FxIndexMap;
@@ -256,7 +256,7 @@ fn make_argument<'hir>(
             Usize => sym::from_usize,
         },
     ));
-    ctx.expr_call_mut(sp, new_fn, std::slice::from_ref(arg))
+    ctx.expr_call_mut(sp, new_fn, core::slice::from_ref(arg))
 }
 
 /// Get the value for a `width` or `precision` field.

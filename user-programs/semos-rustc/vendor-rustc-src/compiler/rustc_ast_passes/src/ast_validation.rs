@@ -16,9 +16,9 @@
 //! constructions produced by proc macros. This pass is only intended for simple checks that do not
 //! require name resolution or type checking, or other kinds of complex analysis.
 
-use std::mem;
-use std::ops::{Deref, DerefMut};
-use std::str::FromStr;
+use core::mem;
+use core::ops::{Deref, DerefMut};
+use core::str::FromStr;
 
 use itertools::{Either, Itertools};
 use rustc_abi::{CVariadicStatus, CanonAbi, ExternAbi, InterruptKind};

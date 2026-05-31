@@ -2,7 +2,7 @@
 mod tests;
 
 pub mod state;
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use rustc_ast as ast;
 use rustc_ast::token::{Token, TokenKind};

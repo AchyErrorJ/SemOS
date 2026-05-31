@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use core::fmt::Write;
 
 use ast::{ForLoopKind, MatchKind};
 use itertools::{Itertools, Position};

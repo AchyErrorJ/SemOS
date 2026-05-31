@@ -1,5 +1,8 @@
-use std::mem::take;
-use std::ops::{Deref, DerefMut};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::mem::take;
+use core::ops::{Deref, DerefMut};
 
 use ast::token::IdentIsRaw;
 use rustc_ast::token::{self, Lit, LitKind, Token, TokenKind};
@@ -203,8 +206,8 @@ impl IncOrDec {
     }
 }
 
-impl std::fmt::Display for UnaryFixity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for UnaryFixity {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Pre => write!(f, "prefix"),
             Self::Post => write!(f, "postfix"),

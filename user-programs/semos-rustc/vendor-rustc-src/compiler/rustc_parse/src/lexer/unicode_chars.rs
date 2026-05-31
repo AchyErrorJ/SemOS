@@ -1,6 +1,8 @@
 //! Characters and their corresponding confusables were collected from
 //! <https://www.unicode.org/Public/security/10.0.0/confusables.txt>
 
+use alloc::string::ToString;
+
 use rustc_span::{BytePos, Pos, Span, kw};
 
 use super::Lexer;

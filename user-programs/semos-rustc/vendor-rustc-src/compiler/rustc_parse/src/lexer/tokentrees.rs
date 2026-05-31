@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use rustc_ast::token::{self, Delimiter, Token};
 use rustc_ast::tokenstream::{DelimSpacing, DelimSpan, Spacing, TokenStream, TokenTree};
 use rustc_ast_pretty::pprust::token_to_string;
@@ -171,7 +173,7 @@ impl<'psess, 'src> Lexer<'psess, 'src> {
                 break (this_spacing, next_tok);
             }
         };
-        let this_tok = std::mem::replace(&mut self.token, next_tok);
+        let this_tok = core::mem::replace(&mut self.token, next_tok);
         (this_tok, this_spacing)
     }
 

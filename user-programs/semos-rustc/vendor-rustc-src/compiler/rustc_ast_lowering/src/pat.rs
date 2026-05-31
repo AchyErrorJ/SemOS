@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use rustc_ast::*;
 use rustc_data_structures::stack::ensure_sufficient_stack;

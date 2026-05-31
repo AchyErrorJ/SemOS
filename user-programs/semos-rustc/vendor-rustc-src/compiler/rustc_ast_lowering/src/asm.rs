@@ -1,8 +1,7 @@
-use std::collections::hash_map::Entry;
-use std::fmt::Write;
+use core::fmt::Write;
 
 use rustc_ast::*;
-use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap, StdEntry as Entry};
 use rustc_hir as hir;
 use rustc_hir::def::{DefKind, Res};
 use rustc_session::parse::feature_err;

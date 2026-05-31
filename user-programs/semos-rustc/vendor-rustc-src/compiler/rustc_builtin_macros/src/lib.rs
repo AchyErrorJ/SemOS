@@ -1,6 +1,7 @@
 //! This crate contains implementations of built-in macros and other code generating facilities
 //! injecting code into the crate before it is lowered to HIR.
 
+#![no_std]
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![feature(assert_matches)]
@@ -14,7 +15,10 @@
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
 
-use std::sync::Arc;
+#[macro_use]
+extern crate alloc;
+
+use alloc::sync::Arc;
 
 use rustc_expand::base::{MacroExpanderFn, ResolverExpand, SyntaxExtensionKind};
 use rustc_expand::proc_macro::BangProcMacro;

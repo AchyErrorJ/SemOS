@@ -1,3 +1,6 @@
+[workspace]
+members = []
+
 [package]
 name = "rustc_ast_passes"
 version = "0.0.0"

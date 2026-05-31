@@ -1,7 +1,37 @@
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::ops::{Deref, DerefMut};
-use std::sync::LazyLock;
+use core::cell::RefCell;
+use alloc::collections::BTreeMap;
+use core::ops::{Deref, DerefMut};
+// M27 R4: std::sync::LazyLock not yet in semos_std. Local `LazyLock`
+// shim below preserves the `LazyLock::new(|| ...)` call-site shape using
+// semos_std::sync::OnceLock + a function pointer. Parent integrator:
+// replace with a hoisted semos_std::sync::LazyLock once that lands;
+// surface here is exactly the std::sync::LazyLock<T, fn() -> T>
+// initializer pattern this crate uses.
+mod lazy_lock_shim {
+    use semos_std::sync::OnceLock;
+    pub struct LazyLock<T: 'static> {
+        cell: OnceLock<T>,
+        init: fn() -> T,
+    }
+    impl<T: 'static> LazyLock<T> {
+        pub const fn new(init: fn() -> T) -> Self {
+            Self { cell: OnceLock::new(), init }
+        }
+        pub fn force(this: &Self) -> &T {
+            this.cell.get_or_init(this.init)
+        }
+    }
+    impl<T: 'static> core::ops::Deref for LazyLock<T> {
+        type Target = T;
+        fn deref(&self) -> &T {
+            self.cell.get_or_init(self.init)
+        }
+    }
+    // SAFETY: OnceLock<T> is Send+Sync where T is; fn() -> T is Send+Sync.
+    unsafe impl<T: Send + Sync + 'static> Sync for LazyLock<T> {}
+    unsafe impl<T: Send + 'static> Send for LazyLock<T> {}
+}
+use lazy_lock_shim::LazyLock;
 
 use private::Sealed;
 use rustc_ast::{AttrStyle, MetaItemLit, NodeId};

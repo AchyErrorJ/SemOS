@@ -1,3 +1,12 @@
+// M27 §1.5: proc-macro runtime deferred — SemOS v1 cannot dlopen a proc-macro
+// dylib and has no cross-thread mpsc semantics; the proc-macro server in
+// this file is therefore host-only. On the SemOS target the public API
+// shape (BangProcMacro / AttrProcMacro / DeriveProcMacro / provide_derive_
+// macro_expansion) is preserved as never-succeeding stubs so the rest of
+// rustc_expand and the builtin_macros registration code keep type-checking.
+// Resolution: once a kernel-side proc-macro sandbox lands (out-of-scope
+// for M27), restore the upstream body. See PLAN §1.5 for rationale.
+
 use rustc_ast::tokenstream::TokenStream;
 use rustc_errors::ErrorGuaranteed;
 use rustc_middle::ty::{self, TyCtxt};
@@ -11,11 +20,15 @@ use {rustc_ast as ast, rustc_proc_macro as pm};
 use crate::base::{self, *};
 use crate::{errors, proc_macro_server};
 
+// M27 §1.5: mpsc-backed MessagePipe is the cross-thread channel for the
+// proc-macro server. semos_std has no mpsc shim yet; host-only.
+#[cfg(not(target_os = "none"))]
 struct MessagePipe<T> {
     tx: std::sync::mpsc::SyncSender<T>,
     rx: std::sync::mpsc::Receiver<T>,
 }
 
+#[cfg(not(target_os = "none"))]
 impl<T> pm::bridge::server::MessagePipe<T> for MessagePipe<T> {
     fn new() -> (Self, Self) {
         let (tx1, rx1) = std::sync::mpsc::sync_channel(1);
@@ -32,6 +45,7 @@ impl<T> pm::bridge::server::MessagePipe<T> for MessagePipe<T> {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 fn exec_strategy(sess: &Session) -> impl pm::bridge::server::ExecutionStrategy + 'static {
     pm::bridge::server::MaybeCrossThread::<MessagePipe<_>>::new(
         sess.opts.unstable_opts.proc_macro_execution_strategy
@@ -44,6 +58,7 @@ pub struct BangProcMacro {
 }
 
 impl base::BangProcMacro for BangProcMacro {
+    #[cfg(not(target_os = "none"))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -67,6 +82,25 @@ impl base::BangProcMacro for BangProcMacro {
             })
         })
     }
+    // M27 §1.5: SemOS target — proc-macros are out of scope for v1. Emit a
+    // hard error from the diagnostic context (the call site has Span).
+    #[cfg(target_os = "none")]
+    fn expand(
+        &self,
+        ecx: &mut ExtCtxt<'_>,
+        span: Span,
+        _input: TokenStream,
+    ) -> Result<TokenStream, ErrorGuaranteed> {
+        let _ = &self.client;
+        Err(ecx.dcx().emit_err(errors::ProcMacroPanicked {
+            span,
+            message: Some(errors::ProcMacroPanickedHelp {
+                message: alloc::string::String::from(
+                    "proc-macro expansion not supported by rustc-on-SemOS (PLAN \u{a7}1.5)",
+                ),
+            }),
+        }))
+    }
 }
 
 pub struct AttrProcMacro {
@@ -74,6 +108,7 @@ pub struct AttrProcMacro {
 }
 
 impl base::AttrProcMacro for AttrProcMacro {
+    #[cfg(not(target_os = "none"))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -100,6 +135,25 @@ impl base::AttrProcMacro for AttrProcMacro {
             },
         )
     }
+    // M27 §1.5: SemOS-target stub — attribute proc-macros not supported.
+    #[cfg(target_os = "none")]
+    fn expand(
+        &self,
+        ecx: &mut ExtCtxt<'_>,
+        span: Span,
+        _annotation: TokenStream,
+        _annotated: TokenStream,
+    ) -> Result<TokenStream, ErrorGuaranteed> {
+        let _ = &self.client;
+        Err(ecx.dcx().emit_err(errors::CustomAttributePanicked {
+            span,
+            message: Some(errors::CustomAttributePanickedHelp {
+                message: alloc::string::String::from(
+                    "attribute proc-macros not supported by rustc-on-SemOS (PLAN \u{a7}1.5)",
+                ),
+            }),
+        }))
+    }
 }
 
 pub struct DeriveProcMacro {
@@ -107,6 +161,7 @@ pub struct DeriveProcMacro {
 }
 
 impl MultiItemModifier for DeriveProcMacro {
+    #[cfg(not(target_os = "none"))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -183,9 +238,24 @@ impl MultiItemModifier for DeriveProcMacro {
 
         ExpandResult::Ready(items)
     }
+    // M27 §1.5: SemOS-target stub — derive proc-macros not supported.
+    #[cfg(target_os = "none")]
+    fn expand(
+        &self,
+        ecx: &mut ExtCtxt<'_>,
+        span: Span,
+        _meta_item: &ast::MetaItem,
+        _item: Annotatable,
+        _is_derive_const: bool,
+    ) -> ExpandResult<Vec<Annotatable>, Annotatable> {
+        let _ = &self.client;
+        ecx.dcx().emit_err(errors::ProcMacroDeriveTokens { span });
+        ExpandResult::Ready(vec![])
+    }
 }
 
 /// Provide a query for computing the output of a derive macro.
+#[cfg(not(target_os = "none"))]
 pub(super) fn provide_derive_macro_expansion<'tcx>(
     tcx: TyCtxt<'tcx>,
     key: (LocalExpnId, &'tcx TokenStream),
@@ -200,8 +270,18 @@ pub(super) fn provide_derive_macro_expansion<'tcx>(
     })
 }
 
+// M27 §1.5: SemOS-target stub — incremental derive query path never fires.
+#[cfg(target_os = "none")]
+pub(super) fn provide_derive_macro_expansion<'tcx>(
+    _tcx: TyCtxt<'tcx>,
+    _key: (LocalExpnId, &'tcx TokenStream),
+) -> Result<&'tcx TokenStream, ()> {
+    Err(())
+}
+
 type DeriveClient = pm::bridge::client::Client<pm::TokenStream, pm::TokenStream>;
 
+#[cfg(not(target_os = "none"))]
 fn expand_derive_macro(
     invoc_id: LocalExpnId,
     input: TokenStream,
@@ -239,12 +319,14 @@ fn expand_derive_macro(
 }
 
 /// Stores the context necessary to expand a derive proc macro via a query.
+#[cfg(not(target_os = "none"))]
 struct QueryDeriveExpandCtx {
     /// Type-erased version of `&mut ExtCtxt`
     expansion_ctx: *mut (),
     client: DeriveClient,
 }
 
+#[cfg(not(target_os = "none"))]
 impl QueryDeriveExpandCtx {
     /// Store the extension context and the client into the thread local value.
     /// It will be accessible via the `with` method while `f` is active.
@@ -281,4 +363,8 @@ impl QueryDeriveExpandCtx {
 
 // When we invoke a query to expand a derive proc macro, we need to provide it with the expansion
 // context and derive Client. We do that using a thread-local.
+// M27 R4 B2: scoped_tls — see semos_std::scoped_thread_local! shim. Kept
+// behind cfg(not(target_os = "none")) because the QueryDeriveExpandCtx
+// only exists on host (proc-macro path).
+#[cfg(not(target_os = "none"))]
 scoped_tls::scoped_thread_local!(static DERIVE_EXPAND_CTX: QueryDeriveExpandCtx);

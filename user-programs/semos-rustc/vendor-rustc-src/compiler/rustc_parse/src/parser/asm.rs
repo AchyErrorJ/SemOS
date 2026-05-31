@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use rustc_ast::{self as ast, AsmMacro, MgcaDisambiguation};
 use rustc_span::{Span, Symbol, kw};
 

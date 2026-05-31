@@ -1796,10 +1796,10 @@ impl<'hir> LoweringContext<'_, 'hir> {
         let span = self.lower_span(generics.span);
         let res = f(self);
 
-        let impl_trait_defs = std::mem::take(&mut self.impl_trait_defs);
+        let impl_trait_defs = core::mem::take(&mut self.impl_trait_defs);
         params.extend(impl_trait_defs.into_iter());
 
-        let impl_trait_bounds = std::mem::take(&mut self.impl_trait_bounds);
+        let impl_trait_bounds = core::mem::take(&mut self.impl_trait_bounds);
         predicates.extend(impl_trait_bounds.into_iter());
 
         let lowered_generics = self.arena.alloc(hir::Generics {

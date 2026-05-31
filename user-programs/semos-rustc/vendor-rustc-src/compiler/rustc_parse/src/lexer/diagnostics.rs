@@ -1,3 +1,6 @@
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
 use rustc_ast::token::Delimiter;
 use rustc_errors::Diag;
 use rustc_session::parse::ParseSess;

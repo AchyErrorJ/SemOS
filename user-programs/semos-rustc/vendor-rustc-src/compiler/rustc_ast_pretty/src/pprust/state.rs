@@ -6,8 +6,8 @@ mod expr;
 mod fixup;
 mod item;
 
-use std::borrow::Cow;
-use std::sync::Arc;
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
 
 use rustc_ast::attr::AttrIdGenerator;
 use rustc_ast::token::{self, CommentKind, Delimiter, DocFragmentKind, Token, TokenKind};
@@ -429,21 +429,21 @@ fn literal_to_string(lit: token::Lit) -> String {
     out
 }
 
-impl std::ops::Deref for State<'_> {
+impl core::ops::Deref for State<'_> {
     type Target = pp::Printer;
     fn deref(&self) -> &Self::Target {
         &self.s
     }
 }
 
-impl std::ops::DerefMut for State<'_> {
+impl core::ops::DerefMut for State<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.s
     }
 }
 
 /// This trait is used for both AST and HIR pretty-printing.
-pub trait PrintState<'a>: std::ops::Deref<Target = pp::Printer> + std::ops::DerefMut {
+pub trait PrintState<'a>: core::ops::Deref<Target = pp::Printer> + core::ops::DerefMut {
     fn comments(&self) -> Option<&Comments<'a>>;
     fn comments_mut(&mut self) -> Option<&mut Comments<'a>>;
     fn ann_post(&mut self, ident: Ident);

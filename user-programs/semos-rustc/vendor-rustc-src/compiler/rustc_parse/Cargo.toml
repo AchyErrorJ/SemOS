@@ -1,7 +1,17 @@
+[workspace]
+# M27 Phase 3a C1: opt out of any parent workspace.
+members = []
+
 [package]
 name = "rustc_parse"
 version = "0.0.0"
 edition = "2024"
+
+# M27 R4 B5: on the SemOS target, lib.rs/errors.rs route Path/PathBuf and
+# fs::read through `semos_std::*`. The dependency edge is added by the parent
+# integrator's workspace patch (same pattern as rustc_fs_util / rustc_span);
+# no semos_std entry is declared here so host builds (rustdoc, host-cargo-test)
+# stay clean. See docs/m27-port/3a/C1-parse.md for routing details.
 
 [dependencies]
 # tidy-alphabetical-start
