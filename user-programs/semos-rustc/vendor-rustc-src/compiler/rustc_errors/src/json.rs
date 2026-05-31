@@ -45,7 +45,11 @@ use crate::timings::{TimingRecord, TimingSection};
 use crate::translation::{Translator, to_fluent_args};
 use crate::{CodeSuggestion, MultiSpan, SpanLabel, Subdiag, Suggestions, TerminalUrl};
 
-#[cfg(test)]
+// M27: json/tests.rs uses std::str + Arc<Mutex<Vec<u8>>> with std-side
+// `.lock().unwrap()` semantics; semos_std::sync::Mutex returns the guard
+// directly. Gated to host-only so the SemOS-target build skips the
+// signature mismatch.
+#[cfg(all(test, not(target_os = "none")))]
 mod tests;
 
 #[derive(Setters)]

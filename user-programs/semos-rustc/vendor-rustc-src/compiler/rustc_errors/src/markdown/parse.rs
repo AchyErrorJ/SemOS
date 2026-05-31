@@ -1,4 +1,6 @@
-use std::{iter, mem, str};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::{iter, mem, str};
 
 use crate::markdown::{MdStream, MdTree};
 

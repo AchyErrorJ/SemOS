@@ -2,7 +2,8 @@
 //!
 //! Entrypoint is `MdStream::parse_str(...)`
 
-use std::io;
+use alloc::vec::Vec;
+use semos_std::io;
 
 mod parse;
 mod term;
@@ -30,7 +31,18 @@ impl<'a> MdStream<'a> {
 }
 
 /// Create an anstream buffer with the `Always` color choice
+///
+/// M27 R4 B5 TODO(Phase 2b): `anstream::Stdout::always` requires a
+/// `std::io::Stdout` handle. semos_std exposes a unit `Stdout` struct
+/// that impls `io::Write`, not the `std::io::Stdout` type anstream
+/// expects. Until the vendored anstream is patched to accept a generic
+/// `Write` (the no_std-friendly path), this constructor is only valid on
+/// host builds. Marked TODO so anstream's port can wire it correctly.
 pub fn create_stdout_bufwtr() -> anstream::Stdout {
+    // M27 R4 B5 TODO(Phase 2b): see fn-level note. The call below is the
+    // original std::io::stdout()-shaped invocation, retained for the host
+    // build. On the SemOS target it will fail to type-check until either
+    // anstream is patched or this is gated to cfg(not(target_os = "none")).
     anstream::Stdout::always(std::io::stdout())
 }
 

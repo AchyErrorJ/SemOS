@@ -7,12 +7,20 @@
 //!
 //! The output types are defined in `rustc_session::config::ErrorOutputType`.
 
-use std::borrow::Cow;
-use std::error::Report;
-use std::io::prelude::*;
-use std::io::{self, IsTerminal};
-use std::iter;
-use std::path::Path;
+// M27 §1.8: std::error::Report dropped per plan (i18n removed). The
+// translator is infallible on SemOS, so .map_err(Report::new).unwrap() is
+// rewritten to plain .unwrap() at each call site below.
+// M27 R4 B5: Path goes through semos_std::path; the implementation is
+// lexical-only (see RECIPE §2 "semos-std surface").
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter;
+use semos_std::io::{self, Write};
+// M27 R4 B5: Path import — semos_std::path is lexical-only; no canonicalize
+// or component-iteration is exercised in this file.
+use semos_std::path::Path;
 
 use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Effects};
@@ -109,10 +117,11 @@ pub trait Emitter {
         fluent_args: &FluentArgs<'_>,
     ) {
         if let Some((sugg, rest)) = suggestions.split_first() {
+            // M27 §1.8: translate_message is infallible on SemOS (no fluent
+            // backend). Plain .unwrap() replaces .map_err(Report::new).unwrap().
             let msg = self
                 .translator()
                 .translate_message(&sugg.msg, fluent_args)
-                .map_err(Report::new)
                 .unwrap();
             if rest.is_empty()
                // ^ if there is only one suggestion
@@ -420,16 +429,23 @@ pub enum ColorConfig {
 
 impl ColorConfig {
     pub fn to_color_choice(self) -> ColorChoice {
+        // M27 R4 B5 TODO(Phase 2b): IsTerminal is a std-only trait.
+        // semos_std::io has no IsTerminal impl. The SemOS console is a
+        // serial UART — never an interactive ANSI terminal — so we treat
+        // is_terminal as constant false. ColorConfig::Always still picks
+        // AlwaysAnsi (raw ANSI bytes on the wire); Auto degenerates to
+        // Never which is the desired default for a serial console.
+        const IS_TERMINAL: bool = false;
         match self {
             ColorConfig::Always => {
-                if io::stderr().is_terminal() {
+                if IS_TERMINAL {
                     ColorChoice::Always
                 } else {
                     ColorChoice::AlwaysAnsi
                 }
             }
             ColorConfig::Never => ColorChoice::Never,
-            ColorConfig::Auto if io::stderr().is_terminal() => ColorChoice::Auto,
+            ColorConfig::Auto if IS_TERMINAL => ColorChoice::Auto,
             ColorConfig::Auto => ColorChoice::Never,
         }
     }
@@ -517,13 +533,33 @@ pub(crate) fn normalize_whitespace(s: &str) -> String {
 
 pub type Destination = AutoStream<Box<dyn Write + Send>>;
 
+// M27 R4 B5 + TODO(Phase 2b): SemOS has no `std::io::Stderr` — semos_std
+// exposes only a single serial-console `Stdout`. The original code path
+// here used a buffered Stderr handle for write-atomicity. On SemOS the
+// SYS_WRITE syscall already serializes writes at the kernel level
+// (single-threaded process model with per-call atomic write), so the
+// Buffy/CRLF-pair below is redundant. We re-route through semos_std::io::
+// Stdout as the only available terminal sink. If a real Stderr split is
+// ever needed (separate fd for diagnostics vs. compile output), this is
+// the site to revisit.
+//
+// To keep the public API unchanged for downstream callers
+// (rustc_driver_impl creates a Destination via stderr_destination), we
+// keep the Buffy + stderr_destination + get_stderr_color_choice shapes
+// intact. The buffer_writer becomes semos_std::io::Stdout.
 struct Buffy {
-    buffer_writer: std::io::Stderr,
+    // M27 R4 B5 TODO(Phase 2b): semos_std::io::Stdout used as Stderr
+    // analogue per the comment above.
+    buffer_writer: semos_std::io::Stdout,
     buffer: Vec<u8>,
 }
 
 impl Write for Buffy {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // M27 TODO(Phase 2b): semos_std::io::Write is implemented for
+        // Vec<u8> via the blanket alloc-backed impl (verified in Cranelift
+        // port). If a future semos_std change removes that impl, this site
+        // needs an explicit io::Write impl-for-Vec<u8>.
         self.buffer.write(buf)
     }
 
@@ -538,13 +574,15 @@ impl Drop for Buffy {
     fn drop(&mut self) {
         if !self.buffer.is_empty() {
             self.flush().unwrap();
+            // M27 §1.9: SemOS panic = abort; semantic equivalence preserved.
             panic!("buffers need to be flushed in order to print their contents");
         }
     }
 }
 
 pub fn stderr_destination(color: ColorConfig) -> Destination {
-    let buffer_writer = std::io::stderr();
+    // M27 R4 B5: semos_std::io::Stdout as Stderr analogue (see Buffy comment).
+    let buffer_writer = semos_std::io::Stdout;
     // We need to resolve `ColorChoice::Auto` before `Box`ing since
     // `ColorChoice::Auto` on `dyn Write` will always resolve to `Never`
     let choice = get_stderr_color_choice(color, &buffer_writer);
@@ -554,6 +592,10 @@ pub fn stderr_destination(color: ColorConfig) -> Destination {
     //
     // On non-Windows we rely on the atomicity of `write` to ensure errors
     // don't get all jumbled up.
+    //
+    // M27 §1.6: SemOS target is x86_64-unknown-none — neither cfg(windows)
+    // nor the original cfg(unix) path applies. The buffered Buffy path is
+    // taken; SYS_WRITE is atomic per kernel contract.
     if cfg!(windows) {
         AutoStream::new(Box::new(buffer_writer), choice)
     } else {
@@ -562,9 +604,16 @@ pub fn stderr_destination(color: ColorConfig) -> Destination {
     }
 }
 
-pub fn get_stderr_color_choice(color: ColorConfig, stderr: &std::io::Stderr) -> ColorChoice {
+pub fn get_stderr_color_choice(color: ColorConfig, stderr: &semos_std::io::Stdout) -> ColorChoice {
     let choice = color.to_color_choice();
-    if matches!(choice, ColorChoice::Auto) { AutoStream::choice(stderr) } else { choice }
+    // M27 TODO(Phase 2b): AutoStream::choice expects an IsTerminal handle.
+    // semos_std::io::Stdout does not implement IsTerminal. anstream's
+    // choice() fallback returns ColorChoice::Never when the stream is not
+    // a terminal — that's the right default for a kernel serial console.
+    // If color output is later wanted on the SemOS console, expose a
+    // const-true IsTerminal impl on semos_std::io::Stdout.
+    let _ = stderr;
+    if matches!(choice, ColorChoice::Auto) { ColorChoice::Never } else { choice }
 }
 
 /// On Windows, BRIGHT_BLUE is hard to read on black. Use cyan instead.

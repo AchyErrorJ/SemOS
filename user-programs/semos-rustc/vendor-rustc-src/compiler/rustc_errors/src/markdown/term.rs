@@ -1,5 +1,7 @@
-use std::cell::Cell;
-use std::io::{self, Write};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::cell::Cell;
+use semos_std::io::{self, Write};
 
 use anstyle::{AnsiColor, Effects, Style};
 
@@ -7,7 +9,10 @@ use crate::markdown::{MdStream, MdTree};
 
 const DEFAULT_COLUMN_WIDTH: usize = 140;
 
-thread_local! {
+// M27 R4 B2: thread_local! resolves via semos_std (single-threaded
+// LocalKey implementation per RECIPE §2). Markdown rendering is invoked
+// from the main rustc thread only, so single-threadedness is fine.
+semos_std::thread_local! {
     /// Track the position of viewable characters in our buffer
     static CURSOR: Cell<usize> = const { Cell::new(0) };
     /// Width of the terminal
@@ -101,7 +106,10 @@ fn write_tt(
             reset_cursor();
         }
         MdTree::HorizontalRule => {
-            (0..WIDTH.get()).for_each(|_| buf.write_all(b"-").unwrap());
+            // M27 R4 B2: semos_std::thread::LocalKey<Cell<T>> has no inherent
+            // `get`/`set` — those are std-only sugar added in 1.73. Use
+            // `.with(|c| c.get())` to access the underlying Cell.
+            (0..WIDTH.with(|c| c.get())).for_each(|_| buf.write_all(b"-").unwrap());
             reset_cursor();
         }
         MdTree::Heading(n, stream) => {
@@ -152,7 +160,8 @@ fn reset_opt_style(buf: &mut Vec<u8>, style: Option<Style>) -> io::Result<()> {
 
 /// End of that block, just wrap the line
 fn reset_cursor() {
-    CURSOR.set(0);
+    // M27 R4 B2: semos_std::thread::LocalKey has no `set` shortcut.
+    CURSOR.with(|c| c.set(0));
 }
 
 /// Change to be generic on Write for testing. If we have a link URL, we don't
@@ -178,7 +187,8 @@ fn write_wrapping(
                 buf.write_all(ind_ws)?;
                 cur.set(indent);
             }
-            let ch_count = WIDTH.get() - cur.get();
+            // M27 R4 B2: see above re LocalKey<Cell<T>>.
+            let ch_count = WIDTH.with(|c| c.get()) - cur.get();
             let mut iter = to_write.char_indices();
             let Some((end_idx, _ch)) = iter.nth(ch_count) else {
                 // Write entire line
@@ -218,6 +228,9 @@ fn write_wrapping(
     })
 }
 
-#[cfg(test)]
+// M27: tests/term.rs uses std::path::PathBuf + std::fs::read/write +
+// std::env::var_os to round-trip blessed fixtures from disk. None of
+// these surfaces match semos_std exactly. Gate to host-only.
+#[cfg(all(test, not(target_os = "none")))]
 #[path = "tests/term.rs"]
 mod tests;

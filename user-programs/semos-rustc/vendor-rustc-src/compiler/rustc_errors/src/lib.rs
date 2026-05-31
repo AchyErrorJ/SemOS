@@ -139,7 +139,13 @@ pub mod json;
 mod lock;
 pub mod markdown;
 pub mod registry;
-#[cfg(test)]
+// M27 §1.8 + R4 B5: tests/* exercise the fluent-translator pipeline that
+// we replaced with a passthrough on SemOS. They use std::sync::LazyLock
+// + IntoDynSyncSend in shapes that have no semos_std analogue. Gate the
+// host-only #[cfg(test)] mod to `cfg(not(target_os = "none"))` so
+// host-side `cargo test` of the rustc-host build still runs them and the
+// SemOS-target build skips them entirely.
+#[cfg(all(test, not(target_os = "none")))]
 mod tests;
 pub mod timings;
 pub mod translation;

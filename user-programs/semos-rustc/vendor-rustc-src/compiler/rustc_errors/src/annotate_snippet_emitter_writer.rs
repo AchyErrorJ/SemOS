@@ -5,12 +5,14 @@
 //!
 //! [annotate_snippets]: https://docs.rs/crate/annotate-snippets/
 
-use std::borrow::Cow;
-use std::error::Report;
-use std::fmt::Debug;
-use std::io;
-use std::io::Write;
-use std::sync::Arc;
+// M27 §1.8: std::error::Report dropped (i18n removed). Translator is
+// infallible on SemOS; `.map_err(Report::new).unwrap()` → `.unwrap()`.
+use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt::Debug;
+use semos_std::io::{self, Write};
 
 use annotate_snippets::renderer::DEFAULT_TERM_WIDTH;
 use annotate_snippets::{AnnotationKind, Group, Origin, Padding, Patch, Renderer, Snippet};
@@ -54,7 +56,7 @@ pub struct AnnotateSnippetEmitter {
 }
 
 impl Debug for AnnotateSnippetEmitter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("AnnotateSnippetEmitter")
             .field("short_message", &self.short_message)
             .field("ui_testing", &self.ui_testing)
@@ -266,7 +268,7 @@ impl AnnotateSnippetEmitter {
                 continue;
             }
 
-            report.push(std::mem::replace(
+            report.push(core::mem::replace(
                 &mut group,
                 Group::with_title(level.clone().secondary_title(msg)),
             ));
@@ -368,10 +370,10 @@ impl AnnotateSnippetEmitter {
                     if substitutions.is_empty() {
                         continue;
                     }
+                    // M27 §1.8: infallible translator on SemOS.
                     let mut msg = self
                         .translator
                         .translate_message(&suggestion.msg, args)
-                        .map_err(Report::new)
                         .unwrap()
                         .to_string();
 
@@ -495,7 +497,7 @@ impl AnnotateSnippetEmitter {
                         })
                         .collect::<Vec<_>>();
                     if !subs.is_empty() {
-                        report.push(std::mem::replace(
+                        report.push(core::mem::replace(
                             &mut group,
                             Group::with_title(annotate_snippets::Level::HELP.secondary_title(msg)),
                         ));
@@ -556,7 +558,8 @@ impl AnnotateSnippetEmitter {
     ) -> String {
         msgs.iter()
             .filter_map(|(m, style)| {
-                let text = self.translator.translate_message(m, args).map_err(Report::new).unwrap();
+                // M27 §1.8: infallible translator on SemOS.
+                let text = self.translator.translate_message(m, args).unwrap();
                 let style = style.anstyle(level);
                 if text.is_empty() { None } else { Some(format!("{style}{text}{style:#}")) }
             })
@@ -613,7 +616,7 @@ impl AnnotateSnippetEmitter {
                 //    │
                 //    ╰ note: not covered
                 if i == 0 && file_idx != 0 {
-                    report.push(std::mem::replace(&mut group, Group::with_level(level.clone())));
+                    report.push(core::mem::replace(&mut group, Group::with_level(level.clone())));
                 }
 
                 if !line_tracker.contains(&lo.line) && (i == 0 || hi.line <= lo.line) {
@@ -706,7 +709,8 @@ fn collect_annotations(
 
         let label = label.as_ref().map(|m| {
             normalize_whitespace(
-                &translator.translate_message(m, args).map_err(Report::new).unwrap(),
+                // M27 §1.8: infallible translator on SemOS.
+                &translator.translate_message(m, args).unwrap(),
             )
         });
 
