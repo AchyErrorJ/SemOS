@@ -1,0 +1,168 @@
+# M27 rustc-on-SemOS — experiment log
+
+This is the research-diary version of the M27 port. The plan is at
+`docs/M27_RUSTC_PORT_PLAN.md`; the recon outputs are at
+`docs/m27-recon/`. This file is *what we actually saw happen* as we
+ran the experiment, append-only, with timestamps so future-me (or a
+future agent on the second port of something similar) can replay the
+decisions.
+
+Why this file exists: nobody on this project has done a 4-8-agent
+swarm port of a 70-internal-crate codebase before, and the project is
+not big enough to have a "we always do it this way" rulebook. The
+swarm is the experiment. The recipe is the artifact. This log is the
+notebook.
+
+---
+
+## 2026-05-30 — Phase 1 (recon)
+
+### Setup
+- Vendored 38 MB / 77 crates from `rust-src` (nightly 1.95.0,
+  2026-01-21) into `user-programs/semos-rustc/vendor-rustc-src/compiler/`.
+- Committed as `c2e7c75` (plan) + the rustc-src staging commit.
+- Spawned 4 parallel recon agents in isolated worktrees:
+  R1 (dep graph) / R2 (std surface) / R3 (externals) / R4 (blockers).
+
+### Outcomes
+All four returned without bouncing. Calendar time: ~15 minutes (R2 was
+first back at ~8 min, R4 last at ~14 min).
+
+Headline reconciled numbers (`docs/m27-recon/SYNTHESIS.md`):
+- 77 internal `rustc_*` crates / 70 after §1 drops / ~770 k LOC remaining
+- 71 external crates / 50–55 after §1 drops
+- 0 TRIVIAL crates (the 5-minute Cranelift pattern applies to none)
+- 1 unmitigated blocker beyond §1 (B1: panic-as-control-flow)
+
+### Things the recon surfaced that I hadn't anticipated
+1. **§1.5 (drop proc-macros) is too coarse.** R1 §6.2 — keep
+   `rustc_proc_macro` for type compatibility; drop only the runtime
+   expansion server.
+2. **§1.2 (statically link cg_clif) is cheaper than I thought.** R1 §6.1
+   — cg_clif is already loaded via `cargo -Z codegen-backend`, not
+   libloading, so no metadata-plugin surgery needed.
+3. **The hash-crate stack should consolidate.** R3 — `rustc_span` uses
+   blake3 + sha1 + sha2 + md-5; consolidating to blake3 saves ~3 sessions.
+4. **rustc has its own forked rayon** at `compiler/rustc_thread_pool/`
+   (R3). Single-threading it kills 3 external deps (crossbeam-deque/
+   crossbeam-utils/jobserver) in one move.
+5. **B1 has no clean v1 fix.** Accept "one error per compile" as the
+   v1 product limitation. Real fix is a SemOS stack unwinder which is
+   3-5 kernel sessions and out of M27 scope.
+
+### Decisions taken (folded into the plan)
+- **§1.7**: cg_clif owns final ET_EXEC emission; drop the
+  `rustc_codegen_ssa::back::link` Command-spawn path entirely.
+- **§1.8**: drop i18n (fluent-bundle + 7 ICU crates), hardcode English
+  diagnostics. Saves ~5 sessions.
+- **§1.9**: FatalError → process abort (one-error-per-compile in v1).
+
+### What I'd do differently next time
+- Spawn the recon agents in two rounds, not one. R1 (the dep graph) is
+  a prerequisite for R2/R3/R4's framing — but I had them all run in
+  parallel, so R2-R4 had to independently build cartographies before
+  they could classify. That's wasted work. Next time: R1 first
+  (single-agent), commit, then R2/R3/R4 in parallel with R1's output
+  as context.
+
+---
+
+## 2026-05-30 (later) — Phase 2a first attempt
+
+### Setup
+Recipe (the standard semos-cc `[workspace] members = []` +
+`#![no_std]` + alloc-prelude + `std::* → core::/alloc::/hashbrown::*`
+substitution) handed to 6 agents in parallel worktrees:
+- A1 rustc_data_structures + thread_pool stub (heavy)
+- A2 rustc_span
+- A3 trivials I (rustc_hashes / rustc_arena / rustc_fs_util / rustc_log)
+- A4 trivials II (rustc_lexer / rustc_graphviz / rustc_ast_ir / rustc_error_codes)
+- A5 rustc_index + rustc_serialize
+- A6 proc-macros (4 crates)
+
+### Failure mode
+**All 6 agents bounced instantly with "You've hit your session limit ·
+resets 10pm (America/Toronto)".** Each agent's duration was 2-3
+seconds, 0 tokens used, 0 tool calls. Worktrees were created but empty.
+
+This is the *quota* limit, not a per-agent failure. Spawning N agents
+in parallel each consumes from the shared bucket; if the bucket is
+already low when the spawn happens, all N bounce simultaneously.
+
+### Diagnosis
+- The earlier 4-agent recon (Phase 1) succeeded that same session, so
+  the bucket WAS available before recon.
+- Recon spent most of the bucket (~12 minutes of agent-time across 4
+  agents).
+- Phase 2a's 6-agent spawn hit the wall.
+
+### Lesson worth capturing
+> Spawning parallel agents in waves of 4-6 against a shared session
+> quota means **the first wave consumes the budget the second wave
+> needs**. The "20 agents at once" mental model from outside-Anthropic
+> reports is not how the quota actually works for this user/plan.
+> Practical pacing: 4-6 agents per wave, wait for completion +
+> bucket-replenishment between waves.
+
+### Adaptation
+Rather than wait until 10pm Toronto for the reset, ran a single-agent
+**probe** to verify the bucket had cooled enough to accept new work.
+
+Probe target: rustc_hashes (131 LOC, smallest possible crate). If the
+probe succeeded, I'd respawn the fleet immediately. If it bounced, the
+quota was still locked and I'd switch to parent-only work.
+
+**Probe succeeded.** Single agent, completed in 285 seconds (~5 min),
+62k tokens, 50 tool calls. Returned a clean rustc_hashes port + two
+recipe corrections.
+
+### Recipe corrections from the probe
+1. **`.cargo-checksum.json` step is N/A** for `compiler/rustc_*`
+   crates. The Cranelift port relied on it because those crates were
+   crates.io vendor checkouts (cargo vendor adds the checksum file).
+   rustc-src crates are raw source and have no checksum file — agents
+   were trying to update a file that doesn't exist.
+2. **External dep `rustc-stable-hash 0.1.2`** is unconditionally std
+   (no feature flag). Will need its own vendor + no_std patch before
+   any rustc_*-target build can succeed.
+3. **Fresh worktrees branch from where the parent was at session
+   start**, not current main. Phase 2a agents on their first invocation
+   were one merge behind because the rustc-src commit landed AFTER
+   the session started. Probe agent had to `git merge main --no-edit`
+   to access it.
+
+### Recipe corrections folded into the v2 prompts
+- "Step 0: `cd` worktree, `git merge main --no-edit`."
+- "Skip `.cargo-checksum.json` updates — rustc-src crates have none."
+- "If you find `rustc-stable-hash` usage, flag it; parent handles the
+  vendor patch separately."
+
+### Re-spawn
+Phase 2a fleet re-spawned 5 agents (A1-A6 minus the rustc_hashes
+already done by the probe). Same recipe, plus the corrections. Running
+in parallel as of timestamp on this commit. Watching.
+
+---
+
+## Lessons-learned so far (running tally)
+
+1. **Sequence recon agents R1 → {R2,R3,R4} parallel.** Saves them
+   re-deriving R1's cartography.
+2. **Session bucket is shared across parallel agents.** Plan agent
+   waves with that in mind; probe before commits to N-agent waves.
+3. **Worktrees branch from session start, not current main.** Always
+   instruct agents `git merge main --no-edit` as step 0 if the parent
+   has committed since the session began.
+4. **`.cargo-checksum.json` step is for *vendored* crates only**, not
+   raw source trees. Recipe must distinguish.
+5. **Probe-then-fleet** is the right cadence for "I think the quota
+   reset but I'm not sure" moments. One agent's failure tells us the
+   bucket state for ~free.
+6. **Document along the way.** The user reminded me of this 20 minutes
+   in, and they're right — this file is the audit trail that lets the
+   next port (typesetter Path A, or a follow-up rustc rebase) start
+   from where we ended rather than from scratch.
+
+---
+
+(Will append as Phase 2a agents come back.)
