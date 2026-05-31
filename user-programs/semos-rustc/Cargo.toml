@@ -55,3 +55,14 @@ opt-level = 0
 lto = true
 strip = true
 codegen-units = 1
+
+# Phase 5b Stage E iter 7: [patch.crates-io] overrides for crates whose
+# upstream defaults pull no_std-incompatible deps that cargo's transitive
+# feature unification can't disable from consumer Cargo.tomls.
+#
+# tracing-core 0.1.36 — upstream `default = ["std", "valuable?/std"]`
+# activates the `std` feature, which pulls once_cell (245 errors against
+# x86_64-unknown-none). Our fork changes default = [] so tracing-core
+# builds in no_std mode unless a consumer explicitly opts in.
+[patch.crates-io]
+tracing-core = { path = "vendor-externals/tracing-core" }
