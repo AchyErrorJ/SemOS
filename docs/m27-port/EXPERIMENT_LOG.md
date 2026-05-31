@@ -1514,7 +1514,47 @@ These are exactly the R3 external port work the recon estimated at
 false` overrides at workspace level OR vendor + no_std patch (same
 pattern as the Cranelift vendored fork in semos-cc).
 
-### Stage E (NEXT-SESSION): external-dep triage wave
+### Stage E IN PROGRESS (commit `24a19be`)
+
+Four discoveries fixed in the first Stage E iteration:
+
+1. **Toolchain pin missing.** `user-programs/semos-rustc/` had no
+   `rust-toolchain.toml`. Cargo fell back to system-default stable,
+   breaking smallvec's `feature(dropck_eyepatch)` (nightly-only).
+   Added `rust-toolchain.toml` pinning `nightly-2026-02-01` (same as
+   `kernel-x86_64/rust-toolchain.toml`).
+2. **RUSTC_BOOTSTRAP env missing.** rustc's internal proc-macro
+   crates (rustc_macros, etc.) check this flag in their build.rs and
+   abort with "wrong command used for building" without it (rustc is
+   normally driven by bootstrap which sets it). Added to .cargo/
+   config.toml `[env]` block.
+3. **stacker pulls C-compiler via psm.** rustc_data_structures
+   carries stacker which needs cc-rs → C compiler (not available
+   targeting x86_64-unknown-none on Windows). Cfg-gated stacker +
+   tempfile as host-only deps; SemOS target uses A1's no-op
+   `ensure_sufficient_stack` shim from Phase 2a.
+4. **thin-vec + rustc-hash defaulted std features.** Bulk-added
+   `default-features = false` to 18 thin-vec + 2 rustc-hash + 1
+   memchr direct dep declarations.
+
+### Stage E open work for next iteration
+
+Transitive external pulls still failing — these come from
+annotate-snippets / fluent-bundle / intl-memoizer / etc. that
+rustc_errors and rustc_driver_impl pull with default features:
+
+| External | Errors | Likely fix |
+|----------|-------:|------------|
+| once_cell 1.21.4 | 245 | parent dep drop (fluent/icu) OR vendor+patch |
+| log 0.4.30 | 100 | vendor + no_std patch (log has no real no_std mode) |
+| rustc-stable-hash 0.1.2 | 31 | vendor + no_std patch (recon flagged) |
+| stable_deref_trait | 17 | parent dep drop |
+| regex-syntax 0.8.10 | 1 | drop unused regex dep from rustc_mir_dataflow |
+
+The §1.8 i18n drop should remove most fluent-bundle / annotate-snippets
+/ intl-memoizer transitive pulls. The drop wasn't fully landed at the
+Cargo.toml level — only at the rustc_errors body level. Need to also
+remove the deps from Cargo.tomls.
 
 1. **Survey each failing external's no_std story.** Some (memchr,
    once_cell, regex-syntax) have feature flags that gate std and
