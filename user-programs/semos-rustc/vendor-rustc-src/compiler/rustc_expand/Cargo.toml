@@ -34,6 +34,6 @@ scoped-tls = "1.0"
 # M27 R4 B5: PathBuf in base.rs, expand.rs, module.rs.
 semos-std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
-thin-vec = "0.2.12"
+thin-vec = { version = "0.2.12", default-features = false }
 tracing = "0.1"
 # tidy-alphabetical-end

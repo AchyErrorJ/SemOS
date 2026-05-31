@@ -25,6 +25,6 @@ rustc_target = { path = "../rustc_target" }
 # attrs/data_structures.rs); mirrors B2/rustc_lint_defs precedent.
 semos-std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
-thin-vec = "0.2.12"
+thin-vec = { version = "0.2.12", default-features = false }
 tracing = "0.1"
 # tidy-alphabetical-end

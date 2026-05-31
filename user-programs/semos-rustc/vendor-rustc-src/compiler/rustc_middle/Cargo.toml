@@ -35,7 +35,7 @@ rustc_thread_pool = { path = "../rustc_thread_pool" }
 rustc_type_ir = { path = "../rustc_type_ir" }
 semos-std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", default-features = false, features = ["union", "may_dangle"] }
-thin-vec = "0.2.12"
+thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
 

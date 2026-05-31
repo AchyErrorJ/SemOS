@@ -1,0 +1,9 @@
+[toolchain]
+# Pin to the same nightly the rest of the project uses
+# (kernel-x86_64/rust-toolchain.toml). M27 Phase 5b Stage E discovery:
+# without this, `cargo check` falls back to the system-default channel
+# (often stable) and immediately fails on smallvec's
+# `#![cfg_attr(feature = "may_dangle", feature(dropck_eyepatch))]`
+# (feature(dropck_eyepatch) is nightly-only).
+channel = "nightly-2026-02-01"
+components = ["rust-src", "llvm-tools-preview"]

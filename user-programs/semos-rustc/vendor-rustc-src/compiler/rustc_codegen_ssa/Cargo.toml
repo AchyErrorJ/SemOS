@@ -43,7 +43,7 @@ semos-std = { path = "../../../../std-shim" }
 serde_json = "1.0.59"
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 tempfile = "3.2"
-thin-vec = "0.2.12"
+thin-vec = { version = "0.2.12", default-features = false }
 thorin-dwp = "0.9"
 tracing = "0.1"
 wasm-encoder = "0.219"

@@ -33,11 +33,17 @@ rustc_macros = { path = "../rustc_macros" }
 rustc_serialize = { path = "../rustc_serialize" }
 rustc_thread_pool = { path = "../rustc_thread_pool" }
 smallvec = { version = "1.8.1", default-features = false, features = ["const_generics", "union", "may_dangle"] }
-stacker = "0.1.17"
-tempfile = "3.2"
-thin-vec = "0.2.12"
+thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+# Host-only deps — these need C compilers (stacker uses psm via cc-rs) or
+# libc-style FS surface (tempfile). On SemOS target, stack.rs's
+# ensure_sufficient_stack falls back to a no-op (A1's M27 R4 B3 shim);
+# tempfile sites should be cfg-gated where they exist.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+stacker = "0.1.17"
+tempfile = "3.2"
 
 [dependencies.hashbrown]
 version = "0.16.1"
