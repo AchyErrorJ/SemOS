@@ -139,7 +139,13 @@ All `cfg(test)` modules left unpatched.
 
 ## Probe-recipe deviations & escalations
 
-None. The recipe scales to both crates without modification:
+**One deviation, mechanical**: in rustc_serialize, the std::collections::
+{HashMap,HashSet} Encodable/Decodable impls were cfg'd out rather than
+re-pointed at hashbrown, because the recipe is patch-only on the assigned
+crates and re-pointing requires a Cargo.toml dep edit. See note 3 above
+for parent's two follow-up options. No source-level escalation needed.
+
+Otherwise the recipe scales to both crates without modification:
 - `[workspace] members = []` blocks dev-deps as advertised.
 - `#![no_std]` placement after the inner cfg_attr / feature attrs is
   correct (Rust attribute ordering: inner doc → inner cfg_attr/feature →
