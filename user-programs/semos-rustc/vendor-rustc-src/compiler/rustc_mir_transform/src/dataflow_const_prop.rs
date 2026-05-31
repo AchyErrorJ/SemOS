@@ -2,8 +2,8 @@
 //!
 //! Currently, this pass only propagates scalar values.
 
-use std::cell::RefCell;
-use std::fmt::Formatter;
+use core::cell::RefCell;
+use core::fmt::Formatter;
 
 use rustc_abi::{BackendRepr, FIRST_VARIANT, FieldIdx, Size, VariantIdx};
 use rustc_const_eval::const_eval::{DummyMachine, throw_machine_stop_str};
@@ -733,7 +733,7 @@ impl<'a, 'tcx> ConstAnalysis<'a, 'tcx> {
 
 /// This is used to visualize the dataflow analysis.
 impl<'tcx> DebugWithContext<ConstAnalysis<'_, 'tcx>> for State<FlatSet<Scalar>> {
-    fn fmt_with(&self, ctxt: &ConstAnalysis<'_, 'tcx>, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt_with(&self, ctxt: &ConstAnalysis<'_, 'tcx>, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             State::Reachable(values) => debug_with_context(values, None, &ctxt.map, f),
             State::Unreachable => write!(f, "unreachable"),
@@ -745,7 +745,7 @@ impl<'tcx> DebugWithContext<ConstAnalysis<'_, 'tcx>> for State<FlatSet<Scalar>> 
         old: &Self,
         ctxt: &ConstAnalysis<'_, 'tcx>,
         f: &mut Formatter<'_>,
-    ) -> std::fmt::Result {
+    ) -> core::fmt::Result {
         match (self, old) {
             (State::Reachable(this), State::Reachable(old)) => {
                 debug_with_context(this, Some(old), &ctxt.map, f)

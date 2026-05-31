@@ -1,6 +1,6 @@
-use std::borrow::Cow;
-use std::mem;
-use std::ops::Bound;
+use alloc::borrow::Cow;
+use core::mem;
+use core::ops::Bound;
 
 use rustc_ast::AsmMacro;
 use rustc_data_structures::stack::ensure_sufficient_stack;
@@ -356,13 +356,13 @@ impl<'a, 'tcx> Visitor<'a, 'tcx> for UnsafetyVisitor<'a, 'tcx> {
                     }
                     if adt_def.is_union() {
                         let old_in_union_destructure =
-                            std::mem::replace(&mut self.in_union_destructure, true);
+                            core::mem::replace(&mut self.in_union_destructure, true);
                         visit::walk_pat(self, pat);
                         self.in_union_destructure = old_in_union_destructure;
                     } else if (Bound::Unbounded, Bound::Unbounded)
                         != self.tcx.layout_scalar_valid_range(adt_def.did())
                     {
-                        let old_inside_adt = std::mem::replace(&mut self.inside_adt, true);
+                        let old_inside_adt = core::mem::replace(&mut self.inside_adt, true);
                         visit::walk_pat(self, pat);
                         self.inside_adt = old_inside_adt;
                     } else {
@@ -404,7 +404,7 @@ impl<'a, 'tcx> Visitor<'a, 'tcx> for UnsafetyVisitor<'a, 'tcx> {
                 visit::walk_pat(self, pat);
             }
             PatKind::Deref { .. } | PatKind::DerefPattern { .. } => {
-                let old_inside_adt = std::mem::replace(&mut self.inside_adt, false);
+                let old_inside_adt = core::mem::replace(&mut self.inside_adt, false);
                 visit::walk_pat(self, pat);
                 self.inside_adt = old_inside_adt;
             }

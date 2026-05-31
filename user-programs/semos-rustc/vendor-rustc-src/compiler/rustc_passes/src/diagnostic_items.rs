@@ -85,7 +85,7 @@ fn all_diagnostic_items(tcx: TyCtxt<'_>, (): ()) -> DiagnosticItems {
         .iter()
         .copied()
         .filter(|cnum| tcx.is_user_visible_dep(*cnum))
-        .chain(std::iter::once(LOCAL_CRATE))
+        .chain(core::iter::once(LOCAL_CRATE))
     {
         for (&name, &def_id) in &tcx.diagnostic_items(cnum).name_to_id {
             collect_item(tcx, &mut items, name, def_id);

@@ -293,7 +293,7 @@ impl<'tcx> Visitor<'tcx> for SsaVisitor<'_, 'tcx> {
 
 #[instrument(level = "trace", skip(ssa, body))]
 fn compute_copy_classes(ssa: &mut SsaLocals, body: &Body<'_>) {
-    let mut direct_uses = std::mem::take(&mut ssa.direct_uses);
+    let mut direct_uses = core::mem::take(&mut ssa.direct_uses);
     let mut copies = IndexVec::from_fn_n(|l| l, body.local_decls.len());
 
     for (local, rvalue, _) in ssa.assignments(body) {

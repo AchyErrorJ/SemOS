@@ -526,7 +526,7 @@ impl<'tcx> PlaceSet<'tcx> {
             self.capture_field_pos = 1;
         }
 
-        for (f, (capture, ty)) in std::iter::zip(captures, upvars).enumerate() {
+        for (f, (capture, ty)) in core::iter::zip(captures, upvars).enumerate() {
             let f = FieldIdx::from_usize(f);
             let elem = PlaceElem::Field(f, ty);
             let by_ref = matches!(capture.info.capture_kind, ty::UpvarCapture::ByRef(..));
@@ -801,7 +801,7 @@ impl<'a, 'tcx> AssignmentResult<'a, 'tcx> {
                 //   two versions is live;
                 // - if it does not appear for the arm local, it happened inside the guard, so we add
                 //   it as-is.
-                let guard_assignments = std::mem::take(&mut self.assignments[index]);
+                let guard_assignments = core::mem::take(&mut self.assignments[index]);
                 let arm_assignments = &mut self.assignments[arm_index];
                 for (source_info, access) in guard_assignments {
                     match arm_assignments.entry(source_info) {
@@ -1160,9 +1160,9 @@ impl DebugWithContext<MaybeLivePlaces<'_, '_>> for PlaceIndex {
     fn fmt_with(
         &self,
         ctxt: &MaybeLivePlaces<'_, '_>,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&ctxt.checked_places.places[*self], f)
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&ctxt.checked_places.places[*self], f)
     }
 }
 

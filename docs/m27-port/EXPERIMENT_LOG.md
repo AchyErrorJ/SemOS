@@ -1242,13 +1242,152 @@ G3 also flagged an R3 dep: `regex` crate is imported by
 path inside the `regex!` macro. Cargo.toml dep flip to
 `default-features = false` will be needed.
 
-#### G1 + G4 in flight
+#### G1 returned third
 
-As of this log entry: rustc_codegen_ssa has 24 modified files in
-main (G1 mid-stream), rustc_metadata has 10 (G4 mid-stream),
-rustc_passes has 7 (G4 picked up after F4's 6 leftover files — there
-may be overlap to deduplicate). G1 and G4 haven't sent completion
-notifications yet.
+| Agent | Crates | LOC | Tokens | T/LOC | Duration | Status |
+|-------|--------|----:|-------:|------:|---------:|--------|
+| G1 | rustc_codegen_ssa remainder (24 files + Cargo.toml) | ~25k | 263,268 | ~10 | ~27 min | COMPLETE |
+
+G1 extended F1's §1.7 whole-module cfg-gate list to also cover
+`back/archive` and `back/rpath` (since cg_clif emits ET_EXEC directly,
+no rlib output → no archive needed). Total back/* gates now:
+apple/command/link/linker/archive/rpath. The remaining back/*
+submodules (metadata.rs, lto.rs, symbol_export.rs, write.rs) were
+cfg-split rather than whole-gated.
+
+G1's heaviest single file was `back/write.rs` — required ~25
+cfg-gate insertions to neutralize the LLVM worker-pool + jobserver
++ mpsc surface. G1 wrote a **private `mpsc_stub` module** inline as
+a placeholder — but `semos_std::mpsc` already exists from M25 sync-
+demo work. Phase 5 cleanup: drop the stub, route through
+`semos_std::mpsc`.
+
+#### G1's new API gaps flagged
+
+1. `semos_std::sync::mpsc` — G1's note flagged this as missing. **Half-
+   true**: `semos_std::mpsc` exists at module top-level (M25 sync-demo);
+   G1 didn't find it. Need to make the path more discoverable, or
+   re-export via `semos_std::sync::mpsc` for std-symmetry.
+2. `impl io::Write for Vec<u8>` — currently you have to call
+   `vec.extend_from_slice(...)`. std's `Vec<u8>: io::Write` is a
+   common pattern; add to semos_std::io.
+3. `semos_std::fs::copy(&Path, &Path)` + Path-aware `fs::write` —
+   currently fs::write takes a string path. Path-overload + copy
+   for symmetry with std.
+4. `JoinHandle::join` returns `Result<T, ()>` not `Result<T, Box<dyn
+   Any + Send>>`. std's signature carries panic payload; rustc and
+   cg_clif both unwrap the error case. Real fix needs SemOS stack
+   unwinding (out of M27 scope).
+
+These four sit in the same priority tier as the earlier B3-followup
+gaps (Stderr + LocalKey Cell sugar) — add as parent-prep before
+any later wave that depends on them.
+
+#### G4 returned fourth (Phase 4 recovery COMPLETE)
+
+| Agent | Crates | LOC | Tokens | T/LOC | Duration | Status |
+|-------|--------|----:|-------:|------:|---------:|--------|
+| G4 | rustc_metadata (12 files inc. Cargo+lib from scratch) + rustc_passes remainder (2 files) | ~14k | 249,621 | ~18 | ~27 min | COMPLETE |
+
+G4 ARCHITECTURAL on rustc_metadata: 5 libloading functions cfg-gated
+host-only with SemOS `DylibError::DlOpen` stubs; `tempfile` + `libloading`
+moved to `[target.'cfg(not(target_os = "none"))'.dependencies]` per
+§1.2; `creader.rs` libloading + dlsym_proc_macros + CrateDump::Debug
+all cfg-split. `fs.rs` / `locator.rs` / `rmeta/encoder.rs` cfg-split
+into host-verbatim vs SemOS-stub bodies (Seek + Mmap not yet in
+semos_std). rustc_passes: 2 small followup fixes on F4's work (stray
+`std::iter::once` + malformed half-cfg-gate).
+
+### MAJOR ARCHITECTURAL INSIGHT from G4 (Phase 5 implication)
+
+G4 §2.2 surfaced an issue with my earlier prompt language. I told
+E1-E4 + F1-F4 that `semos_std is host-buildable, so this works on
+both targets`. **That is wrong.** `user-programs/std-shim/.cargo/
+config.toml` pins `target = "x86_64-unknown-none"` and uses
+build-std for core/alloc/compiler_builtins; semos_std uses raw
+SemOS syscalls in its bodies and **is not a host-OS std drop-in**.
+
+G4 instead adopted the cfg-split pattern from rustc_fs_util/src/
+lib.rs:42-60 (which A3 introduced in Phase 2a) — `#[cfg(not(target_os
+= "none"))] use std::*;` paired with `#[cfg(target_os = "none")] use
+semos_std::*;`. This is the correct pattern.
+
+**The damage**: Phase 3 agents (especially E3's inference triad which
+hit 2 t/LOC by doing UNCONDITIONAL `std::path::PathBuf → semos_std::
+path::PathBuf` substitutions, and many other crates) made semos_std
+calls non-cfg-gated. On a host build (which Phase 5 integration will
+attempt), the rustc_* crates can't link against semos_std.
+
+**The Phase 5 fix** (estimated ~1-2 mechanical sessions):
+1. Convert every `semos_std = { path = "..." }` Cargo.toml dep to
+   `[target.'cfg(target_os = "none")'.dependencies]`.
+2. Add cfg-split arms around every non-cfg-gated `semos_std::*`
+   usage so host build sees `std::*`.
+
+This is mechanical but pervasive — touches ~half of the patches
+landed Phase 3+4 (E3's triad, E1's rustc_middle, parts of D1+D2+D4,
+all of W1's C1+C2+C3, F2-F4 partial, G1-G4). Estimated 1-2 sessions
+of substitution work, ideally orchestrated as a 2-3 agent wave with
+a clear recipe per crate.
+
+**Why it didn't surface earlier**: patch-only contract — we never
+ran `cargo build` on any patched crate. The issue only manifests
+when Phase 5 tries to compile. G4 caught it by reading the
+predecessor (rustc_fs_util) pattern carefully and contrasting with
+F4's unconditional `semos_std` substitution.
+
+**Closes a recipe gap**: RECIPE.md §1.3 substitution table should
+mark the `std::* → semos_std::*` substitution as **cfg-conditional
+only**, not unconditional. Other substitutions (`std::* → core::*` /
+`alloc::* / hashbrown::*`) ARE alias substitutions and remain
+unconditional. Will fold into RECIPE.md before Phase 5.
+
+### Phase 4 final tally
+
+| Agent | Crates | LOC | Tokens | T/LOC | Status |
+|-------|--------|----:|-------:|------:|--------|
+| F1 (bounced) | rustc_codegen_ssa Cargo+lib+back/mod+base+traits/backend | partial | ~? (truncated) | n/a | bounced; partial-commit |
+| F2 (bounced) | rustc_mir_transform Cargo+lib+dump_mir+dest_prop+pass_manager | partial | ~? (truncated) | n/a | bounced; partial-commit |
+| F3 (bounced) | rustc_mir_build Cargo+lib only | partial | ~? (truncated) | n/a | bounced; no notes |
+| F4 (bounced) | rustc_passes 6 files; rustc_metadata 0 source | partial | ~? (truncated) | n/a | bounced; partial-commit |
+| G1 | rustc_codegen_ssa remainder (24 files) | ~25k | 263,268 | 10 | COMPLETE |
+| G2 | rustc_mir_transform remainder (31 files) | ~34k | 108,407 | 2-3 | COMPLETE |
+| G3 | mir_build remainder + mir_dataflow + monomorphize (17 files) | ~14k | 172,102 | 3.9 | COMPLETE |
+| G4 | rustc_metadata full (12 files) + passes remainder (2 files) | ~14k | 249,621 | 18 | COMPLETE |
+| **Phase 4 total** | **7 crates, ~258 files** | **~115k LOC** | **~793k (F-bounce + G-wave)** | **~7 avg** | **CLOSED (with §1.2/§1.7 architectural decisions landed)** |
+
+Wall time: F-wave bounce ~5 min + user manual integration + G-wave
+~30 min parallel ≈ ~1 hr active.
+
+### Cumulative session totals through Phase 4
+
+- **Tokens**: ~5.4M (P1+P2a+P2b+P3) + ~800k (Phase 4 incl. F-bounce
+  + recovery) = **~6.2M**
+- **LOC patched**: ~322k (P1-P3) + ~115k (P4) = **~437k of ~770k
+  post-§1 internal rustc** (~57%)
+- **Crates patched**: 41 (P1-P3) + 7 (P4) = **48 crates**
+
+### Phase 4 → Phase 5 transition
+
+- [x] Phase 4 CLOSED (codegen tier patched)
+- [x] §1.2 libloading drop (G4 cfg-gated 5 sites + moved dep to target-cond)
+- [x] §1.7 back::link drop (F1+G1 whole-module gated back/{apple,command,link,linker,archive,rpath})
+- [x] D1 cfg_attr pattern used throughout
+- [x] All 4 recovery notes written (G1-G4 in `docs/m27-port/4/`)
+- [ ] **HIGH PRIORITY**: semos_std cfg-conditionalization sweep
+      (~1-2 mechanical sessions, fixes the host-build mismatch
+      identified by G4). Must happen before any Phase 5 build attempt.
+- [ ] G1's 4 surface gaps: `sync::mpsc` discoverability,
+      `impl io::Write for Vec<u8>`, `fs::copy + Path-aware fs::write`,
+      JoinHandle panic payload.
+- [ ] G4's Phase-4.5 micro-wave: `Path::display()` (20+ sites),
+      `io::Seek` + `File::seek`, `io::Error::new(ErrorKind, msg)`,
+      `fs::rename`, `File::open_buffered`, `io::copy`, `Path::metadata`/
+      `Path::exists`.
+- [ ] Phase 5 (integration: wire rustc_driver_impl into semos-rustc
+      binary, statically link cg_clif, DEMO 80 — hello-world.rs → ELF
+      → SYS_SPAWN → captured stdout). Plan estimated 3-5 sessions; the
+      semos_std-cfg sweep + surface gap adds 2-3 prep sessions.
 
 ### Lessons in flight
 

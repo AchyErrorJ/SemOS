@@ -1,4 +1,4 @@
-use std::{fmt, iter};
+use core::{fmt, iter};
 
 use rustc_abi::{ExternAbi, FIRST_VARIANT, FieldIdx, VariantIdx};
 use rustc_data_structures::assert_matches;

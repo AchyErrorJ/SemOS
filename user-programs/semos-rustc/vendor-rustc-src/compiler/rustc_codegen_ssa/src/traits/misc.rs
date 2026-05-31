@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use core::cell::RefCell;
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::ty::{self, Instance, Ty};

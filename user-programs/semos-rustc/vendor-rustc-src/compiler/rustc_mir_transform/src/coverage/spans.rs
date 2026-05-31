@@ -241,7 +241,7 @@ impl Covspan {
 }
 
 /// Compares two spans in (lo ascending, hi descending) order.
-fn compare_spans(a: Span, b: Span) -> std::cmp::Ordering {
+fn compare_spans(a: Span, b: Span) -> core::cmp::Ordering {
     // First sort by span start.
     Ord::cmp(&a.lo(), &b.lo())
         // If span starts are the same, sort by span end in reverse order.

@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use core::ops::Deref;
 
 use rustc_abi::{Align, Scalar, Size, WrappingRange};
 use rustc_data_structures::assert_matches;
@@ -417,7 +417,7 @@ pub trait BuilderMethods<'a, 'tcx>:
         // overrides this to just use `@llvm.scmp`/`ucmp` since LLVM 20. This default impl should be
         // reevaluated with respect to the remaining backends like cg_gcc, whether they might use
         // specialized implementations as well, or continue to use a generic implementation here.
-        use std::cmp::Ordering;
+        use core::cmp::Ordering;
         let pred = |op| crate::base::bin_op_to_icmp_predicate(op, ty.is_signed());
         if self.cx().sess().opts.optimize == OptLevel::No {
             // This actually generates tighter assembly, and is a classic trick:

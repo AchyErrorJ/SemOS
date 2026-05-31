@@ -1,4 +1,7 @@
+#[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
 
 use rustc_errors::DiagCtxtHandle;
 use rustc_middle::dep_graph::WorkProduct;

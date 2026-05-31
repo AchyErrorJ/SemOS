@@ -161,7 +161,7 @@ impl<'tcx> InstSimplifyContext<'_, 'tcx> {
             && meta_ty.is_unit()
         {
             // The mutable borrows we're holding prevent printing `rvalue` here
-            let mut fields = std::mem::take(fields);
+            let mut fields = core::mem::take(fields);
             let _meta = fields.pop().unwrap();
             let data = fields.pop().unwrap();
             let ptr_ty = Ty::new_ptr(self.tcx, *pointee_ty, *mutability);

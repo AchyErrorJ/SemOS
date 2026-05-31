@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_index::IndexVec;

@@ -1,6 +1,6 @@
 //! A test for the logic that updates the state in a `ResultsCursor` during seek.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use rustc_index::IndexVec;
 use rustc_middle::ty;
@@ -20,7 +20,7 @@ fn mock_body<'tcx>() -> mir::Body<'tcx> {
         let nop = mir::Statement::new(source_info, mir::StatementKind::Nop);
 
         blocks.push(mir::BasicBlockData::new_stmts(
-            std::iter::repeat(&nop).cloned().take(n).collect(),
+            core::iter::repeat(&nop).cloned().take(n).collect(),
             Some(mir::Terminator { source_info, kind }),
             false,
         ))
@@ -247,7 +247,7 @@ impl SeekTarget {
                 }
             });
 
-        std::iter::once(SeekTarget::BlockEntry(block)).chain(statements_and_terminator)
+        core::iter::once(SeekTarget::BlockEntry(block)).chain(statements_and_terminator)
     }
 }
 

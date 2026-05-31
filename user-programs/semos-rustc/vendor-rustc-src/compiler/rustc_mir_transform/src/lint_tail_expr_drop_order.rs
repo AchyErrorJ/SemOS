@@ -1,6 +1,6 @@
-use std::cell::RefCell;
-use std::collections::hash_map;
-use std::rc::Rc;
+use core::cell::RefCell;
+use alloc::rc::Rc;
+use rustc_data_structures::fx::StdEntry;
 
 use itertools::Itertools as _;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap};
@@ -115,7 +115,7 @@ impl<'a, 'mir, 'tcx> DropsReachable<'a, 'mir, 'tcx> {
             // As long as we are passing through a new block, or new dropped places to propagate,
             // we will proceed with `succ`
             let dropped_local_there = match self.visited.entry(succ) {
-                hash_map::Entry::Occupied(occupied_entry) => {
+                StdEntry::Occupied(occupied_entry) => {
                     if succ == block
                         || !occupied_entry.get().borrow_mut().union(&*dropped_local_here.borrow())
                     {
@@ -125,7 +125,7 @@ impl<'a, 'mir, 'tcx> DropsReachable<'a, 'mir, 'tcx> {
                     }
                     Rc::clone(occupied_entry.get())
                 }
-                hash_map::Entry::Vacant(vacant_entry) => Rc::clone(
+                StdEntry::Vacant(vacant_entry) => Rc::clone(
                     vacant_entry.insert(Rc::new(RefCell::new(dropped_local_here.borrow().clone()))),
                 ),
             };

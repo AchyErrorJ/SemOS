@@ -4,8 +4,8 @@ mod check_match;
 mod const_to_pat;
 mod migration;
 
-use std::cmp::Ordering;
-use std::sync::Arc;
+use core::cmp::Ordering;
+use alloc::sync::Arc;
 
 use rustc_abi::{FieldIdx, Integer};
 use rustc_data_structures::assert_matches;

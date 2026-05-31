@@ -821,7 +821,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         body.coverage_info_hi = self.coverage_info.as_ref().map(|b| b.as_done());
 
         let writer = pretty::MirWriter::new(self.tcx);
-        writer.write_mir_fn(&body, &mut std::io::stdout()).unwrap();
+        writer.write_mir_fn(&body, &mut semos_std::io::stdout()).unwrap();
     }
 
     fn lint_and_remove_uninhabited(&mut self) {
@@ -955,7 +955,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         let writer = pretty::MirWriter::new(self.tcx);
         for (index, block) in body.basic_blocks.iter().enumerate() {
             if block.terminator.is_none() {
-                writer.write_mir_fn(&body, &mut std::io::stdout()).unwrap();
+                writer.write_mir_fn(&body, &mut semos_std::io::stdout()).unwrap();
                 span_bug!(self.fn_span, "no terminator on block {:?}", index);
             }
         }

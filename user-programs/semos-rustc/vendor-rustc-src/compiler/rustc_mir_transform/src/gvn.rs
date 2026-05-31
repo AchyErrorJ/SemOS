@@ -84,8 +84,8 @@
 //! Second, when writing constants in MIR, we do not write `Const::Slice` or `Const`
 //! that contain `AllocId`s.
 
-use std::borrow::Cow;
-use std::hash::{Hash, Hasher};
+use alloc::borrow::Cow;
+use core::hash::{Hash, Hasher};
 
 use either::Either;
 use hashbrown::hash_table::{Entry, HashTable};
@@ -548,7 +548,7 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     }
 
     fn invalidate_derefs(&mut self) {
-        for deref in std::mem::take(&mut self.derefs) {
+        for deref in core::mem::take(&mut self.derefs) {
             self.values.forget(deref);
         }
     }

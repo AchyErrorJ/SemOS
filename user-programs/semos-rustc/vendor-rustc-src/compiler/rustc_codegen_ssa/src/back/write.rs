@@ -1,9 +1,50 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
+#[cfg(not(target_os = "none"))]
 use std::panic::AssertUnwindSafe;
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+use alloc::sync::Arc;
+#[cfg(not(target_os = "none"))]
 use std::sync::mpsc::{Receiver, Sender, channel};
+#[cfg(not(target_os = "none"))]
 use std::{fs, io, mem, str, thread};
+#[cfg(target_os = "none")]
+use core::{mem, str};
+#[cfg(target_os = "none")]
+use semos_std::{fs, io, thread};
+// M27 R4 B5 TODO(Phase 5): semos_std::sync::mpsc not yet available.
+// SemOS arm uses single-threaded fallback (see workers spawned below).
+#[cfg(target_os = "none")]
+mod mpsc_stub {
+    //! M27 R4 B5 stub: a single-element synchronous "channel" that just
+    //! aborts on use. The async codegen path is unreachable on SemOS in
+    //! Phase 4 (Phase 5 implements semos_std::sync::mpsc or replaces the
+    //! worker pool with synchronous calls).
+    use core::marker::PhantomData;
+    pub struct Sender<T>(PhantomData<T>);
+    pub struct Receiver<T>(PhantomData<T>);
+    impl<T> Sender<T> {
+        pub fn send(&self, _t: T) -> Result<(), T> {
+            semos_std::process::abort_with_code(101)
+        }
+        pub fn clone(&self) -> Self { Self(PhantomData) }
+    }
+    impl<T> Clone for Sender<T> {
+        fn clone(&self) -> Self { Self(PhantomData) }
+    }
+    impl<T> Receiver<T> {
+        pub fn recv(&self) -> Result<T, ()> {
+            semos_std::process::abort_with_code(101)
+        }
+    }
+    pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
+        (Sender(PhantomData), Receiver(PhantomData))
+    }
+}
+#[cfg(target_os = "none")]
+use mpsc_stub::{Receiver, Sender, channel};
 
 use rustc_abi::Size;
 use rustc_ast::attr;
@@ -19,10 +60,20 @@ use rustc_errors::{
     Level, MultiSpan, Style, Suggestions, catch_fatal_errors,
 };
 use rustc_fs_util::link_or_copy;
+// M27 §1.3: rustc_incremental cfg'd out on SemOS. Incremental paths
+// below are gated with target_os == "none" stubs returning None / no-op.
+#[cfg(not(target_os = "none"))]
 use rustc_incremental::{
     copy_cgu_workproduct_to_incr_comp_cache_dir, in_incr_comp_dir, in_incr_comp_dir_sess,
 };
+#[cfg(not(target_os = "none"))]
 use rustc_metadata::fs::copy_to_stdout;
+// SemOS stub: copy-to-stdout (rustc's `--emit=…=-`) is unreachable in the
+// kernel host (no real piped stdout for the compiler driver).
+#[cfg(target_os = "none")]
+fn copy_to_stdout(_from: &Path) -> io::Result<()> {
+    Err(io::Error::other())
+}
 use rustc_middle::bug;
 use rustc_middle::dep_graph::{WorkProduct, WorkProductId};
 use rustc_middle::ty::TyCtxt;
@@ -35,7 +86,19 @@ use rustc_span::{FileName, InnerSpan, Span, SpanData, sym};
 use rustc_target::spec::{MergeFunctions, SanitizerSet};
 use tracing::debug;
 
+// M27 §1.7: super::link gated on SemOS. Link-related call sites below
+// (each_linked_rlib, ignored_for_lto, ensure_removed) are gated.
+#[cfg(not(target_os = "none"))]
 use super::link::{self, ensure_removed};
+// SemOS stub for the few link helpers we still call from inside the codegen
+// driver (cleaning up CGU temp objects after a single-CGU compile). These
+// match the host signatures; the bodies are no-ops because cg_clif emits
+// the final ELF into a single output path with no temp files to mop up.
+#[cfg(target_os = "none")]
+fn ensure_removed(_dcx: rustc_errors::DiagCtxtHandle<'_>, _path: &Path) {
+    // M27 §1.7: SemOS produces no per-CGU temp objects via cg_clif, so
+    // there is nothing to remove here.
+}
 use super::lto::{self, SerializedModule};
 use crate::back::lto::check_lto_allowed;
 use crate::errors::ErrorCreatingRemarkDir;
@@ -520,6 +583,8 @@ fn copy_all_cgu_workproducts_to_incr_comp_cache_dir(
         if let Some(path) = &module.bytecode {
             files.push((OutputType::Bitcode.extension(), path.as_path()));
         }
+        // M27 §1.3: incremental compilation disabled on SemOS.
+        #[cfg(not(target_os = "none"))]
         if let Some((id, product)) = copy_cgu_workproduct_to_incr_comp_cache_dir(
             sess,
             &module.name,
@@ -527,6 +592,10 @@ fn copy_all_cgu_workproducts_to_incr_comp_cache_dir(
             &module.links_from_incr_cache,
         ) {
             work_products.insert(id, product);
+        }
+        #[cfg(target_os = "none")]
+        {
+            let _ = (sess, &module.name, files.as_slice(), &module.links_from_incr_cache);
         }
     }
 
@@ -542,6 +611,11 @@ fn produce_final_output_artifacts(
     let mut user_wants_objects = false;
 
     // Produce final compile outputs.
+    // M27 R4 B5 TODO(Phase 5): semos_std::fs lacks `copy(&Path, &Path)`. On
+    // SemOS the only OutFileName variant we hit in practice is Real(path)
+    // pointing at the final ELF; the no-op stub mirrors host behavior when
+    // src == dest. Full implementation needs a Path-aware read+write helper.
+    #[cfg(not(target_os = "none"))]
     let copy_gracefully = |from: &Path, to: &OutFileName| match to {
         OutFileName::Stdout if let Err(e) = copy_to_stdout(from) => {
             sess.dcx().emit_err(errors::CopyPath::new(from, to.as_path(), e));
@@ -550,6 +624,10 @@ fn produce_final_output_artifacts(
             sess.dcx().emit_err(errors::CopyPath::new(from, path, e));
         }
         _ => {}
+    };
+    #[cfg(target_os = "none")]
+    let copy_gracefully = |from: &Path, to: &OutFileName| {
+        let _ = (from, to);
     };
 
     let copy_if_one_unit = |output_type: OutputType, keep_numbered: bool| {
@@ -840,6 +918,18 @@ pub(crate) fn compute_per_cgu_lto_type(
     }
 }
 
+// M27 R4 B5 TODO(Phase 5): reachable only through spawn_work (gated); body
+// uses fs::write(&Path, _) which semos_std::fs lacks. Gate the function.
+#[cfg(target_os = "none")]
+fn execute_optimize_work_item<B: ExtraBackendMethods>(
+    _cgcx: &CodegenContext<B>,
+    _shared_emitter: SharedEmitter,
+    _module: ModuleCodegen<B::Module>,
+) -> WorkItemResult<B> {
+    semos_std::process::abort_with_code(101)
+}
+
+#[cfg(not(target_os = "none"))]
 fn execute_optimize_work_item<B: ExtraBackendMethods>(
     cgcx: &CodegenContext<B>,
     shared_emitter: SharedEmitter,
@@ -896,6 +986,19 @@ fn execute_optimize_work_item<B: ExtraBackendMethods>(
     }
 }
 
+// M27 §1.3: incremental compilation disabled on SemOS — this entire
+// "copy from incr cache" path is unreachable. Provide a stub that
+// panics if a cached work-item somehow leaks through.
+#[cfg(target_os = "none")]
+fn execute_copy_from_cache_work_item<B: ExtraBackendMethods>(
+    _cgcx: &CodegenContext<B>,
+    _shared_emitter: SharedEmitter,
+    _module: CachedModuleCodegen,
+) -> CompiledModule {
+    semos_std::process::abort_with_code(101)
+}
+
+#[cfg(not(target_os = "none"))]
 fn execute_copy_from_cache_work_item<B: ExtraBackendMethods>(
     cgcx: &CodegenContext<B>,
     shared_emitter: SharedEmitter,
@@ -984,6 +1087,21 @@ fn execute_copy_from_cache_work_item<B: ExtraBackendMethods>(
     }
 }
 
+// M27 R4 B5 TODO(Phase 5): LTO is host-only (uses worker pool +
+// jobserver + channels). Gate the entire LTO driver fns on SemOS.
+#[cfg(target_os = "none")]
+fn do_fat_lto<B: ExtraBackendMethods>(
+    _cgcx: &CodegenContext<B>,
+    _shared_emitter: SharedEmitter,
+    _exported_symbols_for_lto: &[String],
+    _each_linked_rlib_for_lto: &[PathBuf],
+    _needs_fat_lto: Vec<FatLtoInput<B>>,
+    _import_only_modules: Vec<(SerializedModule<B::ModuleBuffer>, WorkProduct)>,
+) -> CompiledModule {
+    semos_std::process::abort_with_code(101)
+}
+
+#[cfg(not(target_os = "none"))]
 fn do_fat_lto<B: ExtraBackendMethods>(
     cgcx: &CodegenContext<B>,
     shared_emitter: SharedEmitter,
@@ -1013,6 +1131,22 @@ fn do_fat_lto<B: ExtraBackendMethods>(
     B::codegen(cgcx, &shared_emitter, module, &cgcx.module_config)
 }
 
+#[cfg(target_os = "none")]
+fn do_thin_lto<'a, B: ExtraBackendMethods>(
+    _cgcx: &'a CodegenContext<B>,
+    _shared_emitter: SharedEmitter,
+    _exported_symbols_for_lto: Arc<Vec<String>>,
+    _each_linked_rlib_for_lto: Vec<PathBuf>,
+    _needs_thin_lto: Vec<(String, <B as WriteBackendMethods>::ThinBuffer)>,
+    _lto_import_only_modules: Vec<(
+        SerializedModule<<B as WriteBackendMethods>::ModuleBuffer>,
+        WorkProduct,
+    )>,
+) -> Vec<CompiledModule> {
+    semos_std::process::abort_with_code(101)
+}
+
+#[cfg(not(target_os = "none"))]
 fn do_thin_lto<'a, B: ExtraBackendMethods>(
     cgcx: &'a CodegenContext<B>,
     shared_emitter: SharedEmitter,
@@ -1251,6 +1385,11 @@ enum MainThreadState {
     Lending,
 }
 
+// M27 R4 B5 TODO(Phase 5): worker pool + jobserver + mpsc-channel + LTO
+// orchestration. Whole-function-gated on SemOS until the codegen driver
+// is rewritten as a synchronous single-threaded loop (or semos_std::sync
+// gains real mpsc + thread::Builder + jobserver-equivalent).
+#[cfg(not(target_os = "none"))]
 fn start_executing_work<B: ExtraBackendMethods>(
     backend: B,
     tcx: TyCtxt<'_>,
@@ -1535,7 +1674,7 @@ fn start_executing_work<B: ExtraBackendMethods>(
                     // `running_with_own_token` count, even though we're just going to increase it
                     // right after this when we put a new worker to work.
                     let extra_tokens = tokens.len().checked_sub(running_with_own_token).unwrap();
-                    let additional_running = std::cmp::min(extra_tokens, work_items.len());
+                    let additional_running = core::cmp::min(extra_tokens, work_items.len());
                     let anticipated_running = running_with_own_token + additional_running + 1;
 
                     if !queue_full_enough(work_items.len(), anticipated_running) {
@@ -1866,10 +2005,28 @@ fn start_executing_work<B: ExtraBackendMethods>(
     }
 }
 
+#[cfg(target_os = "none")]
+fn start_executing_work<B: ExtraBackendMethods>(
+    _backend: B,
+    _tcx: TyCtxt<'_>,
+    _crate_info: &CrateInfo,
+    _shared_emitter: SharedEmitter,
+    _codegen_worker_send: Sender<CguMessage>,
+    _coordinator_receive: Receiver<Message<B>>,
+    _regular_config: Arc<ModuleConfig>,
+    _allocator_config: Arc<ModuleConfig>,
+    _allocator_module: Option<ModuleCodegen<B::Module>>,
+    _coordinator_send: Sender<Message<B>>,
+) -> thread::JoinHandle<Result<MaybeLtoModules<B>, ()>> {
+    // M27 R4 B5 TODO(Phase 5): rewrite worker driver as a synchronous loop.
+    semos_std::process::abort_with_code(101)
+}
+
 /// `FatalError` is explicitly not `Send`.
 #[must_use]
 pub(crate) struct WorkerFatalError;
 
+#[cfg(not(target_os = "none"))]
 fn spawn_work<'a, B: ExtraBackendMethods>(
     cgcx: &'a CodegenContext<B>,
     shared_emitter: SharedEmitter,
@@ -1908,6 +2065,17 @@ fn spawn_work<'a, B: ExtraBackendMethods>(
     .expect("failed to spawn work thread");
 }
 
+#[cfg(target_os = "none")]
+fn spawn_work<'a, B: ExtraBackendMethods>(
+    _cgcx: &'a CodegenContext<B>,
+    _shared_emitter: SharedEmitter,
+    _coordinator_send: Sender<Message<B>>,
+    _work: WorkItem<B>,
+) {
+    semos_std::process::abort_with_code(101)
+}
+
+#[cfg(not(target_os = "none"))]
 fn spawn_thin_lto_work<'a, B: ExtraBackendMethods>(
     cgcx: &'a CodegenContext<B>,
     shared_emitter: SharedEmitter,
@@ -1939,6 +2107,16 @@ fn spawn_thin_lto_work<'a, B: ExtraBackendMethods>(
         drop(coordinator_send.send(msg));
     })
     .expect("failed to spawn work thread");
+}
+
+#[cfg(target_os = "none")]
+fn spawn_thin_lto_work<'a, B: ExtraBackendMethods>(
+    _cgcx: &'a CodegenContext<B>,
+    _shared_emitter: SharedEmitter,
+    _coordinator_send: Sender<ThinLtoMessage>,
+    _work: ThinLtoWorkItem<B>,
+) {
+    semos_std::process::abort_with_code(101)
 }
 
 enum SharedEmitterMessage {
@@ -2103,7 +2281,15 @@ pub struct Coordinator<B: ExtraBackendMethods> {
 }
 
 impl<B: ExtraBackendMethods> Coordinator<B> {
+    #[cfg(not(target_os = "none"))]
     fn join(mut self) -> std::thread::Result<Result<MaybeLtoModules<B>, ()>> {
+        self.future.take().unwrap().join()
+    }
+    // M27 R4 B5 TODO(Phase 5): semos_std::thread::JoinHandle::join returns
+    // `Result<T, ()>` (no panic payload). The unwrap-to-thread-Result here
+    // is unreachable on SemOS until the worker driver is rewritten.
+    #[cfg(target_os = "none")]
+    fn join(mut self) -> Result<Result<MaybeLtoModules<B>, ()>, ()> {
         self.future.take().unwrap().join()
     }
 }
@@ -2269,6 +2455,18 @@ pub(crate) fn submit_post_lto_module_to_llvm<B: ExtraBackendMethods>(
     drop(coordinator.sender.send(Message::CodegenDone::<B> { llvm_work_item, cost: 0 }));
 }
 
+// M27 §1.3: incremental compilation disabled on SemOS. The pre-LTO
+// bitcode load path is only reached when reusing cached bitcode.
+#[cfg(target_os = "none")]
+pub(crate) fn submit_pre_lto_module_to_llvm<B: ExtraBackendMethods>(
+    _tcx: TyCtxt<'_>,
+    _coordinator: &Coordinator<B>,
+    _module: CachedModuleCodegen,
+) {
+    semos_std::process::abort_with_code(101)
+}
+
+#[cfg(not(target_os = "none"))]
 pub(crate) fn submit_pre_lto_module_to_llvm<B: ExtraBackendMethods>(
     tcx: TyCtxt<'_>,
     coordinator: &Coordinator<B>,

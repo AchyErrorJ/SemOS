@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use rustc_middle::mir::*;
 use rustc_middle::ty::{Ty, TyCtxt};

@@ -1,5 +1,9 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
+// M27 R4 B5: cfg-split host vs SemOS.
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
 
 use rustc_abi::ExternAbi;
 use rustc_attr_parsing::eval_config_entry;

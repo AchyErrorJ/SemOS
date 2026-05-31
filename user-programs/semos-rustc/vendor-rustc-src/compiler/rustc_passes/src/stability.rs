@@ -1,7 +1,7 @@
 //! A pass that annotates every item and method with its stability level,
 //! propagating default levels lexically from parent to children ast nodes.
 
-use std::num::NonZero;
+use core::num::NonZero;
 
 use rustc_ast_lowering::stability::extern_abi_stability;
 use rustc_data_structures::fx::FxIndexMap;

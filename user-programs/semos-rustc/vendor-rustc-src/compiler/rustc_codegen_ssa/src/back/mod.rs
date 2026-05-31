@@ -11,6 +11,10 @@ use rustc_session::Session;
 // rustc_expand.
 #[cfg(not(target_os = "none"))]
 pub mod apple;
+// M27 §1.7: `archive` builds ar-format rlibs (via ar_archive_writer + tempfile).
+// On SemOS, cg_clif emits ET_EXEC directly and we never produce rlibs/staticlibs,
+// so the archive subsystem is unreachable. Gate at the mod line.
+#[cfg(not(target_os = "none"))]
 pub mod archive;
 #[cfg(not(target_os = "none"))]
 pub(crate) mod command;
@@ -20,6 +24,8 @@ pub mod link;
 pub(crate) mod linker;
 pub mod lto;
 pub mod metadata;
+// M27 §1.7: rpath is consumed only by back::link (gated); gate it too.
+#[cfg(not(target_os = "none"))]
 pub(crate) mod rpath;
 pub mod symbol_export;
 pub mod write;

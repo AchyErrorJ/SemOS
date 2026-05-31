@@ -1,6 +1,6 @@
-use std::cmp::Ordering;
-use std::ops::{Index, IndexMut};
-use std::{mem, slice};
+use core::cmp::Ordering;
+use core::ops::{Index, IndexMut};
+use core::{mem, slice};
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::graph::dominators::Dominators;

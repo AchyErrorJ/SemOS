@@ -342,7 +342,7 @@ impl<'tcx, 'll> MutVisitor<'tcx> for ReplacementVisitor<'tcx, 'll> {
                     && let Some(final_locals) = &self.replacements.fragments[local]
                 {
                     // This is ok as we delete the statement later.
-                    let operands = std::mem::take(operands);
+                    let operands = core::mem::take(operands);
                     for (&opt_ty_local, mut operand) in final_locals.iter().zip(operands) {
                         if let Some((_, new_local)) = opt_ty_local {
                             // Replace mentions of SROA'd locals that appear in the operand.

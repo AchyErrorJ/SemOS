@@ -10,8 +10,8 @@
 //! otherwise silence errors, if move analysis runs after promotion on broken
 //! MIR.
 
-use std::cell::Cell;
-use std::{cmp, iter, mem};
+use core::cell::Cell;
+use core::{cmp, iter, mem};
 
 use either::{Left, Right};
 use rustc_const_eval::check_consts::{ConstCx, qualifs};
@@ -181,7 +181,7 @@ struct Validator<'a, 'tcx> {
     promotion_safe_blocks: Option<FxHashSet<BasicBlock>>,
 }
 
-impl<'a, 'tcx> std::ops::Deref for Validator<'a, 'tcx> {
+impl<'a, 'tcx> core::ops::Deref for Validator<'a, 'tcx> {
     type Target = ConstCx<'a, 'tcx>;
 
     fn deref(&self) -> &Self::Target {

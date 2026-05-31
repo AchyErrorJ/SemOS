@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use itertools::Either;
 use rustc_abi as abi;

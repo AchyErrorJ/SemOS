@@ -1,4 +1,4 @@
-use std::cmp;
+use core::cmp;
 
 use rustc_abi::{Align, BackendRepr, ExternAbi, HasDataLayout, Reg, Size, WrappingRange};
 use rustc_ast as ast;

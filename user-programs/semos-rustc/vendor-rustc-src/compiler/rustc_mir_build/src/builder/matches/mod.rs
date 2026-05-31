@@ -5,9 +5,9 @@
 //! This also includes code for pattern bindings in `let` statements and
 //! function parameters.
 
-use std::borrow::Borrow;
-use std::mem;
-use std::sync::Arc;
+use core::borrow::Borrow;
+use core::mem;
+use alloc::sync::Arc;
 
 use itertools::{Itertools, Position};
 use rustc_abi::{FIRST_VARIANT, VariantIdx};
@@ -2783,7 +2783,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 None,
                 None,
             )),
-            std::iter::once(Operand::Move(pinned_temp)).collect(),
+            core::iter::once(Operand::Move(pinned_temp)).collect(),
         )
     }
 

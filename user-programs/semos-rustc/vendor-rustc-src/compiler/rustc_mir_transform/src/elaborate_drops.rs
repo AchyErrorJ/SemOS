@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_index::IndexVec;

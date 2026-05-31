@@ -1,4 +1,4 @@
-use std::ops::Range;
+use core::ops::Range;
 
 use rustc_abi::Size;
 use rustc_middle::mir;

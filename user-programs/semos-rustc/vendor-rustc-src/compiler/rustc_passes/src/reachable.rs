@@ -385,7 +385,7 @@ impl<'tcx> DefIdVisitor<'tcx> for ReachableContext<'tcx> {
         &mut self,
         def_id: DefId,
         _kind: &str,
-        _descr: &dyn std::fmt::Display,
+        _descr: &dyn core::fmt::Display,
     ) -> Self::Result {
         self.propagate_item(Res::Def(self.tcx.def_kind(def_id), def_id))
     }

@@ -1,10 +1,18 @@
 //! Validates all used crates and extern libraries and loads their metadata
 
-use std::error::Error;
+use core::error::Error;
+use core::str::FromStr;
+use core::time::Duration;
+use core::{cmp, iter};
+// M27 R4 B5: cfg-split host vs SemOS.
+#[cfg(not(target_os = "none"))]
+use std::env;
+#[cfg(not(target_os = "none"))]
 use std::path::Path;
-use std::str::FromStr;
-use std::time::Duration;
-use std::{cmp, env, iter};
+#[cfg(target_os = "none")]
+use semos_std::env;
+#[cfg(target_os = "none")]
+use semos_std::path::Path;
 
 use rustc_ast::expand::allocator::{ALLOC_ERROR_HANDLER, AllocatorKind, global_fn_name};
 use rustc_ast::{self as ast, *};
@@ -80,8 +88,8 @@ pub struct CStore {
     used_extern_options: FxHashSet<Symbol>,
 }
 
-impl std::fmt::Debug for CStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for CStore {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CStore").finish_non_exhaustive()
     }
 }
@@ -114,7 +122,7 @@ pub(crate) struct CrateMetadataRef<'a> {
     pub cstore: &'a CStore,
 }
 
-impl std::ops::Deref for CrateMetadataRef<'_> {
+impl core::ops::Deref for CrateMetadataRef<'_> {
     type Target = CrateMetadata;
 
     fn deref(&self) -> &Self::Target {
@@ -124,8 +132,12 @@ impl std::ops::Deref for CrateMetadataRef<'_> {
 
 struct CrateDump<'a>(&'a CStore);
 
-impl<'a> std::fmt::Debug for CrateDump<'a> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+// M27 R4 B5 TODO(Phase 5): host body uses PathBuf::display() which semos_std
+// doesn't expose yet. SemOS body collapses to a minimal one-liner per crate
+// (no paths) — only used by info!() debug logging.
+#[cfg(not(target_os = "none"))]
+impl<'a> core::fmt::Debug for CrateDump<'a> {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         writeln!(fmt, "resolved crates:")?;
         for (cnum, data) in self.0.iter_crate_data() {
             writeln!(fmt, "  name: {}", data.name())?;
@@ -146,6 +158,17 @@ impl<'a> std::fmt::Debug for CrateDump<'a> {
             if let Some(sdylib_interface) = sdylib_interface {
                 writeln!(fmt, "   sdylib interface: {}", sdylib_interface.display())?;
             }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "none")]
+impl<'a> core::fmt::Debug for CrateDump<'a> {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(fmt, "resolved crates:")?;
+        for (cnum, data) in self.0.iter_crate_data() {
+            writeln!(fmt, "  name: {}  cnum: {cnum}  hash: {}", data.name(), data.hash())?;
         }
         Ok(())
     }
@@ -904,6 +927,11 @@ impl CStore {
         Ok(crate_num_map)
     }
 
+    // M27 §1.5 + R4 B5: proc-macro loading is dropped on SemOS, and
+    // path.display() isn't yet in semos_std. Host body verbatim; SemOS arm
+    // returns a uniform DlOpen error (unreachable in practice — proc-macros
+    // never trigger on SemOS).
+    #[cfg(not(target_os = "none"))]
     fn dlsym_proc_macros(
         &self,
         sess: &Session,
@@ -930,6 +958,19 @@ impl CStore {
                 }
             }
         }
+    }
+
+    #[cfg(target_os = "none")]
+    fn dlsym_proc_macros(
+        &self,
+        _sess: &Session,
+        _path: &Path,
+        _stable_crate_id: StableCrateId,
+    ) -> Result<&'static [ProcMacro], CrateError> {
+        Err(CrateError::DlOpen(
+            String::from("proc-macros are not loaded on SemOS (§1.5)"),
+            String::new(),
+        ))
     }
 
     fn inject_panic_runtime(&mut self, tcx: TyCtxt<'_>, krate: &ast::Crate) {
@@ -1360,10 +1401,34 @@ fn fn_spans(krate: &ast::Crate, name: Symbol) -> Vec<Span> {
     f.spans
 }
 
-fn format_dlopen_err(e: &(dyn std::error::Error + 'static)) -> String {
+// M27 §1.2 plugin loader deferred: the libloading plugin path is dead on SemOS
+// because semos-rustc statically links cg_clif (no codegen-backend dlopen) and
+// never loads proc-macro crates (§1.5). The full host implementation lives below
+// in a `#[cfg(not(target_os = "none"))]` block; the SemOS target gets a stub
+// `load_symbol_from_dylib` that always returns `DylibError::DlOpen(_)` since the
+// only path that reaches it is `dlsym_proc_macros`, which itself is unreachable
+// when proc-macros are dropped.
+
+pub enum DylibError {
+    DlOpen(String, String),
+    DlSym(String, String),
+}
+
+impl From<DylibError> for CrateError {
+    fn from(err: DylibError) -> CrateError {
+        match err {
+            DylibError::DlOpen(path, err) => CrateError::DlOpen(path, err),
+            DylibError::DlSym(path, err) => CrateError::DlSym(path, err),
+        }
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+fn format_dlopen_err(e: &(dyn core::error::Error + 'static)) -> String {
     e.sources().map(|e| format!(": {e}")).collect()
 }
 
+#[cfg(not(target_os = "none"))]
 fn attempt_load_dylib(path: &Path) -> Result<libloading::Library, libloading::Error> {
     #[cfg(target_os = "aix")]
     if let Some(ext) = path.extension()
@@ -1391,6 +1456,7 @@ fn attempt_load_dylib(path: &Path) -> Result<libloading::Library, libloading::Er
 // proc-macro DLL with `Error::LoadLibraryExW`. It is suspected that something in the
 // system still holds a lock on the file, so we retry a few times before calling it
 // an error.
+#[cfg(not(target_os = "none"))]
 fn load_dylib(path: &Path, max_attempts: usize) -> Result<libloading::Library, String> {
     assert!(max_attempts > 0);
 
@@ -1440,20 +1506,7 @@ fn load_dylib(path: &Path, max_attempts: usize) -> Result<libloading::Library, S
     Err(message)
 }
 
-pub enum DylibError {
-    DlOpen(String, String),
-    DlSym(String, String),
-}
-
-impl From<DylibError> for CrateError {
-    fn from(err: DylibError) -> CrateError {
-        match err {
-            DylibError::DlOpen(path, err) => CrateError::DlOpen(path, err),
-            DylibError::DlSym(path, err) => CrateError::DlSym(path, err),
-        }
-    }
-}
-
+#[cfg(not(target_os = "none"))]
 pub unsafe fn load_symbol_from_dylib<T: Copy>(
     path: &Path,
     sym_name: &str,
@@ -1472,4 +1525,20 @@ pub unsafe fn load_symbol_from_dylib<T: Copy>(
     std::mem::forget(lib);
 
     Ok(*sym)
+}
+
+// M27 §1.2 plugin loader deferred: SemOS target stub. semos-rustc statically
+// links cg_clif so the codegen-backend plugin loader is dead, and proc-macros
+// are dropped (§1.5) so dlsym_proc_macros is unreachable. Returning a uniform
+// `DlOpen` error here means a hypothetical caller would surface a clean
+// diagnostic rather than reaching unreachable!() in a release build.
+#[cfg(target_os = "none")]
+pub unsafe fn load_symbol_from_dylib<T: Copy>(
+    _path: &Path,
+    _sym_name: &str,
+) -> Result<T, DylibError> {
+    Err(DylibError::DlOpen(
+        String::new(),
+        String::from("dynamic library loading is not supported on SemOS (§1.2)"),
+    ))
 }

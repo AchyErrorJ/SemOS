@@ -52,7 +52,7 @@
 
 mod by_move_body;
 mod drop;
-use std::ops;
+use core::ops;
 
 pub(super) use by_move_body::coroutine_by_move_body_def_id;
 use drop::{
@@ -647,7 +647,7 @@ fn replace_resume_ty_local<'tcx>(
     local: Local,
     context_mut_ref: Ty<'tcx>,
 ) {
-    let local_ty = std::mem::replace(&mut body.local_decls[local].ty, context_mut_ref);
+    let local_ty = core::mem::replace(&mut body.local_decls[local].ty, context_mut_ref);
     // We have to replace the `ResumeTy` that is used for type and borrow checking
     // with `&mut Context<'_>` in MIR.
     #[cfg(debug_assertions)]
@@ -714,7 +714,7 @@ fn locals_live_across_suspend_points<'tcx>(
 ) -> LivenessInfo {
     // Calculate when MIR locals have live storage. This gives us an upper bound of their
     // lifetimes.
-    let mut storage_live = MaybeStorageLive::new(std::borrow::Cow::Borrowed(always_live_locals))
+    let mut storage_live = MaybeStorageLive::new(alloc::borrow::Cow::Borrowed(always_live_locals))
         .iterate_to_fixpoint(tcx, body, None)
         .into_results_cursor(body);
 

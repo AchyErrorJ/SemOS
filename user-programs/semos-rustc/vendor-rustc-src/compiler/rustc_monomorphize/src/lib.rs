@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![cfg_attr(bootstrap, feature(array_windows))]
 #![feature(file_buffered)]
@@ -5,6 +6,12 @@
 #![feature(impl_trait_in_assoc_type)]
 #![feature(once_cell_get_mut)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 use rustc_hir::lang_items::LangItem;
 use rustc_middle::query::TyCtxtAt;

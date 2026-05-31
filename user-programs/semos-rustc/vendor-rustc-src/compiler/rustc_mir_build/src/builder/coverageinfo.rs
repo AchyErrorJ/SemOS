@@ -1,6 +1,5 @@
-use std::collections::hash_map::Entry;
-
 use rustc_data_structures::assert_matches;
+use rustc_data_structures::fx::StdEntry as Entry;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::mir::coverage::{BlockMarkerId, BranchSpan, CoverageInfoHi, CoverageKind};
 use rustc_middle::mir::{self, BasicBlock, SourceInfo, UnOp};
@@ -248,7 +247,7 @@ impl<'tcx> Builder<'_, 'tcx> {
         if let Some(&NotInfo { enclosing_not, is_flipped }) = coverage_info.nots.get(&expr_id) {
             expr_id = enclosing_not;
             if is_flipped {
-                std::mem::swap(&mut then_block, &mut else_block);
+                core::mem::swap(&mut then_block, &mut else_block);
             }
         }
 

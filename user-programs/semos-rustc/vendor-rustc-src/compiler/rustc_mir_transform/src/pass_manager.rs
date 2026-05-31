@@ -72,7 +72,7 @@ const fn simplify_pass_type_name(name: &'static str) -> &'static str {
     }
     let (bytes, _) = bytes.split_at(i);
 
-    match std::str::from_utf8(bytes) {
+    match core::str::from_utf8(bytes) {
         Ok(name) => name,
         Err(_) => panic!(),
     }
@@ -83,7 +83,7 @@ const fn simplify_pass_type_name(name: &'static str) -> &'static str {
 /// loop that goes over each available MIR and applies `run_pass`.
 pub(super) trait MirPass<'tcx> {
     fn name(&self) -> &'static str {
-        const { simplify_pass_type_name(std::any::type_name::<Self>()) }
+        const { simplify_pass_type_name(core::any::type_name::<Self>()) }
     }
 
     fn profiler_name(&self) -> &'static str {
@@ -117,7 +117,7 @@ pub(super) trait MirPass<'tcx> {
 /// disabled (via the `Lint` adapter).
 pub(super) trait MirLint<'tcx> {
     fn name(&self) -> &'static str {
-        const { simplify_pass_type_name(std::any::type_name::<Self>()) }
+        const { simplify_pass_type_name(core::any::type_name::<Self>()) }
     }
 
     fn is_enabled(&self, _sess: &Session) -> bool {

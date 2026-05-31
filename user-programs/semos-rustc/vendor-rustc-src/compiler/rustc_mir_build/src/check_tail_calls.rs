@@ -287,7 +287,7 @@ impl<'tcx> TailCallCkVisitor<'_, 'tcx> {
     fn report_calling_closure(&mut self, fun: &Expr<'_>, tupled_args: Ty<'_>, expr: &Expr<'_>) {
         let underscored_args = match tupled_args.kind() {
             ty::Tuple(tys) if tys.is_empty() => "".to_owned(),
-            ty::Tuple(tys) => std::iter::repeat_n("_, ", tys.len() - 1).chain(["_"]).collect(),
+            ty::Tuple(tys) => core::iter::repeat_n("_, ", tys.len() - 1).chain(["_"]).collect(),
             _ => "_".to_owned(),
         };
 
@@ -338,7 +338,7 @@ impl<'tcx> TailCallCkVisitor<'_, 'tcx> {
             let thing = if ty.is_fn_ptr() { "pointer" } else { "definition" };
 
             let derefs =
-                std::iter::once('(').chain(std::iter::repeat_n('*', refs)).collect::<String>();
+                core::iter::once('(').chain(core::iter::repeat_n('*', refs)).collect::<String>();
 
             err.multipart_suggestion(
                 format!("consider dereferencing the expression to get a function {thing}"),

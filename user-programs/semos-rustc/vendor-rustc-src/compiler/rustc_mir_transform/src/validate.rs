@@ -1059,7 +1059,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                             variant.fields.len(),
                         ));
                     }
-                    for (src, dest) in std::iter::zip(fields, &variant.fields) {
+                    for (src, dest) in core::iter::zip(fields, &variant.fields) {
                         let dest_ty = self
                             .tcx
                             .normalize_erasing_regions(self.typing_env, dest.ty(self.tcx, args));
@@ -1073,7 +1073,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                     if upvars.len() != fields.len() {
                         self.fail(location, "closure has the wrong number of initialized fields");
                     }
-                    for (src, dest) in std::iter::zip(fields, upvars) {
+                    for (src, dest) in core::iter::zip(fields, upvars) {
                         if !self.mir_assign_valid_types(src.ty(self.body, self.tcx), dest) {
                             self.fail(location, "closure field has the wrong type");
                         }
@@ -1084,7 +1084,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                     if upvars.len() != fields.len() {
                         self.fail(location, "coroutine has the wrong number of initialized fields");
                     }
-                    for (src, dest) in std::iter::zip(fields, upvars) {
+                    for (src, dest) in core::iter::zip(fields, upvars) {
                         if !self.mir_assign_valid_types(src.ty(self.body, self.tcx), dest) {
                             self.fail(location, "coroutine field has the wrong type");
                         }
@@ -1098,7 +1098,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                             "coroutine-closure has the wrong number of initialized fields",
                         );
                     }
-                    for (src, dest) in std::iter::zip(fields, upvars) {
+                    for (src, dest) in core::iter::zip(fields, upvars) {
                         if !self.mir_assign_valid_types(src.ty(self.body, self.tcx), dest) {
                             self.fail(location, "coroutine-closure field has the wrong type");
                         }

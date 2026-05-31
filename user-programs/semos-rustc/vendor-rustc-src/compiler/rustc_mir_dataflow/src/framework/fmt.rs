@@ -1,7 +1,7 @@
 //! Custom formatting traits used when outputting Graphviz diagrams with the results of a dataflow
 //! analysis.
 
-use std::fmt;
+use core::fmt;
 
 use rustc_index::Idx;
 use rustc_index::bit_set::{ChunkedBitSet, DenseBitSet, MixedBitSet};

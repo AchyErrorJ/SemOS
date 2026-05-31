@@ -176,17 +176,17 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
                     merged_blocks.iter().map(|&i| self.basic_blocks[i].statements.len()).sum();
 
                 if statements_to_merge > 0 {
-                    let mut statements = std::mem::take(&mut self.basic_blocks[bb].statements);
+                    let mut statements = core::mem::take(&mut self.basic_blocks[bb].statements);
                     statements.reserve(statements_to_merge);
                     let mut parent_bb_last_debuginfos =
-                        std::mem::take(&mut self.basic_blocks[bb].after_last_stmt_debuginfos);
+                        core::mem::take(&mut self.basic_blocks[bb].after_last_stmt_debuginfos);
                     for &from in &merged_blocks {
                         if let Some(stmt) = self.basic_blocks[from].statements.first_mut() {
                             stmt.debuginfos.prepend(&mut parent_bb_last_debuginfos);
                         }
                         statements.append(&mut self.basic_blocks[from].statements);
                         parent_bb_last_debuginfos =
-                            std::mem::take(&mut self.basic_blocks[from].after_last_stmt_debuginfos);
+                            core::mem::take(&mut self.basic_blocks[from].after_last_stmt_debuginfos);
                     }
                     self.basic_blocks[bb].statements = statements;
                     self.basic_blocks[bb].after_last_stmt_debuginfos = parent_bb_last_debuginfos;
@@ -250,7 +250,7 @@ impl<'a, 'tcx> CfgSimplifier<'a, 'tcx> {
             };
             if trivial_goto_chain {
                 let mut pred_debuginfos =
-                    std::mem::take(&mut self.basic_blocks[current].after_last_stmt_debuginfos);
+                    core::mem::take(&mut self.basic_blocks[current].after_last_stmt_debuginfos);
                 let debuginfos = if let Some(stmt) = self.basic_blocks[last].statements.first_mut()
                 {
                     &mut stmt.debuginfos

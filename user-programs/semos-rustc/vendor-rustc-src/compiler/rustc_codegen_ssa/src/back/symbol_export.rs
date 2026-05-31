@@ -1,4 +1,10 @@
+// M27: hash_map::Entry source is cfg-split via rustc-hash's no_std mode
+// (host: std::collections, target: hashbrown). Variants Occupied/Vacant
+// are identical on both sides.
+#[cfg(not(target_os = "none"))]
 use std::collections::hash_map::Entry::*;
+#[cfg(target_os = "none")]
+use hashbrown::hash_map::Entry::*;
 
 use rustc_abi::{CanonAbi, X86Call};
 use rustc_ast::expand::allocator::{

@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_middle::mir::Place;

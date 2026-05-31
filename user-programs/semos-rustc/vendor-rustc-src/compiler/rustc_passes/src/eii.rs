@@ -1,7 +1,7 @@
 //! Checks necessary for externally implementable items:
 //! Are all items implemented etc.?
 
-use std::iter;
+use core::iter;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_hir::attrs::{EiiDecl, EiiImpl};

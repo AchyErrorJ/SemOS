@@ -1,10 +1,22 @@
 // Decoding metadata from a single crate's metadata
 
-use std::iter::TrustedLen;
-use std::ops::{Deref, DerefMut};
+use core::iter::TrustedLen;
+use core::ops::{Deref, DerefMut};
+// M27 R4 B5: cfg-split host vs SemOS.
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
-use std::{io, mem};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+use alloc::sync::Arc;
+#[cfg(not(target_os = "none"))]
+use std::sync::OnceLock;
+#[cfg(target_os = "none")]
+use semos_std::sync::OnceLock;
+#[cfg(not(target_os = "none"))]
+use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
+use core::mem;
 
 pub(super) use cstore_impl::provide;
 use rustc_ast as ast;
@@ -50,7 +62,7 @@ mod cstore_impl;
 /// so that later constructions are guaranteed to succeed.
 pub(crate) struct MetadataBlob(OwnedSlice);
 
-impl std::ops::Deref for MetadataBlob {
+impl core::ops::Deref for MetadataBlob {
     type Target = [u8];
 
     #[inline]
@@ -308,7 +320,7 @@ impl<T: ParameterizedOverTcx> LazyValue<T> {
 }
 
 struct DecodeIterator<T, D> {
-    elem_counter: std::ops::Range<usize>,
+    elem_counter: core::ops::Range<usize>,
     dcx: D,
     _phantom: PhantomData<fn() -> T>,
 }
@@ -1141,7 +1153,7 @@ impl<'a> CrateMetadataRef<'a> {
                 })
                 .collect()
         } else {
-            std::iter::once(self.get_variant(tcx, kind, item_id, did)).collect()
+            core::iter::once(self.get_variant(tcx, kind, item_id, did)).collect()
         };
 
         variants.sort_by_key(|(idx, _)| *idx);

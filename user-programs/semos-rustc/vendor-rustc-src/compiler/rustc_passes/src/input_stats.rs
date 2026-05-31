@@ -117,7 +117,7 @@ impl<'k> StatCollector<'k> {
     }
 
     fn print(&self, tcx: TyCtxt<'_>, title: &str, prefix: &str) {
-        use std::fmt::Write;
+        use core::fmt::Write;
 
         // We will soon sort, so the initial order does not matter.
         #[allow(rustc::potential_query_instability)]

@@ -1,5 +1,12 @@
+// M27 R4 B5: cfg-split — std on host, semos_std on the SemOS target.
+#[cfg(not(target_os = "none"))]
 use std::io::Error;
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::io::Error;
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
 
 use rustc_errors::codes::*;
 use rustc_errors::{Diag, DiagCtxtHandle, Diagnostic, EmissionGuarantee, Level};

@@ -2,7 +2,7 @@
 //! It can be used to locate problems in MIR building or optimizations. It assumes that all code
 //! can be executed, so it has false positives.
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_index::bit_set::DenseBitSet;

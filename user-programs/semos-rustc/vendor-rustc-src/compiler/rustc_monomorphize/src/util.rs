@@ -1,14 +1,17 @@
-use std::fs::OpenOptions;
-use std::io::prelude::*;
-
-use rustc_middle::ty::{self, ClosureSizeProfileData, Instance, TyCtxt};
+use rustc_middle::ty::{Instance, TyCtxt};
 
 /// For a given closure, writes out the data for the profiling the impact of RFC 2229 on
 /// closure size into a CSV.
 ///
 /// During the same compile all closures dump the information in the same file
 /// "closure_profile_XXXXX.csv", which is created in the directory where the compiler is invoked.
+#[cfg(not(target_os = "none"))]
 pub(crate) fn dump_closure_profile<'tcx>(tcx: TyCtxt<'tcx>, closure_instance: Instance<'tcx>) {
+    use std::fs::OpenOptions;
+    use std::io::prelude::*;
+
+    use rustc_middle::ty::{self, ClosureSizeProfileData};
+
     let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)
@@ -62,3 +65,8 @@ pub(crate) fn dump_closure_profile<'tcx>(tcx: TyCtxt<'tcx>, closure_instance: In
         }
     }
 }
+
+// M27 §1.3 R4 closure profile dump deferred — needs FS surface we don't expose.
+// SemOS variant is a no-op; the RFC 2229 closure-size CSV is debug-only output.
+#[cfg(target_os = "none")]
+pub(crate) fn dump_closure_profile<'tcx>(_tcx: TyCtxt<'tcx>, _closure_instance: Instance<'tcx>) {}

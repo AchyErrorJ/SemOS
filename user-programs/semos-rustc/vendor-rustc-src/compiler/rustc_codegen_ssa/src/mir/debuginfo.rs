@@ -1,6 +1,8 @@
-use std::collections::hash_map::Entry;
-use std::marker::PhantomData;
-use std::ops::Range;
+// M27: route hash_map::Entry through rustc_data_structures::fx::StdEntry,
+// which is std/hashbrown-cfg-split inside the data-structures crate.
+use rustc_data_structures::fx::StdEntry as Entry;
+use core::marker::PhantomData;
+use core::ops::Range;
 
 use rustc_abi::{BackendRepr, FieldIdx, FieldsShape, Size, VariantIdx};
 use rustc_data_structures::fx::FxHashMap;

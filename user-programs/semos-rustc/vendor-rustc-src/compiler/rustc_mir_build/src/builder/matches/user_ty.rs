@@ -4,7 +4,7 @@
 //! This avoids having to repeatedly clone a partly-built [`UserTypeProjections`]
 //! at every step of the traversal, which is what the previous code was doing.
 
-use std::iter;
+use core::iter;
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::assert_matches;

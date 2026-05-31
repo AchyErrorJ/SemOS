@@ -48,7 +48,7 @@ impl<'tcx> crate::MirPass<'tcx> for SingleUseConsts {
 
             // We're only changing an operand, not the terminator kinds or successors
             let basic_blocks = body.basic_blocks.as_mut_preserves_cfg();
-            let init_statement_kind = std::mem::replace(
+            let init_statement_kind = core::mem::replace(
                 &mut basic_blocks[init_loc.block].statements[init_loc.statement_index].kind,
                 StatementKind::Nop,
             );

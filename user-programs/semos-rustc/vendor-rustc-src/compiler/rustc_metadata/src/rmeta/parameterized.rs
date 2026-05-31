@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use core::hash::Hash;
 
 use rustc_data_structures::unord::UnordMap;
 use rustc_hir::def_id::DefIndex;
@@ -63,7 +63,7 @@ trivially_parameterized_over_tcx! {
     bool,
     u64,
     usize,
-    std::string::String,
+    alloc::string::String,
     // tidy-alphabetical-start
     crate::rmeta::AttrFlags,
     crate::rmeta::CrateDep,

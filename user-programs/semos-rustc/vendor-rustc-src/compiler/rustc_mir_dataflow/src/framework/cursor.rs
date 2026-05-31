@@ -1,7 +1,7 @@
 //! Random access inspection of the results of a dataflow analysis.
 
-use std::cmp::Ordering;
-use std::ops::Deref;
+use core::cmp::Ordering;
+use core::ops::Deref;
 
 #[cfg(debug_assertions)]
 use rustc_index::bit_set::DenseBitSet;

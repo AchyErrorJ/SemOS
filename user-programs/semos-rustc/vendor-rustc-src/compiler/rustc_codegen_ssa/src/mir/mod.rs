@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use rustc_index::IndexVec;
 use rustc_index::bit_set::DenseBitSet;

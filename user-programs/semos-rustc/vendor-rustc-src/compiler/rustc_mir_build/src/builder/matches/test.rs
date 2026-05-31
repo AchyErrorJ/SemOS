@@ -5,7 +5,7 @@
 // identify what tests are needed, perform the tests, and then filter
 // the candidates based on the result.
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_hir::{LangItem, RangeEnd};

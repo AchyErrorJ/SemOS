@@ -1,10 +1,11 @@
 //! A helpful diagram for debugging dataflow problems.
 
-use std::borrow::Cow;
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::sync::OnceLock;
-use std::{io, ops, str};
+use alloc::borrow::Cow;
+use core::{ops, str};
+use semos_std::ffi::OsString;
+use semos_std::io;
+use semos_std::path::PathBuf;
+use semos_std::sync::OnceLock;
 
 use regex::Regex;
 use rustc_index::bit_set::DenseBitSet;
@@ -29,6 +30,7 @@ use crate::errors::{
 /// Writes a DOT file containing the results of a dataflow analysis if the user requested it via
 /// `rustc_mir` attributes and `-Z dump-mir-dataflow`. The `Result` in and the `Results` out are
 /// the same.
+#[cfg(not(target_os = "none"))]
 pub(super) fn write_graphviz_results<'tcx, A>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
@@ -93,6 +95,23 @@ where
     };
 
     lhs
+}
+
+// M27 §1.3 R4 dataflow graphviz dump deferred — needs FS surface we don't expose.
+// SemOS variant returns Ok(()) immediately; `-Z dump-mir-dataflow` is a debug flag and not
+// reachable in the v1 rustc-on-SemOS path.
+#[cfg(target_os = "none")]
+pub(super) fn write_graphviz_results<'tcx, A>(
+    _tcx: TyCtxt<'tcx>,
+    _body: &Body<'tcx>,
+    _results: &Results<'tcx, A>,
+    _pass_name: Option<&'static str>,
+) -> io::Result<()>
+where
+    A: Analysis<'tcx>,
+    A::Domain: DebugWithContext<A>,
+{
+    Ok(())
 }
 
 #[derive(Default)]
@@ -336,7 +355,7 @@ where
         block: BasicBlock,
         diffs: StateDiffCollector<A::Domain>,
     ) -> io::Result<Vec<u8>> {
-        use std::io::Write;
+        use semos_std::io::Write;
 
         //   Sample output:
         //   +-+-----------------------------------------------+
@@ -579,7 +598,7 @@ where
         let mut diffs_before = diffs.before.map(|v| v.into_iter());
         let mut diffs_after = diffs.after.into_iter();
 
-        let next_in_dataflow_order = |it: &mut std::vec::IntoIter<_>| {
+        let next_in_dataflow_order = |it: &mut alloc::vec::IntoIter<_>| {
             if A::Direction::IS_FORWARD { it.next().unwrap() } else { it.next_back().unwrap() }
         };
 
@@ -697,7 +716,7 @@ impl<D> StateDiffCollector<D> {
             before: (style == OutputStyle::BeforeAndAfter).then_some(vec![]),
         };
 
-        visit_results(body, std::iter::once(block), results, &mut collector);
+        visit_results(body, core::iter::once(block), results, &mut collector);
         collector
     }
 }

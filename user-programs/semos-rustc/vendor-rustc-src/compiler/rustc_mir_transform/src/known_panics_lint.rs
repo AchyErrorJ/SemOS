@@ -2,7 +2,7 @@
 //! out-of-bound access etc. Uses const propagation to determine the values of
 //! operands during checks.
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use rustc_abi::{BackendRepr, FieldIdx, HasDataLayout, Size, TargetDataLayout, VariantIdx};
 use rustc_const_eval::const_eval::DummyMachine;
@@ -485,8 +485,8 @@ impl<'mir, 'tcx> ConstPropagator<'mir, 'tcx> {
                 Val(T),
                 Underscore,
             }
-            impl<T: std::fmt::Debug> std::fmt::Debug for DbgVal<T> {
-                fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            impl<T: core::fmt::Debug> core::fmt::Debug for DbgVal<T> {
+                fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
                         Self::Val(val) => val.fmt(fmt),
                         Self::Underscore => fmt.write_str("_"),
@@ -794,7 +794,7 @@ impl<'tcx> Visitor<'tcx> for ConstPropagator<'_, 'tcx> {
         // which were modified in the current block.
         // Take it out of the ecx so we can get a mutable reference to the ecx for `remove_const`.
         let mut written_only_inside_own_block_locals =
-            std::mem::take(&mut self.written_only_inside_own_block_locals);
+            core::mem::take(&mut self.written_only_inside_own_block_locals);
 
         // This loop can get very hot for some bodies: it check each local in each bb.
         // To avoid this quadratic behaviour, we only clear the locals that were modified inside

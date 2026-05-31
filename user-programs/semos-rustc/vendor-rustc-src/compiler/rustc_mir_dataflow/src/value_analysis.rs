@@ -1,5 +1,5 @@
-use std::fmt::{Debug, Formatter};
-use std::ops::Range;
+use core::fmt::{Debug, Formatter};
+use core::ops::Range;
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::debug_assert_matches;
@@ -1114,7 +1114,7 @@ fn debug_with_context_rec<V: Debug + Eq + HasBottom>(
     old: Option<&StateData<V>>,
     map: &Map<'_>,
     f: &mut Formatter<'_>,
-) -> std::fmt::Result {
+) -> core::fmt::Result {
     if let Some(value) = map.places[place].value_index {
         match old {
             None => writeln!(f, "{}: {:?}", place_str, new.get(value))?,
@@ -1158,7 +1158,7 @@ pub fn debug_with_context<V: Debug + Eq + HasBottom>(
     old: Option<&StateData<V>>,
     map: &Map<'_>,
     f: &mut Formatter<'_>,
-) -> std::fmt::Result {
+) -> core::fmt::Result {
     for (local, place) in map.locals.iter_enumerated() {
         if let Some(place) = place {
             debug_with_context_rec(*place, &format!("{local:?}"), new, old, map, f)?;

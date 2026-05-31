@@ -1,4 +1,4 @@
-use std::{fmt, iter, mem};
+use core::{fmt, iter, mem};
 
 use rustc_abi::{FIRST_VARIANT, FieldIdx, VariantIdx};
 use rustc_hir::def::DefKind;
@@ -1118,7 +1118,7 @@ where
 
         if let Some(size) = opt_size {
             enum ProjectionKind<Path> {
-                Drop(std::ops::Range<u64>),
+                Drop(core::ops::Range<u64>),
                 Keep(u64, Path),
             }
             // Previously, we'd make a projection for every element in the array and create a drop

@@ -2,7 +2,7 @@
 //! be careful wrt to subtyping. To deal with this we only allow updates by using
 //! `FunctionCx::overwrite_local` which handles it automatically.
 
-use std::ops::{Index, IndexMut};
+use core::ops::{Index, IndexMut};
 
 use rustc_index::IndexVec;
 use rustc_middle::mir;

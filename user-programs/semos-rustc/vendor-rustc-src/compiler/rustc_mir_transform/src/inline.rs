@@ -1,7 +1,7 @@
 //! Inlining pass for MIR functions.
 
-use std::iter;
-use std::ops::{Range, RangeFrom};
+use core::iter;
+use core::ops::{Range, RangeFrom};
 
 use rustc_abi::{ExternAbi, FieldIdx};
 use rustc_data_structures::debug_assert_matches;
@@ -137,7 +137,7 @@ trait Inliner<'tcx> {
         &mut self,
         callsite: &CallSite<'tcx>,
         caller_body: &mut Body<'tcx>,
-        new_blocks: std::ops::Range<BasicBlock>,
+        new_blocks: core::ops::Range<BasicBlock>,
     );
 
     /// Called when inlining failed or was not performed.
@@ -233,7 +233,7 @@ impl<'tcx> Inliner<'tcx> for ForceInliner<'tcx> {
         &mut self,
         callsite: &CallSite<'tcx>,
         caller_body: &mut Body<'tcx>,
-        new_blocks: std::ops::Range<BasicBlock>,
+        new_blocks: core::ops::Range<BasicBlock>,
     ) {
         self.changed = true;
 
@@ -466,7 +466,7 @@ impl<'tcx> Inliner<'tcx> for NormalInliner<'tcx> {
         &mut self,
         callsite: &CallSite<'tcx>,
         caller_body: &mut Body<'tcx>,
-        new_blocks: std::ops::Range<BasicBlock>,
+        new_blocks: core::ops::Range<BasicBlock>,
     ) {
         self.changed = true;
 
@@ -599,7 +599,7 @@ fn try_inlining<'tcx, I: Inliner<'tcx>>(
     inliner: &I,
     caller_body: &mut Body<'tcx>,
     callsite: &CallSite<'tcx>,
-) -> Result<std::ops::Range<BasicBlock>, &'static str> {
+) -> Result<core::ops::Range<BasicBlock>, &'static str> {
     let tcx = inliner.tcx();
     check_mir_is_available(inliner, caller_body, callsite.callee)?;
 
@@ -659,7 +659,7 @@ fn try_inlining<'tcx, I: Inliner<'tcx>>(
 
         let arg_tuple_ty = arg_tuple.node.ty(&caller_body.local_decls, tcx);
         let arg_tys = if callee_body.spread_arg.is_some() {
-            std::slice::from_ref(&arg_tuple_ty)
+            core::slice::from_ref(&arg_tuple_ty)
         } else {
             let ty::Tuple(arg_tuple_tys) = *arg_tuple_ty.kind() else {
                 bug!("Closure arguments are not passed as a tuple");

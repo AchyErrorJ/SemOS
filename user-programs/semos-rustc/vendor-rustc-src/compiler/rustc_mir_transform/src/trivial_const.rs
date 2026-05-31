@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use core::ops::Deref;
 
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::LocalDefId;

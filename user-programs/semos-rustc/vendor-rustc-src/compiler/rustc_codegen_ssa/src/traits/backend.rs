@@ -15,9 +15,10 @@ use rustc_span::Symbol;
 
 use super::CodegenObject;
 use super::write::WriteBackendMethods;
+// M27 §1.7: back::archive + back::link cfg-gated on SemOS — semos-rustc
+// bypasses the SSA link step (cg_clif emits ET_EXEC directly, no rlib output).
+#[cfg(not(target_os = "none"))]
 use crate::back::archive::ArArchiveBuilderBuilder;
-// M27 §1.7: back::link cfg-gated on SemOS — semos-rustc bypasses the SSA
-// link step (cg_clif emits ET_EXEC directly).
 #[cfg(not(target_os = "none"))]
 use crate::back::link::link_binary;
 use crate::back::write::TargetMachineFactoryFn;

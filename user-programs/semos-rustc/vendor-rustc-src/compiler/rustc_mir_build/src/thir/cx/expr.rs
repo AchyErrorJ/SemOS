@@ -345,7 +345,7 @@ impl<'tcx> ThirBuildCx<'tcx> {
                 // Rewrite a.b(c) into UFCS form like Trait::b(a, c)
                 let expr = self.method_callee(expr, segment.ident.span, None);
                 info!("Using method span: {:?}", expr.span);
-                let args = std::iter::once(receiver)
+                let args = core::iter::once(receiver)
                     .chain(args.iter())
                     .map(|expr| self.mirror_expr(expr))
                     .collect();

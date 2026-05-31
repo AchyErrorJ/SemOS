@@ -1,17 +1,34 @@
+// M27 R4 B5: cfg-split — host body uses std::fs verbatim (rustc_fs_util's
+// TempDirBuilder pairs with std types). SemOS body uses the semos_std::fs
+// subset for the simple write path; the TempDir + rename + buffered-copy
+// flow stubs to Unsupported.
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "none"))]
 use std::{fs, io};
 
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::{fs, io};
+
+#[cfg_attr(target_os = "none", allow(unused_imports))]
 use rustc_data_structures::temp_dir::MaybeTempDir;
+#[cfg(not(target_os = "none"))]
 use rustc_fs_util::TempDirBuilder;
 use rustc_middle::ty::TyCtxt;
 use rustc_session::Session;
+#[cfg_attr(target_os = "none", allow(unused_imports))]
 use rustc_session::config::{CrateType, OutFileName, OutputType};
+#[cfg_attr(target_os = "none", allow(unused_imports))]
 use rustc_session::output::filename_for_metadata;
 
+#[cfg_attr(target_os = "none", allow(unused_imports))]
 use crate::errors::{
     BinaryOutputToTty, FailedCopyToStdout, FailedCreateEncodedMetadata, FailedCreateFile,
     FailedCreateTempdir, FailedWriteError,
 };
+#[cfg_attr(target_os = "none", allow(unused_imports))]
 use crate::{EncodedMetadata, encode_metadata};
 
 // FIXME(eddyb) maybe include the crate name in this?
@@ -22,6 +39,7 @@ pub const METADATA_FILENAME: &str = "lib.rmeta";
 /// building an `.rlib` (stomping over one another), or writing an `.rmeta` into a
 /// directory being searched for `extern crate` (observing an incomplete file).
 /// The returned path is the temporary file containing the complete metadata.
+#[cfg(not(target_os = "none"))]
 pub fn emit_wrapper_file(sess: &Session, data: &[u8], tmpdir: &Path, name: &str) -> PathBuf {
     let out_filename = tmpdir.join(name);
     let result = fs::write(&out_filename, data);
@@ -33,6 +51,20 @@ pub fn emit_wrapper_file(sess: &Session, data: &[u8], tmpdir: &Path, name: &str)
     out_filename
 }
 
+// M27 R4 B5: SemOS arm uses semos_std::fs::write(&str, ...).
+#[cfg(target_os = "none")]
+pub fn emit_wrapper_file(sess: &Session, data: &[u8], tmpdir: &Path, name: &str) -> PathBuf {
+    let out_filename = tmpdir.join(name);
+    let result = fs::write(out_filename.as_str(), data);
+
+    if let Err(err) = result {
+        sess.dcx().emit_fatal(FailedWriteError { filename: out_filename, err });
+    }
+
+    out_filename
+}
+
+#[cfg(not(target_os = "none"))]
 pub fn encode_and_write_metadata(tcx: TyCtxt<'_>) -> EncodedMetadata {
     let out_filename = filename_for_metadata(tcx.sess, tcx.output_filenames(()));
     // To avoid races with another rustc process scanning the output directory,
@@ -111,7 +143,17 @@ pub fn encode_and_write_metadata(tcx: TyCtxt<'_>) -> EncodedMetadata {
     metadata
 }
 
-#[cfg(not(target_os = "linux"))]
+// M27 R4 B5 TODO(Phase 5): SemOS-target rmeta encoding currently aborts —
+// the host body above uses tempfile::TempDir + fs::rename + buffered open,
+// none of which semos_std::fs exposes yet. semos-rustc on SemOS doesn't yet
+// emit rmeta (single-crate hello-world target). When it does, the SemOS arm
+// will need fs::rename + a tempdir RAII surface in semos_std.
+#[cfg(target_os = "none")]
+pub fn encode_and_write_metadata(tcx: TyCtxt<'_>) -> EncodedMetadata {
+    tcx.dcx().emit_fatal(FailedCreateTempdir { err: io::Error::other() })
+}
+
+#[cfg(all(not(target_os = "linux"), not(target_os = "none")))]
 pub fn non_durable_rename(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::rename(src, dst)
 }
@@ -129,9 +171,22 @@ pub fn non_durable_rename(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::rename(src, dst)
 }
 
+// M27 R4 B5 TODO(Phase 5): semos_std::fs::rename not yet implemented.
+#[cfg(target_os = "none")]
+pub fn non_durable_rename(_src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::other())
+}
+
+#[cfg(not(target_os = "none"))]
 pub fn copy_to_stdout(from: &Path) -> io::Result<()> {
     let mut reader = fs::File::open_buffered(from)?;
     let mut stdout = io::stdout();
     io::copy(&mut reader, &mut stdout)?;
     Ok(())
+}
+
+// M27 R4 B5 TODO(Phase 5): semos_std::io::copy + File::open_buffered not yet wired.
+#[cfg(target_os = "none")]
+pub fn copy_to_stdout(_from: &Path) -> io::Result<()> {
+    Err(io::Error::other())
 }

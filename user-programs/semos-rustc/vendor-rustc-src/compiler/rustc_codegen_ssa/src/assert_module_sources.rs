@@ -23,8 +23,8 @@
 //! allows for doing a more fine-grained check to see if pre- or post-lto data
 //! was re-used.
 
-use std::borrow::Cow;
-use std::fmt;
+use alloc::borrow::Cow;
+use core::fmt;
 
 use rustc_data_structures::unord::{UnordMap, UnordSet};
 use rustc_errors::{DiagArgValue, IntoDiagArg};
@@ -220,7 +220,12 @@ impl fmt::Display for CguReuse {
 }
 
 impl IntoDiagArg for CguReuse {
+    #[cfg(not(target_os = "none"))]
     fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+        DiagArgValue::Str(Cow::Owned(self.to_string()))
+    }
+    #[cfg(target_os = "none")]
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Owned(self.to_string()))
     }
 }

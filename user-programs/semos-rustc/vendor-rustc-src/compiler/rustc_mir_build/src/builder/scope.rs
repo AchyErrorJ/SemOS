@@ -81,7 +81,7 @@ that contains only loops and breakable blocks. It tracks where a `break`,
 
 */
 
-use std::mem;
+use core::mem;
 
 use interpret::ErrorHandled;
 use rustc_data_structures::fx::FxHashMap;

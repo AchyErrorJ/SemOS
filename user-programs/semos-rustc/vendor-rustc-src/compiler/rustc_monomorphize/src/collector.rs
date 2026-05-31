@@ -207,8 +207,8 @@
 
 mod autodiff;
 
-use std::cell::OnceCell;
-use std::ops::ControlFlow;
+use core::cell::OnceCell;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::sync::{MTLock, par_for_each_in};

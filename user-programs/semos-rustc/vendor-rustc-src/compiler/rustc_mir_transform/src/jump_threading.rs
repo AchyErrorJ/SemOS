@@ -995,7 +995,7 @@ impl<'a, 'tcx> OpportunitySet<'a, 'tcx> {
         let mut targets: Vec<_> = state
             .fulfilled
             .iter()
-            .flat_map(|&index| std::mem::take(&mut state.targets[index]))
+            .flat_map(|&index| core::mem::take(&mut state.targets[index]))
             .collect();
         targets.sort();
         targets.dedup();

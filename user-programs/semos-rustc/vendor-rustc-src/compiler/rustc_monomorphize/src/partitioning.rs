@@ -92,12 +92,9 @@
 //! source-level module, functions from the same module will be available for
 //! inlining, even when they are not marked `#[inline]`.
 
-use std::cmp;
-use std::collections::hash_map::Entry;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use core::cmp;
 
+use rustc_data_structures::fx::StdEntry as Entry;
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_data_structures::sync;
 use rustc_data_structures::unord::{UnordMap, UnordSet};
@@ -117,13 +114,16 @@ use rustc_middle::ty::print::{characteristic_def_id_of_type, with_no_trimmed_pat
 use rustc_middle::ty::{self, InstanceKind, TyCtxt};
 use rustc_middle::util::Providers;
 use rustc_session::CodegenUnits;
+#[cfg(not(target_os = "none"))]
 use rustc_session::config::{DumpMonoStatsFormat, SwitchWithOptPath};
 use rustc_span::Symbol;
 use rustc_target::spec::SymbolVisibility;
 use tracing::debug;
 
 use crate::collector::{self, MonoItemCollectionStrategy, UsageMap};
-use crate::errors::{CouldntDumpMonoStats, SymbolAlreadyDefined};
+#[cfg(not(target_os = "none"))]
+use crate::errors::CouldntDumpMonoStats;
+use crate::errors::SymbolAlreadyDefined;
 use crate::graph_checks::target_specific_checks;
 
 struct PartitioningCx<'a, 'tcx> {
@@ -958,7 +958,7 @@ fn default_visibility(tcx: TyCtxt<'_>, id: DefId, is_generic: bool) -> Visibilit
 
 fn debug_dump<'a, 'tcx: 'a>(tcx: TyCtxt<'tcx>, label: &str, cgus: &[CodegenUnit<'tcx>]) {
     let dump = move || {
-        use std::fmt::Write;
+        use core::fmt::Write;
 
         let mut num_cgus = 0;
         let mut all_cgu_sizes = Vec::new();
@@ -1058,7 +1058,7 @@ fn debug_dump<'a, 'tcx: 'a>(tcx: TyCtxt<'tcx>, label: &str, cgus: &[CodegenUnit<
             let _ = writeln!(s);
         }
 
-        return std::mem::take(s);
+        return core::mem::take(s);
 
         // Converts a slice to a string, capturing repetitions to save space.
         // E.g. `[4, 4, 4, 3, 2, 1, 1, 1, 1, 1]` -> "[4 (x3), 3, 2, 1 (x5)]".
@@ -1175,7 +1175,9 @@ fn collect_and_partition_mono_items(tcx: TyCtxt<'_>, (): ()) -> MonoItemPartitio
         })
         .collect();
 
-    // Output monomorphization stats per def_id
+    // Output monomorphization stats per def_id.
+    // M27 §1.3 R4 partitioning dump deferred — only emitted on the host build.
+    #[cfg(not(target_os = "none"))]
     if let SwitchWithOptPath::Enabled(ref path) = tcx.sess.opts.unstable_opts.dump_mono_stats
         && let Err(err) =
             dump_mono_items_stats(tcx, codegen_units, path, tcx.crate_name(LOCAL_CRATE))
@@ -1183,6 +1185,9 @@ fn collect_and_partition_mono_items(tcx: TyCtxt<'_>, (): ()) -> MonoItemPartitio
         tcx.dcx().emit_fatal(CouldntDumpMonoStats { error: err.to_string() });
     }
 
+    // M27 §1.3 R4 print_mono_items dump deferred — `println!` is host-only and the
+    // `-Z print-mono-items` flag is debug-only.
+    #[cfg(not(target_os = "none"))]
     if tcx.sess.opts.unstable_opts.print_mono_items {
         let mut item_to_cgus: UnordMap<_, Vec<_>> = Default::default();
 
@@ -1237,12 +1242,22 @@ fn collect_and_partition_mono_items(tcx: TyCtxt<'_>, (): ()) -> MonoItemPartitio
 
 /// Outputs stats about instantiation counts and estimated size, per `MonoItem`'s
 /// def, to a file in the given output directory.
+///
+/// M27 §1.3 R4 partitioning dump deferred — cfg-gated to host because SemOS doesn't
+/// expose a writable filesystem surface. `-Z dump-mono-stats` is a debug flag that
+/// isn't exercised in v1 rustc-on-SemOS.
+#[cfg(not(target_os = "none"))]
 fn dump_mono_items_stats<'tcx>(
     tcx: TyCtxt<'tcx>,
     codegen_units: &[CodegenUnit<'tcx>],
-    output_directory: &Option<PathBuf>,
+    output_directory: &Option<std::path::PathBuf>,
     crate_name: Symbol,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::Path;
+
     let output_directory = if let Some(directory) = output_directory {
         fs::create_dir_all(directory)?;
         directory

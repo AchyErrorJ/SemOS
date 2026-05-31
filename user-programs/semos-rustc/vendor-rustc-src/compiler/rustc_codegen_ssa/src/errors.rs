@@ -1,9 +1,23 @@
 //! Errors emitted by codegen_ssa
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+#[cfg(not(target_os = "none"))]
 use std::ffi::OsString;
+#[cfg(target_os = "none")]
+use semos_std::ffi::OsString;
+#[cfg(not(target_os = "none"))]
 use std::io::Error;
+#[cfg(target_os = "none")]
+use semos_std::io::Error;
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+// M27 §1.7: ExitStatus + back::command::Command are external-linker-only;
+// the diagnostic structs that reference them (LinkingFailed,
+// ProcessingDymutilFailed, UnableToRunDsymutil, StrippingDebugInfoFailed,
+// UnableToRun) are also cfg-gated below.
+#[cfg(not(target_os = "none"))]
 use std::process::ExitStatus;
 
 use rustc_errors::codes::*;
@@ -16,6 +30,7 @@ use rustc_middle::ty::{FloatTy, Ty};
 use rustc_span::{Span, Symbol};
 
 use crate::assert_module_sources::CguReuse;
+#[cfg(not(target_os = "none"))]
 use crate::back::command::Command;
 use crate::fluent_generated as fluent;
 
@@ -162,7 +177,12 @@ impl<'a> CopyPath<'a> {
 struct DebugArgPath<'a>(pub &'a Path);
 
 impl IntoDiagArg for DebugArgPath<'_> {
+    #[cfg(not(target_os = "none"))]
     fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+        DiagArgValue::Str(Cow::Owned(format!("{:?}", self.0)))
+    }
+    #[cfg(target_os = "none")]
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         DiagArgValue::Str(Cow::Owned(format!("{:?}", self.0)))
     }
 }
@@ -350,6 +370,8 @@ impl<G: EmissionGuarantee> Diagnostic<'_, G> for ThorinErrorWrapper {
     }
 }
 
+// M27 §1.7: LinkingFailed referenced only from back::link.rs (gated).
+#[cfg(not(target_os = "none"))]
 pub(crate) struct LinkingFailed<'a> {
     pub linker_path: &'a Path,
     pub exit_status: ExitStatus,
@@ -359,6 +381,7 @@ pub(crate) struct LinkingFailed<'a> {
     pub sysroot_dir: PathBuf,
 }
 
+#[cfg(not(target_os = "none"))]
 impl<G: EmissionGuarantee> Diagnostic<'_, G> for LinkingFailed<'_> {
     fn into_diag(mut self, dcx: DiagCtxtHandle<'_>, level: Level) -> Diag<'_, G> {
         let mut diag = Diag::new(dcx, level, fluent::codegen_ssa_linking_failed);
@@ -551,6 +574,9 @@ pub(crate) struct InsufficientVSCodeProduct;
 #[diag(codegen_ssa_cpu_required)]
 pub(crate) struct CpuRequired;
 
+// M27 §1.7: dymutil / strip / external-utility diagnostics — referenced
+// only from back::link.rs (gated).
+#[cfg(not(target_os = "none"))]
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_processing_dymutil_failed)]
 #[note]
@@ -559,12 +585,14 @@ pub(crate) struct ProcessingDymutilFailed {
     pub output: String,
 }
 
+#[cfg(not(target_os = "none"))]
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_unable_to_run_dsymutil)]
 pub(crate) struct UnableToRunDsymutil {
     pub error: Error,
 }
 
+#[cfg(not(target_os = "none"))]
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_stripping_debug_info_failed)]
 #[note]
@@ -574,6 +602,7 @@ pub(crate) struct StrippingDebugInfoFailed<'a> {
     pub output: String,
 }
 
+#[cfg(not(target_os = "none"))]
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_unable_to_run)]
 pub(crate) struct UnableToRun<'a> {
@@ -631,34 +660,34 @@ pub(crate) struct RlibArchiveBuildFailure {
 // Public for ArchiveBuilderBuilder::extract_bundled_libs
 pub enum ExtractBundledLibsError<'a> {
     #[diag(codegen_ssa_extract_bundled_libs_open_file)]
-    OpenFile { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    OpenFile { rlib: &'a Path, error: Box<dyn core::error::Error> },
 
     #[diag(codegen_ssa_extract_bundled_libs_mmap_file)]
-    MmapFile { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    MmapFile { rlib: &'a Path, error: Box<dyn core::error::Error> },
 
     #[diag(codegen_ssa_extract_bundled_libs_parse_archive)]
-    ParseArchive { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    ParseArchive { rlib: &'a Path, error: Box<dyn core::error::Error> },
 
     #[diag(codegen_ssa_extract_bundled_libs_read_entry)]
-    ReadEntry { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    ReadEntry { rlib: &'a Path, error: Box<dyn core::error::Error> },
 
     #[diag(codegen_ssa_extract_bundled_libs_archive_member)]
-    ArchiveMember { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    ArchiveMember { rlib: &'a Path, error: Box<dyn core::error::Error> },
 
     #[diag(codegen_ssa_extract_bundled_libs_convert_name)]
-    ConvertName { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    ConvertName { rlib: &'a Path, error: Box<dyn core::error::Error> },
 
     #[diag(codegen_ssa_extract_bundled_libs_write_file)]
-    WriteFile { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    WriteFile { rlib: &'a Path, error: Box<dyn core::error::Error> },
 
     #[diag(codegen_ssa_extract_bundled_libs_write_file)]
-    ExtractSection { rlib: &'a Path, error: Box<dyn std::error::Error> },
+    ExtractSection { rlib: &'a Path, error: Box<dyn core::error::Error> },
 }
 
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_read_file)]
 pub(crate) struct ReadFileError {
-    pub message: std::io::Error,
+    pub message: Error,
 }
 
 #[derive(Diagnostic)]
@@ -669,7 +698,7 @@ pub(crate) struct UnsupportedLinkSelfContained;
 #[diag(codegen_ssa_archive_build_failure)]
 pub(crate) struct ArchiveBuildFailure {
     pub path: PathBuf,
-    pub error: std::io::Error,
+    pub error: Error,
 }
 
 #[derive(Diagnostic)]
@@ -1051,7 +1080,15 @@ pub enum ExpectedPointerMutability {
 }
 
 impl IntoDiagArg for ExpectedPointerMutability {
+    #[cfg(not(target_os = "none"))]
     fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+        match self {
+            ExpectedPointerMutability::Mut => DiagArgValue::Str(Cow::Borrowed("*mut")),
+            ExpectedPointerMutability::Not => DiagArgValue::Str(Cow::Borrowed("*_")),
+        }
+    }
+    #[cfg(target_os = "none")]
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         match self {
             ExpectedPointerMutability::Mut => DiagArgValue::Str(Cow::Borrowed("*mut")),
             ExpectedPointerMutability::Not => DiagArgValue::Str(Cow::Borrowed("*_")),
@@ -1099,20 +1136,20 @@ pub(crate) struct DlltoolFailImportLibrary<'a> {
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_error_writing_def_file)]
 pub(crate) struct ErrorWritingDEFFile {
-    pub error: std::io::Error,
+    pub error: Error,
 }
 
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_error_calling_dlltool)]
 pub(crate) struct ErrorCallingDllTool<'a> {
     pub dlltool_path: Cow<'a, str>,
-    pub error: std::io::Error,
+    pub error: Error,
 }
 
 #[derive(Diagnostic)]
 #[diag(codegen_ssa_error_creating_remark_dir)]
 pub(crate) struct ErrorCreatingRemarkDir {
-    pub error: std::io::Error,
+    pub error: Error,
 }
 
 #[derive(Diagnostic)]
@@ -1138,7 +1175,7 @@ pub(crate) struct AixStripNotUsed;
 #[derive(Diagnostic, Debug)]
 pub(crate) enum XcrunError {
     #[diag(codegen_ssa_xcrun_failed_invoking)]
-    FailedInvoking { sdk_name: &'static str, command_formatted: String, error: std::io::Error },
+    FailedInvoking { sdk_name: &'static str, command_formatted: String, error: Error },
 
     #[diag(codegen_ssa_xcrun_unsuccessful)]
     #[note]

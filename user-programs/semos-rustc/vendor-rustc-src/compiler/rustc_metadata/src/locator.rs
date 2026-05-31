@@ -212,11 +212,24 @@
 //! no means all of the necessary details. Take a look at the rest of
 //! metadata::locator or metadata::creader for all the juicy details!
 
-use std::borrow::Cow;
+// M27 R4 B5 TODO(Phase 5): pervasive `path.display()` / `filename.display()`
+// calls throughout this file (lines 435/450/607/911/933/943/960/967/1073/
+// 1138/1146/1163/1179/1195) compile fine on host (std::path::Path::display)
+// but require `semos_std::path::Path::display()` and `PathBuf::display()` to
+// be added before the SemOS target build resolves. Phase 5 integration will
+// add the one-method `display()` shim (returns `impl Display`).
+use alloc::borrow::Cow;
+use core::ops::Deref;
+use core::{cmp, fmt};
+// M27 R4 B5: cfg-split host vs SemOS for io + path.
+#[cfg(not(target_os = "none"))]
 use std::io::{Result as IoResult, Write};
-use std::ops::Deref;
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::{cmp, fmt};
+#[cfg(target_os = "none")]
+use semos_std::io::{Result as IoResult, Write};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
 
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_data_structures::memmap::Mmap;
@@ -231,6 +244,8 @@ use rustc_session::utils::CanonicalizedPath;
 use rustc_session::{Session, config};
 use rustc_span::{Span, Symbol};
 use rustc_target::spec::{Target, TargetTuple};
+// M27 §1.2 plugin loader deferred: tempfile is host-only.
+#[cfg(not(target_os = "none"))]
 use tempfile::Builder as TempFileBuilder;
 use tracing::{debug, info};
 
@@ -289,7 +304,7 @@ impl fmt::Display for CrateFlavor {
 }
 
 impl IntoDiagArg for CrateFlavor {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<PathBuf>) -> rustc_errors::DiagArgValue {
         match self {
             CrateFlavor::Rlib => DiagArgValue::Str(Cow::Borrowed("rlib")),
             CrateFlavor::Rmeta => DiagArgValue::Str(Cow::Borrowed("rmeta")),
@@ -827,6 +842,11 @@ fn get_metadata_section<'p>(
         CrateFlavor::Rlib => {
             loader.get_rlib_metadata(target, filename).map_err(MetadataError::LoadFailure)?
         }
+        // M27 §1.2 plugin loader deferred: SDylib spawns a child rustc to build
+        // sdylib interfaces. On SemOS there are no sdylib interfaces (single
+        // codegen, no proc-macros), so the SDylib arm is dead. Host body
+        // verbatim; SemOS arm returns LoadFailure unconditionally.
+        #[cfg(not(target_os = "none"))]
         CrateFlavor::SDylib => {
             let compiler = std::env::current_exe().map_err(|_err| {
                 MetadataError::LoadFailure(
@@ -875,6 +895,12 @@ fn get_metadata_section<'p>(
             let _ = std::fs::remove_file(rmeta_file);
 
             rmeta
+        }
+        #[cfg(target_os = "none")]
+        CrateFlavor::SDylib => {
+            return Err(MetadataError::LoadFailure(
+                "sdylib not supported on semos (§1.2)".to_string(),
+            ));
         }
         CrateFlavor::Dylib => {
             let buf =
@@ -931,6 +957,7 @@ fn get_metadata_section<'p>(
     }
 }
 
+#[cfg(not(target_os = "none"))]
 fn get_rmeta_metadata_section<'a, 'p>(filename: &'p Path) -> Result<OwnedSlice, MetadataError<'a>> {
     // mmap the file, because only a small fraction of it is read.
     let file = std::fs::File::open(filename).map_err(|_| {
@@ -948,6 +975,18 @@ fn get_rmeta_metadata_section<'a, 'p>(filename: &'p Path) -> Result<OwnedSlice, 
     })?;
 
     Ok(slice_owned(mmap, Deref::deref))
+}
+
+// M27 R4 B5 TODO(Phase 5): SemOS arm reads the entire rmeta into a buffer
+// (no mmap on SemOS). Currently a stub — the SemOS rustc bootstrap doesn't
+// yet read rmeta from disk; when it does, this needs semos_std::fs::read +
+// rustc_data_structures::memmap::Mmap-from-Vec support.
+#[cfg(target_os = "none")]
+fn get_rmeta_metadata_section<'a, 'p>(filename: &'p Path) -> Result<OwnedSlice, MetadataError<'a>> {
+    let _ = filename;
+    Err(MetadataError::LoadFailure(
+        "rmeta read not supported on semos yet (R4 B5 TODO Phase 5)".to_string(),
+    ))
 }
 
 /// A diagnostic function for dumping crate metadata to an output stream.

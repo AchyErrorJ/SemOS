@@ -32,7 +32,7 @@
 //!
 //! [gen-kill]: https://en.wikipedia.org/wiki/Data-flow_analysis#Bit_vector_problems
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 use rustc_data_structures::work_queue::WorkQueue;
 use rustc_index::bit_set::{DenseBitSet, MixedBitSet};

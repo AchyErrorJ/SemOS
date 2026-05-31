@@ -1,5 +1,5 @@
-use std::marker::PhantomData;
-use std::num::NonZero;
+use core::marker::PhantomData;
+use core::num::NonZero;
 
 use decoder::LazyDecoder;
 pub(crate) use decoder::{CrateMetadata, CrateNumMap, MetadataBlob, TargetModifiers};

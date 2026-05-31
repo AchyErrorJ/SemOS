@@ -121,7 +121,7 @@ fn prefix_and_suffix<'tcx>(
     item_data: MonoItemData,
     fn_abi: &FnAbi<'tcx, Ty<'tcx>>,
 ) -> (String, String) {
-    use std::fmt::Write;
+    use core::fmt::Write;
 
     let asm_binary_format = &tcx.sess.target.binary_format;
 
@@ -157,7 +157,7 @@ fn prefix_and_suffix<'tcx>(
     let emit_fatal = |msg| tcx.dcx().span_fatal(tcx.def_span(instance.def_id()), msg);
 
     // see https://godbolt.org/z/cPK4sxKor.
-    let write_linkage = |w: &mut String| -> std::fmt::Result {
+    let write_linkage = |w: &mut String| -> core::fmt::Result {
         match item_data.linkage {
             Linkage::External => {
                 writeln!(w, ".globl {asm_name}")?;

@@ -1,6 +1,6 @@
-use std::any::Any;
-use std::mem;
-use std::sync::Arc;
+use core::any::Any;
+use core::mem;
+use alloc::sync::Arc;
 
 use rustc_hir::attrs::Deprecation;
 use rustc_hir::def::{CtorKind, DefKind};
@@ -450,8 +450,8 @@ pub(in crate::rmeta) fn provide(providers: &mut Providers) {
         // sufficiently visible parent (considering modules that re-export the
         // external item to be parents).
         visible_parent_map: |tcx, ()| {
-            use std::collections::hash_map::Entry;
-            use std::collections::vec_deque::VecDeque;
+            use hashbrown::hash_map::Entry;
+            use alloc::collections::vec_deque::VecDeque;
 
             let mut visible_parent_map: DefIdMap<DefId> = Default::default();
             // This is a secondary visible_parent_map, storing the DefId of

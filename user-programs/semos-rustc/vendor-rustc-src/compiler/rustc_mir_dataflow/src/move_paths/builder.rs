@@ -1,4 +1,4 @@
-use std::mem;
+use core::mem;
 
 use rustc_index::IndexVec;
 use rustc_middle::mir::*;

@@ -1,9 +1,25 @@
-use std::borrow::Borrow;
-use std::collections::hash_map::Entry;
+use core::borrow::Borrow;
+use hashbrown::hash_map::Entry;
+use alloc::sync::Arc;
+// M27 R4 B5: cfg-split host vs SemOS for fs/io/path.
+#[cfg(not(target_os = "none"))]
 use std::fs::File;
+#[cfg(not(target_os = "none"))]
 use std::io::{Read, Seek, Write};
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::fs::File;
+// M27 R4 B5 TODO(Phase 5): semos_std::io::Seek not yet exposed. Encoder uses
+// File::seek to rewrite the root position header (encode_root_position). Until
+// semos_std grows a Seek trait + File::seek impl, the SemOS arm of encoder.rs
+// will fail at type resolution. The whole rmeta encoder path is not exercised
+// on SemOS in v1 (no on-target rmeta emission); when it is, this is Phase 5
+// integration. For now we re-export Read/Write only and leave Seek unresolved.
+#[cfg(target_os = "none")]
+use semos_std::io::{Read, Write};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_data_structures::memmap::{Mmap, MmapMut};
@@ -512,7 +528,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
     fn encode_def_path_table(&mut self) {
         let table = self.tcx.def_path_table();
         if self.is_proc_macro {
-            for def_index in std::iter::once(CRATE_DEF_INDEX)
+            for def_index in core::iter::once(CRATE_DEF_INDEX)
                 .chain(self.tcx.resolutions(()).proc_macros.iter().map(|p| p.local_def_index))
             {
                 let def_key = self.lazy(table.def_key(def_index));
@@ -783,8 +799,12 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         let computed_total_bytes: usize = stats.iter().map(|(_, size)| size).sum();
         assert_eq!(total_bytes, computed_total_bytes);
 
+        // M27 R4 B5 TODO(Phase 5): -Zmeta-stats requires Seek + BufReader, both
+        // host-only today. Gate the whole branch host-only — SemOS rustc never
+        // ships with -Zmeta-stats enabled.
+        #[cfg(not(target_os = "none"))]
         if tcx.sess.opts.unstable_opts.meta_stats {
-            use std::fmt::Write;
+            use core::fmt::Write;
 
             self.opaque.flush();
 
@@ -2345,6 +2365,10 @@ pub struct EncodedMetadata {
 }
 
 impl EncodedMetadata {
+    // M27 R4 B5 TODO(Phase 5): host body uses File::open + file_metadata + mmap +
+    // fs::read. SemOS arm stubs to Err — see Phase 5 integration; SemOS rustc
+    // hello-world target doesn't yet emit/consume rmeta.
+    #[cfg(not(target_os = "none"))]
     #[inline]
     pub fn from_path(
         path: PathBuf,
@@ -2372,6 +2396,16 @@ impl EncodedMetadata {
             path: Some(path.into()),
             _temp_dir: temp_dir,
         })
+    }
+
+    #[cfg(target_os = "none")]
+    #[inline]
+    pub fn from_path(
+        _path: PathBuf,
+        _stub_path: Option<PathBuf>,
+        _temp_dir: Option<MaybeTempDir>,
+    ) -> semos_std::io::Result<Self> {
+        Err(semos_std::io::Error::other())
     }
 
     #[inline]
@@ -2554,6 +2588,9 @@ fn with_encode_metadata_header(
     }
 }
 
+// M27 R4 B5 TODO(Phase 5): semos_std::io::Seek not yet exposed. Host body
+// verbatim; SemOS arm stubs to Err. SemOS rustc doesn't emit rmeta in v1.
+#[cfg(not(target_os = "none"))]
 fn encode_root_position(mut file: &File, pos: usize) -> Result<(), std::io::Error> {
     // We will return to this position after writing the root position.
     let pos_before_seek = file.stream_position().unwrap();
@@ -2566,6 +2603,11 @@ fn encode_root_position(mut file: &File, pos: usize) -> Result<(), std::io::Erro
     // Return to the position where we are before writing the root position.
     file.seek(std::io::SeekFrom::Start(pos_before_seek))?;
     Ok(())
+}
+
+#[cfg(target_os = "none")]
+fn encode_root_position(_file: &File, _pos: usize) -> Result<(), semos_std::io::Error> {
+    Err(semos_std::io::Error::other())
 }
 
 pub(crate) fn provide(providers: &mut Providers) {

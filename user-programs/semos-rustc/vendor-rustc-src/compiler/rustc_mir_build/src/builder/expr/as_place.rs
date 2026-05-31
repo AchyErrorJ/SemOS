@@ -1,6 +1,6 @@
 //! See docs in build/expr/mod.rs
 
-use std::iter;
+use core::iter;
 
 use rustc_abi::{FIRST_VARIANT, FieldIdx, VariantIdx};
 use rustc_data_structures::assert_matches;

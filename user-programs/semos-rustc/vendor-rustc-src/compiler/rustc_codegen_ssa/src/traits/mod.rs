@@ -25,7 +25,7 @@ mod statics;
 mod type_;
 mod write;
 
-use std::fmt;
+use core::fmt;
 
 use rustc_middle::ty::Ty;
 use rustc_middle::ty::layout::{FnAbiOf, LayoutOf, TyAndLayout};

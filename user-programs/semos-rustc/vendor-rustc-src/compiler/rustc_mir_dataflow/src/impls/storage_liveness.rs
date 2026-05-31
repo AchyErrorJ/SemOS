@@ -1,5 +1,5 @@
-use std::borrow::Cow;
-use std::cell::RefCell;
+use alloc::borrow::Cow;
+use core::cell::RefCell;
 
 use rustc_index::bit_set::DenseBitSet;
 use rustc_middle::mir::visit::{NonMutatingUseContext, PlaceContext, Visitor};

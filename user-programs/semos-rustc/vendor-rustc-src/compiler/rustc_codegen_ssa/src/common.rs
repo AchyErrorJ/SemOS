@@ -220,7 +220,7 @@ pub fn i686_decorated_name(
     decorated_name.push_str(name);
 
     if add_suffix && dll_import.is_fn {
-        use std::fmt::Write;
+        use core::fmt::Write;
 
         match dll_import.calling_convention {
             DllCallingConvention::C => {}

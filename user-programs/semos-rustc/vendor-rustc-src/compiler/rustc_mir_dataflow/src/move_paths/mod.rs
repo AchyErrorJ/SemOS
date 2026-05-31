@@ -1,7 +1,7 @@
 //! [`MovePath`]s track the initialization state of places and their sub-paths.
 
-use std::fmt;
-use std::ops::{Index, IndexMut};
+use core::fmt;
+use core::ops::{Index, IndexMut};
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::fx::FxHashMap;

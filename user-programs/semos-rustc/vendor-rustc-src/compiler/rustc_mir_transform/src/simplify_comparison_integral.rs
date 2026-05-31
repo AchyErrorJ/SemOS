@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use rustc_middle::bug;
 use rustc_middle::mir::interpret::Scalar;

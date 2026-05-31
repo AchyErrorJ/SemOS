@@ -11,7 +11,7 @@
 //   within the brackets).
 // * `"` is treated as the start of a string.
 
-use std::fmt::Write;
+use core::fmt::Write;
 
 use rustc_abi::Integer;
 use rustc_data_structures::fx::FxHashSet;

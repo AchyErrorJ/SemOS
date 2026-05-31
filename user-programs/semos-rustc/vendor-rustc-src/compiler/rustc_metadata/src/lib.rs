@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![feature(decl_macro)]
@@ -13,6 +14,12 @@
 #![feature(strip_circumfix)]
 #![feature(trusted_len)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 pub use rmeta::provide;
 

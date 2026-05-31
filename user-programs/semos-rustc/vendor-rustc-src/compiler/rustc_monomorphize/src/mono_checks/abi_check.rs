@@ -61,7 +61,7 @@ fn do_check_simd_vector_abi<'tcx>(
         let fn_feats = codegen_attrs.target_features.iter().any(|x| x.name == feat);
         target_feats || fn_feats
     };
-    for arg_abi in abi.args.iter().chain(std::iter::once(&abi.ret)) {
+    for arg_abi in abi.args.iter().chain(core::iter::once(&abi.ret)) {
         let size = arg_abi.layout.size;
         match passes_vectors_by_value(&arg_abi.mode, &arg_abi.layout.backend_repr) {
             UsesVectorRegisters::FixedVector => {

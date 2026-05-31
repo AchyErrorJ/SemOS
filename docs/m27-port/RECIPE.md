@@ -125,8 +125,61 @@ std::rc::*                     → alloc::rc::*
 std::string::*                 → alloc::string::*
 std::vec::*                    → alloc::vec::*
 std::error::Error              → core::error::Error  (stable since 1.81)
-std::*                         → core::*             (everything else)
+std::*                         → core::*             (everything else, where it's a re-export)
 ```
+
+All substitutions in the table above are **unconditional alias
+swaps** — `alloc::sync::Arc` *is* `std::sync::Arc` on every target,
+core/alloc paths work on both host and SemOS-target. Safe.
+
+**The fs/io/path/process/env/thread family is DIFFERENT.** Phase 4
+G4 caught this 2026-05-31: `semos_std` is **not host-buildable** (it
+pins `target = "x86_64-unknown-none"` in its `.cargo/config.toml` and
+calls SemOS syscalls in its bodies). A naked `use semos_std::path::
+PathBuf;` breaks the host build because semos_std can't link into a
+host binary.
+
+For these, use the **cfg-split pattern** (A3 introduced in
+rustc_fs_util Phase 2a; G4 re-applied in rustc_metadata Phase 4):
+
+```rust
+#[cfg(not(target_os = "none"))]
+use std::path::PathBuf;
+#[cfg(not(target_os = "none"))]
+use std::io;
+
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
+#[cfg(target_os = "none")]
+use semos_std::io;
+```
+
+And in Cargo.toml, gate the `semos_std` dep itself:
+
+```toml
+[target.'cfg(target_os = "none")'.dependencies]
+semos_std = { path = "../../../../std-shim" }
+```
+
+**Substitutions that need cfg-split** (host arm stays `std::*`, target
+arm uses `semos_std::*`):
+
+```text
+std::fs::*       ⇒ cfg-split:  std::fs / semos_std::fs
+std::io::*       ⇒ cfg-split:  std::io / semos_std::io
+std::path::*     ⇒ cfg-split:  std::path / semos_std::path
+std::env::*      ⇒ cfg-split:  std::env / semos_std::env
+std::process::*  ⇒ cfg-split:  std::process / semos_std::process
+std::thread::*   ⇒ cfg-split:  std::thread / semos_std::thread
+std::sync::Mutex/RwLock/Once/OnceLock/LazyLock/Condvar  ⇒ cfg-split
+std::ffi::OsString/OsStr  ⇒ cfg-split:  std::ffi / semos_std::ffi
+std::time::SystemTime/Instant/Duration  ⇒ cfg-split where it's not in core
+std::net::*  ⇒ cfg-split:  std::net / semos_std::net
+```
+
+(Note: `core::time::Duration` is the unconditional substitute for
+`std::time::Duration` because Duration lives in core since stable
+1.25 — that one's still in the alias table above.)
 
 Per-file: pick up `use std::…` lines first, then `std::…` in expression
 positions. A Python or sed sweep is fine; eyeball each substitution

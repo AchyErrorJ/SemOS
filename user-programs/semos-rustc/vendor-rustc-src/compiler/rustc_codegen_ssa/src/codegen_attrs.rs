@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use core::str::FromStr;
 
 use rustc_abi::{Align, ExternAbi};
 use rustc_ast::expand::autodiff_attrs::{AutoDiffAttrs, DiffActivity, DiffMode};

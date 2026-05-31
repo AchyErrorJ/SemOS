@@ -1,9 +1,12 @@
 //! Reading of the rustc metadata for rlibs and dylibs
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+#[cfg(not(target_os = "none"))]
 use std::fs::File;
-use std::io::Write;
+#[cfg(not(target_os = "none"))]
 use std::path::Path;
+#[cfg(target_os = "none")]
+use semos_std::path::Path;
 
 use itertools::Itertools;
 use object::write::{self, StandardSegment, Symbol, SymbolSection};
@@ -23,6 +26,8 @@ use rustc_span::sym;
 use rustc_target::spec::{Abi, Os, RelocModel, Target, ef_avr_arch};
 use tracing::debug;
 
+// M27 §1.7: apple is whole-module-gated; no darwin support on SemOS.
+#[cfg(not(target_os = "none"))]
 use super::apple;
 
 /// The default metadata loader. This is used by cg_llvm and cg_clif.
@@ -40,6 +45,7 @@ pub(crate) struct DefaultMetadataLoader;
 
 static AIX_METADATA_SYMBOL_NAME: &'static str = "__aix_rust_metadata";
 
+#[cfg(not(target_os = "none"))]
 fn load_metadata_with(
     path: &Path,
     f: impl for<'a> FnOnce(&'a [u8]) -> Result<&'a [u8], String>,
@@ -50,6 +56,22 @@ fn load_metadata_with(
     unsafe { Mmap::map(file) }
         .map_err(|e| format!("failed to mmap file '{}': {}", path.display(), e))
         .and_then(|mmap| try_slice_owned(mmap, |mmap| f(mmap)))
+}
+
+// M27 R4 B5 TODO(Phase 5): SemOS-side metadata load needs (a) Path→str bridge,
+// (b) semos_std::fs::Mmap (or read-to-Vec fallback). For now, fail closed so
+// the metadata loader rejects unknown rlibs at SemOS runtime; the sysroot
+// bake is the integration follow-up that decides whether to materialize a
+// Mmap shim or pre-decompress on disk.
+#[cfg(target_os = "none")]
+fn load_metadata_with(
+    path: &Path,
+    _f: impl for<'a> FnOnce(&'a [u8]) -> Result<&'a [u8], String>,
+) -> Result<OwnedSlice, String> {
+    let _ = path;
+    Err(alloc::string::String::from(
+        "M27 R4 B5: load_metadata_with not yet implemented on SemOS (needs Mmap shim)",
+    ))
 }
 
 impl MetadataLoader for DefaultMetadataLoader {
@@ -214,6 +236,8 @@ pub(crate) fn create_object_file(sess: &Session) -> Option<write::Object<'static
 
     let mut file = write::Object::new(binary_format, architecture, endianness);
     file.set_sub_architecture(sub_architecture);
+    // M27 §1.7: darwin target unreachable on SemOS (apple module gated).
+    #[cfg(not(target_os = "none"))]
     if sess.target.is_like_darwin {
         if macho_is_arm64e(&sess.target) {
             file.set_macho_cpu_subtype(object::macho::CPU_SUBTYPE_ARM64E);
@@ -423,6 +447,7 @@ pub(super) fn elf_e_flags(architecture: Architecture, sess: &Session) -> u32 {
 ///
 /// Since Xcode 15, Apple's LD apparently requires object files to use this load command, so this
 /// returns the `MachOBuildVersion` for the target to do so.
+#[cfg(not(target_os = "none"))]
 fn macho_object_build_version_for_target(sess: &Session) -> object::write::MachOBuildVersion {
     /// The `object` crate demands "X.Y.Z encoded in nibbles as xxxx.yy.zz"
     /// e.g. minOS 14.0 = 0x000E0000, or SDK 16.2 = 0x00100200
@@ -578,7 +603,9 @@ pub fn create_compressed_metadata_file(
     symbol_name: &str,
 ) -> Vec<u8> {
     let mut packed_metadata = rustc_metadata::METADATA_HEADER.to_vec();
-    packed_metadata.write_all(&(metadata.stub_or_full().len() as u64).to_le_bytes()).unwrap();
+    // M27: Vec<u8> has io::Write on std but not on no_std; extend_from_slice
+    // matches semantics for a single buffered write here.
+    packed_metadata.extend_from_slice(&(metadata.stub_or_full().len() as u64).to_le_bytes());
     packed_metadata.extend(metadata.stub_or_full());
 
     let Some(mut file) = create_object_file(sess) else {

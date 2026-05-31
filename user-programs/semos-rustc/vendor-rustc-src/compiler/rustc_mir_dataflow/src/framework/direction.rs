@@ -1,4 +1,4 @@
-use std::ops::RangeInclusive;
+use core::ops::RangeInclusive;
 
 use rustc_middle::bug;
 use rustc_middle::mir::{

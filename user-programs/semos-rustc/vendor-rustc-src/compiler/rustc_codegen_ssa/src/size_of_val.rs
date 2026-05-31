@@ -133,7 +133,7 @@ pub fn size_and_align_of_dst<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>>(
                 (Some(sized_align), Some(unsized_align)) => {
                     // If both alignments are constant, (the sized_align should always be), then
                     // pick the correct alignment statically.
-                    bx.const_usize(std::cmp::max(sized_align, unsized_align) as u64)
+                    bx.const_usize(core::cmp::max(sized_align, unsized_align) as u64)
                 }
                 _ => {
                     let cmp = bx.icmp(IntPredicate::IntUGT, sized_align, unsized_align);

@@ -1,5 +1,15 @@
+// M27 R4 B5: cfg-split host vs SemOS. IntoDiagArg is implemented for
+// std::io::Error / std::path::PathBuf on host (via rustc_error_messages's
+// into_diag_arg_using_display! macro); SemOS target needs the matching
+// impls for semos_std::io::Error / semos_std::path::PathBuf (Phase 5).
+#[cfg(not(target_os = "none"))]
 use std::io::Error;
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::io::Error;
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
 
 use rustc_errors::codes::*;
 use rustc_errors::{

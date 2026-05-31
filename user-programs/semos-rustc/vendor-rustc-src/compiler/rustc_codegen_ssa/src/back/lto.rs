@@ -1,5 +1,5 @@
-use std::ffi::CString;
-use std::sync::Arc;
+use alloc::ffi::CString;
+use alloc::sync::Arc;
 
 use rustc_data_structures::memmap::Mmap;
 use rustc_errors::DiagCtxtHandle;
