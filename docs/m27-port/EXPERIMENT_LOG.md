@@ -10,36 +10,36 @@
 > 5. This file — scroll to the bottom for the latest tally and the
 >    Phase 3 transition checklist.
 >
-> **State at session end (2026-05-31, end of 2nd Phase 3 session):**
+> **State at session end (2026-05-31, PHASE 3 CLOSED):**
 > - Phase 1 (recon) ✅ — 4 agents, ~723k tokens
 > - Phase 2a (foundation) ✅ — 16 crates, ~38k LOC, ~1.3M tokens
 > - Phase 2b (cycle-breakers) ✅ — 4 crates + A1 sync followup, ~26k LOC, ~560k tokens
+> - **Phase 3 (semantics tier) ✅** — 21+ crates patched across 3 waves:
+>   Wave 1 (Cluster A frontend, 3 agents, ~533k tokens, 5.2 t/LOC),
+>   Wave 2 (Cluster B semantics, 5 agents, all late-bounced after
+>   partial-100-file work, ~est 1.5M tokens), Recovery wave (4 agents,
+>   ~770k tokens, 2-7 t/LOC, closed Cluster B). Commits `c186403`,
+>   `81b5e0d`, `d5b5bdb`.
 > - semos-std surface ✅ for R2 top-6 + scoped_thread_local!
 >   + path Components/strip_prefix/Cow<Path> + io::Stderr + LocalKey<Cell>
 >   sugar (commit `7978ce5`) + sync::LazyLock + env::VarError (commit `c9f0b2d`)
-> - **Phase 3 Wave 1 (Cluster A frontend) ✅** — C1+C2 complete, C3 partial.
->   ~92k LOC covered, ~533k tokens, avg 5.2 t/LOC (B1 LARGE-but-THIN
->   pattern dominates). Commit `c186403`.
-> - **Phase 3 Wave 2 (Cluster B semantics) PARTIAL** — all 5 agents
->   bounced simultaneously on session limit late-bounce. 100 files /
->   ~half of Cluster B landed before bounce. Commit `81b5e0d`.
-> - **NEXT**: recovery wave after 8:50am Toronto reset. Targets:
->   rustc_middle remainder (98 files), rustc_hir_typeck (untouched),
->   rustc_infer + rustc_trait_selection + rustc_const_eval (untouched),
->   rustc_borrowck (untouched), rustc_expand remainder. Probe-then-fleet
->   this time; spawning 5 at once when the bucket is unknown is what
->   caused the simultaneous late-bounce.
+> - **NEXT**: Phase 4 (codegen tier — rustc_codegen_ssa, rustc_mir_*,
+>   rustc_monomorphize, rustc_passes, rustc_metadata). ~6-7 crates,
+>   ~10-15 calendar-sessions per the plan. The cross-crate IntoDiagArg
+>   trait-vs-impl mismatch flagged inline at rustc_error_messages/
+>   src/lib.rs:602 will need to land in Phase 5 integration (either
+>   port rustc_error_messages full no_std or cfg-gate the param type).
 >
 > Recipe evolution discovered by D1 (rustc_middle): use
 > `#![cfg_attr(target_os = "none", no_std)]` + `#[cfg(not(target_os =
 > "none"))] extern crate std;` instead of A3's cfg(target_os="none")
 > body-split. Cleaner, keeps host builds first-class. Folded into
-> RECIPE.md §1.5 evolution. Sub-agents should prefer this for any
-> crate that has substantial host-only test/dump surface.
+> RECIPE.md §1.2. Recovery wave (E1-E4) used it throughout.
 >
-> Roadmap row landed in `docs/ROADMAP.md` summarizing the swarm. Update
-> this log next session as recovery-wave agents return — token table is
-> append-only; lessons-learned tally is at the bottom of each section.
+> Cumulative session totals: ~4.6M tokens (Phase 1+2a+2b+3 W1+W2+
+> recovery), ~310k LOC patched of ~770k post-§1 internal rustc.
+>
+> Roadmap row landed in `docs/ROADMAP.md` summarizing Phase 3 closure.
 
 
 This is the research-diary version of the M27 port. The plan is at
@@ -1082,3 +1082,85 @@ THIN-LARGE per the B1 pattern), if it returns clean spawn the other
 - [ ] Decide whether to launch Phase 4 (codegen tier — rustc_codegen_ssa,
       rustc_mir_*, rustc_monomorphize, rustc_passes, rustc_metadata)
       same session or pause
+
+---
+
+## 2026-05-31 — Phase 3 recovery wave — PHASE 3 CLOSED
+
+User confirmed bucket usage is good at 9:39am Toronto (~50 min past
+the 8:50am reset). Launched 4-agent recovery wave in parallel — went
+straight to fleet given bucket was known-good, skipping the probe
+the prior session-end notes suggested.
+
+### Wave-3 (recovery) assignments + returns
+
+| Agent | Crates | LOC | Tokens | T/LOC | Duration | Status |
+|-------|--------|----:|-------:|------:|---------:|--------|
+| E1 | rustc_middle remainder (~98 files on top of D1's 18) | ~50k | 261,526 | ~5 | ~43 min | COMPLETE; closed all 116 files |
+| E2 | rustc_hir_typeck + rustc_expand remainder | ~31k | 172,183 | 4.5 | ~21.5 min | COMPLETE; applied C3's §3 recipes for expand |
+| E3 | rustc_infer + rustc_trait_selection + rustc_const_eval | ~60k | 209,829 | **2** | ~26 min | COMPLETE; cheapest port yet |
+| E4 | rustc_borrowck | ~25k | 187,260 | ~7 | ~26 min | COMPLETE; R2's "sync:8" was phantom, crate was MECHANICAL |
+| **Recovery total** | **4 crate-clusters, ~7 crates** | **~166k LOC** | **~770k** | **~5 avg** | **~26 min wall (parallel)** | **PHASE 3 CLOSED** |
+
+### Recovery-wave findings
+
+1. **E3 set a new floor: 2 t/LOC** on the inference triad — cheaper
+   than C1/C2's 3.6 from Wave 1. The B1 LARGE-but-THIN pattern keeps
+   getting stronger as agents work further from the rustc_data_
+   structures NEEDS-SHIM core. E3 surprises: zero std::sync::* sites
+   across all three crates (purely value-passing computation); zero
+   std::io::Write sites in rustc_const_eval (R2's "io:1" was a
+   Formatter pattern, not real IO).
+2. **E4 disproved R2's NEEDS-SHIM tag for rustc_borrowck.** R2's
+   "sync:8" count was phantom — the crate has zero std::sync::* sites;
+   R2 conflated `Rc` references. rustc_borrowck was structurally
+   MECHANICAL with one cfg-gated dump cluster (polonius/legacy/facts.rs).
+   This is the 2nd recon site-level miscount (Wave 1 C1 found R2 wrong
+   about rustc_parse/parser/diagnostics.rs Command::new). The recon is
+   directional, not authoritative on site claims — verify before
+   applying architectural decisions.
+3. **Cross-crate IntoDiagArg trait/impl mismatch.** All 7 impl
+   crates (hir, errors, middle, borrowck, const_eval, trait_selection,
+   hir_typeck) now use `semos_std::path::PathBuf` for the `path`
+   parameter of `into_diag_arg`. The trait def in rustc_error_messages/
+   src/lib.rs:602 still uses `std::path::PathBuf`. Flagged inline as
+   `// M27 R4 B5 TODO(Phase 4/5)`. rustc_error_messages itself is on
+   the §1.8 fluent-deferral list and stays unpatched.
+4. **Incremental-notes mandate worked.** All 4 agents (vs Wave 2's
+   0/5) wrote their notes during the work, not just at the end.
+   docs/m27-port/3a/E{1..4}-*.md all landed.
+5. **D1's cfg_attr pattern proven across the wave.** E1/E2/E3/E4 all
+   used it. The legacy `#![no_std]` block stays valid for already-
+   patched zero-host-surface crates per RECIPE.md §1.2.
+
+### Phase 3 final tally
+
+- **Crates patched**: 21 (Cluster A: 8, Cluster B: 13)
+- **LOC patched**: ~258k (Wave 1: 92k, Wave 2: 50k, Recovery: 116k)
+- **Tokens spent**: Wave 1 (533k) + Wave 2 (est 1.5M unreported pre-
+  bounce, the official 23k truncated reports + parent-prep work) +
+  Recovery (770k) = **~2.8M tokens for Phase 3**
+- **Wall time**: ~45 min (W1 parallel) + ~10 min (W2 bounce) + ~45 min
+  (parent integration + prep) + ~30 min (recovery parallel) = ~2 hrs
+  active across two sessions.
+
+### Session-wide cumulative through Phase 3 CLOSED
+
+- **Tokens**: 723k (P1) + 1,309k (P2a) + 560k (P2b) + ~2.8M (P3) = **~5.4M**
+- **LOC patched**: ~38k (P2a) + ~26k (P2b) + ~258k (P3) = **~322k of ~770k post-§1 internal rustc**
+- **Crates patched**: 16 (P2a) + 4 (P2b) + 21 (P3) = **41 crates**
+- **Wall-time spent**: ~5 hrs (P1+P2a+P2b) + ~2 hrs (P3) = ~7 hrs across multiple sessions
+
+### Phase 3 → Phase 4 transition
+
+- [x] Phase 3 CLOSED
+- [x] All 4 recovery notes written
+- [x] D1 cfg_attr pattern in RECIPE.md §1.2 as preferred
+- [x] Cross-crate IntoDiagArg flag marked inline for Phase 4/5
+- [ ] Phase 4 launch decision (codegen tier — rustc_codegen_ssa,
+      rustc_mir_build, rustc_mir_transform, rustc_mir_dataflow,
+      rustc_monomorphize, rustc_passes, rustc_metadata). ~6-7 crates,
+      plan estimated 5-10 calendar-sessions, post-§1.7 (cg_clif owns
+      ET_EXEC) the codegen_ssa::back::link subsystem is skipped
+      entirely, so Phase 4 is lighter than the plan's original
+      estimate.
