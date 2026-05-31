@@ -1,4 +1,16 @@
-use std::time::Instant;
+// M27 §1.9: SemOS has no std::time::Instant. We stub Instant with a no-op
+// monotonic counter that always returns zero. --json=timings is unused
+// on the SemOS target (single-shot compiles per §1.3), so the loss is
+// purely a missing metric, not a correctness issue.
+#[derive(Copy, Clone, Debug)]
+struct Instant;
+
+impl Instant {
+    fn now() -> Self { Instant }
+    fn duration_since(self, _earlier: Instant) -> core::time::Duration {
+        core::time::Duration::from_micros(0)
+    }
+}
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::sync::Lock;

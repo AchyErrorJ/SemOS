@@ -13,8 +13,8 @@ pub enum DecorateDiagCompat {
     Builtin(BuiltinLintDiag),
 }
 
-impl std::fmt::Debug for DecorateDiagCompat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for DecorateDiagCompat {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("DecorateDiagCompat").finish()
     }
 }

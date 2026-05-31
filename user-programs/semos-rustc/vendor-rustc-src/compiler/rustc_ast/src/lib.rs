@@ -4,6 +4,11 @@
 //!
 //! This API is completely unstable and subject to change.
 
+// M27 Phase 2b B1: rustc_ast runs against semos_std (no full std) on
+// the SemOS-host build. `#![no_std]` MUST be the first inner attribute,
+// before the `#![feature(...)]` block (Rust attribute-ordering rules
+// learned in A2-followup §lib.rs).
+#![no_std]
 // tidy-alphabetical-start
 #![cfg_attr(bootstrap, feature(array_windows))]
 #![doc(test(attr(deny(warnings), allow(internal_features))))]
@@ -14,6 +19,12 @@
 #![feature(macro_metavar_expr)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
+
+// M27 Phase 2b B1: alloc prelude — provides Vec/String/Box/format!/vec!
+// crate-wide. The `#[macro_use]` is what reaches vec!/format! into
+// submodules without per-file `use alloc::vec;`.
+#[macro_use]
+extern crate alloc;
 
 pub mod util {
     pub mod case;

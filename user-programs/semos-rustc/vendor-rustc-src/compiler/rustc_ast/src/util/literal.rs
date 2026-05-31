@@ -1,6 +1,6 @@
 //! Code related to parsing literals.
 
-use std::{ascii, fmt, str};
+use core::{ascii, fmt, str};
 
 use rustc_literal_escaper::{
     MixedUnit, unescape_byte, unescape_byte_str, unescape_c_str, unescape_char, unescape_str,

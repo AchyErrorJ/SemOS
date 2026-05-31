@@ -1,11 +1,17 @@
-use std::borrow::Cow;
-use std::fmt::{self, Debug};
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::panic;
-use std::path::PathBuf;
-use std::thread::panicking;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt::{self, Debug};
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
+// M27 §1.9: panic shim from crate root (process::abort under the hood).
+use crate::panic;
+// M27 R4 B5: PathBuf via semos_std on this target.
+use semos_std::path::PathBuf;
+// M27 §1.9: SemOS has no unwinder — nothing is ever "panicking".
+fn panicking() -> bool { false }
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_error_messages::{DiagArgName, DiagArgValue, IntoDiagArg};
@@ -373,7 +379,7 @@ impl DiagInner {
     }
 
     pub fn restore_args(&mut self) {
-        self.args = std::mem::take(&mut self.reserved_args);
+        self.args = core::mem::take(&mut self.reserved_args);
     }
 
     pub fn emitted_at_sub_diag(&self) -> Subdiag {
@@ -834,7 +840,7 @@ impl<'a, G: EmissionGuarantee> Diag<'a, G> {
     /// and new suggestions will be ignored.
     pub fn seal_suggestions(&mut self) -> &mut Self {
         if let Suggestions::Enabled(suggestions) = &mut self.suggestions {
-            let suggestions_slice = std::mem::take(suggestions).into_boxed_slice();
+            let suggestions_slice = core::mem::take(suggestions).into_boxed_slice();
             self.suggestions = Suggestions::Sealed(suggestions_slice);
         }
         self

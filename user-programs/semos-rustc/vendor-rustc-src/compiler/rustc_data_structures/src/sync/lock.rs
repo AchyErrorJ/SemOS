@@ -15,10 +15,54 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 
+// M27 R4 B1 (parking_lot collapse): on SemOS the parking_lot RawMutex is
+// only reachable via the `Mode::Sync` arm, and on SemOS `Lock::new` always
+// picks `Mode::NoSync` (single-threaded compiler per plan §1.4). Gate the
+// parking_lot imports to the host build; on SemOS provide a unit stub with
+// the same API surface so the union arm still type-checks even though it is
+// statically unreachable.
+#[cfg(not(target_os = "none"))]
 use parking_lot::RawMutex;
+#[cfg(not(target_os = "none"))]
 use parking_lot::lock_api::RawMutex as _;
 
-use crate::sync::{DynSend, DynSync, mode};
+#[cfg(target_os = "none")]
+mod parking_lot_shim {
+    /// Unit-sized stub matching the slice of `parking_lot::lock_api::RawMutex`
+    /// used by this module. On SemOS the `Mode::Sync` arm is statically
+    /// unreachable (see `Lock::new`), so these methods are never invoked at
+    /// runtime; they exist only to satisfy the type checker for the
+    /// `ModeUnion::sync` field and the matching match arms below.
+    pub struct RawMutex;
+
+    impl RawMutex {
+        pub const INIT: Self = RawMutex;
+
+        #[inline(always)]
+        pub fn try_lock(&self) -> bool {
+            // SemOS is single-threaded; the Sync arm is never picked.
+            true
+        }
+
+        #[inline(always)]
+        pub fn lock(&self) {
+            // Same: unreachable on SemOS.
+        }
+
+        #[inline(always)]
+        pub unsafe fn unlock(&self) {
+            // Same: unreachable on SemOS.
+        }
+    }
+}
+#[cfg(target_os = "none")]
+use self::parking_lot_shim::RawMutex;
+
+use crate::sync::{DynSend, DynSync};
+// M27 R4 B1: `mode::might_be_dyn_thread_safe` is only consulted by the host
+// branch of `Lock::new`; SemOS always picks NoSync.
+#[cfg(not(target_os = "none"))]
+use crate::sync::mode;
 
 /// A guard holding mutable access to a `Lock` which is in a locked state.
 #[must_use = "if unused the Lock will immediately unlock"]
@@ -92,6 +136,16 @@ pub struct Lock<T> {
 impl<T> Lock<T> {
     #[inline(always)]
     pub fn new(inner: T) -> Self {
+        // M27 R4 B1: collapse `Mode::Sync` to `Mode::NoSync` on SemOS — the
+        // compiler is single-threaded on this target (plan §1.4), so no
+        // parking_lot-backed path is ever needed and the `RawMutex` shim
+        // stays unreachable at runtime.
+        #[cfg(target_os = "none")]
+        let (mode, mode_union) = (
+            Mode::NoSync,
+            ModeUnion { no_sync: ManuallyDrop::new(Cell::new(!LOCKED)) },
+        );
+        #[cfg(not(target_os = "none"))]
         let (mode, mode_union) = if unlikely(mode::might_be_dyn_thread_safe()) {
             // Create the lock with synchronization enabled using the `RawMutex` type.
             (Mode::Sync, ModeUnion { sync: ManuallyDrop::new(RawMutex::INIT) })

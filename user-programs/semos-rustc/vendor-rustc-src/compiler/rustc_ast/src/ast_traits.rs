@@ -2,8 +2,8 @@
 //! typically those used in AST fragments during macro expansion.
 //! The traits are not implemented exhaustively, only when actually necessary.
 
-use std::fmt;
-use std::marker::PhantomData;
+use core::fmt;
+use core::marker::PhantomData;
 
 use crate::tokenstream::LazyAttrTokenStream;
 use crate::{

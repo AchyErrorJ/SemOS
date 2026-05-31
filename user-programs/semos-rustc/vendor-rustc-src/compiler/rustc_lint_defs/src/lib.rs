@@ -1,5 +1,12 @@
-use std::borrow::Cow;
-use std::fmt::Display;
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
+
+use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt::Display;
 
 use rustc_ast::AttrId;
 use rustc_ast::attr::AttributeExt;
@@ -298,7 +305,7 @@ impl Level {
 }
 
 impl IntoDiagArg for Level {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Borrowed(self.to_cmd_flag()))
     }
 }
@@ -531,14 +538,14 @@ impl FutureIncompatibilityReason {
 }
 
 impl Display for ReleaseFcw {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let issue_number = self.issue_number;
         write!(f, "issue #{issue_number} <https://github.com/rust-lang/rust/issues/{issue_number}>")
     }
 }
 
 impl Display for EditionFcw {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "<https://doc.rust-lang.org/edition-guide/{}/{}.html>",
@@ -592,14 +599,14 @@ pub struct LintId {
 
 impl PartialEq for LintId {
     fn eq(&self, other: &LintId) -> bool {
-        std::ptr::eq(self.lint, other.lint)
+        core::ptr::eq(self.lint, other.lint)
     }
 }
 
 impl Eq for LintId {}
 
-impl std::hash::Hash for LintId {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl core::hash::Hash for LintId {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         let ptr = self.lint as *const Lint;
         ptr.hash(state);
     }
@@ -640,7 +647,7 @@ impl<HCX> ToStableHashKey<HCX> for LintId {
 impl StableCompare for LintId {
     const CAN_USE_UNSTABLE_SORT: bool = true;
 
-    fn stable_cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn stable_cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.lint_name_raw().cmp(&other.lint_name_raw())
     }
 }

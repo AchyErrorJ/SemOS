@@ -4,11 +4,11 @@
 //! A `TokenStream` is, roughly speaking, a sequence of [`TokenTree`]s,
 //! which are themselves a single [`Token`] or a `Delimited` subsequence of tokens.
 
-use std::borrow::Cow;
-use std::hash::Hash;
-use std::ops::Range;
-use std::sync::Arc;
-use std::{cmp, fmt, iter, mem};
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
+use core::hash::Hash;
+use core::ops::Range;
+use core::{cmp, fmt, iter, mem};
 
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_data_structures::sync;

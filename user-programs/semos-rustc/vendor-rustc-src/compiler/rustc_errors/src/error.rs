@@ -1,8 +1,15 @@
-use std::borrow::Cow;
-use std::error::Error;
-use std::fmt;
+// M27 §1.8: i18n / fluent dropped. With no fluent backend, translation
+// errors cannot occur — every DiagMessage is either a Str (returned as-is)
+// or a FluentIdentifier (returned as the identifier string itself). This
+// shim keeps the `TranslateError` type for API compatibility with
+// downstream callers in this crate, but its variants are never constructed.
 
-use rustc_error_messages::fluent_bundle::resolver::errors::{ReferenceKind, ResolverError};
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::error::Error;
+use core::fmt;
+
 use rustc_error_messages::{FluentArgs, FluentError};
 
 #[derive(Debug)]
@@ -63,76 +70,30 @@ pub enum TranslateErrorKind<'args> {
 
 impl fmt::Display for TranslateError<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use TranslateErrorKind::*;
-
+        // M27 §1.8: simplified display — the rich fluent-error introspection
+        // (argument reference suggestions, etc.) is dropped along with i18n.
         match self {
-            Self::One { id, args, kind } => {
-                writeln!(f, "failed while formatting fluent string `{id}`: ")?;
-                match kind {
-                    MessageMissing => writeln!(f, "message was missing")?,
-                    PrimaryBundleMissing => writeln!(f, "the primary bundle was missing")?,
-                    AttributeMissing { attr } => {
-                        writeln!(f, "the attribute `{attr}` was missing")?;
-                        writeln!(f, "help: add `.{attr} = <message>`")?;
-                    }
-                    ValueMissing => writeln!(f, "the value was missing")?,
-                    Fluent { errs } => {
-                        for err in errs {
-                            match err {
-                                FluentError::ResolverError(ResolverError::Reference(
-                                    ReferenceKind::Message { id, .. }
-                                    | ReferenceKind::Variable { id, .. },
-                                )) => {
-                                    if args.iter().any(|(arg_id, _)| arg_id == id) {
-                                        writeln!(
-                                            f,
-                                            "argument `{id}` exists but was not referenced correctly"
-                                        )?;
-                                        writeln!(f, "help: try using `{{${id}}}` instead")?;
-                                    } else {
-                                        writeln!(
-                                            f,
-                                            "the fluent string has an argument `{id}` that was not found."
-                                        )?;
-                                        let vars: Vec<&str> =
-                                            args.iter().map(|(a, _v)| a).collect();
-                                        match &*vars {
-                                            [] => writeln!(f, "help: no arguments are available")?,
-                                            [one] => writeln!(
-                                                f,
-                                                "help: the argument `{one}` is available"
-                                            )?,
-                                            [first, middle @ .., last] => {
-                                                write!(f, "help: the arguments `{first}`")?;
-                                                for a in middle {
-                                                    write!(f, ", `{a}`")?;
-                                                }
-                                                writeln!(f, " and `{last}` are available")?;
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => writeln!(f, "{err}")?,
-                            }
-                        }
-                    }
+            Self::One { id, kind, .. } => match kind {
+                TranslateErrorKind::MessageMissing => {
+                    write!(f, "fluent message `{id}` was missing")
                 }
-            }
-            // If someone cares about primary bundles, they'll probably notice it's missing
-            // regardless or will be using `debug_assertions`
-            // so we skip the arm below this one to avoid confusing the regular user.
-            Self::Two { primary: box Self::One { kind: PrimaryBundleMissing, .. }, fallback } => {
-                fmt::Display::fmt(fallback, f)?;
-            }
+                TranslateErrorKind::PrimaryBundleMissing => {
+                    write!(f, "the primary fluent bundle was missing")
+                }
+                TranslateErrorKind::AttributeMissing { attr } => {
+                    write!(f, "fluent message `{id}` was missing attribute `{attr}`")
+                }
+                TranslateErrorKind::ValueMissing => {
+                    write!(f, "fluent message `{id}` was missing its value")
+                }
+                TranslateErrorKind::Fluent { .. } => {
+                    write!(f, "fluent formatting of `{id}` failed")
+                }
+            },
             Self::Two { primary, fallback } => {
-                writeln!(
-                    f,
-                    "first, fluent formatting using the primary bundle failed:\n {primary}\n \
-                    while attempting to recover by using the fallback bundle instead, another error occurred:\n{fallback}"
-                )?;
+                write!(f, "translation error: primary={primary}; fallback={fallback}")
             }
         }
-        Ok(())
     }
 }
 

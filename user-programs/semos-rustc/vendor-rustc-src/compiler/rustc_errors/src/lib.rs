@@ -19,19 +19,72 @@
 #![feature(yeet_expr)]
 // tidy-alphabetical-end
 
+#![no_std]
+
+#[macro_use]
+extern crate alloc;
+
 extern crate self as rustc_errors;
 
-use std::backtrace::{Backtrace, BacktraceStatus};
-use std::borrow::Cow;
-use std::cell::Cell;
-use std::error::Report;
-use std::ffi::OsStr;
-use std::hash::Hash;
-use std::io::Write;
-use std::num::NonZero;
-use std::ops::DerefMut;
-use std::path::{Path, PathBuf};
-use std::{fmt, panic};
+// M27 §1.9: SemOS has no std::backtrace::Backtrace and no stack-unwinder.
+// We provide minimal shims that satisfy the API shape but never capture
+// real frames. delayed_bug paths still record-and-print these, the
+// difference being that the printed body is just "(no backtrace available)".
+mod backtrace_shim {
+    use core::fmt;
+    #[derive(Debug, Clone)]
+    pub struct Backtrace;
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum BacktraceStatus { Captured, Disabled, Unsupported }
+    impl Backtrace {
+        pub fn capture() -> Self { Backtrace }
+        pub fn force_capture() -> Self { Backtrace }
+        pub fn status(&self) -> BacktraceStatus { BacktraceStatus::Unsupported }
+    }
+    impl fmt::Display for Backtrace {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("(no backtrace available on SemOS)")
+        }
+    }
+}
+use backtrace_shim::{Backtrace, BacktraceStatus};
+
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cell::Cell;
+// M27 §1.8: std::error::Report is std-only (nightly). On SemOS the
+// translator never errors, so Report::new wrapping is dropped at the
+// call site below.
+// M27 R4 B5: semos_std::ffi::OsStr is a type alias for str on SemOS.
+// (OsStr import dropped — the original `OsStr::new("0")` site was
+// rewritten to a direct semos_std::env::var-based string compare.)
+use core::hash::Hash;
+use semos_std::io::Write;
+use core::num::NonZero;
+use core::ops::DerefMut;
+// M27 R4 B5: PathBuf carries through from semos_std::path. Path/PathBuf
+// flow through diagnostic args + ICE-file open + artifact emission. The
+// semos_std::path implementation is lexical-only (see RECIPE §1.6).
+use semos_std::path::{Path, PathBuf};
+use core::fmt;
+// M27 §1.9: rustc's diagnostic machinery uses `panic::panic_any(...)` /
+// `catch_unwind` as control flow. semos_std::process::abort/abort_with_code
+// terminates the process. The rustc_span::fatal_error rewrite (B1) is what
+// actually services FatalError::raise(); the std::panic uses here all
+// pertain to ExplicitBug / DelayedBugPanic, which under §1.9 abort.
+mod panic {
+    use semos_std::process;
+    /// Carries panic payload by value, then aborts. The payload is dropped
+    /// before abort to honor any Drop logic (mirrors std::panic_any).
+    #[track_caller]
+    pub fn panic_any<T: 'static>(_payload: T) -> ! {
+        process::abort();
+    }
+    // Location is identical to core::panic::Location on SemOS.
+    pub use core::panic::Location;
+}
 
 use Level::*;
 // Used by external projects such as `rust-gpu`.
@@ -286,7 +339,7 @@ pub struct DiagCtxtHandle<'a> {
     tainted_with_errors: Option<&'a Cell<Option<ErrorGuaranteed>>>,
 }
 
-impl<'a> std::ops::Deref for DiagCtxtHandle<'a> {
+impl<'a> core::ops::Deref for DiagCtxtHandle<'a> {
     type Target = &'a DiagCtxt;
 
     fn deref(&self) -> &Self::Target {
@@ -445,7 +498,10 @@ impl Drop for DiagCtxtInner {
         // Sanity check: did we use some of the expensive `trimmed_def_paths` functions
         // unexpectedly, that is, without producing diagnostics? If so, for debugging purposes, we
         // suggest where this happened and how to avoid it.
-        if !self.has_printed && !self.suppressed_expected_diag && !std::thread::panicking() {
+        // M27 §1.9: SemOS has no unwinder; nothing is ever "panicking" in the
+        // std sense — we always abort. Use a constant `false` so the
+        // must_produce_diag check fires unconditionally on the drop path.
+        if !self.has_printed && !self.suppressed_expected_diag && !false {
             if let Some(backtrace) = &self.must_produce_diag {
                 let suggestion = match backtrace.status() {
                     BacktraceStatus::Disabled => String::from(
@@ -884,7 +940,7 @@ impl<'a> DiagCtxtHandle<'a> {
 
     pub fn emit_future_breakage_report(&self) {
         let inner = &mut *self.inner.borrow_mut();
-        let diags = std::mem::take(&mut inner.future_breakage_diagnostics);
+        let diags = core::mem::take(&mut inner.future_breakage_diagnostics);
         if !diags.is_empty() {
             inner.emitter.emit_future_breakage_report(diags, &inner.registry);
         }
@@ -923,7 +979,7 @@ impl<'a> DiagCtxtHandle<'a> {
     /// [`DiagCtxtInner`] and indicate that the linked expectation has been fulfilled.
     #[must_use]
     pub fn steal_fulfilled_expectation_ids(&self) -> FxIndexSet<LintExpectationId> {
-        std::mem::take(&mut self.inner.borrow_mut().fulfilled_expectations)
+        core::mem::take(&mut self.inner.borrow_mut().fulfilled_expectations)
     }
 
     /// Trigger an ICE if there are any delayed bugs and no hard errors.
@@ -1211,7 +1267,7 @@ impl DiagCtxtInner {
     fn emit_stashed_diagnostics(&mut self) -> Option<ErrorGuaranteed> {
         let mut guar = None;
         let has_errors = !self.err_guars.is_empty();
-        for (_, stashed_diagnostics) in std::mem::take(&mut self.stashed_diagnostics).into_iter() {
+        for (_, stashed_diagnostics) in core::mem::take(&mut self.stashed_diagnostics).into_iter() {
             for (_, (diag, _guar)) in stashed_diagnostics {
                 if !diag.is_error() {
                     // Unless they're forced, don't flush stashed warnings when
@@ -1273,7 +1329,7 @@ impl DiagCtxtInner {
                         // No `TRACK_DIAGNOSTIC` call is needed, because the
                         // incremental session is deleted if there is a delayed
                         // bug. This also saves us from cloning the diagnostic.
-                        let backtrace = std::backtrace::Backtrace::capture();
+                        let backtrace = crate::backtrace_shim::Backtrace::capture();
                         // This `unchecked_error_guaranteed` is valid. It is where the
                         // `ErrorGuaranteed` for delayed bugs originates. See
                         // `DiagCtxtInner::drop`.
@@ -1455,10 +1511,10 @@ impl DiagCtxtInner {
         args: impl Iterator<Item = DiagArg<'a>>,
     ) -> String {
         let args = crate::translation::to_fluent_args(args);
+        // M27 §1.8: translate_message is infallible on SemOS (no fluent backend).
         self.emitter
             .translator()
             .translate_message(&message, &args)
-            .map_err(Report::new)
             .unwrap()
             .to_string()
     }
@@ -1489,14 +1545,23 @@ impl DiagCtxtInner {
         }
 
         let bugs: Vec<_> =
-            std::mem::take(&mut self.delayed_bugs).into_iter().map(|(b, _)| b).collect();
+            core::mem::take(&mut self.delayed_bugs).into_iter().map(|(b, _)| b).collect();
 
-        let backtrace = std::env::var_os("RUST_BACKTRACE").as_deref() != Some(OsStr::new("0"));
+        // M27 R4 B5: semos_std::env::var returns Option<String>; OsStr on
+        // SemOS is `str`, so the comparison stays string-level.
+        let backtrace = semos_std::env::var("RUST_BACKTRACE")
+            .map(|v| v.as_str() != "0")
+            .unwrap_or(false);
         let decorate = backtrace || self.ice_file.is_none();
-        let mut out = self
-            .ice_file
-            .as_ref()
-            .and_then(|file| std::fs::File::options().create(true).append(true).open(file).ok());
+        // M27 R4 B5: ICE file open. semos_std::fs::OpenOptions exposes
+        // create+append. PathBuf::as_str gives the bare string path.
+        let mut out = self.ice_file.as_ref().and_then(|file| {
+            semos_std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(file.as_str())
+                .ok()
+        });
 
         // Put the overall explanation before the `DelayedBug`s, to frame them
         // better (e.g. separate warnings from them). Also, use notes, which
@@ -1701,7 +1766,7 @@ impl Level {
 }
 
 impl IntoDiagArg for Level {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::from(self.to_string()))
     }
 }

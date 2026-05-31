@@ -1,5 +1,5 @@
-use std::borrow::Cow;
-use std::fmt;
+use alloc::borrow::Cow;
+use core::fmt;
 
 pub use LitKind::*;
 pub use NtExprKind::*;

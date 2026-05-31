@@ -3,8 +3,8 @@
 pub mod data_structures;
 pub mod version;
 
-use std::fmt::Debug;
-use std::sync::atomic::{AtomicU32, Ordering};
+use core::fmt::Debug;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use rustc_index::bit_set::GrowableBitSet;
 use rustc_span::{Ident, Span, Symbol, sym};

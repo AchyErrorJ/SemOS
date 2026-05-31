@@ -1,5 +1,8 @@
-use std::fmt::{self, Display};
-use std::sync::OnceLock;
+use core::fmt::{self, Display};
+// M27 Phase 2b B1: OnceLock comes from semos_std (futex-backed shim
+// mirroring std::sync::OnceLock). A2 landed semos_std::sync::OnceLock
+// in commit 18d80dd. Same surface (`new()`, `get_or_init(f)`).
+use semos_std::sync::OnceLock;
 
 use rustc_macros::{BlobDecodable, Encodable, HashStable_Generic, current_rustc_version};
 
@@ -15,7 +18,9 @@ impl RustcVersion {
     pub const CURRENT: Self = current_rustc_version!();
     pub fn current_overridable() -> Self {
         *CURRENT_OVERRIDABLE.get_or_init(|| {
-            if let Ok(override_var) = std::env::var("RUSTC_OVERRIDE_VERSION_STRING")
+            // M27 Phase 2b B1: env::var maps cleanly to semos_std::env::var
+            // (returns `Result<String, VarError>`, same shape as std).
+            if let Ok(override_var) = semos_std::env::var("RUSTC_OVERRIDE_VERSION_STRING")
                 && let Some(override_) = Self::parse_str(&override_var)
             {
                 override_

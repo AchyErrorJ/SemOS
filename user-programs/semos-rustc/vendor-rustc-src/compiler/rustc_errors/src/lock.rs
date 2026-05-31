@@ -9,7 +9,8 @@
 //!
 //! For more information about why this is necessary, see where this is called.
 
-use std::any::Any;
+use core::any::Any;
+use alloc::boxed::Box;
 
 #[cfg(windows)]
 pub(crate) fn acquire_global_lock(name: &str) -> Box<dyn Any> {

@@ -7,8 +7,11 @@
 //! a `MutVisitor` renaming item names in a module will miss all of those
 //! that are created by the expansion of a macro.
 
-use std::ops::DerefMut;
-use std::panic;
+// M27 Phase 2b B1: `use std::panic;` removed — it was imported but never
+// used (`panic!` macro is in the prelude / core::panic). Confirmed via
+// grep: no `panic::`, `catch_unwind`, `panic_any`, or `resume_unwind`
+// in this file.
+use core::ops::DerefMut;
 
 use rustc_data_structures::flat_map_in_place::FlatMapInPlace;
 use rustc_span::source_map::Spanned;

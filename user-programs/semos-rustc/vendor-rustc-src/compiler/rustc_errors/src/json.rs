@@ -9,11 +9,20 @@
 
 // FIXME: spec the JSON output properly.
 
-use std::error::Report;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::vec;
+// M27 §1.8: Report dropped; on SemOS translation is infallible (see
+// translation.rs). Replaced map_err(Report::new) call sites with plain
+// .unwrap().
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::{self, Vec};
+use semos_std::io::{self, Write};
+// M27 R4 B5: Path/PathBuf via semos_std on this target.
+use semos_std::path::{Path, PathBuf};
+// M27 §1.4: single-thread per plan §1.4 — Mutex<T> degenerates to a
+// RefCell<T>; here only used as `Mutex<T>::lock()`/.unwrap() so callers
+// see no API difference.
+use semos_std::sync::Mutex;
 
 use anstream::{AutoStream, ColorChoice};
 use derive_setters::Setters;
@@ -315,7 +324,7 @@ impl Diagnostic {
         let args = to_fluent_args(diag.args.iter());
         let sugg_to_diag = |sugg: &CodeSuggestion| {
             let translated_message =
-                je.translator.translate_message(&sugg.msg, &args).map_err(Report::new).unwrap();
+                je.translator.translate_message(&sugg.msg, &args).unwrap();
             Diagnostic {
                 message: translated_message.to_string(),
                 code: None,
@@ -338,11 +347,16 @@ impl Diagnostic {
         struct BufWriter(Arc<Mutex<Vec<u8>>>);
 
         impl Write for BufWriter {
+            // M27 §1.4: semos_std::sync::Mutex::lock returns the guard directly
+            // (no Result wrapper since single-threaded paths cannot poison).
+            // M27 TODO(Phase 2b): semos_std::io::Write impl-for-Vec<u8> needs
+            // verification. Cranelift port confirmed Write-for-Vec<u8> exists
+            // via blanket alloc-backed impl.
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.0.lock().unwrap().write(buf)
+                self.0.lock().write(buf)
             }
             fn flush(&mut self) -> io::Result<()> {
-                self.0.lock().unwrap().flush()
+                self.0.lock().flush()
             }
         }
 

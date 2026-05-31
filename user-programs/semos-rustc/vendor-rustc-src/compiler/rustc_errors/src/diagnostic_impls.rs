@@ -1,4 +1,6 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use rustc_abi::TargetDataLayoutErrors;
 use rustc_error_messages::{DiagArgValue, IntoDiagArg};
@@ -12,7 +14,8 @@ use crate::{
 };
 
 impl IntoDiagArg for DiagLocation {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::from(self.to_string()))
     }
 }
@@ -32,8 +35,9 @@ impl<S> FromIterator<S> for DiagSymbolList<S> {
     }
 }
 
-impl<S: std::fmt::Display> IntoDiagArg for DiagSymbolList<S> {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+impl<S: core::fmt::Display> IntoDiagArg for DiagSymbolList<S> {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::StrListSepByAnd(
             self.0.into_iter().map(|sym| Cow::Owned(format!("`{sym}`"))).collect(),
         )

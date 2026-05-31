@@ -18,8 +18,8 @@
 //! - [`Attribute`]: Metadata associated with item.
 //! - [`UnOp`], [`BinOp`], and [`BinOpKind`]: Unary and binary operators.
 
-use std::borrow::{Borrow, Cow};
-use std::{cmp, fmt};
+use alloc::borrow::{Borrow, Cow};
+use core::{cmp, fmt};
 
 pub use GenericArgs::*;
 pub use UnsafeSource::*;
@@ -2745,8 +2745,8 @@ impl InlineAsmOptions {
     }
 }
 
-impl std::fmt::Debug for InlineAsmOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for InlineAsmOptions {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         bitflags::parser::to_writer(self, f)
     }
 }

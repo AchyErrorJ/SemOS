@@ -4,7 +4,7 @@
 //! - A static table `DIAGNOSTICS` pairing every error code constant with its
 //!   long description text.
 
-use std::fmt;
+use core::fmt;
 
 rustc_index::newtype_index! {
     #[max = 9999] // Because all error codes have four digits.

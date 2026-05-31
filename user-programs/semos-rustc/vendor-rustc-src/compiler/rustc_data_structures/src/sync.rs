@@ -37,9 +37,20 @@ use std::collections::HashMap;
 #[cfg(target_os = "none")]
 use hashbrown::HashMap;
 
+// M27 R4 B1 (parking_lot collapse): on the host the read/write guard types
+// are parking_lot's. On SemOS we collapse to `core::cell::Ref` / `RefMut`
+// because the compiler is single-threaded (plan §1.4) and parking_lot does
+// not build on `target_os = "none"`. `Ref::map` / `RefMut::map` provide the
+// same map-into-projection that callers (notably `steal.rs`) rely on, so
+// `Mapped*Guard` and the plain `*Guard` alias to the same type on SemOS.
+#[cfg(not(target_os = "none"))]
 pub use parking_lot::{
     MappedRwLockReadGuard as MappedReadGuard, MappedRwLockWriteGuard as MappedWriteGuard,
     RwLockReadGuard as ReadGuard, RwLockWriteGuard as WriteGuard,
+};
+#[cfg(target_os = "none")]
+pub use core::cell::{
+    Ref as MappedReadGuard, Ref as ReadGuard, RefMut as MappedWriteGuard, RefMut as WriteGuard,
 };
 
 pub use self::atomic::AtomicU64;
@@ -164,9 +175,17 @@ impl<K: Eq + Hash, V: Eq, S: BuildHasher> HashMapExt<K, V> for HashMap<K, V, S> 
     }
 }
 
+// M27 R4 B1 (parking_lot collapse): host body keeps the parking_lot-backed
+// `RwLock<T>`; SemOS substitutes `core::cell::RefCell<T>` because the
+// compiler is single-threaded (plan §1.4). The two impls expose the same
+// public surface; on SemOS `read()` / `write()` return `Ref` / `RefMut`
+// which are already re-exported above as `ReadGuard` / `WriteGuard`.
+
+#[cfg(not(target_os = "none"))]
 #[derive(Debug, Default)]
 pub struct RwLock<T>(parking_lot::RwLock<T>);
 
+#[cfg(not(target_os = "none"))]
 impl<T> RwLock<T> {
     #[inline(always)]
     pub fn new(inner: T) -> Self {
@@ -203,6 +222,63 @@ impl<T> RwLock<T> {
             self.0.try_write().expect("lock was already held")
         } else {
             self.0.write()
+        }
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub fn borrow(&self) -> ReadGuard<'_, T> {
+        self.read()
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub fn borrow_mut(&self) -> WriteGuard<'_, T> {
+        self.write()
+    }
+}
+
+#[cfg(target_os = "none")]
+#[derive(Debug, Default)]
+pub struct RwLock<T>(core::cell::RefCell<T>);
+
+#[cfg(target_os = "none")]
+impl<T> RwLock<T> {
+    #[inline(always)]
+    pub fn new(inner: T) -> Self {
+        RwLock(core::cell::RefCell::new(inner))
+    }
+
+    #[inline(always)]
+    pub fn into_inner(self) -> T {
+        self.0.into_inner()
+    }
+
+    #[inline(always)]
+    pub fn get_mut(&mut self) -> &mut T {
+        self.0.get_mut()
+    }
+
+    #[inline(always)]
+    pub fn read(&self) -> ReadGuard<'_, T> {
+        if ERROR_CHECKING {
+            self.0.try_borrow().expect("lock was already held")
+        } else {
+            self.0.borrow()
+        }
+    }
+
+    #[inline(always)]
+    pub fn try_write(&self) -> Result<WriteGuard<'_, T>, ()> {
+        self.0.try_borrow_mut().map_err(|_| ())
+    }
+
+    #[inline(always)]
+    pub fn write(&self) -> WriteGuard<'_, T> {
+        if ERROR_CHECKING {
+            self.0.try_borrow_mut().expect("lock was already held")
+        } else {
+            self.0.borrow_mut()
         }
     }
 

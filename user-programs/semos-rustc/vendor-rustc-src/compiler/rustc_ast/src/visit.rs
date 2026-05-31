@@ -373,7 +373,7 @@ macro_rules! common_visitor_and_walkers {
             Result<(), rustc_span::ErrorGuaranteed>,
             rustc_data_structures::fx::FxHashMap<Symbol, usize>,
             rustc_span::ErrorGuaranteed,
-            std::borrow::Cow<'_, str>,
+            alloc::borrow::Cow<'_, str>,
             Symbol,
             u8,
             usize,
