@@ -663,3 +663,94 @@ through these directly instead of leaving TODO markers.
 If B3's §1.8 work goes deep (recon estimated ~5 sessions saved by
 dropping i18n; this is the i18n drop itself) it could trend higher
 than the forecast. Monitor.
+
+---
+
+## 2026-05-31 — Phase 2b returns + B3 session-limit incident
+
+Three of four Phase 2b agents returned. B3 bounced on session limit
+at the *very end* (8.4 min in, 97 tool uses, only 2,719 tokens recorded
+because the bounce happened during summary writing). The work BEFORE
+the bounce did land — 10 of 15 rustc_errors files were patched.
+
+### Token accounting for Phase 2b returns
+
+| Agent | Crate | LOC | Tokens | T/LOC | Notes |
+|-------|-------|----:|-------:|------:|-------|
+| B1 | rustc_ast | 11,553 | 116,071 | **10** | Crate much less std-coupled than expected; only 30 raw std:: refs, all trivial. Zero deferral markers. |
+| B2 | rustc_lint_defs | 1,042 effective / 6,451 blast | 93,426 | 90 effective / 14 blast | builtin.rs (5,409 LOC) needed zero edits — pure declare_lint! macros covered by crate-root no_std. Pattern worth codifying. |
+| B3 | rustc_errors (10/15 files) | ~5,000 partial | 2,719 recorded* | n/a | Bounced during summary. Work landed; notes did not. B3-followup dispatched. |
+| B4 | A1 sync collapse | ~200 focused | 78,749 | n/a | freeze.rs needed zero edits — A1's flag was a false positive. |
+
+*B3's recorded tokens were truncated by the bounce. Actual cost was
+probably 200-300k based on tool_uses and duration.
+
+### B1's surprise: 10 t/LOC for the biggest cycle crate
+
+The plan estimated rustc_ast as one of the heaviest crates (it's the
+foundation of the cycle). Reality: 10 t/LOC because the crate has
+**very thin std surface** — most of its bulk is enums, structs, and
+visitor traits that are pure core. Only 30 distinct std:: paths across
+11,553 LOC; one OnceLock substitution; one dead `use std::panic;`
+removed.
+
+This is a major data point for the forecast: crates can be **LARGE
+but THIN** (lots of LOC, little std surface). The recon's LOC-only
+classification missed this distinction. R2's std-surface counts
+(which we DIDN'T forecast against) were a better predictor.
+
+**Lesson**: when projecting future tokens for novel crates, use R2's
+std-surface count as the primary signal, not LOC. Update the forecast
+methodology in the next round.
+
+### B2's surprise: macro-heavy files are free
+
+builtin.rs (84% of rustc_lint_defs by LOC) needed zero source edits
+because it's pure `declare_lint!`/`declare_lint_pass!` macro
+invocations. Once the crate root has `#![no_std]` + `extern crate
+alloc;`, every macro-emitted item is covered.
+
+**RECIPE addition** (will fold in): "If a file is &gt;80% declarative
+macro invocations covered by crate-root attributes, verify it compiles
+clean with no source edits before running the substitution sweep."
+This is a third efficiency tier alongside "recipe-following" (14 t/LOC)
+and "config-only" (zero source).
+
+### B4's false positive
+
+A1's notes flagged sync/freeze.rs as needing the parking_lot collapse.
+B4 verified: it doesn't. freeze.rs imports `RwLock`/`ReadGuard`/
+`WriteGuard` exclusively via re-exports from `crate::sync`, so the
+host/target gating in sync.rs flows through transparently. B4 saved
+itself the work by checking the dependency direction first.
+
+**Lesson**: predecessor recipes are valuable but not infallible. The
+followup agent SHOULD verify before applying — A1's recipe was right
+about the *substance* (Mode::Sync → Mode::NoSync collapse) but wrong
+about the *scope* (3 files vs 2).
+
+### Session bounce pattern — a third mode
+
+Phase 2a's first wave bounced INSTANTLY (0 tokens, instant rejection
+of the spawn). B3 bounced LATE (8.4 min of real work, then the
+summary-writing phase hit the limit). Both are "session limit"
+messages but mean very different things:
+
+- **Instant bounce**: redo with smaller wave or different timing.
+- **Late bounce**: work landed in the working tree; only the
+  notes/synthesis was lost. Treat as "completed without notes" and
+  dispatch a followup to verify + document.
+
+This distinction matters for orchestration. Captured in the codified
+RECIPE.
+
+### B3-followup dispatched
+
+Reads B3's diffs from the integration commit, finishes the remaining
+5 files (emitter.rs is the big one, plus annotate_snippet_*, registry,
+tests, json/, markdown/), applies §1.8 i18n removal in emitter.rs,
+writes proper handoff notes per HANDOFF_TEMPLATE.
+
+Expected: 100-200k tokens; 50-80 t/LOC for emitter.rs's §1.8 work.
+
+(B3-followup in flight.)
