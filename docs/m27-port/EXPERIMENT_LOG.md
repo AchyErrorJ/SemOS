@@ -626,6 +626,40 @@ file set than the parking_lot/PathBuf followups.
 - [x] RECIPE.md + HANDOFF_TEMPLATE.md codified
 - [x] Per-agent token costs tabulated
 - [ ] Phase 2b cycle plan (3 crates × sequential ports)
-- [ ] Decide: launch Phase 2b now or wait for user signal
+- [x] Phase 2b launched (4 parallel agents)
 - [ ] Parent action items: rustc-stable-hash vendor patch, tracing
-      stack vendoring, PathBuf API extension
+      stack vendoring, ~PathBuf API extension~ (DONE this commit)
+
+---
+
+## 2026-05-30 — Phase 2b launched
+
+Four parallel agents in flight:
+- **B1** rustc_ast (11,553 LOC)
+- **B2** rustc_lint_defs (6,451 LOC)
+- **B3** rustc_errors (7,807 LOC; §1.8 i18n removal is the
+  architectural call)
+- **B4** A1 deferred sync.rs/lock.rs/freeze.rs parking_lot collapse
+  (A1's line-precise recipe; ~1,000 LOC; expected to land at the
+  recipe-following 14-20 t/LOC band)
+
+Plus parent-side: **path API extension done** —
+Components/Component/strip_prefix/as_os_str/Cow<Path>/Borrow/ToOwned.
+A2-followup flagged this as the single biggest gap blocking
+rustc_span integration. semos-std build clean. When the Phase 2b
+agents integrate, they hit a more-complete surface and can route
+through these directly instead of leaving TODO markers.
+
+### Token forecast for Phase 2b
+- B1 (rustc_ast, novel hard): ~50 t/LOC × 11,553 LOC ≈ 580k tokens
+- B2 (rustc_lint_defs, mechanical): ~30 t/LOC × 6,451 LOC ≈ 195k
+- B3 (rustc_errors, §1.8 work): ~80 t/LOC × 7,807 LOC ≈ 625k
+- B4 (followup recipe): ~17 t/LOC × 1,000 LOC ≈ 17k
+- **Phase 2b expected total: ~1.4M tokens**
+- Session-running-total after Phase 2b: ~3.4M tokens for ~64k LOC
+  patched. ~53 t/LOC average. Below the mixed-weighted ~50M token
+  budget for the whole port.
+
+If B3's §1.8 work goes deep (recon estimated ~5 sessions saved by
+dropping i18n; this is the i18n drop itself) it could trend higher
+than the forecast. Monitor.
