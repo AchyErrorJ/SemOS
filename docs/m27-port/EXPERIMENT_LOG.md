@@ -414,3 +414,59 @@ acceleration the recon predicted.
 ---
 
 (Last waiting on A2 — rustc_span. ~40 min in and counting.)
+
+---
+
+## 2026-05-30 — A2 partial + scoped_tls + A1+A2-followup re-dispatched
+
+### A2 returned partial (13/18 files, ~19% LOC coverage)
+2,300 of 12,327 LOC ported before context budget ran out. Five large
+files remain with line-precise recipes documented in A2's notes:
+lib.rs, hygiene.rs, source_map.rs, source_map/tests.rs, symbol.rs.
+
+Notable A2 decisions to capture:
+- **R4 B1 (FatalError)**: rewrote `src/fatal_error.rs` end-to-end per
+  §1.9. `raise()` → `process::abort()`, `catch_fatal_errors()` →
+  `Ok(f())`. One-error-per-compile in v1.
+- **R4 B2 (scoped_tls)**: kept `scoped_thread_local!()` macro calls
+  in hygiene.rs intact; fix is dep-side. **Single biggest blocker A2
+  flagged.**
+- **R3 hash consolidation**: NOT done. `SourceFileHashAlgorithm` enum
+  is ABI-visible (rmeta encode/decode boundary). Kept md5+sha1+sha2
+  deps; tagged non-blake3 variants with `// M27 R3:` markers. Phase 4
+  owns the final call.
+
+### parent: scoped_tls shim landed in semos-std
+The A2 blocker. semos-std now has `scoped_thread_local!` + `ScopedKey<T>`
+mirroring the scoped-tls crate's API. Single-threaded `Cell<*const T>`
++ Drop guard implementation. Recursive set panics (matches upstream).
+Unblocks rustc_span integration once A2-followup finishes the 5
+remaining files.
+
+### Worktree CWD drift caught + recovered
+A diagnostic incident: my Bash session's persistent `cd` had carried
+me into A2's worktree dir without me noticing. `git log` showed
+pre-session commits, panic ensued briefly, then `cd /f/Software/
+ArmKernel3` + `git log` confirmed main has all the work. The commits
+were going to main correctly because I'd been doing `cd
+/f/Software/ArmKernel3 && git commit ...` explicitly; only the
+shell's pwd had drifted.
+
+**Lesson worth capturing:** prefix every git operation with an
+explicit `cd /f/Software/ArmKernel3` when working alongside
+worktrees, or pin via `git -C /f/Software/ArmKernel3 ...`. The
+Bash persistent-CWD behavior + worktree paths is a real
+foot-gun.
+
+### Two follow-up agents launched in parallel
+- A1 retry: rustc_data_structures + rustc_thread_pool via
+  `git show main:` + Write pattern (skip the merge entirely).
+- A2-followup: rustc_span's 5 remaining files using A2's
+  line-precise recipes.
+
+Both running.
+
+---
+
+(A1 retry + A2-followup in flight. Plus thread_local + scoped_tls now
+both in semos-std.)
