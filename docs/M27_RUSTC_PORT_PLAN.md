@@ -35,9 +35,14 @@ The smallest viable rustc-on-SemOS therefore drops:
 Even with those drops we still need to port ~50-60 internal crates plus
 several external deps (jiff, anstyle, tracing, etc.). The Cranelift
 port (14 crates, mostly small) took one intensive session. rustc's
-crates are larger and more std-coupled. Realistic estimate: **30-60
-sessions** of focused work, parallelizable across 4-8 agents.
+crates are larger and more std-coupled. Original estimate: **30-60 sessions** of focused work, parallelizable across 4-8 agents.
 Calendar-time: **1-2 months full-time, possibly longer.**
+
+**Revised estimate post-Phase-1 recon:** ~40–60 calendar-sessions parallelized
+4-6 wide. Internal crate work: ~85-130 crate-sessions (70 crates, mostly
+mechanical). External crate work: ~5-7 calendar-sessions. semos-std surface
+additions: ~4-6 sessions. Foundation (Phase 2a+2b): ~6-10 sessions.
+Integration (Phase 5): ~3-5 sessions.
 
 If that estimate alone is intolerable, stop here and pivot to D.3 or
 accept that rustc-on-SemOS stays aspirational. The rest of this
@@ -295,11 +300,16 @@ This is M27's "done when" bullet #2 + #3 in the current roadmap. Bullet
 the decisions in §1 explicitly punt on some of them, and that's fine
 for v1.
 
-## 6. What to do today
+## 6. Status log
 
-Spawn the four Phase 1 recon agents. Each in its own worktree, each
-producing one sub-doc. Total elapsed: 1 session (multi-hour if any).
+- **2026-05-30** — Phase 1 recon complete (R1–R4). Synthesis:
+  `docs/m27-recon/SYNTHESIS.md`. Verdict: PROCEED.
+- **2026-05-30** — Plan amended with §1.7/§1.8/§1.9 and Phase 2a/2b split.
+- **2026-05-30** — Phase 2a spawned: 5 parallel agents on zero-dep
+  foundation crates + semos-std additions.
 
-Phase 1 outputs determine whether Phase 2 starts at all. If R4
-identifies a blocker we can't mitigate, we pivot — without spending
-30+ sessions discovering it ourselves.
+## 7. What to do next
+
+When Phase 2a agents report back, integrate their patches into main,
+then spawn Phase 2b (cycle-breakers: `rustc_ast` + `rustc_lint_defs` +
+`rustc_errors`) sequentially.

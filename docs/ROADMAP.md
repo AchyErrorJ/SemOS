@@ -911,28 +911,36 @@ Avoid the LLVM C++ port by adopting the Rust-native codegen.
       library deps). Upstream cg_clif issue — track from the next
       nightly bump.
 
-## M27 — First rustc build on Semantic OS `[🔨 Cranelift codegen running ON SemOS; needs rustc-as-binary]`
+## M27 — First rustc build on Semantic OS `[🔨 Phase 2a foundation port in progress]`
 
 The cross-build path is live (DEMO 71, rustc-on-cg_clif on the dev box),
 and `cranelift-codegen` itself now runs **on** SemOS in `semos-cc`
-(DEMO 73, 2026-05-30 — the open follow-up from D.2 is closed). The
-remaining work is moving rustc ITSELF onto SemOS so it can drive its
-own compile loop — a different shape of problem (rustc-as-a-Rust-program
-built for `x86_64-unknown-none` against `semos-std`, which currently
-doesn't satisfy all of `std` rustc expects).
+(DEMO 73, 2026-05-30). Phase 1 recon (4 agents, R1–R4) mapped the dep
+graph, audited std surfaces, identified externals, and found exactly one
+unmitigated blocker (B1: FatalError/catch_unwind → accepted as
+"one-error-per-compile" in v1 per §1.9). Synthesis verdict: PROCEED.
+
+See `docs/M27_RUSTC_PORT_PLAN.md` for the full phase plan and
+`docs/m27-recon/SYNTHESIS.md` for reconciled scope estimates.
 
 **Done when:**
-- [✅] Codegen-backend layer unblocked (M26 cg_clif e2e, DEMO 71, `0039b25`)
-- [✅] Cranelift `cranelift-codegen` + `cranelift-frontend` build and run
-      Ring-3 on SemOS, producing actual machine code at runtime (D.2
-      follow-up, DEMO 73, `1a3ac52` + `632a4d9`)
+- [✅] Phase 1 recon complete (R1–R4, SYNTHESIS.md, `f98c37a`)
+- [✅] Plan amended with §1.7/§1.8/§1.9 + Phase 2a/2b split
+- [🔨] Phase 2a — zero-dep foundation crates (`rustc_data_structures`,
+      `rustc_span`, `rustc_index`, `rustc_serialize`, `rustc_arena`,
+      `rustc_hashes`, `rustc_graphviz`, `rustc_fs_util`, `rustc_lexer`,
+      `rustc_error_codes`, plus semos-std additions: `OnceLock`,
+      `thread_local!`, `OsString`, `canonicalize`, `abort_with_code`)
+- [ ] Phase 2b — cycle-breakers (`rustc_ast` + `rustc_lint_defs` +
+      `rustc_errors`)
+- [ ] Phase 3 — middle layer (frontend + semantics clusters)
+- [ ] Phase 4 — codegen layer (`rustc_codegen_ssa`, MIR, metadata)
+- [ ] Phase 5 — Integration: `semos-rustc` binary drives `rustc_driver`,
+      compiles `fn main() { println!("hi"); }` end-to-end on SemOS
 - [ ] Cargo (built against `semos-std`) drives a rustc invocation
       that produces a working binary, ON SemOS
 - [ ] The "hello world" test from M25 compiles and runs end-to-end
       on Semantic OS without the cross-build server
-- [ ] Resolved: `semos-std` reaches enough surface that `rustc_driver`'s
-      `std` dependencies are satisfied (or rustc patched to skip what
-      isn't there). Big lift — separate research project.
 
 ## M28 — Self-bootstrap `[  ]`
 
