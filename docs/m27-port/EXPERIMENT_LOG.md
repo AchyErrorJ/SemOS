@@ -33,12 +33,19 @@
 >   for Phase 5b. Polish pass after integration ships.
 > - **Phase 5b scaffold ✅** (commit `0c19848`) — user-programs/semos-rustc
 >   binary template; builds clean to ET_EXEC at 0x400000.
-> - **NEXT**: Phase 5b integration — uncomment rustc_driver_impl path
->   dep, first `cargo check` will surface compile errors across the 48
->   ported crates, plan 4-6 parallel agents for the fix wave. Then wire
->   cg_clif statically + write DEMO 80. The cross-crate IntoDiagArg
->   flag at rustc_error_messages/src/lib.rs:602 will need to land here
->   (either port rustc_error_messages full no_std or cfg-gate the param).
+> - **Phase 5b Stage D STARTED** (commit `926e739`): workspace plumbing
+>   fixed (workspace root + stripped `[workspace] members=[]` from 48
+>   rustc_*'s + renamed `semos_std` dep → `semos-std` in 9 Cargo.tomls).
+>   First `cargo check` resolved 303 packages but **8 external crates
+>   fail before any rustc_* compiles** (once_cell:245 errors, log:100,
+>   rustc-stable-hash:32, stable_deref_trait:17, plus memchr, smallvec,
+>   regex-syntax, rustc-hash). The R3 external port work the recon
+>   estimated at ~15 sessions is now the blocker.
+> - **NEXT**: Stage E external-dep triage wave. Add
+>   `[workspace.dependencies]` + `[patch.crates-io]` overrides in
+>   semos-rustc/Cargo.toml, vendor + no_std-patch log/once_cell/
+>   rustc-stable-hash. THEN the 48 rustc_* crates get tried. THEN
+>   cg_clif wiring + DEMO 80.
 >
 > Recipe evolution discovered by D1 (rustc_middle): use
 > `#![cfg_attr(target_os = "none", no_std)]` + `#[cfg(not(target_os =
@@ -1468,31 +1475,72 @@ e_entry=0x400000 (matches USER_CODE_BASE), statically linked, stripped,
 5KB. **Same shape as semos-cc's stage-1 D.2 emitter** at the same
 point in its pipeline.
 
-### Stage D: Phase 5b integration ⏭ NEXT-SESSION (or agent wave)
+### Stage D: Phase 5b integration STARTED (workspace plumbing landed, externals blocking)
 
-Replace the stub `main` with rustc_driver_impl invocations. Concrete
-work:
+Started this session. Commit `926e739`. Three Cargo plumbing fixes
+landed to get the workspace to resolve:
 
-1. Uncomment + activate the `rustc_driver_impl` + `rustc_driver`
-   path deps in Cargo.toml. First `cargo check` will surface
-   compile errors across the 48 ported crates — likely many sites
-   to fix (type mismatches, missing impls, std-vs-semos_std API
-   shape differences).
-2. Wire `cg_clif` statically as the codegen backend per §1.2 (drop
-   the dynamic plugin-load model). This is a Cargo.toml + Rust glue
-   change pointing rustc_codegen_ssa at cg_clif's `codegen_backend`
-   trait impl.
-3. Replace the stub's body with `rustc_driver::run_compiler` calls
-   reading an input file path from argv, producing a SemOS ELF
-   output file via cg_clif.
-4. DEMO 80 in the kernel: SYS_SPAWN /bin/semos-rustc with argv
-   `["semos-rustc", "/tmp/hello.rs", "-o", "/tmp/hello.elf"]`,
-   wait for exit, then SYS_SPAWN /tmp/hello.elf and assert "hi"
-   appears in its captured stdout.
+1. **semos-rustc/Cargo.toml as WORKSPACE ROOT** with glob membership
+   (`members = [".", "vendor-rustc-src/compiler/*"]`). Excludes the
+   8 dropped crates (codegen_llvm/gcc/cranelift, llvm, baked_icu_data,
+   sanitizers, windows_rc, rustc shim).
+2. **Stripped `[workspace] members = []` headers** from all 48 patched
+   rustc_* Cargo.tomls. Python script targeted the literal pair, left
+   real config intact. The opt-out blocks served their purpose during
+   patch-only phase; now conflict with workspace-root resolution.
+3. **Renamed `semos_std = { ... }` → `semos-std = { ... }`** in 9
+   rustc_* Cargo.tomls. The package's `[package] name` is `semos-std`
+   (hyphen); the underscore comes from `[lib] name = "semos_std"` for
+   imports. Other user-programs (sem-sh, semos-cc, hello-std) all use
+   the hyphen form, matching package name.
 
-The first `cargo check` is the load-bearing next step — its error
-output drives a per-crate fix wave (probably 4-6 parallel agents
-each handling 1-2 crates' worth of compile errors).
+First `cargo check --release` (from inside semos-rustc/) resolves 303
+packages and starts compiling. Wall: **8 external crates fail before
+any patched rustc_* crate gets tried.**
+
+| External crate | Errors | Cause |
+|----------------|-------:|-------|
+| once_cell 1.21.4 | 245 | No #![no_std]; missing prelude |
+| log 0.4.30 | 100 | std::cfg; no #![no_std] |
+| rustc-stable-hash 0.1.2 | 32 | Explicit std (recon flagged) |
+| stable_deref_trait | 17 | std prelude |
+| smallvec 1.15.1 | 1 | Unstable feature on stable |
+| memchr 2.8.1 | 1 | std required |
+| regex-syntax 0.8.10 | 1 | std required |
+| rustc-hash 2.1 | 1 | std required |
+
+These are exactly the R3 external port work the recon estimated at
+~15 focused PATCH sessions. Most need either `default-features =
+false` overrides at workspace level OR vendor + no_std patch (same
+pattern as the Cranelift vendored fork in semos-cc).
+
+### Stage E (NEXT-SESSION): external-dep triage wave
+
+1. **Survey each failing external's no_std story.** Some (memchr,
+   once_cell, regex-syntax) have feature flags that gate std and
+   just need `default-features = false` in the upstream rustc_* dep
+   declarations. Others (log, stable_deref_trait, rustc-stable-hash)
+   need real patches or vendored forks.
+2. **Top-of-funnel approach**: add a `[workspace.dependencies]` table
+   in semos-rustc/Cargo.toml that pins these 8 crates with
+   `default-features = false` + required features, plus
+   `[patch.crates-io]` overrides for the ones that need vendored
+   patches. The rustc_* crate Cargo.tomls keep their existing entries
+   but inherit the workspace pin.
+3. **Vendor + patch the 2-3 hardest crates** (log + once_cell +
+   rustc-stable-hash) into `user-programs/semos-rustc/vendor-externals/`,
+   each with a no_std patch following the Cranelift PORT_LOG.md
+   pattern.
+4. Once externals build, the NEXT wall will be the 48 patched
+   rustc_* crates — expect a similar volume of compile errors
+   surfacing the actual port quality. THAT's the 4-6 parallel
+   agent fix wave.
+
+### Stages F+ (later):
+- Wire `cg_clif` statically as the codegen backend per §1.2.
+- Replace semos-rustc's stub main with `rustc_driver::run_compiler`.
+- DEMO 80: SYS_SPAWN semos-rustc on hello-world.rs → SYS_SPAWN
+  emitted ELF → assert "hi" in captured stdout.
 
 ### Cumulative session totals through Phase 5 start
 
