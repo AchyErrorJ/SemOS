@@ -1556,6 +1556,55 @@ The §1.8 i18n drop should remove most fluent-bundle / annotate-snippets
 Cargo.toml level — only at the rustc_errors body level. Need to also
 remove the deps from Cargo.tomls.
 
+### Stage E iter 2: §1.8 done at Cargo+source level (H1 agent, commit `9399abe`)
+
+H1 agent landed the proper §1.8 drop in rustc_error_messages:
+- Dropped 7 transitive-puller deps (fluent-bundle, fluent-syntax,
+  icu_list, icu_locale, intl-memoizer, unic-langid, rustc_baked_icu_data,
+  tracing).
+- Replaced fluent/unic-langid public surface with local stub types
+  (FluentArgs, FluentValue, FluentBundle, FluentError, FluentResource,
+  FluentType, LanguageIdentifier, langid!) — API-compatible no-ops.
+- Notes at `docs/m27-port/4/H1-i18n-drop.md`.
+
+### Stage E iter 3: tracing + parking_lot host-cfg-gate (parent followup)
+
+Same commit. Parent followups after H1's i18n drop revealed remaining
+transitive pulls:
+- `tracing = "0.1"` in ~20 rustc_* Cargo.tomls bulk-set to
+  `default-features = false` (was pulling log + once_cell otherwise).
+- In rustc_errors: moved annotate-snippets + anstream + termize to
+  `[target.'cfg(not(target_os = "none"))'.dependencies]` host-only.
+- In rustc_data_structures: moved jobserver + measureme + parking_lot
+  + rustc-stable-hash + memmap2 to host-only deps (transitive std
+  pulls). stacker + tempfile already gated in iter 1.
+
+### Stage E iter 4 open work
+
+Cargo check now reaches more crates but 12 still fail. The mix shifted:
+- 2 patched-crate failures (Phase 3-4 port bugs surfacing):
+  - **rustc_thread_pool** (138 errors): A1's stub wasn't actually
+    `#![no_std]` — still has `use std::any::Any;`. Need D1 cfg_attr
+    pattern.
+  - **rustc_graphviz** (2 errors): `assert!` macro not found —
+    needs `#[macro_use] extern crate alloc;` or core prelude.
+- ~10 external failures (further transitive chains):
+  once_cell (245), log (100), rustc-stable-hash (31), stable_deref_trait
+  (17), scoped-tls (7), constant_time_eq (5), crypto-common, either,
+  indexmap, memchr.
+
+Iteration 4 next-steps:
+1. Fix rustc_thread_pool no_std (port bug).
+2. Fix rustc_graphviz prelude (port bug).
+3. Trace remaining transitive log/once_cell pullers — likely
+   syn/serde/proc-macro chain or some still-active crate dep.
+4. Vendor + no_std-patch the 3 hardest externals (log + once_cell +
+   rustc-stable-hash) — recon estimated ~3 sessions per.
+
+Stage E is real R3 work — recon estimated ~15 sessions total of
+focused PATCH work. Each iteration unblocks ~2-4 crates. We're 4
+iterations in, ~12 unblocked, ~12 still in the queue.
+
 1. **Survey each failing external's no_std story.** Some (memchr,
    once_cell, regex-syntax) have feature flags that gate std and
    just need `default-features = false` in the upstream rustc_* dep
