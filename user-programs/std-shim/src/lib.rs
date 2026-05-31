@@ -55,6 +55,7 @@ pub use core::{
 mod alloc_impl;
 pub mod arch;
 pub mod env;
+pub mod ffi;
 pub mod fs;
 pub mod io;
 pub mod net;

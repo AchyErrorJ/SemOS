@@ -99,6 +99,58 @@ impl Path {
     pub fn to_path_buf(&self) -> PathBuf {
         PathBuf { inner: self.inner.to_owned() }
     }
+
+    /// Lexical canonicalize — collapse `.` and `..` components without
+    /// touching the filesystem. Mirrors `std::path::Path::canonicalize`
+    /// in shape but does NOT resolve symlinks (we don't have those) and
+    /// does NOT verify the path exists.
+    ///
+    /// Added 2026-05-30 for M27 R2 (rustc_span and 2 other crates use
+    /// canonicalize lexically). std's version is filesystem-resolving;
+    /// callers who need the real-fs variant should use a future
+    /// `fs::canonicalize` helper that hits SYS_STAT.
+    pub fn canonicalize_lexical(&self) -> PathBuf {
+        use core_alloc::vec::Vec;
+        let is_abs = self.is_absolute();
+        let mut parts: Vec<&str> = Vec::new();
+        for seg in self.inner.split(SEP) {
+            match seg {
+                "" => continue, // skip "//" and leading "/"
+                "." => continue,
+                ".." => {
+                    // If we have parts, pop one; for an absolute path,
+                    // ".." at the root stays at root (POSIX semantics).
+                    if let Some(last) = parts.last() {
+                        if *last != ".." {
+                            parts.pop();
+                            continue;
+                        }
+                    }
+                    // For relative paths, ".." with nothing to pop
+                    // becomes a literal ".." preserved at the head.
+                    if !is_abs {
+                        parts.push("..");
+                    }
+                }
+                _ => parts.push(seg),
+            }
+        }
+        let mut out = String::new();
+        if is_abs {
+            out.push(SEP);
+        }
+        for (i, p) in parts.iter().enumerate() {
+            if i > 0 {
+                out.push(SEP);
+            }
+            out.push_str(p);
+        }
+        // Empty relative-path canonicalize → ".".
+        if out.is_empty() {
+            out.push('.');
+        }
+        PathBuf { inner: out }
+    }
 }
 
 impl AsRef<Path> for Path {
