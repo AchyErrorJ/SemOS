@@ -1650,3 +1650,45 @@ iterations in, ~12 unblocked, ~12 still in the queue.
    working directory carried me into a worktree path. Codified in
    EXPERIMENT_LOG previously; keep `cd /f/Software/ArmKernel3` at the
    head of any git invocation or `git -C` explicitly.
+
+### Stage E iter 4 (commit `81e3e2e`)
+- rustc_thread_pool: D1 cfg_attr pattern + cfg-split use std::* +
+  thread_local! macro. Added semos-std target-dep.
+- rustc_graphviz: A4's deferred core::io redirect applied.
+- rustc_codegen_ssa: tempfile + thorin-dwp + wasm-encoder host-only.
+- rustc_fs_util: host-gated tempfile. rustc_data_structures: host-
+  gated ena.
+- Cleared: log + crc32fast. Remaining: 11 externals.
+
+### Stage E iter 5 (commit `cfba8f6`) — BIG WIN: serde no_std
+
+- Bulk-set all 8 rustc_* Cargo.tomls' serde / serde_json deps to
+  `default-features = false, features = ["alloc"]`. Cleared 5829
+  serde_core errors.
+- gsgdt host-gated in rustc_middle (pulled serde without
+  default-features=false, forcing serde/std workspace-wide via
+  feature unification). Used only in MIR debug dump (host-only).
+- odht host-gated in rustc_hir + rustc_metadata (incremental hash
+  table, dropped per §1.3).
+- rustc_thread_pool: dropped `const { }` syntax (semos_std::
+  thread_local! lacks it).
+- rustc_fs_util: added missing semos-std dep.
+
+Net: non-monotone — log + crc32fast + parking_lot_core + anstyle
+re-surfaced through a different chain in rustc_metadata after odht
+host-gate. 16 externals at iter 5 end vs 11 at iter 4 end, but
+serde_core (5829) clear dwarfs everything.
+
+### Iter 6+ open work
+1. Trace re-surfaced log + once_cell pullers via cargo tree. The
+   anstyle (156) + parking_lot_core (60) failures suggest
+   annotate-snippets/anstream slipping through host-gate.
+2. Stub 29 remaining `tracing::*!()` macro sites to fully drop the
+   tracing dep workspace-wide.
+3. Vendor + no_std-patch once_cell + rustc-stable-hash (Cranelift
+   PORT_LOG template, recon-estimated 3 sessions per).
+
+Cumulative this session: 17 commits, ~6.9M tokens. Stage E continues
+the recon-estimated grind. Significant single-iter wins (serde 5829
+clear) interspersed with iteration-shuffle when one host-gate opens
+a different code path.
