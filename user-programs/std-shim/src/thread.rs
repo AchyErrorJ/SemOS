@@ -228,3 +228,104 @@ macro_rules! thread_local {
             $crate::thread::LocalKey::new(|| $init);
     };
 }
+
+// ---------------------------------------------------------------------
+// ScopedKey<T> + scoped_thread_local! macro — M27 R4 B2 (scoped-tls
+// crate replacement).
+//
+// rustc_span uses the `scoped-tls` crate via the `scoped_thread_local!`
+// macro for SESSION_GLOBALS — "set a value for the duration of a closure
+// call, then unset." This shim provides the same shape. Single-threaded
+// because SemOS Ring-3 is single-threaded; for multi-threading, replace
+// the inner storage with a per-tid map.
+// ---------------------------------------------------------------------
+
+/// `scoped_tls::ScopedKey`-shaped: holds an `Option<*const T>` that's
+/// set for the duration of a `set` call and unset afterwards. `with`
+/// panics if no value is currently set; `is_set` lets callers check.
+pub struct ScopedKey<T: 'static> {
+    inner: core::cell::Cell<*const T>,
+    _marker: core::marker::PhantomData<T>,
+}
+
+// Safety: SemOS Ring-3 is single-threaded; the Cell is only ever
+// accessed from one thread. Sync is asserted so the static can live
+// at program scope.
+unsafe impl<T: 'static> Sync for ScopedKey<T> {}
+
+impl<T: 'static> ScopedKey<T> {
+    /// Build an empty key. Usually invoked by the
+    /// `scoped_thread_local!` macro rather than directly.
+    pub const fn new() -> Self {
+        Self {
+            inner: core::cell::Cell::new(core::ptr::null()),
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    /// Set the value for the duration of `f`'s execution. Panics if
+    /// `set` is called recursively (i.e., already set).
+    pub fn set<R, F: FnOnce() -> R>(&'static self, value: &T, f: F) -> R {
+        let prev = self.inner.replace(value as *const T);
+        // Defensive: scoped-tls panics on nested set; mirror that.
+        // (rustc's SESSION_GLOBALS pattern only sets once per compile.)
+        if !prev.is_null() {
+            // Restore + panic.
+            self.inner.set(prev);
+            panic!("scoped_thread_local set recursively");
+        }
+        struct Guard<'a, T: 'static>(&'a ScopedKey<T>);
+        impl<'a, T: 'static> Drop for Guard<'a, T> {
+            fn drop(&mut self) {
+                self.0.inner.set(core::ptr::null());
+            }
+        }
+        let _guard = Guard(self);
+        f()
+    }
+
+    /// Run `f` with the currently-set value. Panics if no value is set.
+    pub fn with<R, F: FnOnce(&T) -> R>(&'static self, f: F) -> R {
+        let p = self.inner.get();
+        if p.is_null() {
+            panic!("scoped_thread_local accessed without set");
+        }
+        // Safety: `set` guarantees `inner` is a valid `&T` while `f` is
+        // running (the Drop guard unsets after f returns).
+        unsafe { f(&*p) }
+    }
+
+    /// `true` iff a value is currently set on this key.
+    pub fn is_set(&'static self) -> bool {
+        !self.inner.get().is_null()
+    }
+}
+
+/// `scoped_tls::scoped_thread_local!`-shaped macro. Single-threaded
+/// variant: each declared static becomes a process-wide `ScopedKey`.
+///
+/// Usage:
+/// ```ignore
+/// semos_std::scoped_thread_local! {
+///     pub static SESSION_GLOBALS: SessionGlobals;
+/// }
+///
+/// SESSION_GLOBALS.set(&globals, || {
+///     SESSION_GLOBALS.with(|g| use_it(g));
+/// });
+/// ```
+#[macro_export]
+macro_rules! scoped_thread_local {
+    () => {};
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $ty:ty; $($rest:tt)*) => {
+        $(#[$attr])*
+        $vis static $name: $crate::thread::ScopedKey<$ty> =
+            $crate::thread::ScopedKey::new();
+        $crate::scoped_thread_local! { $($rest)* }
+    };
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $ty:ty) => {
+        $(#[$attr])*
+        $vis static $name: $crate::thread::ScopedKey<$ty> =
+            $crate::thread::ScopedKey::new();
+    };
+}
