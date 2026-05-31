@@ -10,19 +10,35 @@
 > 5. This file — scroll to the bottom for the latest tally and the
 >    Phase 3 transition checklist.
 >
-> **State at session end (2026-05-31):**
+> **State at session end (2026-05-31, end of 2nd Phase 3 session):**
 > - Phase 1 (recon) ✅ — 4 agents, ~723k tokens
 > - Phase 2a (foundation) ✅ — 16 crates, ~38k LOC, ~1.3M tokens
 > - Phase 2b (cycle-breakers) ✅ — 4 crates + A1 sync followup, ~26k LOC, ~560k tokens
 > - semos-std surface ✅ for R2 top-6 + scoped_thread_local!
->   + path Components/strip_prefix/Cow<Path>
-> - **NEXT**: Phase 3 (semantics tier, ~13 crates incl. 60k-LOC
->   rustc_middle) — see "Phase 2b → Phase 3 transition" at the bottom
->   of this file for the open checklist. Note: assign agents by
->   std-surface, not LOC (the B1 / rustc_ast insight).
+>   + path Components/strip_prefix/Cow<Path> + io::Stderr + LocalKey<Cell>
+>   sugar (commit `7978ce5`) + sync::LazyLock + env::VarError (commit `c9f0b2d`)
+> - **Phase 3 Wave 1 (Cluster A frontend) ✅** — C1+C2 complete, C3 partial.
+>   ~92k LOC covered, ~533k tokens, avg 5.2 t/LOC (B1 LARGE-but-THIN
+>   pattern dominates). Commit `c186403`.
+> - **Phase 3 Wave 2 (Cluster B semantics) PARTIAL** — all 5 agents
+>   bounced simultaneously on session limit late-bounce. 100 files /
+>   ~half of Cluster B landed before bounce. Commit `81b5e0d`.
+> - **NEXT**: recovery wave after 8:50am Toronto reset. Targets:
+>   rustc_middle remainder (98 files), rustc_hir_typeck (untouched),
+>   rustc_infer + rustc_trait_selection + rustc_const_eval (untouched),
+>   rustc_borrowck (untouched), rustc_expand remainder. Probe-then-fleet
+>   this time; spawning 5 at once when the bucket is unknown is what
+>   caused the simultaneous late-bounce.
+>
+> Recipe evolution discovered by D1 (rustc_middle): use
+> `#![cfg_attr(target_os = "none", no_std)]` + `#[cfg(not(target_os =
+> "none"))] extern crate std;` instead of A3's cfg(target_os="none")
+> body-split. Cleaner, keeps host builds first-class. Folded into
+> RECIPE.md §1.5 evolution. Sub-agents should prefer this for any
+> crate that has substantial host-only test/dump surface.
 >
 > Roadmap row landed in `docs/ROADMAP.md` summarizing the swarm. Update
-> this log next session as Phase 3 agents return — token table is
+> this log next session as recovery-wave agents return — token table is
 > append-only; lessons-learned tally is at the bottom of each section.
 
 
@@ -953,3 +969,116 @@ remaining files) — possibly as a 5-agent wave or sequenced.
 
 C3-followup's expected cost: ~150k tokens at ~5-10 t/LOC (the
 predecessor recipe pattern continues to deliver ~10× efficiency).
+
+---
+
+## 2026-05-31 — Phase 3 Wave 2 launched (5 agents) + WHOLE-WAVE late-bounce
+
+Wave 2 went out: D1 rustc_middle solo, D2 HIR tier, D3 inference,
+D4 borrowck+resolve, plus C3-followup applying C3's §3 recipes.
+Five agents in parallel.
+
+**All five bounced simultaneously on session limit ~9-10 minutes in.**
+Each had done 110-126 tool uses worth of real work; each reported
+back with the same message: "You've hit your session limit · resets
+8:50am (America/Toronto)" and a token usage in the 4-6k range that's
+the *post-bounce* summary attempt, not the work done before. Real
+spend per agent was probably 100-300k pre-bounce.
+
+This is a NEW failure mode at the wave-orchestration layer: the B3
+late-bounce pattern from Phase 2b, now happening to ALL agents in a
+wave at once. Mechanism: the bucket was already partially-depleted
+from Wave 1's ~533k + parent-prep work in the same session window.
+Spawning 5 fresh agents drove total demand past the limit, and all
+five hit the wall at roughly the same simulation time (around their
+summary-write phase).
+
+**Lesson worth codifying:** when bucket-state is unknown after recent
+heavy use, **probe-then-fleet, don't fleet-then-pray**. One probe
+agent first — if it finishes cleanly, the bucket has headroom; then
+spawn the rest. Phase 2a learned this once; we forgot it for Wave 2
+because Wave 1 had gone so smoothly.
+
+### Wave 2 partial work
+
+Despite the bounce, real work landed in the main tree (each agent
+had written canonical-path source files before the bounce; only the
+notes phase was killed). 100 files / +512/-381 lines across 11 crates.
+
+| Agent | Crates touched | Files | Status |
+|-------|----------------|------:|--------|
+| C3-followup | rustc_attr_parsing + rustc_feature + rustc_builtin_macros (rustc_expand untouched) | 23 | partial — properly used parent's LazyLock + VarError shims |
+| D1 | rustc_middle (16 files) — incl. ty/context.rs, ty/context/tls.rs, util/bug.rs, arena.rs, lib.rs, plus 11 mid-tree files | 18 | ~15% of 116-file crate |
+| D2 | rustc_hir (13) + rustc_hir_id (2) + rustc_hir_pretty (2) + rustc_hir_analysis (7); **rustc_hir_typeck untouched** | 24 | partial |
+| D3 | rustc_type_ir COMPLETE (21) + rustc_privacy COMPLETE (2); **rustc_infer + rustc_trait_selection + rustc_const_eval untouched** | 23 | partial |
+| D4 | rustc_resolve COMPLETE (12); **rustc_borrowck untouched** | 12 | partial |
+
+Patches verified clean (spot-checks). `use std::*` residuals in 4
+files are correctly cfg-gated `#[cfg(not(target_os = "none"))]` host
+arms — deliberate, not incomplete substitution.
+
+### Recipe evolution discovered
+
+D1 introduced a cleaner no_std pattern than the existing A3 host/target
+body-split:
+
+```rust
+// In src/lib.rs head, after //! doc comments, before items:
+#![cfg_attr(target_os = "none", no_std)]
+// ... other crate-level attrs ...
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+```
+
+Effect: SemOS-target build sees `#![no_std]`; host build still has
+full std as a regular `extern crate`. Avoids cfg-bracketing every
+host body. Should be the default pattern going forward; fold into
+RECIPE.md §1.2.
+
+### Cumulative session total
+
+- **Tokens (parent + agents)**: ~3.13M before Wave 2 spawn + Wave 2's
+  un-reported real spend (probably ~1.5-2M based on tool-use counts
+  + duration). Recovery wave will add another ~2-3M to close Phase 3.
+- **LOC patched cumulative**: ~38k (2a) + ~26k (2b) + ~92k (W1) +
+  ~100 files × ~500 LOC/file avg ≈ 50k (W2) = **~206k LOC** of the
+  ~770k post-§1 internal rustc.
+- **Wave count so far**: Phase 1 (1 wave, 4 agents), Phase 2a (probe
+  + 2 waves), Phase 2b (1 wave), Phase 3 W1 (1 wave), Phase 3 W2 (1
+  wave bounced).
+
+### What's left for Phase 3 closure
+
+Recovery wave targets (after 8:50am Toronto reset):
+1. **rustc_middle remainder** (~98 of 116 files) — heaviest remaining
+   single-crate work; D1 set up the cfg_attr pattern + critical
+   modules, recovery follows that recipe through the rest of the tree.
+2. **rustc_hir_typeck** (20k LOC, untouched) — D2 didn't reach.
+3. **rustc_infer + rustc_trait_selection + rustc_const_eval** (~60k
+   LOC, all untouched) — D3 didn't reach.
+4. **rustc_borrowck** (25k LOC, untouched) — D4 didn't reach.
+5. **rustc_expand remainder** (most of crate, untouched) — C3-followup
+   didn't reach.
+
+That's 5 distinct work-units, naturally one-per-agent. Use probe-
+then-fleet: probe with the cheapest (e.g., rustc_hir_typeck — likely
+THIN-LARGE per the B1 pattern), if it returns clean spawn the other
+4 in parallel. If probe bounces, the bucket isn't ready.
+
+### Next-session checklist
+
+- [ ] Wait until 8:50am Toronto + a buffer (bucket replenishment)
+- [ ] Probe with one agent (suggest rustc_hir_typeck — closes a known
+      gap, biggest remaining MECHANICAL crate)
+- [ ] If probe clean: spawn 4 agents for rustc_middle remainder /
+      rustc_infer+trait_selection+const_eval / rustc_borrowck /
+      rustc_expand remainder, in parallel
+- [ ] Integrate + token-table the recovery wave
+- [ ] Close Phase 3 in ROADMAP + memory file
+- [ ] Decide whether to launch Phase 4 (codegen tier — rustc_codegen_ssa,
+      rustc_mir_*, rustc_monomorphize, rustc_passes, rustc_metadata)
+      same session or pause

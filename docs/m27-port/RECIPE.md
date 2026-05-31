@@ -58,8 +58,28 @@ file exists.
 
 ### 1.2 src/lib.rs
 
-Add in this exact order **after the leading `//!` inner doc comments,
-before any items:**
+**Preferred pattern (D1 evolution, 2026-05-31):** conditional no_std
+that keeps host builds first-class. After the leading `//!` doc
+comments, before any items:
+
+```rust
+#![cfg_attr(target_os = "none", no_std)]
+// ... other crate-level #![feature(...)] / #![allow(...)] attrs ...
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+```
+
+Effect: on the SemOS target the crate behaves as `#![no_std]`; on the
+host build, std is available as a regular extern crate. Avoids the
+need to wrap host-only bodies in `cfg(target_os = "none")` blocks
+inside the source. D1 introduced this in rustc_middle; it's the
+default going forward.
+
+**Legacy pattern (still valid for already-patched crates):**
 
 ```rust
 #![no_std]
@@ -68,15 +88,20 @@ before any items:**
 extern crate alloc;
 ```
 
+Use this when the crate has zero host-only surface (e.g., the entire
+file compiles cleanly on both targets without cfg branches). Most
+Phase 2a foundation crates used this shape; do NOT churn them just
+to switch to the cfg_attr form — pick one per crate.
+
 The `#[macro_use]` is what makes `vec![]` reachable in submodules. If
 the crate already declares `#![no_std]`, skip; if `extern crate alloc;`
 is already there without `#[macro_use]`, add the attribute.
 
 **Trap:** Rust inner attributes (`#![...]`) must appear before any
 items. Doc comments at the file top are OK; an `extern crate` is an
-item, so putting `extern crate alloc;` ahead of `#![no_std]` is a
-syntax error. Order: `//!` doc comments → `#![…]` attributes →
-`extern crate` items → `use` → rest.
+item, so putting `extern crate alloc;` ahead of `#![no_std]` /
+`#![cfg_attr(..., no_std)]` is a syntax error. Order: `//!` doc
+comments → `#![…]` attributes → `extern crate` items → `use` → rest.
 
 ### 1.3 All `.rs` files — std::* path substitution
 
