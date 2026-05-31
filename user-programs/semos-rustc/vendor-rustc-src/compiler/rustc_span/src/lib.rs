@@ -15,6 +15,11 @@
 //!
 //! This API is completely unstable and subject to change.
 
+// M27 R2: no_std + alloc prelude. rustc_span runs against semos_std
+// (no full std) on the SemOS-host build. Cranelift port log patch #11
+// pattern: std::* → core::* / alloc::* / semos_std::* (B5 PathBuf,
+// fs/io).
+#![no_std]
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![cfg_attr(bootstrap, feature(array_windows))]
@@ -27,6 +32,10 @@
 #![feature(read_buf)]
 #![feature(rustc_attrs)]
 // tidy-alphabetical-end
+
+// M27 R2: alloc prelude — provides Vec/String/Box/format!/vec! crate-wide.
+#[macro_use]
+extern crate alloc;
 
 // The code produced by the `Encodable`/`Decodable` derive macros refer to
 // `rustc_span::Span{Encoder,Decoder}`. That's fine outside this crate, but doesn't work inside
@@ -73,16 +82,24 @@ pub mod fatal_error;
 
 pub mod profiling;
 
-use std::borrow::Cow;
-use std::cmp::{self, Ordering};
-use std::fmt::Display;
-use std::hash::Hash;
-use std::io::{self, Read};
-use std::ops::{Add, Range, Sub};
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::Arc;
-use std::{fmt, iter};
+// M27 R2: std::* → core::* / alloc::* / semos_std::* per the
+// substitution recipe. R4 B5 markers tag the path/io/fs sites that
+// route through semos_std (single-target UTF-8-only OsString shim).
+use alloc::borrow::Cow;
+use core::cmp::{self, Ordering};
+use core::fmt::Display;
+use core::hash::Hash;
+// M27 R4 B5: io = semos_std::io. `Read` is the semos_std::io::Read
+// trait (subset of std::io::Read — no read_buf_exact yet).
+use semos_std::io::{self, Read};
+use core::ops::{Add, Range, Sub};
+// M27 R4 B5: path = semos_std::path (str-backed; lexical only).
+use semos_std::path::{Path, PathBuf};
+use core::str::FromStr;
+use alloc::sync::Arc;
+use core::{fmt, iter};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use md5::{Digest, Md5};
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
@@ -182,6 +199,9 @@ pub fn create_default_session_globals_then<R>(f: impl FnOnce() -> R) -> R {
 // If this ever becomes non thread-local, `decode_syntax_context`
 // and `decode_expn_id` will need to be updated to handle concurrent
 // deserialization.
+// M27 R4 B2: SESSION_GLOBALS TLS — kept as scoped_tls macro call. The
+// vendored scoped-tls patch (Phase 2b parent task) provides a no_std
+// shim macro that lowers to a process-wide static cell on SemOS.
 scoped_tls::scoped_thread_local!(static SESSION_GLOBALS: SessionGlobals);
 
 #[derive(Default)]
@@ -312,7 +332,7 @@ struct InnerRealFileName {
 
 impl Hash for RealFileName {
     #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         // To prevent #70924 from happening again we should only hash the
         // remapped path if that exists. This is because remapped paths to
         // sysroot crates (/rust/$hash or /rust/$version) remain stable even
@@ -525,7 +545,7 @@ enum FileNameDisplayPreference {
 }
 
 impl fmt::Display for FileNameDisplay<'_> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use FileName::*;
         match *self.inner {
             Real(ref name) => {
@@ -1677,11 +1697,20 @@ impl ExternalSource {
 #[derive(Debug)]
 pub struct OffsetOverflowError;
 
+// M27 R3: ABI-visible enum — kept as 4-variant {Md5, Sha1, Sha256, Blake3}
+// despite the consolidate-to-blake3-only R3 advice. Collapsing variants
+// silently breaks rmeta files between the host-stage and SemOS-stage
+// rustc (Encodable/Decodable derive crosses the boundary and feeds into
+// --remap-path-prefix + debuginfo path-hash). Phase 4 codegen owns the
+// final consolidation call.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encodable, Decodable)]
 #[derive(HashStable_Generic)]
 pub enum SourceFileHashAlgorithm {
+    // M27 R3:
     Md5,
+    // M27 R3:
     Sha1,
+    // M27 R3:
     Sha256,
     Blake3,
 }
@@ -2559,7 +2588,7 @@ fn normalize_newlines(src: &mut String, normalized_pos: &mut Vec<NormalizedPos>)
     // directly, let's rather steal the contents of `src`. This makes the code
     // safe even if a panic occurs.
 
-    let mut buf = std::mem::replace(src, String::new()).into_bytes();
+    let mut buf = core::mem::replace(src, String::new()).into_bytes();
     let mut gap_len = 0;
     let mut tail = buf.as_mut_slice();
     let mut cursor = 0;

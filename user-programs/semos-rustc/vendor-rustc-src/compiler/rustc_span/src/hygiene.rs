@@ -24,9 +24,12 @@
 // because getting it wrong can lead to nested `HygieneData::with` calls that
 // trigger runtime aborts. (Fortunately these are obvious and easy to fix.)
 
-use std::hash::Hash;
-use std::sync::Arc;
-use std::{fmt, iter, mem};
+// M27 R2: rustc_span hygiene — only top-of-file import block changes.
+// scoped_tls!() macro calls below stay as-is; the scoped-tls vendor
+// patch (R4 B2) provides the macro from semos_std's surface.
+use core::hash::Hash;
+use alloc::sync::Arc;
+use core::{fmt, iter, mem};
 
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};

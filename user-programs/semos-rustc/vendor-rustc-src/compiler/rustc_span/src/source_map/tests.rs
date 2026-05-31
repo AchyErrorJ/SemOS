@@ -1,3 +1,11 @@
+// M27 R2: rustc_span source_map::tests — `use super::*;` pulls in
+// PathBuf / Path / String / Vec from the patched source_map.rs
+// (semos_std::path::PathBuf et al). The only direct `std::fs::*`
+// references in this file live inside `#[cfg(target_os = "linux")]`
+// functions which never compile on SemOS, so they remain verbatim.
+// No top-level `use std::path::PathBuf;` exists in upstream (contrary
+// to A2's recipe — see followup notes), so no import substitution is
+// needed here.
 use super::*;
 
 fn filename(sm: &SourceMap, path: &str) -> FileName {

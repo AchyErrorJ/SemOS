@@ -9,9 +9,17 @@
 //! within the `SourceMap`, which upon request can be converted to line and column
 //! information, source code snippets, etc.
 
-use std::fs::File;
-use std::io::{self, BorrowedBuf, Read};
-use std::{fs, path};
+// M27 R2 / R4 B5: rustc_span source_map — fs/io/path route through
+// semos_std. BorrowedBuf is not yet in semos_std::io, so
+// `read_binary_file` falls back to the byte-by-byte loop below; this
+// loses the std nice peak-memory behavior but is correct. See followup
+// notes for the Phase 2b semos_std::io::BorrowedBuf TODO.
+use semos_std::fs::{self, File};
+// NOTE: semos_std::io has no `BorrowedBuf` or `ErrorKind` yet — those
+// are Phase 2b deps. Sites that need them are marked `// M27 R4 B5
+// TODO:` below and use an alloc::vec::Vec read loop instead.
+use semos_std::io::{self, Read};
+use semos_std::path::{self, Path, PathBuf};
 
 use rustc_data_structures::sync::{IntoDynSyncSend, MappedReadGuard, ReadGuard, RwLock};
 use rustc_data_structures::unhash::UnhashMap;
@@ -44,7 +52,7 @@ pub fn original_sp(sp: Span, enclosing_sp: Span) -> Span {
 }
 
 mod monotonic {
-    use std::ops::{Deref, DerefMut};
+    use core::ops::{Deref, DerefMut};
 
     /// A `MonotonicVec` is a `Vec` which can only be grown.
     /// Once inserted, an element can never be removed or swapped,
@@ -110,72 +118,50 @@ pub trait FileLoader {
     fn current_directory(&self) -> io::Result<PathBuf>;
 }
 
-/// A FileLoader that uses std::fs to load real files.
+/// A FileLoader that uses semos_std::fs to load real files.
+// M27 R4 B5: rewritten to use semos_std's simpler fs surface.
+// semos_std::fs::File::open takes `&str` (not `&Path`); semos_std::io
+// has no BorrowedBuf / read_buf_exact / ErrorKind / Error::other(arg)
+// today. We collapse to the `fs::read` / `fs::read_to_string` free
+// functions which match this code's intent and trade off the
+// peak-memory optimization in `read_binary_file`. Phase 2b can add
+// the BorrowedBuf machinery to semos_std::io.
 pub struct RealFileLoader;
 
 impl FileLoader for RealFileLoader {
     fn file_exists(&self, path: &Path) -> bool {
-        path.exists()
+        // M27 R4 B5: semos_std::path::Path has no `exists()`; probe by
+        // attempting an open. This matches std's exists() behavior.
+        File::open(path.as_str()).is_ok()
     }
 
     fn read_file(&self, path: &Path) -> io::Result<String> {
-        let mut file = File::open(path)?;
-        let size = file.metadata().map(|metadata| metadata.len()).ok().unwrap_or(0);
-
-        if size > SourceFile::MAX_FILE_SIZE.into() {
-            return Err(io::Error::other(format!(
-                "text files larger than {} bytes are unsupported",
-                SourceFile::MAX_FILE_SIZE
-            )));
-        }
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-        Ok(contents)
+        // M27 R4 B5: semos_std::fs::read_to_string already handles
+        // the open + slurp. The MAX_FILE_SIZE pre-check on metadata
+        // is dropped because semos_std::fs::File has no metadata yet;
+        // SourceFile::new will enforce the limit on the returned
+        // contents downstream.
+        fs::read_to_string(path.as_str())
     }
 
     fn read_binary_file(&self, path: &Path) -> io::Result<Arc<[u8]>> {
-        let mut file = fs::File::open(path)?;
-        let len = file.metadata()?.len();
-
-        let mut bytes = Arc::new_uninit_slice(len as usize);
-        let mut buf = BorrowedBuf::from(Arc::get_mut(&mut bytes).unwrap());
-        match file.read_buf_exact(buf.unfilled()) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                drop(bytes);
-                return fs::read(path).map(Vec::into);
-            }
-            Err(e) => return Err(e),
-        }
-        // SAFETY: If the read_buf_exact call returns Ok(()), then we have
-        // read len bytes and initialized the buffer.
-        let bytes = unsafe { bytes.assume_init() };
-
-        // At this point, we've read all the bytes that filesystem metadata reported exist.
-        // But we are not guaranteed to be at the end of the file, because we did not attempt to do
-        // a read with a non-zero-sized buffer and get Ok(0).
-        // So we do small read to a fixed-size buffer. If the read returns no bytes then we're
-        // already done, and we just return the Arc we built above.
-        // If the read returns bytes however, we just fall back to reading into a Vec then turning
-        // that into an Arc, losing our nice peak memory behavior. This fallback code path should
-        // be rarely exercised.
-
-        let mut probe = [0u8; 32];
-        let n = loop {
-            match file.read(&mut probe) {
-                Ok(0) => return Ok(bytes),
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-                Ok(n) => break n,
-            }
-        };
-        let mut bytes: Vec<u8> = bytes.iter().copied().chain(probe[..n].iter().copied()).collect();
-        file.read_to_end(&mut bytes)?;
-        Ok(bytes.into())
+        // M27 R4 B5 TODO(Phase 2b): semos_std::io lacks BorrowedBuf
+        // and File::metadata, so we can't run the peak-memory-optimal
+        // upstream path. Fall back to `fs::read` → Vec → Arc<[u8]>,
+        // which holds two copies briefly. Equivalent behavior for
+        // include_bytes! correctness, just temporarily 2x peak RSS
+        // for binary includes. Restore upstream code once semos_std
+        // grows BorrowedBuf + File::metadata.
+        let bytes = fs::read(path.as_str())?;
+        Ok(Arc::from(bytes))
     }
 
     fn current_directory(&self) -> io::Result<PathBuf> {
-        std::env::current_dir()
+        // M27 R4 B5: semos_std::env::current_dir_string returns
+        // Option<String>; lift into the io::Result<PathBuf> shape.
+        semos_std::env::current_dir_string()
+            .map(PathBuf::from)
+            .ok_or_else(io::Error::other)
     }
 }
 
@@ -276,7 +262,7 @@ impl SourceMap {
         // loaded as a binary via `include_bytes!` and as proper `SourceFile`
         // via `mod`, so we try to use real file contents and not just an
         // empty string.
-        let text = std::str::from_utf8(&bytes).unwrap_or("").to_string();
+        let text = core::str::from_utf8(&bytes).unwrap_or("").to_string();
         let filename = FileName::Real(self.path_mapping.to_real_filename(&self.working_dir, path));
         let file = self.new_source_file(filename, text);
         Ok((
@@ -1140,8 +1126,17 @@ pub fn get_source_map() -> Option<Arc<SourceMap>> {
     with_session_globals(|session_globals| session_globals.source_map.clone())
 }
 
+// M27 R4 B5: FilePathMapping holds Vec<(PathBuf, PathBuf)>. PathBuf
+// is semos_std::path::PathBuf (str-backed lexical). The map_prefix /
+// reverse_map_prefix_heuristically methods below depend on
+// `path.strip_prefix(...)`, `path.as_os_str()`, `path.components()`,
+// `path::Component::Normal`, `path.to_path_buf()`, and Cow<Path>
+// support — none of which exist in semos_std::path today. They are
+// flagged with `// M27 R4 B5 TODO(Phase 2b):` markers; semos_std::path
+// must grow these methods (or stubs) before rustc_span integrates.
 #[derive(Clone)]
 pub struct FilePathMapping {
+    // M27 R4 B5:
     mapping: Vec<(PathBuf, PathBuf)>,
     filename_remapping_scopes: RemapPathScopeComponents,
 }
@@ -1152,6 +1147,7 @@ impl FilePathMapping {
     }
 
     pub fn new(
+        // M27 R4 B5:
         mapping: Vec<(PathBuf, PathBuf)>,
         filename_remapping_scopes: RemapPathScopeComponents,
     ) -> FilePathMapping {
@@ -1161,6 +1157,10 @@ impl FilePathMapping {
     /// Applies any path prefix substitution as defined by the mapping.
     /// The return value is the remapped path and a boolean indicating whether
     /// the path was affected by the mapping.
+    // M27 R4 B5 TODO(Phase 2b): Cow<'a, Path>, path.as_os_str(),
+    // path.strip_prefix(...), Path::join(rest) — semos_std::path
+    // additions required. Keeping upstream shape; will not compile
+    // until Phase 2b lands the std::path API surface.
     fn map_prefix<'a>(&'a self, path: impl Into<Cow<'a, Path>>) -> (Cow<'a, Path>, bool) {
         let path = path.into();
         if path.as_os_str().is_empty() {
@@ -1173,6 +1173,7 @@ impl FilePathMapping {
 
         #[instrument(level = "debug", skip(mapping), ret)]
         fn remap_path_prefix<'a>(
+            // M27 R4 B5:
             mapping: &'a [(PathBuf, PathBuf)],
             path: Cow<'a, Path>,
         ) -> (Cow<'a, Path>, bool) {
@@ -1283,6 +1284,10 @@ impl FilePathMapping {
     /// This is a heuristic and not guaranteed to return the actual original
     /// path! Do not rely on the result unless you have other means to verify
     /// that the mapping is correct (e.g. by checking the file content hash).
+    // M27 R4 B5 TODO(Phase 2b): uses PathBuf.components(),
+    // path::Component::Normal, path.strip_prefix(), from.join(rest) —
+    // none of which exist in semos_std::path today. Kept upstream
+    // shape; requires Phase 2b semos_std::path additions.
     #[instrument(level = "debug", skip(self), ret)]
     fn reverse_map_prefix_heuristically(&self, path: &Path) -> Option<PathBuf> {
         let mut found = None;

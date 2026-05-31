@@ -2,9 +2,11 @@
 //! allows bidirectional lookup; i.e., given a value, one can easily find the
 //! type, and vice versa.
 
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::{fmt, str};
+// M27 R2: rustc_span symbol — std → core. String/Vec/Box resolve via
+// the crate-root `#[macro_use] extern crate alloc;` in lib.rs.
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
+use core::{fmt, str};
 
 use rustc_arena::DroplessArena;
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
@@ -2853,7 +2855,7 @@ impl Symbol {
     /// it works out ok.
     pub fn as_str(&self) -> &str {
         with_session_globals(|session_globals| unsafe {
-            std::mem::transmute::<&str, &str>(session_globals.symbol_interner.get_str(*self))
+            core::mem::transmute::<&str, &str>(session_globals.symbol_interner.get_str(*self))
         })
     }
 
@@ -2926,7 +2928,7 @@ impl<CTX> ToStableHashKey<CTX> for Symbol {
 impl StableCompare for Symbol {
     const CAN_USE_UNSTABLE_SORT: bool = true;
 
-    fn stable_cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn stable_cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.as_str().cmp(other.as_str())
     }
 }
@@ -2953,7 +2955,7 @@ impl ByteSymbol {
     /// Like `Symbol::as_str`.
     pub fn as_byte_str(&self) -> &[u8] {
         with_session_globals(|session_globals| unsafe {
-            std::mem::transmute::<&[u8], &[u8]>(session_globals.symbol_interner.get_byte_str(*self))
+            core::mem::transmute::<&[u8], &[u8]>(session_globals.symbol_interner.get_byte_str(*self))
         })
     }
 
