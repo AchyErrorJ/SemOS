@@ -1,6 +1,6 @@
-use std::cell::RefCell;
-use std::collections::hash_map::Entry;
+use core::cell::RefCell;
 
+use rustc_data_structures::fx::StdEntry as Entry;
 use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
 use rustc_middle::mir::{Body, MirDumper, MirPhase, RuntimePhase};
 use rustc_middle::ty::TyCtxt;

@@ -5,9 +5,9 @@
 //! conflicts between multiple such attributes attached to the same
 //! item.
 
-use std::cell::Cell;
-use std::collections::hash_map::Entry;
-use std::slice;
+use core::cell::Cell;
+use core::slice;
+use hashbrown::hash_map::Entry;
 
 use rustc_abi::{Align, ExternAbi, Size};
 use rustc_ast::{AttrStyle, MetaItemKind, ast};
@@ -101,7 +101,7 @@ pub(crate) enum ProcMacroKind {
 }
 
 impl IntoDiagArg for ProcMacroKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         match self {
             ProcMacroKind::Attribute => "attribute proc macro",
             ProcMacroKind::Derive => "derive proc macro",
@@ -1673,7 +1673,7 @@ impl<'tcx> CheckAttrVisitor<'tcx> {
         }
 
         let expected_sig = tcx.mk_fn_sig(
-            std::iter::repeat_n(
+            core::iter::repeat_n(
                 token_stream,
                 match kind {
                     ProcMacroKind::Attribute => 2,

@@ -3,8 +3,8 @@
 // expectations such as `#[expect(unused)]` and `#[expect(dead_code)]` is live, and everything else
 // is dead.
 
-use std::mem;
-use std::ops::ControlFlow;
+use core::mem;
+use core::ops::ControlFlow;
 
 use hir::def_id::{LocalDefIdMap, LocalDefIdSet};
 use rustc_abi::FieldIdx;

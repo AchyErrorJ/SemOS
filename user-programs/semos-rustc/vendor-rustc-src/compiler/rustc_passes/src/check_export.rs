@@ -1,5 +1,5 @@
-use std::iter;
-use std::ops::ControlFlow;
+use core::iter;
+use core::ops::ControlFlow;
 
 use rustc_abi::ExternAbi;
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -85,7 +85,7 @@ impl<'tcx> ExportableItemCollector<'tcx> {
         if find_attr!(self.tcx.get_all_attrs(def_id), AttributeKind::ExportStable) {
             self.in_exportable_mod = true;
         }
-        let old_seen_exportable_in_mod = std::mem::replace(&mut self.seen_exportable_in_mod, false);
+        let old_seen_exportable_in_mod = core::mem::replace(&mut self.seen_exportable_in_mod, false);
 
         intravisit::walk_item(self, item);
 

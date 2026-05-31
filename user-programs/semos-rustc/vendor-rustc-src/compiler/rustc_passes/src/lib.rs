@@ -4,10 +4,17 @@
 //!
 //! This API is completely unstable and subject to change.
 
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(if_let_guard)]
 #![feature(map_try_insert)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 use rustc_middle::query::Providers;
 

@@ -137,6 +137,11 @@
 //! [attempt 3]: https://github.com/rust-lang/rust/pull/72632
 //! [attempt 4]: https://github.com/rust-lang/rust/pull/96451
 
+#[cfg(not(target_os = "none"))]
+use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
+
 use rustc_data_structures::union_find::UnionFind;
 use rustc_index::bit_set::DenseBitSet;
 use rustc_index::interval::SparseIntervalMatrix;
@@ -206,8 +211,8 @@ impl<'tcx> crate::MirPass<'tcx> for DestinationPropagation {
                     (false, _) => {}
                     // Renaming `src` is wrong, but renaming `dst` is ok.
                     (true, false) => {
-                        std::mem::swap(&mut src, &mut dst);
-                        std::mem::swap(&mut orig_src, &mut orig_dst);
+                        core::mem::swap(&mut src, &mut dst);
+                        core::mem::swap(&mut orig_src, &mut orig_dst);
                     }
                     // Neither local can be renamed, so skip this case.
                     (true, true) => continue,
@@ -454,7 +459,7 @@ fn dest_prop_mir_dump<'tcx>(
     };
 
     if let Some(dumper) = MirDumper::new(tcx, "DestinationPropagation-dataflow", body) {
-        let extra_data = &|pass_where, w: &mut dyn std::io::Write| {
+        let extra_data = &|pass_where, w: &mut dyn io::Write| {
             if let PassWhere::BeforeLocation(loc) = pass_where {
                 let location = TwoStepIndex::new(points, loc, Effect::Before);
                 let live = locals_live_at(location);

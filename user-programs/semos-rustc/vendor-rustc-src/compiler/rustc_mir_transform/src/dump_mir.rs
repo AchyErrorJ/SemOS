@@ -1,7 +1,11 @@
 //! This pass just dumps MIR at a specified point.
 
+#[cfg(not(target_os = "none"))]
 use std::fs::File;
+#[cfg(not(target_os = "none"))]
 use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
 
 use rustc_middle::mir::{Body, write_mir_pretty};
 use rustc_middle::ty::TyCtxt;
@@ -21,6 +25,9 @@ impl<'tcx> crate::MirPass<'tcx> for Marker {
     }
 }
 
+// M27 §1.3 R4 dump path — host build writes to a real file; SemOS target
+// either dumps to stdout (already in-memory) or no-ops on a Real path.
+#[cfg(not(target_os = "none"))]
 pub fn emit_mir(tcx: TyCtxt<'_>) -> io::Result<()> {
     match tcx.output_filenames(()).path(OutputType::Mir) {
         OutFileName::Stdout => {
@@ -33,6 +40,24 @@ pub fn emit_mir(tcx: TyCtxt<'_>) -> io::Result<()> {
             if tcx.sess.opts.json_artifact_notifications {
                 tcx.dcx().emit_artifact_notification(&path, "mir");
             }
+        }
+    }
+    Ok(())
+}
+
+// M27 §1.3 R4 dump path — SemOS target: emit to stdout when requested,
+// no-op when a real file path is asked for (SemOS lacks buffered file
+// writes from this layer).
+#[cfg(target_os = "none")]
+pub fn emit_mir(tcx: TyCtxt<'_>) -> io::Result<()> {
+    match tcx.output_filenames(()).path(OutputType::Mir) {
+        OutFileName::Stdout => {
+            let mut f = io::stdout();
+            write_mir_pretty(tcx, None, &mut f)?;
+        }
+        OutFileName::Real(_path) => {
+            // No buffered-file emitter available on SemOS; MIR file dumps
+            // become a no-op. Stdout path above is still functional.
         }
     }
     Ok(())

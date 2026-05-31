@@ -1,4 +1,5 @@
 // tidy-alphabetical-start
+#![cfg_attr(target_os = "none", no_std)]
 #![feature(assert_matches)]
 #![feature(box_patterns)]
 #![feature(file_buffered)]
@@ -14,10 +15,22 @@
 //! The backend-agnostic functions of this crate use functions defined in various traits that
 //! have to be implemented by each backend.
 
-use std::collections::BTreeSet;
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use alloc::collections::BTreeSet;
+use alloc::sync::Arc;
+#[cfg(not(target_os = "none"))]
 use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
 
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
 use rustc_data_structures::unord::UnordMap;

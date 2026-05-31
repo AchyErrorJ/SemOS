@@ -1,5 +1,5 @@
-use std::any::Any;
-use std::hash::Hash;
+use core::any::Any;
+use core::hash::Hash;
 
 use rustc_ast::expand::allocator::AllocatorMethod;
 use rustc_data_structures::fx::FxIndexMap;
@@ -16,6 +16,9 @@ use rustc_span::Symbol;
 use super::CodegenObject;
 use super::write::WriteBackendMethods;
 use crate::back::archive::ArArchiveBuilderBuilder;
+// M27 §1.7: back::link cfg-gated on SemOS — semos-rustc bypasses the SSA
+// link step (cg_clif emits ET_EXEC directly).
+#[cfg(not(target_os = "none"))]
 use crate::back::link::link_binary;
 use crate::back::write::TargetMachineFactoryFn;
 use crate::{CodegenResults, ModuleCodegen, TargetConfig};
@@ -111,6 +114,7 @@ pub trait CodegenBackend {
     ) -> (CodegenResults, FxIndexMap<WorkProductId, WorkProduct>);
 
     /// This is called on the returned [`CodegenResults`] from [`join_codegen`](Self::join_codegen).
+    #[cfg(not(target_os = "none"))]
     fn link(
         &self,
         sess: &Session,
@@ -126,6 +130,21 @@ pub trait CodegenBackend {
             outputs,
             self.name(),
         );
+    }
+
+    /// SemOS: cg_clif emits ET_EXEC bytes directly; no external linker.
+    /// Backends override this if they need a per-target writeout step.
+    #[cfg(target_os = "none")]
+    fn link(
+        &self,
+        _sess: &Session,
+        _codegen_results: CodegenResults,
+        _metadata: EncodedMetadata,
+        _outputs: &OutputFilenames,
+    ) {
+        // M27 §1.7: in-process ELF emission belongs to the cg_clif glue,
+        // not to rustc_codegen_ssa. Backends that need a linkless writeout
+        // override this method.
     }
 }
 
@@ -154,6 +173,7 @@ pub trait ExtraBackendMethods:
         target_features: &[String],
     ) -> TargetMachineFactoryFn<Self>;
 
+    #[cfg(not(target_os = "none"))]
     fn spawn_named_thread<F, T>(
         _time_trace: bool,
         name: String,
@@ -165,6 +185,23 @@ pub trait ExtraBackendMethods:
         T: Send + 'static,
     {
         std::thread::Builder::new().name(name).spawn(f)
+    }
+
+    /// SemOS: thread-named spawn maps to `semos_std::thread::spawn` with the
+    /// name discarded (semos_std doesn't expose Builder yet). Most callers
+    /// only care about the JoinHandle.
+    #[cfg(target_os = "none")]
+    fn spawn_named_thread<F, T>(
+        _time_trace: bool,
+        _name: String,
+        f: F,
+    ) -> semos_std::io::Result<semos_std::thread::JoinHandle<T>>
+    where
+        F: FnOnce() -> T,
+        F: Send + 'static,
+        T: Send + 'static,
+    {
+        Ok(semos_std::thread::spawn(f))
     }
 
     /// Returns `true` if this backend can be safely called from multiple threads.

@@ -1,3 +1,6 @@
+[workspace]
+members = []
+
 [package]
 name = "rustc_mir_transform"
 version = "0.0.0"
@@ -25,6 +28,7 @@ rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
 rustc_trait_selection = { path = "../rustc_trait_selection" }
+semos_std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 tracing = "0.1"
 # tidy-alphabetical-end

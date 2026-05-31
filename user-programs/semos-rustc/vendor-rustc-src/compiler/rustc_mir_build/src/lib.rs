@@ -1,11 +1,18 @@
 //! Construction of MIR from HIR.
 
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(assert_matches)]
 #![feature(box_patterns)]
 #![feature(if_let_guard)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 // The `builder` module used to be named `build`, but that was causing GitHub's
 // "Go to file" feature to silently ignore all files in the module, probably

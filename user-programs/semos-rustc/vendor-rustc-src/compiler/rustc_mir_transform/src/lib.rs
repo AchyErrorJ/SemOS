@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![cfg_attr(bootstrap, feature(array_windows))]
 #![feature(assert_matches)]
@@ -10,6 +11,12 @@
 #![feature(try_blocks)]
 #![feature(yeet_expr)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 use hir::ConstContext;
 use required_consts::RequiredConstsVisitor;
@@ -36,7 +43,10 @@ use tracing::debug;
 #[macro_use]
 mod pass_manager;
 
+#[cfg(not(target_os = "none"))]
 use std::sync::LazyLock;
+#[cfg(target_os = "none")]
+use semos_std::sync::LazyLock;
 
 use pass_manager::{self as pm, Lint, MirLint, MirPass, WithMinOptLevel};
 
@@ -304,7 +314,7 @@ fn remap_mir_for_const_eval_select<'tcx>(
 }
 
 fn take_array<T, const N: usize>(b: &mut Box<[T]>) -> Result<[T; N], Box<[T]>> {
-    let b: Box<[T; N]> = std::mem::take(b).try_into()?;
+    let b: Box<[T; N]> = core::mem::take(b).try_into()?;
     Ok(*b)
 }
 

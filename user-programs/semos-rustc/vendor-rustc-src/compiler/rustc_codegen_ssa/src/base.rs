@@ -1,7 +1,10 @@
-use std::cmp;
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use alloc::collections::BTreeSet;
+use alloc::sync::Arc;
+use core::cmp;
+#[cfg(not(target_os = "none"))]
 use std::time::{Duration, Instant};
+#[cfg(target_os = "none")]
+use semos_std::time::{Duration, Instant};
 
 use itertools::Itertools;
 use rustc_abi::FIRST_VARIANT;
@@ -39,7 +42,14 @@ use rustc_trait_selection::traits::{ObligationCause, ObligationCtxt};
 use tracing::{debug, info};
 
 use crate::assert_module_sources::CguReuse;
+// M27 §1.7: back::link cfg-gated on SemOS. Use local stub on target.
+#[cfg(not(target_os = "none"))]
 use crate::back::link::are_upstream_rust_objects_already_included;
+#[cfg(target_os = "none")]
+fn are_upstream_rust_objects_already_included(_sess: &Session) -> bool {
+    // SemOS bypasses the SSA link step; cg_clif emits ET_EXEC directly.
+    false
+}
 use crate::back::write::{
     ComputedLtoType, OngoingCodegen, compute_per_cgu_lto_type, start_async_codegen,
     submit_codegened_module_to_llvm, submit_post_lto_module_to_llvm, submit_pre_lto_module_to_llvm,
@@ -887,12 +897,23 @@ pub fn is_call_from_compiler_builtins_to_upstream_monomorphization<'tcx>(
 impl CrateInfo {
     pub fn new(tcx: TyCtxt<'_>, target_cpu: String) -> CrateInfo {
         let crate_types = tcx.crate_types().to_vec();
+        // M27 §1.7: back::linker cfg-gated on SemOS. cg_clif emits ET_EXEC
+        // directly so no external linker is invoked; symbol export tables are
+        // unused on the SemOS target.
+        #[cfg(not(target_os = "none"))]
         let exported_symbols = crate_types
             .iter()
             .map(|&c| (c, crate::back::linker::exported_symbols(tcx, c)))
             .collect();
+        #[cfg(not(target_os = "none"))]
         let linked_symbols =
             crate_types.iter().map(|&c| (c, crate::back::linker::linked_symbols(tcx, c))).collect();
+        #[cfg(target_os = "none")]
+        let exported_symbols: UnordMap<CrateType, Vec<(String, SymbolExportKind)>> =
+            crate_types.iter().map(|&c| (c, Vec::new())).collect();
+        #[cfg(target_os = "none")]
+        let linked_symbols: FxIndexMap<CrateType, Vec<(String, SymbolExportKind)>> =
+            crate_types.iter().map(|&c| (c, Vec::new())).collect();
         let local_crate_name = tcx.crate_name(LOCAL_CRATE);
         let windows_subsystem = find_attr!(tcx.get_all_attrs(CRATE_DEF_ID), AttributeKind::WindowsSubsystem(kind, _) => *kind);
 
