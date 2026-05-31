@@ -849,11 +849,107 @@ Cluster A (frontend) is probably mostly LARGE-but-THIN; Cluster B
 - [x] semos-std surface complete for R2 top-6 + scoped_thread_local!
       + path Components/Component/strip_prefix/Cow<Path>
 - [x] Phase 2b token accounting in table
-- [ ] Phase 3 assignment by std-surface (not LOC)
-- [ ] B3-followup's recommended semos-std additions: real Stderr
-      surface, LocalKey<Cell<T>>::{get,set} sugar (std 1.73 API)
-- [ ] Decide: launch Phase 3 now or wait for user signal
+- [x] Phase 3 assignment by std-surface (not LOC) — done; cluster
+      map in §"Phase 3 Wave 1 launch" below
+- [x] B3-followup's recommended semos-std additions: io::Stderr +
+      LocalKey<Cell<T>>::{get,set,take,replace} +
+      LocalKey<RefCell<T>>::with_borrow{,_mut} sugar
+      (commit `7978ce5`)
+- [x] User signed off "both clusters back-to-back"; Phase 3 launched
 
 Phase 3 splits into Cluster A (frontend, ~8 crates) + Cluster B
 (semantics, ~13 crates including rustc_middle at 60k LOC). Each
 cluster can support 3 parallel agents.
+
+---
+
+## 2026-05-31 — Phase 3 Wave 1 launch + return
+
+Parent prep (`7978ce5`): io::Stderr struct + io::{stdout,stderr}()
+factories; LocalKey<Cell<T>>::{get,set,take,replace} +
+LocalKey<RefCell<T>>::with_borrow{,_mut} (std 1.73 sugar). Reverted
+the 3 verbose `.with(|c| c.get())` sites in rustc_errors/markdown/
+term.rs and updated RECIPE.md §2.
+
+### Cluster A map (by std-surface, not LOC)
+
+| Agent | Crates | LOC | R2 class |
+|-------|--------|----:|----------|
+| C1 | rustc_parse + rustc_parse_format | ~32k | MECHANICAL (R2 wrongly flagged Command::new in parser/diagnostics.rs) |
+| C2 | rustc_ast_pretty + rustc_ast_lowering + rustc_ast_passes | ~19.6k | THIN downstream of B1 |
+| C3 | rustc_attr_parsing + rustc_feature + rustc_builtin_macros + rustc_expand | ~41k | MEDIUM (proc-macro §1.5 cfg-out, LazyLock+VarError gaps) |
+
+(Skipped: rustc_lexer already done in Phase 2a A4; rustc_attr_data_structures
+folded into rustc_hir in this snapshot.)
+
+### Wave 1 return
+
+| Agent | Tokens | Tool uses | Duration | LOC patched | T/LOC | Status |
+|-------|-------:|----------:|---------:|------------:|------:|--------|
+| C1 | 165,530 | 164 | 871 s (~14.5 min) | ~32k inspected, ~10 sites | **3.6** | COMPLETE |
+| C2 | 121,976 | 185 | 682 s (~11.4 min) | ~19.6k inspected, 23 files patched | **3.6** | COMPLETE |
+| C3 | 245,654 | 121 | 1,117 s (~18.6 min) | 13 files written + line-precise §3 recipes for 29 more | n/a (PARTIAL) | PARTIAL (followup needed) |
+| **Wave 1 total** | **~533k** | **470** | **~45 min wall (parallel)** | **~92k LOC covered (Cluster A ~80% complete)** | **~5.2 avg (excluding C3's recipe-only files)** | — |
+
+C1 + C2 came in well under the 14-30 t/LOC band: 3.6 t/LOC each.
+The B1 LARGE-but-THIN insight from Phase 2b continues to dominate
+the actual data — Cluster A's frontend crates are mostly downstream
+of rustc_ast (which Phase 2b already no_std-ified) and inherit the
+thin-surface profile.
+
+### Notable findings
+
+1. **R2's Command::new claim in rustc_parse/parser/diagnostics.rs
+   was wrong.** C1 found no such site in the current snapshot. R2
+   may have looked at rustc_driver_impl or an older version.
+   One architectural decision saved. This is a third LESSON about
+   recon-vs-port-truth: recon is directional, not authoritative on
+   site-specific claims.
+
+2. **C2's three crates: ZERO architectural markers.** Cleanest port
+   since A6 (proc-macros). Downstream-of-cycle-foundation crates
+   inherit hygiene; 0.12 std::* per 100 LOC (B1 was 0.26).
+
+3. **C3 wrote into its worktree path, not main.** The worktree
+   branched from a stale (pre-rustc-src) commit, so the parent had
+   to manually copy 13 source files + 1 notes file across to main.
+   C1 and C2 wrote correctly to main paths. Variance in agent
+   write-target choice was already documented in Phase 2a; codify
+   in RECIPE: "agents that branch from stale parent should pre-merge
+   their target paths OR the parent should run pre-spawn `cd
+   F:\\Software\\ArmKernel3` checks."
+
+4. **R3-class new gaps surfaced in C3.** Two parent-side semos-std
+   additions delivered same session (commit `c9f0b2d`):
+   - `sync::LazyLock<T>` (8+ rustc crates) — std-shape, OnceLock-
+     backed, fn-pointer init (not closure → const-constructible).
+   - `env::VarError` + `env::var() -> Result<String, VarError>`
+     (4+ sites; std signature). NotPresent + NotUnicode variants
+     for source-compat; NotUnicode unreachable on UTF-8 SemOS.
+     sem-sh's 2 callers (Some→Ok, ||→|_|) updated in same commit.
+
+5. **asm.rs hashbrown integration fix.** rustc_ast_lowering/src/
+   asm.rs's `hashbrown::hash_map::Entry` import routed through
+   `rustc_data_structures::fx::StdEntry as Entry` (target-conditional
+   alias B4 already wired in Phase 2b). Avoids adding hashbrown as
+   a direct dep. One-line landing on top of C2's patch.
+
+### Cumulative session total after Wave 1
+
+- **Tokens spent on agents**: 723k (Phase 1) + 1,309k (Phase 2a) +
+  ~560k (Phase 2b) + ~533k (Wave 1) = **~3.13M**.
+- **LOC patched**: ~38k (2a) + ~26k (2b) + ~92k Cluster A
+  (partial — Wave 1 covered ~80% of Cluster A's source surface,
+  C3-followup handles the rest) = **~156k**.
+- **Wall-time**: ~5 hours (Phase 1+2a+2b) + ~1.5 hours (Wave 1
+  including parent prep + integration) = ~6.5 hrs.
+
+### What to do next
+
+Wave 2 (Cluster B, 4 agents in parallel: D1=rustc_middle solo, D2=HIR
+tier, D3=infer/types tier, D4=borrowck+resolve NEEDS-SHIM pair) +
+C3-followup (single recipe-following agent applying §3 to the 29
+remaining files) — possibly as a 5-agent wave or sequenced.
+
+C3-followup's expected cost: ~150k tokens at ~5-10 t/LOC (the
+predecessor recipe pattern continues to deliver ~10× efficiency).
