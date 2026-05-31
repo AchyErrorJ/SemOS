@@ -1,3 +1,8 @@
+[workspace]
+# M27 Phase 2a A2: opt out of any parent workspace (Cargo otherwise walks up
+# to the worktree root and tries to resolve dev-deps from an unrelated tree).
+members = []
+
 [package]
 name = "rustc_span"
 version = "0.0.0"
@@ -10,6 +15,13 @@ blake3 = "1.5.2"
 derive-where = "1.2.7"
 indexmap = { version = "2.0.0" }
 itoa = "1.0"
+# M27 R3 hash-consolidation: keep md-5/sha1/sha2 dep entries — the SourceMap
+# checksum types (Md5, Sha1, Sha256) are part of an externally-visible enum
+# (`SourceFileHashAlgorithm`) that crosses crate boundaries to metadata
+# encoding and to the `--remap-path-prefix` / debuginfo path-hash machinery.
+# We cannot collapse them to blake3 without breaking the on-wire format the
+# rest of the toolchain expects. blake3 is already a dep (line above). See
+# `docs/m27-port/2a/A2-rustc_span.md` for the decision rationale.
 md5 = { package = "md-5", version = "0.10.0" }
 rustc_arena = { path = "../rustc_arena" }
 rustc_data_structures = { path = "../rustc_data_structures" }
@@ -17,6 +29,11 @@ rustc_hashes = { path = "../rustc_hashes" }
 rustc_index = { path = "../rustc_index" }
 rustc_macros = { path = "../rustc_macros" }
 rustc_serialize = { path = "../rustc_serialize" }
+# M27 R4 B2: scoped_tls shim needed — semos-std has no thread_local!/scoped-tls.
+# Keep the dep entry so the source still references the macro; the no_std
+# build will need a vendor patch for scoped-tls itself (separate vendor patch
+# under Phase 2a externals). Interim workaround at the call site (SESSION_GLOBALS
+# in src/lib.rs) is a `Mutex<Option<&'static SessionGlobals>>` shim.
 scoped-tls = "1.0"
 sha1 = "0.10.0"
 sha2 = "0.10.1"

@@ -251,7 +251,7 @@ impl Span {
         parent: Option<LocalDefId>,
     ) -> Self {
         if lo > hi {
-            std::mem::swap(&mut lo, &mut hi);
+            core::mem::swap(&mut lo, &mut hi);
         }
 
         // Small len and ctxt may enable one of fully inline formats (or may not).

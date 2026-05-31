@@ -1,4 +1,6 @@
-use std::borrow::Borrow;
+use core::borrow::Borrow;
+
+use alloc::string::String;
 
 use rustc_data_structures::profiling::EventArgRecorder;
 

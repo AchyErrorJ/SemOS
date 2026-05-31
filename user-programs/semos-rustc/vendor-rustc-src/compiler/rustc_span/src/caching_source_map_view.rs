@@ -1,5 +1,5 @@
-use std::ops::Range;
-use std::sync::Arc;
+use core::ops::Range;
+use alloc::sync::Arc;
 
 use crate::source_map::SourceMap;
 use crate::{BytePos, Pos, RelativeBytePos, SourceFile, SpanData};

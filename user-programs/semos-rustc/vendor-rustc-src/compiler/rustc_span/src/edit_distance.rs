@@ -9,7 +9,11 @@
 // algorithm should not matter to the caller of the methods, which is why it is not noted in the
 // documentation.
 
-use std::{cmp, mem};
+use core::{cmp, mem};
+
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::Symbol;
 

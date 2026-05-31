@@ -1,5 +1,8 @@
-use std::fmt;
-use std::hash::{BuildHasherDefault, Hash, Hasher};
+use core::fmt;
+use core::hash::{BuildHasherDefault, Hash, Hasher};
+
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use rustc_data_structures::AtomicRef;
 use rustc_data_structures::fingerprint::Fingerprint;
@@ -183,10 +186,24 @@ impl StableCrateId {
         //
         // RUSTC_FORCE_RUSTC_VERSION is used to inject rustc version information
         // during testing.
-        if let Some(val) = std::env::var_os("RUSTC_FORCE_RUSTC_VERSION") {
-            hasher.write(val.to_string_lossy().into_owned().as_bytes())
-        } else {
-            hasher.write(cfg_version.as_bytes())
+        //
+        // M27 R2 / R4 env: was `std::env::var_os("RUSTC_FORCE_RUSTC_VERSION")`.
+        // semos-std exposes `env::var` (M27 R2 audit item — needed by 10+ rustc
+        // crates per SYNTHESIS top-5 priority #3). For SemOS we only ever
+        // build one rustc, so RUSTC_FORCE_RUSTC_VERSION is never set; treat
+        // missing as None and skip the override.
+        // semos-std currently lacks `env::var_os` / `OsString` (R4 B5).
+        // semos_std::env::var returns Option<String> (not Result like
+        // upstream std::env::var) — same effective semantics for our
+        // ASCII-only env. M27 R4 B5: needs semos-std PathBuf/OsString shim
+        // (this site reads via str, no Path involved, so str works).
+        // NOTE: `semos_std` is the crate name of semos-std at the consumer
+        // side. Callers must depend on semos-std as `semos-std = { ... }`
+        // (renamed to `semos_std` in Rust path-syntax). For Phase 2a this
+        // edit assumes that vendor patch will land — see plan §1.
+        match semos_std::env::var("RUSTC_FORCE_RUSTC_VERSION") {
+            Some(val) => hasher.write(val.as_bytes()),
+            None => hasher.write(cfg_version.as_bytes()),
         }
 
         StableCrateId(hasher.finish())

@@ -62,9 +62,9 @@ cfg_select! {
             multi_byte_chars: &mut Vec<MultiByteChar>,
         ) {
             #[cfg(target_arch = "x86")]
-            use std::arch::x86::*;
+            use core::arch::x86::*;
             #[cfg(target_arch = "x86_64")]
-            use std::arch::x86_64::*;
+            use core::arch::x86_64::*;
 
             const CHUNK_SIZE: usize = 16;
 
@@ -138,7 +138,7 @@ cfg_select! {
             lines: &mut Vec<RelativeBytePos>,
             multi_byte_chars: &mut Vec<MultiByteChar>,
         ) {
-            use std::arch::is_loongarch_feature_detected;
+            use core::arch::is_loongarch_feature_detected;
 
             if is_loongarch_feature_detected!("lsx") {
                 unsafe {
@@ -165,7 +165,7 @@ cfg_select! {
             lines: &mut Vec<RelativeBytePos>,
             multi_byte_chars: &mut Vec<MultiByteChar>,
         ) {
-            use std::arch::loongarch64::*;
+            use core::arch::loongarch64::*;
 
             const CHUNK_SIZE: usize = 16;
 
