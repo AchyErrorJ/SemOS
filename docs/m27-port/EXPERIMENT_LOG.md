@@ -1,5 +1,31 @@
 # M27 rustc-on-SemOS — experiment log
 
+> ## ⏭ NEXT-SESSION-START-HERE
+>
+> If you're picking this up cold, read in this order:
+> 1. `docs/M27_RUSTC_PORT_PLAN.md` §1 (9 decisions taken)
+> 2. `docs/m27-recon/SYNTHESIS.md` (Phase 1 numbers, what's mitigated)
+> 3. `docs/m27-port/RECIPE.md` (canonical port pattern + sandbox lessons)
+> 4. `docs/m27-port/HANDOFF_TEMPLATE.md` (line-precise §3 = 10× efficiency)
+> 5. This file — scroll to the bottom for the latest tally and the
+>    Phase 3 transition checklist.
+>
+> **State at session end (2026-05-31):**
+> - Phase 1 (recon) ✅ — 4 agents, ~723k tokens
+> - Phase 2a (foundation) ✅ — 16 crates, ~38k LOC, ~1.3M tokens
+> - Phase 2b (cycle-breakers) ✅ — 4 crates + A1 sync followup, ~26k LOC, ~560k tokens
+> - semos-std surface ✅ for R2 top-6 + scoped_thread_local!
+>   + path Components/strip_prefix/Cow<Path>
+> - **NEXT**: Phase 3 (semantics tier, ~13 crates incl. 60k-LOC
+>   rustc_middle) — see "Phase 2b → Phase 3 transition" at the bottom
+>   of this file for the open checklist. Note: assign agents by
+>   std-surface, not LOC (the B1 / rustc_ast insight).
+>
+> Roadmap row landed in `docs/ROADMAP.md` summarizing the swarm. Update
+> this log next session as Phase 3 agents return — token table is
+> append-only; lessons-learned tally is at the bottom of each section.
+
+
 This is the research-diary version of the M27 port. The plan is at
 `docs/M27_RUSTC_PORT_PLAN.md`; the recon outputs are at
 `docs/m27-recon/`. This file is *what we actually saw happen* as we
