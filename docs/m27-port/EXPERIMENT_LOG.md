@@ -754,3 +754,80 @@ writes proper handoff notes per HANDOFF_TEMPLATE.
 Expected: 100-200k tokens; 50-80 t/LOC for emitter.rs's §1.8 work.
 
 (B3-followup in flight.)
+
+---
+
+## 2026-05-31 — PHASE 2b CLOSED
+
+B3-followup returned at 191,306 tokens / 150 tool uses / 14.7 min for
+the 5 remaining rustc_errors files. The combined B3 + B3-followup
+spend (~250k tokens estimated) for rustc_errors's 7,807 LOC came in
+at ~32 t/LOC — squarely the recipe-following band, even with the
+§1.8 i18n architectural call.
+
+### Phase 2b final tally
+
+| Agent | Crate | LOC | Tokens | T/LOC | Status |
+|-------|-------|----:|-------:|------:|--------|
+| B1 | rustc_ast | 11,553 | 116,071 | 10 | done in one |
+| B2 | rustc_lint_defs | 6,451 | 93,426 | 14 (blast) | done in one |
+| B3 | rustc_errors (10/15) | ~5,000 | ~80k est | n/a | late-bounce |
+| B3-followup | rustc_errors (5 remaining) | ~2,800 | 191,306 | 68 | done |
+| B4 | A1 sync collapse | ~200 | 78,749 | n/a | done |
+| **Phase 2b total** | **4 crates + 1 followup** | **~26,000** | **~560k** | **~22 avg** | **CLOSED** |
+
+Phase 2b ran in ~2.5 hours wall-time including the late-bounce
+recovery cycle (B3 → B3-followup adds ~25 min of orchestration cost).
+
+### B3-followup's surprise: fluent-bundle port not needed
+
+B3-followup found that rustc_errors needs only ONE real FS site (ICE-
+file flush). Everything else is in-memory format!/Write. **This means
+the R3-budgeted 3-session fluent-bundle external port can probably
+be skipped entirely** — we already neutered fluent into a passthrough
+Translator per §1.8, and we never read fluent_bundle's body. Net
+savings: ~3 sessions beyond what the recon estimated.
+
+The §1.8 decision keeps paying dividends. Worth re-running the recon
+math for Phase 4 externals with the same skepticism.
+
+### Session-wide cumulative
+
+- **Tokens spent on agents**: ~2,590k = 723k (Phase 1) + ~1.3M (Phase 2a) + ~560k (Phase 2b)
+- **LOC patched**: ~64,000 = ~38k (Phase 2a) + ~26k (Phase 2b)
+- **Foundation tier complete**: 19 crates patched + 1 stub
+- **Wall-time spent**: ~5 hours (Phase 1 recon ~40 min, Phase 2a ~90 min, Phase 2b ~2.5 hrs incl. recovery)
+- **Avg t/LOC for port work**: 30 (Phase 2a + 2b combined)
+- **Phase 3 forecast** (770k post-§1 internal LOC × 30 t/LOC): ~23M tokens. Down from the previous mixed-weighted ~38M estimate because actual t/LOC ratios continue trending toward the recipe-following band as agents have more codified context to work from.
+
+### The B1 surprise generalizes
+
+Re-applying B1's insight (LARGE-but-THIN crates) to R1's classification:
+
+- **Crates that LOOK heavy by LOC but are mostly enums/structs/visitor
+  traits**: rustc_ast (11.5k LOC, 10 t/LOC), rustc_lint_defs (6.5k
+  LOC, 14 t/LOC blast), probably also `rustc_hir` (11.4k LOC) and
+  `rustc_hir_pretty` (?).
+- **Crates that have HEAVY std surface**: rustc_data_structures (sync
+  primitives, OS abstractions), rustc_metadata (file I/O), rustc_session
+  (sysroot search), rustc_codegen_ssa (linker invocation).
+
+For Phase 3 the assignment should weight by std-surface, not LOC.
+Cluster A (frontend) is probably mostly LARGE-but-THIN; Cluster B
+(semantics) is probably HEAVY-surface in fewer crates.
+
+### Phase 2b → Phase 3 transition
+
+- [x] Phase 2b CLOSED
+- [x] RECIPE.md + HANDOFF_TEMPLATE.md in use
+- [x] semos-std surface complete for R2 top-6 + scoped_thread_local!
+      + path Components/Component/strip_prefix/Cow<Path>
+- [x] Phase 2b token accounting in table
+- [ ] Phase 3 assignment by std-surface (not LOC)
+- [ ] B3-followup's recommended semos-std additions: real Stderr
+      surface, LocalKey<Cell<T>>::{get,set} sugar (std 1.73 API)
+- [ ] Decide: launch Phase 3 now or wait for user signal
+
+Phase 3 splits into Cluster A (frontend, ~8 crates) + Cluster B
+(semantics, ~13 crates including rustc_middle at 60k LOC). Each
+cluster can support 3 parallel agents.
