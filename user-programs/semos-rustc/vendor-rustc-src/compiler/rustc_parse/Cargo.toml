@@ -25,7 +25,7 @@ rustc_macros = { path = "../rustc_macros" }
 rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 thin-vec = { version = "0.2.12", default-features = false }
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false }
 unicode-normalization = "0.1.25"
 unicode-width = "0.2.2"
 # tidy-alphabetical-end

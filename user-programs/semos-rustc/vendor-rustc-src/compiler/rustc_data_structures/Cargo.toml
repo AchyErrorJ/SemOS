@@ -20,11 +20,7 @@ either = { version = "1.0", default-features = false }
 elsa = "1.11.0"
 ena = "0.14.3"
 indexmap = { version = "2.12.1", default-features = false }
-jobserver_crate = { version = "0.1.28", package = "jobserver" }
-measureme = "12.0.1"
-parking_lot = "0.12"
 rustc-hash = { version = "2.0.0", default-features = false }
-rustc-stable-hash = { version = "0.1.0", features = ["nightly"] }
 rustc_arena = { path = "../rustc_arena" }
 rustc_graphviz = { path = "../rustc_graphviz" }
 rustc_hashes = { path = "../rustc_hashes" }
@@ -37,11 +33,19 @@ thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
 
-# Host-only deps — these need C compilers (stacker uses psm via cc-rs) or
-# libc-style FS surface (tempfile). On SemOS target, stack.rs's
-# ensure_sufficient_stack falls back to a no-op (A1's M27 R4 B3 shim);
-# tempfile sites should be cfg-gated where they exist.
+# Host-only deps — need C compilers (stacker uses psm via cc-rs),
+# libc-style FS surface (tempfile), or transitive-std (jobserver,
+# measureme, parking_lot pull libc + once_cell + lock_api). On SemOS
+# target the body sites are stubbed in-place (A1's M27 R4 B3 shim
+# for stacker; jobserver/parking_lot used only inside cfg-gated
+# parallel-query paths per §1.4).
+# rustc-stable-hash 0.1.0 is unconditionally std (recon flagged);
+# host-only for now until vendor+patch in a later iteration.
 [target.'cfg(not(target_os = "none"))'.dependencies]
+jobserver_crate = { version = "0.1.28", package = "jobserver" }
+measureme = "12.0.1"
+parking_lot = "0.12"
+rustc-stable-hash = { version = "0.1.0", features = ["nightly"] }
 stacker = "0.1.17"
 tempfile = "3.2"
 
@@ -65,7 +69,7 @@ features = [
 libc = "0.2"
 # tidy-alphabetical-end
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "none")))'.dependencies]
 # tidy-alphabetical-start
 memmap2 = "0.2.1"
 # tidy-alphabetical-end

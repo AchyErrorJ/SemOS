@@ -1,41 +1,75 @@
 // tidy-alphabetical-start
 #![allow(internal_features)]
+#![cfg_attr(target_os = "none", no_std)]
 #![feature(rustc_attrs)]
 // tidy-alphabetical-end
 
-use std::borrow::Cow;
-use std::error::Error;
-use std::path::Path;
-use std::sync::{Arc, LazyLock};
-use std::{fmt, fs, io};
+// M27 §1.8: i18n / fluent dropped. The crate retains the public type
+// names that the wider workspace consumes from `rustc_error_messages::*`
+// (FluentArgs, FluentValue, FluentError, FluentBundle, FluentResource,
+// FluentType, LanguageIdentifier, langid!) — see the local stub module
+// at the bottom of the file — but no longer pulls in fluent-bundle /
+// fluent-syntax / icu_list / icu_locale / intl-memoizer / unic-langid /
+// rustc_baked_icu_data / tracing. Diagnostic messages are returned as
+// English literal `Cow::Borrowed(static_str)` by rustc_errors's
+// Translator (translation.rs); the loader functions
+// `fluent_bundle()` and `fallback_fluent_bundle()` are kept here as
+// no-ops so callers in rustc_interface / rustc_session compile
+// unchanged.
 
-use fluent_bundle::FluentResource;
-pub use fluent_bundle::types::FluentType;
-pub use fluent_bundle::{self, FluentArgs, FluentError, FluentValue};
-use fluent_syntax::parser::ParserError;
-use intl_memoizer::concurrent::IntlLangMemoizer;
-use rustc_data_structures::sync::{DynSend, IntoDynSyncSend};
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt;
+
+use rustc_data_structures::sync::IntoDynSyncSend;
 use rustc_macros::{Decodable, Encodable};
 use rustc_span::Span;
-use tracing::{instrument, trace};
-pub use unic_langid::{LanguageIdentifier, langid};
+
+// M27 §1.8: local stub types (see bottom of file) replacing the
+// `fluent_bundle::*` / `unic_langid::*` public surface.
+pub use self::fluent_stubs::{
+    FluentArgs, FluentBundle as RawFluentBundle, FluentError, FluentResource, FluentType,
+    FluentValue, LanguageIdentifier,
+};
 
 mod diagnostic_impls;
 pub use diagnostic_impls::DiagArgFromDisplay;
 
-pub type FluentBundle =
-    IntoDynSyncSend<fluent_bundle::bundle::FluentBundle<FluentResource, IntlLangMemoizer>>;
+// `Path` is host-only here — the `fluent_bundle()` loader's signature
+// took `&[&Path]`, which we keep for ABI compat. On the SemOS target we
+// route through `semos_std::path::Path`. The loader body is gutted (it
+// always returns `Ok(None)`), but the parameter type still needs to
+// resolve.
+#[cfg(not(target_os = "none"))]
+use std::path::Path;
+#[cfg(target_os = "none")]
+use semos_std::path::Path;
 
-fn new_bundle(locales: Vec<LanguageIdentifier>) -> FluentBundle {
-    IntoDynSyncSend(fluent_bundle::bundle::FluentBundle::new_concurrent(locales))
-}
+#[cfg(not(target_os = "none"))]
+use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
+
+// `FluentBundle` is the rustc-side alias for the (formerly) `IntoDynSyncSend`-
+// wrapped fluent_bundle::FluentBundle. We preserve the wrapper shape so the
+// type alias is bit-identical to the upstream definition — any downstream
+// `Option<Arc<FluentBundle>>` field types are unchanged.
+pub type FluentBundle = IntoDynSyncSend<RawFluentBundle>;
 
 #[derive(Debug)]
 pub enum TranslationBundleError {
     /// Failed to read from `.ftl` file.
     ReadFtl(io::Error),
     /// Failed to parse contents of `.ftl` file.
-    ParseFtl(ParserError),
+    ParseFtl(/* M27 §1.8: was fluent_syntax::parser::ParserError */ String),
     /// Failed to add `FluentResource` to `FluentBundle`.
     AddResource(FluentError),
     /// `$sysroot/share/locale/$locale` does not exist.
@@ -70,11 +104,11 @@ impl fmt::Display for TranslationBundleError {
     }
 }
 
-impl Error for TranslationBundleError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
+impl core::error::Error for TranslationBundleError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             TranslationBundleError::ReadFtl(e) => Some(e),
-            TranslationBundleError::ParseFtl(e) => Some(e),
+            TranslationBundleError::ParseFtl(_) => None,
             TranslationBundleError::AddResource(e) => Some(e),
             TranslationBundleError::MissingLocale => None,
             TranslationBundleError::ReadLocalesDir(e) => Some(e),
@@ -84,150 +118,40 @@ impl Error for TranslationBundleError {
     }
 }
 
-impl From<(FluentResource, Vec<ParserError>)> for TranslationBundleError {
-    fn from((_, mut errs): (FluentResource, Vec<ParserError>)) -> Self {
-        TranslationBundleError::ParseFtl(errs.pop().expect("failed ftl parse with no errors"))
-    }
-}
-
-impl From<Vec<FluentError>> for TranslationBundleError {
-    fn from(mut errs: Vec<FluentError>) -> Self {
-        TranslationBundleError::AddResource(
-            errs.pop().expect("failed adding resource to bundle with no errors"),
-        )
-    }
-}
+// M27 §1.8: removed `From<(FluentResource, Vec<ParserError>)>` and
+// `From<Vec<FluentError>>` impls — both relied on real fluent error
+// types that no longer exist. The loader fn below never produces these
+// variants on SemOS (it short-circuits to Ok(None)), so the conversions
+// are unreachable.
 
 /// Returns Fluent bundle with the user's locale resources from
 /// `$sysroot/share/locale/$requested_locale/*.ftl`.
 ///
-/// If `-Z additional-ftl-path` was provided, load that resource and add it  to the bundle
-/// (overriding any conflicting messages).
-#[instrument(level = "trace")]
+/// On SemOS (§1.8 i18n drop) this always returns `Ok(None)`; English
+/// diagnostics are baked into the generated `fluent_generated::*`
+/// constants by `rustc_fluent_macro` (host-side codegen).
 pub fn fluent_bundle(
-    sysroot_candidates: &[&Path],
-    requested_locale: Option<LanguageIdentifier>,
-    additional_ftl_path: Option<&Path>,
-    with_directionality_markers: bool,
+    _sysroot_candidates: &[&Path],
+    _requested_locale: Option<LanguageIdentifier>,
+    _additional_ftl_path: Option<&Path>,
+    _with_directionality_markers: bool,
 ) -> Result<Option<Arc<FluentBundle>>, TranslationBundleError> {
-    if requested_locale.is_none() && additional_ftl_path.is_none() {
-        return Ok(None);
-    }
-
-    let fallback_locale = langid!("en-US");
-    let requested_fallback_locale = requested_locale.as_ref() == Some(&fallback_locale);
-    trace!(?requested_fallback_locale);
-    if requested_fallback_locale && additional_ftl_path.is_none() {
-        return Ok(None);
-    }
-    // If there is only `-Z additional-ftl-path`, assume locale is "en-US", otherwise use user
-    // provided locale.
-    let locale = requested_locale.clone().unwrap_or(fallback_locale);
-    trace!(?locale);
-    let mut bundle = new_bundle(vec![locale]);
-
-    // Add convenience functions available to ftl authors.
-    register_functions(&mut bundle);
-
-    // Fluent diagnostics can insert directionality isolation markers around interpolated variables
-    // indicating that there may be a shift from right-to-left to left-to-right text (or
-    // vice-versa). These are disabled because they are sometimes visible in the error output, but
-    // may be worth investigating in future (for example: if type names are left-to-right and the
-    // surrounding diagnostic messages are right-to-left, then these might be helpful).
-    bundle.set_use_isolating(with_directionality_markers);
-
-    // If the user requests the default locale then don't try to load anything.
-    if let Some(requested_locale) = requested_locale {
-        let mut found_resources = false;
-        for sysroot in sysroot_candidates {
-            let mut sysroot = sysroot.to_path_buf();
-            sysroot.push("share");
-            sysroot.push("locale");
-            sysroot.push(requested_locale.to_string());
-            trace!(?sysroot);
-
-            if !sysroot.exists() {
-                trace!("skipping");
-                continue;
-            }
-
-            if !sysroot.is_dir() {
-                return Err(TranslationBundleError::LocaleIsNotDir);
-            }
-
-            for entry in sysroot.read_dir().map_err(TranslationBundleError::ReadLocalesDir)? {
-                let entry = entry.map_err(TranslationBundleError::ReadLocalesDirEntry)?;
-                let path = entry.path();
-                trace!(?path);
-                if path.extension().and_then(|s| s.to_str()) != Some("ftl") {
-                    trace!("skipping");
-                    continue;
-                }
-
-                let resource_str =
-                    fs::read_to_string(path).map_err(TranslationBundleError::ReadFtl)?;
-                let resource =
-                    FluentResource::try_new(resource_str).map_err(TranslationBundleError::from)?;
-                trace!(?resource);
-                bundle.add_resource(resource).map_err(TranslationBundleError::from)?;
-                found_resources = true;
-            }
-        }
-
-        if !found_resources {
-            return Err(TranslationBundleError::MissingLocale);
-        }
-    }
-
-    if let Some(additional_ftl_path) = additional_ftl_path {
-        let resource_str =
-            fs::read_to_string(additional_ftl_path).map_err(TranslationBundleError::ReadFtl)?;
-        let resource =
-            FluentResource::try_new(resource_str).map_err(TranslationBundleError::from)?;
-        trace!(?resource);
-        bundle.add_resource_overriding(resource);
-    }
-
-    let bundle = Arc::new(bundle);
-    Ok(Some(bundle))
+    Ok(None)
 }
 
-fn register_functions(bundle: &mut FluentBundle) {
-    bundle
-        .add_function("STREQ", |positional, _named| match positional {
-            [FluentValue::String(a), FluentValue::String(b)] => format!("{}", (a == b)).into(),
-            _ => FluentValue::Error,
-        })
-        .expect("Failed to add a function to the bundle.");
-}
-
-/// Type alias for the result of `fallback_fluent_bundle` - a reference-counted pointer to a lazily
-/// evaluated fluent bundle.
-pub type LazyFallbackBundle =
-    Arc<LazyLock<FluentBundle, Box<dyn FnOnce() -> FluentBundle + DynSend>>>;
+/// Type alias for the result of `fallback_fluent_bundle` - a reference-counted pointer to the
+/// fallback fluent bundle. On SemOS (§1.8 i18n drop) we collapse the historical
+/// `Arc<LazyLock<FluentBundle, Box<dyn FnOnce() -> FluentBundle + DynSend>>>` shape down to a
+/// plain `Arc<FluentBundle>` — nothing reads from this on the target build.
+pub type LazyFallbackBundle = Arc<FluentBundle>;
 
 /// Return the default `FluentBundle` with standard "en-US" diagnostic messages.
-#[instrument(level = "trace", skip(resources))]
+/// On SemOS this returns a no-op bundle; the bytes are never read.
 pub fn fallback_fluent_bundle(
-    resources: Vec<&'static str>,
-    with_directionality_markers: bool,
+    _resources: Vec<&'static str>,
+    _with_directionality_markers: bool,
 ) -> LazyFallbackBundle {
-    Arc::new(LazyLock::new(Box::new(move || {
-        let mut fallback_bundle = new_bundle(vec![langid!("en-US")]);
-
-        register_functions(&mut fallback_bundle);
-
-        // See comment in `fluent_bundle`.
-        fallback_bundle.set_use_isolating(with_directionality_markers);
-
-        for resource in resources {
-            let resource = FluentResource::try_new(resource.to_string())
-                .expect("failed to parse fallback fluent resource");
-            fallback_bundle.add_resource_overriding(resource);
-        }
-
-        fallback_bundle
-    })))
+    Arc::new(IntoDynSyncSend(RawFluentBundle::new()))
 }
 
 /// Identifier for the Fluent message/attribute corresponding to a diagnostic message.
@@ -496,76 +420,27 @@ impl From<Vec<Span>> for MultiSpan {
     }
 }
 
-fn icu_locale_from_unic_langid(lang: LanguageIdentifier) -> Option<icu_locale::Locale> {
-    icu_locale::Locale::try_from_str(&lang.to_string()).ok()
-}
-
+// M27 §1.8: simplified — was a fluent-aware list formatter that used
+// icu_list + intl_memoizer to localize the "a, b, and c" join. Now
+// just concatenates the strings with "and"-separation in English.
 pub fn fluent_value_from_str_list_sep_by_and(l: Vec<Cow<'_, str>>) -> FluentValue<'_> {
-    // Fluent requires 'static value here for its AnyEq usages.
-    #[derive(Clone, PartialEq, Debug)]
-    struct FluentStrListSepByAnd(Vec<String>);
-
-    impl FluentType for FluentStrListSepByAnd {
-        fn duplicate(&self) -> Box<dyn FluentType + Send> {
-            Box::new(self.clone())
+    let mut buf = String::new();
+    let n = l.len();
+    for (i, s) in l.iter().enumerate() {
+        if i > 0 {
+            if i == n - 1 {
+                if n == 2 {
+                    buf.push_str(" and ");
+                } else {
+                    buf.push_str(", and ");
+                }
+            } else {
+                buf.push_str(", ");
+            }
         }
-
-        fn as_string(&self, intls: &intl_memoizer::IntlLangMemoizer) -> Cow<'static, str> {
-            let result = intls
-                .with_try_get::<MemoizableListFormatter, _, _>((), |list_formatter| {
-                    list_formatter.format_to_string(self.0.iter())
-                })
-                .unwrap();
-            Cow::Owned(result)
-        }
-
-        fn as_string_threadsafe(
-            &self,
-            intls: &intl_memoizer::concurrent::IntlLangMemoizer,
-        ) -> Cow<'static, str> {
-            let result = intls
-                .with_try_get::<MemoizableListFormatter, _, _>((), |list_formatter| {
-                    list_formatter.format_to_string(self.0.iter())
-                })
-                .unwrap();
-            Cow::Owned(result)
-        }
+        buf.push_str(s);
     }
-
-    struct MemoizableListFormatter(icu_list::ListFormatter);
-
-    impl std::ops::Deref for MemoizableListFormatter {
-        type Target = icu_list::ListFormatter;
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
-
-    impl intl_memoizer::Memoizable for MemoizableListFormatter {
-        type Args = ();
-        type Error = ();
-
-        fn construct(lang: LanguageIdentifier, _args: Self::Args) -> Result<Self, Self::Error>
-        where
-            Self: Sized,
-        {
-            let locale = icu_locale_from_unic_langid(lang)
-                .unwrap_or_else(|| rustc_baked_icu_data::supported_locales::EN);
-            let list_formatter = icu_list::ListFormatter::try_new_and_unstable(
-                &rustc_baked_icu_data::BakedDataProvider,
-                locale.into(),
-                icu_list::options::ListFormatterOptions::default()
-                    .with_length(icu_list::options::ListLength::Wide),
-            )
-            .expect("Failed to create list formatter");
-
-            Ok(MemoizableListFormatter(list_formatter))
-        }
-    }
-
-    let l = l.into_iter().map(|x| x.into_owned()).collect();
-
-    FluentValue::Custom(Box::new(FluentStrListSepByAnd(l)))
+    FluentValue::Str(Cow::Owned(buf))
 }
 
 /// Simplified version of `FluentArg` that can implement `Encodable` and `Decodable`. Collection of
@@ -595,11 +470,15 @@ pub enum DiagArgValue {
 // M27 R4 B5 TODO(Phase 4/5): IntoDiagArg's `path: &mut Option<std::path::PathBuf>`
 // parameter is inconsistent with all 4+ impl sites (rustc_hir, rustc_errors, rustc_middle,
 // rustc_borrowck, rustc_const_eval, rustc_trait_selection, rustc_hir_typeck) which use
-// `semos_std::path::PathBuf`. rustc_error_messages itself isn't ported yet (still on the §1.8
-// fluent-deferral list). When Phase 4/5 integrates and the trait def is required to compile
-// against impls, either (a) port rustc_error_messages full no_std + swap the trait param to
-// `semos_std::path::PathBuf`, or (b) cfg-gate via type alias. Patching here would force a
-// cascading Cargo.toml change (semos_std dep) for a crate we plan to gut anyway.
+// `semos_std::path::PathBuf`. The trait param stays on `std::path::PathBuf` on the host build
+// and is cfg-split to `semos_std::path::PathBuf` on the SemOS target via the
+// `__rustc_error_messages_PathBuf` alias defined below. All downstream impl sites use that
+// alias so they don't need their own cfg gates.
+#[cfg(not(target_os = "none"))]
+pub use std::path::PathBuf as __IntoDiagArgPathBuf;
+#[cfg(target_os = "none")]
+pub use semos_std::path::PathBuf as __IntoDiagArgPathBuf;
+
 pub trait IntoDiagArg {
     /// Convert `Self` into a `DiagArgValue` suitable for rendering in a diagnostic.
     ///
@@ -607,11 +486,11 @@ pub trait IntoDiagArg {
     /// for displaying on the terminal. This path comes from the `Diag` itself. When rendering
     /// values that come from `TyCtxt`, like `Ty<'_>`, they can use `TyCtxt::short_string`. If a
     /// value has no shortening logic that could be used, the argument can be safely ignored.
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> DiagArgValue;
+    fn into_diag_arg(self, path: &mut Option<__IntoDiagArgPathBuf>) -> DiagArgValue;
 }
 
 impl IntoDiagArg for DiagArgValue {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<__IntoDiagArgPathBuf>) -> DiagArgValue {
         self
     }
 }
@@ -619,9 +498,250 @@ impl IntoDiagArg for DiagArgValue {
 impl From<DiagArgValue> for FluentValue<'static> {
     fn from(val: DiagArgValue) -> Self {
         match val {
-            DiagArgValue::Str(s) => From::from(s),
-            DiagArgValue::Number(n) => From::from(n),
-            DiagArgValue::StrListSepByAnd(l) => fluent_value_from_str_list_sep_by_and(l),
+            DiagArgValue::Str(s) => FluentValue::Str(s),
+            DiagArgValue::Number(n) => FluentValue::Number(n as f64),
+            DiagArgValue::StrListSepByAnd(l) => {
+                // l: Vec<Cow<'static, str>> — the helper takes Vec<Cow<'a, str>>
+                // and returns FluentValue<'a>. 'static fits 'a here.
+                fluent_value_from_str_list_sep_by_and(l)
+            }
         }
     }
+}
+
+// =====================================================================
+// M27 §1.8 — local stub types
+// =====================================================================
+//
+// The `fluent_stubs` module supplies replacement types for the
+// previously-re-exported fluent-bundle / unic-langid surface. The shapes
+// are intentionally minimal: just enough to satisfy the callers we
+// audited (rustc_errors, rustc_session, rustc_interface, rustc_middle,
+// rustc_hir, rustc_target, rustc_lint_defs, rustc_type_ir).
+//
+// Callers never construct these directly except via the public
+// constructors below (FluentArgs::new, FluentArgs::with_capacity,
+// FluentValue::from(&str|String|i32), LanguageIdentifier::from_str).
+//
+// On the SemOS target the loader bodies short-circuit (see
+// `fluent_bundle()` above), so the dummy bodies never get exercised in
+// the diagnostic-emission hot path.
+mod fluent_stubs {
+    use alloc::borrow::Cow;
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+    use core::fmt;
+    use core::str::FromStr;
+
+    use rustc_macros::{Decodable, Encodable};
+
+    /// Stub replacing `fluent_bundle::FluentValue`. Only the variants that
+    /// the surviving rustc-side call sites need; `Custom`/`None`/`Error`
+    /// from upstream are dropped along with the fluent backend.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum FluentValue<'a> {
+        Str(Cow<'a, str>),
+        Number(f64),
+    }
+
+    impl<'a> FluentValue<'a> {
+        pub fn into_owned(self) -> FluentValue<'static> {
+            match self {
+                FluentValue::Str(Cow::Borrowed(s)) => FluentValue::Str(Cow::Owned(s.to_string())),
+                FluentValue::Str(Cow::Owned(s)) => FluentValue::Str(Cow::Owned(s)),
+                FluentValue::Number(n) => FluentValue::Number(n),
+            }
+        }
+    }
+
+    impl<'a> fmt::Display for FluentValue<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                FluentValue::Str(s) => f.write_str(s),
+                FluentValue::Number(n) => write!(f, "{n}"),
+            }
+        }
+    }
+
+    impl<'a> From<&'a str> for FluentValue<'a> {
+        fn from(s: &'a str) -> Self {
+            FluentValue::Str(Cow::Borrowed(s))
+        }
+    }
+    impl<'a> From<Cow<'a, str>> for FluentValue<'a> {
+        fn from(s: Cow<'a, str>) -> Self {
+            FluentValue::Str(s)
+        }
+    }
+    impl From<String> for FluentValue<'static> {
+        fn from(s: String) -> Self {
+            FluentValue::Str(Cow::Owned(s))
+        }
+    }
+    impl From<i32> for FluentValue<'static> {
+        fn from(n: i32) -> Self {
+            FluentValue::Number(n as f64)
+        }
+    }
+    impl From<f64> for FluentValue<'static> {
+        fn from(n: f64) -> Self {
+            FluentValue::Number(n)
+        }
+    }
+
+    /// Stub replacing `fluent_bundle::FluentArgs`. Backed by a `Vec` of
+    /// (name, value) pairs. The only consumer (rustc_errors's
+    /// to_fluent_args + Translator's no-op translate_message) needs
+    /// `new`, `with_capacity`, `set`, and `IntoIterator`-by-reference.
+    #[derive(Clone, Debug, Default)]
+    pub struct FluentArgs<'a> {
+        entries: Vec<(Cow<'a, str>, FluentValue<'a>)>,
+    }
+
+    impl<'a> FluentArgs<'a> {
+        pub fn new() -> Self {
+            Self { entries: Vec::new() }
+        }
+
+        pub fn with_capacity(cap: usize) -> Self {
+            Self { entries: Vec::with_capacity(cap) }
+        }
+
+        pub fn set<K, V>(&mut self, key: K, value: V)
+        where
+            K: Into<Cow<'a, str>>,
+            V: Into<FluentValue<'a>>,
+        {
+            self.entries.push((key.into(), value.into()));
+        }
+
+        pub fn get(&self, key: &str) -> Option<&FluentValue<'a>> {
+            self.entries.iter().find_map(|(k, v)| if k == key { Some(v) } else { None })
+        }
+
+        pub fn iter(&self) -> core::slice::Iter<'_, (Cow<'a, str>, FluentValue<'a>)> {
+            self.entries.iter()
+        }
+    }
+
+    impl<'a> IntoIterator for FluentArgs<'a> {
+        type Item = (Cow<'a, str>, FluentValue<'a>);
+        type IntoIter = alloc::vec::IntoIter<Self::Item>;
+        fn into_iter(self) -> Self::IntoIter {
+            self.entries.into_iter()
+        }
+    }
+
+    impl<'a, 'b> IntoIterator for &'b FluentArgs<'a> {
+        type Item = &'b (Cow<'a, str>, FluentValue<'a>);
+        type IntoIter = core::slice::Iter<'b, (Cow<'a, str>, FluentValue<'a>)>;
+        fn into_iter(self) -> Self::IntoIter {
+            self.entries.iter()
+        }
+    }
+
+    /// Stub replacing `fluent_bundle::FluentError`. Never constructed on
+    /// the SemOS target; kept for API compat (rustc_errors::error.rs
+    /// stores `Vec<FluentError>` in a variant that is unreachable post-§1.8).
+    #[derive(Clone, Debug)]
+    pub enum FluentError {
+        // Empty: variants are unreachable on the SemOS target.
+        Unreachable,
+    }
+
+    impl fmt::Display for FluentError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("fluent error (unreachable on SemOS)")
+        }
+    }
+
+    impl core::error::Error for FluentError {}
+
+    /// Stub replacing `fluent_bundle::FluentResource`. Unit struct — the
+    /// loader never constructs one on SemOS.
+    #[derive(Debug)]
+    pub struct FluentResource;
+
+    /// Stub replacing the `IntoDynSyncSend<fluent_bundle::FluentBundle<...>>`
+    /// inner type. The outer type alias `pub type FluentBundle =
+    /// IntoDynSyncSend<RawFluentBundle>` at the crate root preserves the
+    /// historical wrapper shape so `Option<Arc<FluentBundle>>` in
+    /// rustc_session is bit-identical.
+    #[derive(Debug)]
+    pub struct FluentBundle;
+
+    impl FluentBundle {
+        pub fn new() -> Self {
+            FluentBundle
+        }
+    }
+
+    /// Stub replacing `fluent_bundle::types::FluentType`. No impls exist
+    /// outside this crate today; kept for `pub use` ABI compat.
+    pub trait FluentType {}
+
+    /// Stub replacing `unic_langid::LanguageIdentifier`. Stores the raw
+    /// string form (e.g. "en-US"). Used in rustc_session as the type of
+    /// the `translate_lang` option; `FromStr` is the only constructor
+    /// touched by call sites.
+    #[derive(Clone, Debug, PartialEq, Eq, Hash, Encodable, Decodable)]
+    pub struct LanguageIdentifier {
+        tag: String,
+    }
+
+    impl LanguageIdentifier {
+        pub fn new(tag: impl Into<String>) -> Self {
+            Self { tag: tag.into() }
+        }
+    }
+
+    impl fmt::Display for LanguageIdentifier {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.tag)
+        }
+    }
+
+    impl FromStr for LanguageIdentifier {
+        type Err = LanguageIdentifierError;
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            // Minimal validation: a tag must be ASCII and non-empty. The
+            // upstream parser was much more elaborate (RFC 4647) but the
+            // only call site (rustc_session) just round-trips an opaque
+            // string into the diagnostic emitter, which then does nothing
+            // with it on SemOS.
+            if s.is_empty() || !s.is_ascii() {
+                return Err(LanguageIdentifierError);
+            }
+            Ok(Self { tag: s.to_string() })
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct LanguageIdentifierError;
+
+    impl fmt::Display for LanguageIdentifierError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("invalid language identifier")
+        }
+    }
+
+    impl core::error::Error for LanguageIdentifierError {}
+
+}
+
+/// `langid!` macro stub. The upstream `unic_langid::langid!` did a
+/// compile-time parse of a literal tag into a `LanguageIdentifier`;
+/// the only call site that survives is `langid!("en-US")` in
+/// `rustc_fluent_macro` (which is a HOST proc-macro, unaffected) and
+/// the gated `rustc_errors/src/tests.rs` (also host-only). We provide
+/// a runtime variant that returns `LanguageIdentifier::from_str(...)
+/// .unwrap()` so any stray on-target use compiles, even if it would
+/// be a panic at runtime.
+#[macro_export]
+macro_rules! langid {
+    ($tag:literal) => {{
+        // Build via FromStr to avoid taking a dep on a const parser.
+        <$crate::LanguageIdentifier as ::core::str::FromStr>::from_str($tag)
+            .expect("invalid langid literal")
+    }};
 }

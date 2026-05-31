@@ -27,5 +27,5 @@ rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 thin-vec = { version = "0.2.12", default-features = false }
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end

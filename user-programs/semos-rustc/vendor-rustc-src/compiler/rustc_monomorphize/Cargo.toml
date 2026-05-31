@@ -18,5 +18,5 @@ rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
 serde = "1"
 serde_json = "1"
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end

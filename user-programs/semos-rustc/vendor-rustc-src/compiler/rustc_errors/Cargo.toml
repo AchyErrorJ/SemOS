@@ -5,8 +5,6 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-annotate-snippets = { version = "0.12.10", features = ["simd"] }
-anstream = "0.6.20"
 anstyle = "1.0.13"
 derive_setters = "0.1.6"
 rustc_abi = { path = "../rustc_abi" }
@@ -23,9 +21,18 @@ rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
 serde = { version = "1.0.125", features = ["derive"] }
 serde_json = "1.0.59"
-termize = "0.2"
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+# Host-only deps — annotate-snippets / anstream / termize bring in
+# transitive non-no_std crates (memchr-default / parking_lot_core /
+# libc). M27 §1.8 i18n drop already gutted the body code that used
+# these (B3's emitter.rs/Buffy refactor); kept here only for the
+# host build path that still wants real ANSI rendering.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+annotate-snippets = { version = "0.12.10", features = ["simd"] }
+anstream = "0.6.20"
+termize = "0.2"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61.0"

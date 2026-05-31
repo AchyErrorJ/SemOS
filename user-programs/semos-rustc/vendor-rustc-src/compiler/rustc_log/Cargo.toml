@@ -11,7 +11,7 @@ edition = "2024"
 # in lib.rs) stays present, but the crate body on the SemOS target reduces to
 # a stub that returns Ok(()). Once the tracing tree is no_std-patched, swap
 # the stub body back to upstream behavior.
-tracing = "0.1.41"
+tracing = { version = "0.1.41", default-features = false }
 tracing-core = "0.1.34"
 tracing-subscriber = { version = "0.3.3", default-features = false, features = ["fmt", "env-filter", "smallvec", "parking_lot", "ansi"] }
 tracing-tree = "0.3.1"

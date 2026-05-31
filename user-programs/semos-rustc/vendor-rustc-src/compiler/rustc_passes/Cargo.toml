@@ -25,5 +25,5 @@ rustc_target = { path = "../rustc_target" }
 rustc_trait_selection = { path = "../rustc_trait_selection" }
 # M27 R4 B5: PathBuf/Path in errors.rs IntoDiagArg + check_attr.rs IntoDiagArg, io::Error in errors.rs.
 semos-std = { path = "../../../../std-shim" }
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
