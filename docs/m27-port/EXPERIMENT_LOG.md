@@ -10,7 +10,7 @@
 > 5. This file — scroll to the bottom for the latest tally and the
 >    Phase 3 transition checklist.
 >
-> **State at session end (2026-05-31, PHASE 3 CLOSED):**
+> **State at session end (2026-05-31, PHASE 4 CLOSED + Phase 5 scaffolded):**
 > - Phase 1 (recon) ✅ — 4 agents, ~723k tokens
 > - Phase 2a (foundation) ✅ — 16 crates, ~38k LOC, ~1.3M tokens
 > - Phase 2b (cycle-breakers) ✅ — 4 crates + A1 sync followup, ~26k LOC, ~560k tokens
@@ -23,12 +23,22 @@
 > - semos-std surface ✅ for R2 top-6 + scoped_thread_local!
 >   + path Components/strip_prefix/Cow<Path> + io::Stderr + LocalKey<Cell>
 >   sugar (commit `7978ce5`) + sync::LazyLock + env::VarError (commit `c9f0b2d`)
-> - **NEXT**: Phase 4 (codegen tier — rustc_codegen_ssa, rustc_mir_*,
->   rustc_monomorphize, rustc_passes, rustc_metadata). ~6-7 crates,
->   ~10-15 calendar-sessions per the plan. The cross-crate IntoDiagArg
->   trait-vs-impl mismatch flagged inline at rustc_error_messages/
->   src/lib.rs:602 will need to land in Phase 5 integration (either
->   port rustc_error_messages full no_std or cfg-gate the param type).
+> - **Phase 4 (codegen tier) ✅** — 7 crates / ~115k LOC / ~793k tokens.
+>   §1.7 (back::link drop) + §1.2 (libloading drop) both landed via
+>   cfg-gates. Commits `97a7b75` + `a6cf41f` + `b95aaeb`.
+> - **Phase 4.5 surface additions ✅** (commit `de8aff3`) — Path::display
+>   + ErrorKind + io::Write for Vec + fs::rename + fs::copy + fs::stat
+>   + sync::mpsc re-export.
+> - **Phase 5a cfg-sweep ⏸ DEFERRED** — re-analyzed as non-blocking
+>   for Phase 5b. Polish pass after integration ships.
+> - **Phase 5b scaffold ✅** (commit `0c19848`) — user-programs/semos-rustc
+>   binary template; builds clean to ET_EXEC at 0x400000.
+> - **NEXT**: Phase 5b integration — uncomment rustc_driver_impl path
+>   dep, first `cargo check` will surface compile errors across the 48
+>   ported crates, plan 4-6 parallel agents for the fix wave. Then wire
+>   cg_clif statically + write DEMO 80. The cross-crate IntoDiagArg
+>   flag at rustc_error_messages/src/lib.rs:602 will need to land here
+>   (either port rustc_error_messages full no_std or cfg-gate the param).
 >
 > Recipe evolution discovered by D1 (rustc_middle): use
 > `#![cfg_attr(target_os = "none", no_std)]` + `#[cfg(not(target_os =
@@ -36,8 +46,10 @@
 > body-split. Cleaner, keeps host builds first-class. Folded into
 > RECIPE.md §1.2. Recovery wave (E1-E4) used it throughout.
 >
-> Cumulative session totals: ~4.6M tokens (Phase 1+2a+2b+3 W1+W2+
-> recovery), ~310k LOC patched of ~770k post-§1 internal rustc.
+> Cumulative session totals (through Phase 5b scaffold):
+> ~6.5M tokens, ~437k LOC of ~770k post-§1 internal rustc (~57%),
+> 48 crates patched, semos-rustc binary scaffolded but rustc_driver_impl
+> not yet wired in.
 >
 > Roadmap row landed in `docs/ROADMAP.md` summarizing Phase 3 closure.
 
@@ -1388,6 +1400,107 @@ Wall time: F-wave bounce ~5 min + user manual integration + G-wave
       binary, statically link cg_clif, DEMO 80 — hello-world.rs → ELF
       → SYS_SPAWN → captured stdout). Plan estimated 3-5 sessions; the
       semos_std-cfg sweep + surface gap adds 2-3 prep sessions.
+
+---
+
+## 2026-05-31 — Phase 5 start
+
+User said "start phase 5". Three-stage plan:
+
+### Stage A: Phase 4.5 surface additions ✅ DONE (commit `de8aff3`)
+
+Landed the G1+G4 surface gaps from Phase 4:
+- `Path::display()` returning a Display wrapper (dominant gap per G4)
+- `Path::exists/is_dir/is_file/metadata` via SYS_STATX
+- `PathBuf::display` forwarder + same accessors
+- `io::ErrorKind` enum (NotFound + 9 variants incl. Unsupported)
+- `io::Error::new(ErrorKind, &'static str)` + `kind()` accessor
+- `impl io::Write for Vec<u8>` (G1's "common pattern" flag)
+- `impl io::Read for &[u8]` (paired)
+- `io::copy(reader, writer) -> u64` Read+Write loop
+- `fs::rename(from, to)` via SYS_RENAME (Phase 14 Tier 2)
+- `fs::copy(from, to) -> u64` via fs::read + fs::write
+- `fs::stat(path) -> Option<StatX>` + `fs::metadata` Result variant
+- `fs::StatX` struct (#[repr(C)] mirroring kernel layout) with
+  is_dir/is_file/len/modified/created helpers
+- `sync::mpsc` re-export from crate-root `mpsc` (G1 path-discoverability fix)
+
+Builds clean: semos-std + sem-sh both compile against x86_64-unknown-none.
+
+Still deferred (need new kernel surface):
+- `io::Seek + File::seek + SeekFrom` (needs SYS_FSEEK or equivalent)
+- `File::open_buffered` + BufReader (needs a buffering wrapper struct)
+
+### Stage B: Phase 5a cfg-sweep ⏸ DEFERRED (re-analyzed as non-blocking)
+
+Original plan was to retroactively cfg-split the unconditional `use
+semos_std::*` substitutions Phase 3 agents made. Re-analyzed in this
+session: only **39 unconditional sites** across **9 Cargo.toml files**
+needing the dep target-conditional. **NOT a Phase 5b build blocker**:
+
+- semos-rustc binary targets x86_64-unknown-none (the SemOS target).
+  All 48 ported rustc_* crates build for that target.
+- Proc-macro crates (4 of them) are HOST builds — but they have NO
+  semos_std deps. They're unaffected.
+- Build scripts (build.rs) are host builds — none import semos_std.
+- The unconditional dep just means rustc_* crates can ONLY build for
+  the SemOS target. That's what we want for Phase 5b.
+
+The cfg-sweep matters for dev-ergonomics (host `cargo doc`, IDE
+integration, host-side `#[cfg(test)]` blocks), NOT for getting M27
+to ship. Picking it up as a polish pass after Phase 5b lands.
+
+### Stage C: Phase 5b scaffold ✅ DONE (commit `0c19848`)
+
+Created `user-programs/semos-rustc/` as a Ring-3 binary template
+mirroring semos-cc's shape:
+- Cargo.toml with [bin] + semos-std dep + opt-level=0 profile.
+  rustc_driver_impl + rustc_driver path deps commented for stage 2.
+- .cargo/config.toml: target=x86_64-unknown-none + build-std.
+- build.rs: -T<linker> + -no-pie cargo:rustc-link-arg's.
+- link.ld: USER_CODE_BASE=0x400000 .text/.rodata/.data/.bss layout
+  identical to semos-cc.
+- src/main.rs: stub `_start` via `semos_std::main!` macro; prints two
+  markers + SYS_EXIT(0). NO rustc calls yet.
+
+Builds clean. Output ELF: ET_EXEC (e_type=2), EM_X86_64 (e_machine=62),
+e_entry=0x400000 (matches USER_CODE_BASE), statically linked, stripped,
+5KB. **Same shape as semos-cc's stage-1 D.2 emitter** at the same
+point in its pipeline.
+
+### Stage D: Phase 5b integration ⏭ NEXT-SESSION (or agent wave)
+
+Replace the stub `main` with rustc_driver_impl invocations. Concrete
+work:
+
+1. Uncomment + activate the `rustc_driver_impl` + `rustc_driver`
+   path deps in Cargo.toml. First `cargo check` will surface
+   compile errors across the 48 ported crates — likely many sites
+   to fix (type mismatches, missing impls, std-vs-semos_std API
+   shape differences).
+2. Wire `cg_clif` statically as the codegen backend per §1.2 (drop
+   the dynamic plugin-load model). This is a Cargo.toml + Rust glue
+   change pointing rustc_codegen_ssa at cg_clif's `codegen_backend`
+   trait impl.
+3. Replace the stub's body with `rustc_driver::run_compiler` calls
+   reading an input file path from argv, producing a SemOS ELF
+   output file via cg_clif.
+4. DEMO 80 in the kernel: SYS_SPAWN /bin/semos-rustc with argv
+   `["semos-rustc", "/tmp/hello.rs", "-o", "/tmp/hello.elf"]`,
+   wait for exit, then SYS_SPAWN /tmp/hello.elf and assert "hi"
+   appears in its captured stdout.
+
+The first `cargo check` is the load-bearing next step — its error
+output drives a per-crate fix wave (probably 4-6 parallel agents
+each handling 1-2 crates' worth of compile errors).
+
+### Cumulative session totals through Phase 5 start
+
+- **Tokens**: ~6.2M (P1-P4) + ~? (Phase 5 prep) ≈ **~6.5M** estimated
+- **LOC patched**: ~437k of ~770k post-§1 internal rustc (~57%) +
+  semos-std surface additions
+- **Crates patched**: 48 internal rustc_* crates
+- **semos-rustc binary**: scaffolded, no rustc yet
 
 ### Lessons in flight
 
