@@ -15,7 +15,7 @@
 /// contain the `TyKind` key or if the address of the interned
 /// pointer differs. The latter case is possible if a primitive type,
 /// e.g., `()` or `u8`, was interned in a different context.
-pub trait Lift<I>: std::fmt::Debug {
-    type Lifted: std::fmt::Debug;
+pub trait Lift<I>: core::fmt::Debug {
+    type Lifted: core::fmt::Debug;
     fn lift_to_interner(self, cx: I) -> Option<Self::Lifted>;
 }

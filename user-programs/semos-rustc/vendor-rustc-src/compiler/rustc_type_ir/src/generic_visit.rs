@@ -41,7 +41,7 @@
 //! - u.generic_visit_with(visitor)
 //! ```
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use rustc_index::{Idx, IndexVec};
 use smallvec::SmallVec;
@@ -154,7 +154,7 @@ impl<V, T: GenericTypeVisitable<V>, Ix: Idx> GenericTypeVisitable<V> for IndexVe
     }
 }
 
-impl<S, V> GenericTypeVisitable<V> for std::hash::BuildHasherDefault<S> {
+impl<S, V> GenericTypeVisitable<V> for core::hash::BuildHasherDefault<S> {
     fn generic_visit_with(&self, _visitor: &mut V) {}
 }
 
@@ -164,7 +164,7 @@ impl<
     Key: GenericTypeVisitable<Visitor>,
     Value: GenericTypeVisitable<Visitor>,
     S: GenericTypeVisitable<Visitor>,
-> GenericTypeVisitable<Visitor> for std::collections::HashMap<Key, Value, S>
+> GenericTypeVisitable<Visitor> for hashbrown::HashMap<Key, Value, S>
 {
     fn generic_visit_with(&self, visitor: &mut Visitor) {
         self.iter().for_each(|it| it.generic_visit_with(visitor));
@@ -174,7 +174,7 @@ impl<
 
 #[expect(rustc::default_hash_types, rustc::potential_query_instability)]
 impl<V, T: GenericTypeVisitable<V>, S: GenericTypeVisitable<V>> GenericTypeVisitable<V>
-    for std::collections::HashSet<T, S>
+    for hashbrown::HashSet<T, S>
 {
     fn generic_visit_with(&self, visitor: &mut V) {
         self.iter().for_each(|it| it.generic_visit_with(visitor));

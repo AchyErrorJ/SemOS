@@ -1,8 +1,12 @@
 //! The implementation of built-in macros which relate to the file system.
 
+// M27 R4 B5: semos_std::path supplies Path/PathBuf in the SemOS build.
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+use alloc::rc::Rc;
+use alloc::sync::Arc;
 
 use rustc_ast as ast;
 use rustc_ast::tokenstream::TokenStream;
@@ -216,7 +220,7 @@ pub(crate) fn expand_include_str(
         Err(guar) => return ExpandResult::Ready(DummyResult::any(sp, guar)),
     };
     ExpandResult::Ready(match load_binary_file(cx, path.as_str().as_ref(), sp, path_span) {
-        Ok((bytes, bsp)) => match std::str::from_utf8(&bytes) {
+        Ok((bytes, bsp)) => match core::str::from_utf8(&bytes) {
             Ok(src) => {
                 let interned_src = Symbol::intern(src);
                 // MacEager converts the expr into a pat if need be.
@@ -338,7 +342,7 @@ fn find_path_suggestion(
 
     // Try with additional leading ../
     let mut prefix = PathBuf::new();
-    let add = std::iter::from_fn(|| {
+    let add = core::iter::from_fn(|| {
         prefix.push("..");
         Some(prefix.join(wanted_path))
     })
@@ -346,14 +350,19 @@ fn find_path_suggestion(
 
     // Try without leading directories
     let mut trimmed_path = wanted_path;
-    let remove = std::iter::from_fn(|| {
+    let remove = core::iter::from_fn(|| {
         let mut components = trimmed_path.components();
         let removed = components.next()?;
         trimmed_path = components.as_path();
         let _ = trimmed_path.file_name()?; // ensure there is a file name left
         Some([
             Some(trimmed_path.to_path_buf()),
-            (removed != std::path::Component::ParentDir)
+            // M27 R4 B5: semos_std::path::Component::ParentDir mirrors std's.
+            #[cfg(not(target_os = "none"))]
+            let parent_dir = std::path::Component::ParentDir;
+            #[cfg(target_os = "none")]
+            let parent_dir = semos_std::path::Component::ParentDir;
+            (removed != parent_dir)
                 .then(|| Path::new("..").join(trimmed_path)),
         ])
     })

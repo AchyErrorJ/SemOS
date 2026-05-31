@@ -1,4 +1,4 @@
-use std::num::IntErrorKind;
+use core::num::IntErrorKind;
 
 use rustc_ast::{self as ast};
 use rustc_errors::codes::*;

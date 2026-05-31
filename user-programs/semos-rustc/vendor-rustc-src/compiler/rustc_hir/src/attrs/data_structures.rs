@@ -1,5 +1,5 @@
-use std::borrow::Cow;
-use std::path::PathBuf;
+use alloc::borrow::Cow;
+use semos_std::path::PathBuf;
 
 pub use ReprAttr::*;
 use rustc_abi::Align;

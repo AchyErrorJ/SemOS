@@ -1,5 +1,5 @@
-use std::mem;
-use std::ops::Range;
+use core::mem;
+use core::ops::Range;
 
 use itertools::Itertools;
 /// Re-export the markdown parser used by rustdoc.
@@ -21,7 +21,7 @@ use rustc_span::{DUMMY_SP, InnerSpan, Span, Symbol, sym};
 use thin_vec::ThinVec;
 use tracing::{debug, trace};
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "none")))]
 mod tests;
 
 /// A portion of documentation, extracted from a `#[doc]` attribute.

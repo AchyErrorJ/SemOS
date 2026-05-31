@@ -3,8 +3,8 @@
 //! scope when programming in interner-agnostic settings, and to avoid importing any of these
 //! directly elsewhere (i.e. specify the full path for an implementation downstream).
 
-use std::fmt::Debug;
-use std::hash::Hash;
+use core::fmt::Debug;
+use core::hash::Hash;
 
 use rustc_ast_ir::Mutability;
 
@@ -656,11 +656,11 @@ pub trait DefId<I: Interner>: Copy + Debug + Hash + Eq + TypeFoldable<I> {
 }
 
 pub trait SpecificDefId<I: Interner>:
-    DefId<I> + Into<I::DefId> + TryFrom<I::DefId, Error: std::fmt::Debug>
+    DefId<I> + Into<I::DefId> + TryFrom<I::DefId, Error: core::fmt::Debug>
 {
 }
 
-impl<I: Interner, T: DefId<I> + Into<I::DefId> + TryFrom<I::DefId, Error: std::fmt::Debug>>
+impl<I: Interner, T: DefId<I> + Into<I::DefId> + TryFrom<I::DefId, Error: core::fmt::Debug>>
     SpecificDefId<I> for T
 {
 }
@@ -732,7 +732,7 @@ pub trait SliceLike: Sized + Copy {
 
 impl<'a, T: Copy> SliceLike for &'a [T] {
     type Item = T;
-    type IntoIter = std::iter::Copied<std::slice::Iter<'a, T>>;
+    type IntoIter = core::iter::Copied<core::slice::Iter<'a, T>>;
 
     fn iter(self) -> Self::IntoIter {
         self.iter().copied()
@@ -745,7 +745,7 @@ impl<'a, T: Copy> SliceLike for &'a [T] {
 
 impl<'a, T: Copy, const N: usize> SliceLike for &'a [T; N] {
     type Item = T;
-    type IntoIter = std::iter::Copied<std::slice::Iter<'a, T>>;
+    type IntoIter = core::iter::Copied<core::slice::Iter<'a, T>>;
 
     fn iter(self) -> Self::IntoIter {
         self.into_iter().copied()

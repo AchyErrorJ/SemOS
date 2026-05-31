@@ -1,6 +1,6 @@
 // ignore-tidy-filelength
-use std::borrow::Cow;
-use std::fmt;
+use alloc::borrow::Cow;
+use core::fmt;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::attr::AttributeExt;
@@ -1204,7 +1204,7 @@ pub struct AttrPath {
 }
 
 impl IntoDiagArg for AttrPath {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         self.to_string().into_diag_arg(path)
     }
 }
@@ -1224,7 +1224,7 @@ impl AttrPath {
 }
 
 impl fmt::Display for AttrPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "{}",
@@ -2381,7 +2381,7 @@ impl fmt::Display for ConstContext {
 }
 
 impl IntoDiagArg for ConstContext {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Borrowed(match self {
             ConstContext::ConstFn => "const_fn",
             ConstContext::Static(_) => "static",
@@ -2723,7 +2723,7 @@ impl Expr<'_> {
                 path2_def_id == path1_def_id
                     && is_range_literal(self)
                     && is_range_literal(other)
-                    && std::iter::zip(args1, args2)
+                    && core::iter::zip(args1, args2)
                         .all(|(a, b)| a.expr.equivalent_for_indexing(b.expr))
             }
             _ => false,

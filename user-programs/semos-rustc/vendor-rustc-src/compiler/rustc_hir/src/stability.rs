@@ -1,4 +1,4 @@
-use std::num::NonZero;
+use core::num::NonZero;
 
 use rustc_macros::{BlobDecodable, Decodable, Encodable, HashStable_Generic, PrintAttribute};
 use rustc_span::{ErrorGuaranteed, Symbol, sym};

@@ -1,3 +1,6 @@
+[workspace]
+members = []
+
 [package]
 name = "rustc_hir"
 version = "0.0.0"
@@ -21,6 +24,9 @@ rustc_macros = { path = "../rustc_macros" }
 rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
+# M27 R4 B5: PathBuf in IntoDiagArg trait impls (def.rs, hir.rs, limit.rs,
+# attrs/data_structures.rs); mirrors B2/rustc_lint_defs precedent.
+semos_std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 thin-vec = "0.2.12"
 tracing = "0.1"

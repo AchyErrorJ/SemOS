@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use smallvec::smallvec;
 
@@ -321,7 +321,7 @@ pub fn supertrait_def_ids<I: Interner>(
 
     set.insert(trait_def_id);
 
-    std::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         let trait_def_id = stack.pop()?;
 
         for (predicate, _) in cx.explicit_super_predicates_of(trait_def_id).iter_identity() {

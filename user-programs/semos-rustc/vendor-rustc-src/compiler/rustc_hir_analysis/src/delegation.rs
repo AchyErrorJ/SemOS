@@ -288,7 +288,7 @@ fn create_generic_args<'tcx>(
             let trait_args = ty::GenericArgs::identity_for_item(tcx, sig_id);
             let trait_args = build_generic_args(tcx, sig_id, def_id, trait_args);
 
-            let args = std::iter::once(generic_self_ty).chain(trait_args.iter().skip(1));
+            let args = core::iter::once(generic_self_ty).chain(trait_args.iter().skip(1));
             tcx.mk_args_from_iter(args)
         }
 
@@ -424,6 +424,6 @@ pub(crate) fn inherit_sig_for_delegation_item<'tcx>(
     // Bound vars are also inherited from `sig_id`.
     // They will be rebound later in `lower_fn_ty`.
     let sig = caller_sig.instantiate(tcx, args).skip_binder();
-    let sig_iter = sig.inputs().iter().cloned().chain(std::iter::once(sig.output()));
+    let sig_iter = sig.inputs().iter().cloned().chain(core::iter::once(sig.output()));
     tcx.arena.alloc_from_iter(sig_iter)
 }

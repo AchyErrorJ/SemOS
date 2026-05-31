@@ -1,4 +1,4 @@
-use std::{mem, ptr};
+use core::{mem, ptr};
 
 use rustc_data_structures::sync;
 

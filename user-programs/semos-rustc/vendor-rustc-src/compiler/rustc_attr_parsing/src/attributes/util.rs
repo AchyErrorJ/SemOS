@@ -1,4 +1,4 @@
-use std::num::IntErrorKind;
+use core::num::IntErrorKind;
 
 use rustc_ast::LitKind;
 use rustc_ast::attr::AttributeExt;

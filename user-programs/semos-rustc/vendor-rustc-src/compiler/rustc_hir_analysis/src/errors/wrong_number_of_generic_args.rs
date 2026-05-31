@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use GenericArgsInfo::*;
 use rustc_errors::codes::*;
@@ -339,7 +339,7 @@ impl<'a, 'tcx> WrongNumberOfGenericArgs<'a, 'tcx> {
             hir::GenericArg::Lifetime(lt) => Some(lt),
             _ => None,
         }) {
-            return std::iter::repeat_n(lt.to_string(), num_params_to_take)
+            return core::iter::repeat_n(lt.to_string(), num_params_to_take)
                 .collect::<Vec<_>>()
                 .join(", ");
         }
@@ -361,7 +361,7 @@ impl<'a, 'tcx> WrongNumberOfGenericArgs<'a, 'tcx> {
                     matches!(fn_decl.output, hir::FnRetTy::Return(ty) if ty.hir_id == ty_id);
 
                 if in_arg || (in_ret && fn_decl.lifetime_elision_allowed) {
-                    return std::iter::repeat_n("'_".to_owned(), num_params_to_take)
+                    return core::iter::repeat_n("'_".to_owned(), num_params_to_take)
                         .collect::<Vec<_>>()
                         .join(", ");
                 }
@@ -386,7 +386,7 @@ impl<'a, 'tcx> WrongNumberOfGenericArgs<'a, 'tcx> {
             })
             | hir::Node::AnonConst(..) = node
             {
-                return std::iter::repeat_n(
+                return core::iter::repeat_n(
                     "'static".to_owned(),
                     num_params_to_take.saturating_sub(ret.len()),
                 )

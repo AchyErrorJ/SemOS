@@ -1,6 +1,12 @@
 //! List of the unstable feature gates.
 
+// M27 R4 B5: PathBuf flows through dump_feature_usage_metrics' arg.
+#[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
+// M27 §1.5: time imports only used by host-only dump_feature_usage_metrics body.
+#[cfg(not(target_os = "none"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustc_data_structures::fx::FxHashSet;
@@ -707,10 +713,15 @@ declare_features! (
 );
 
 impl Features {
+    // M27 §1.5: feature-usage-metrics dump writes a serde_json file with
+    // SystemTime timestamps. SemOS has no serde_json file sink today and
+    // no wall-clock SystemTime; method is host-only, target build gets a
+    // no-op stub with the same signature so callers compile unchanged.
+    #[cfg(not(target_os = "none"))]
     pub fn dump_feature_usage_metrics(
         &self,
         metrics_path: PathBuf,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn core::error::Error>> {
         #[derive(serde::Serialize)]
         struct LibFeature {
             timestamp: u128,
@@ -763,6 +774,15 @@ impl Features {
 
         serde_json::to_writer(metrics_file, &feature_usage)?;
 
+        Ok(())
+    }
+
+    #[cfg(target_os = "none")]
+    pub fn dump_feature_usage_metrics(
+        &self,
+        _metrics_path: PathBuf,
+    ) -> Result<(), Box<dyn core::error::Error>> {
+        // M27 §1.5: no-op on SemOS target.
         Ok(())
     }
 }

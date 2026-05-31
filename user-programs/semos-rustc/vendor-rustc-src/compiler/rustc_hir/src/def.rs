@@ -1,6 +1,6 @@
-use std::array::IntoIter;
-use std::borrow::Cow;
-use std::fmt::Debug;
+use core::array::IntoIter;
+use alloc::borrow::Cow;
+use core::fmt::Debug;
 
 use rustc_ast as ast;
 use rustc_ast::NodeId;
@@ -603,7 +603,7 @@ pub enum Res<Id = hir::HirId> {
 }
 
 impl<Id> IntoDiagArg for Res<Id> {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Borrowed(self.descr()))
     }
 }
@@ -696,7 +696,7 @@ impl Namespace {
 }
 
 impl IntoDiagArg for Namespace {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Borrowed(self.descr()))
     }
 }
@@ -738,7 +738,7 @@ impl<T> PerNS<T> {
     }
 }
 
-impl<T> ::std::ops::Index<Namespace> for PerNS<T> {
+impl<T> ::core::ops::Index<Namespace> for PerNS<T> {
     type Output = T;
 
     fn index(&self, ns: Namespace) -> &T {
@@ -750,7 +750,7 @@ impl<T> ::std::ops::Index<Namespace> for PerNS<T> {
     }
 }
 
-impl<T> ::std::ops::IndexMut<Namespace> for PerNS<T> {
+impl<T> ::core::ops::IndexMut<Namespace> for PerNS<T> {
     fn index_mut(&mut self, ns: Namespace) -> &mut T {
         match ns {
             Namespace::ValueNS => &mut self.value_ns,

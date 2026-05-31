@@ -1,13 +1,18 @@
+// M27 Phase 3 D3: no_std port (RECIPE §1.2). Inner attrs must precede items.
+#![no_std]
 // tidy-alphabetical-start
 #![feature(associated_type_defaults)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+
 mod errors;
 
-use std::fmt;
-use std::marker::PhantomData;
-use std::ops::ControlFlow;
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::ControlFlow;
 
 use errors::{
     FieldIsPrivate, FieldIsPrivateLabel, FromPrivateDependencyInPublicInterface, InPublicInterface,

@@ -4,8 +4,8 @@
 //! FIXME(ZuseZ4): Remove this once we have a smarter linter.
 
 mod llvm_enzyme {
-    use std::str::FromStr;
-    use std::string::String;
+    use core::str::FromStr;
+    use alloc::string::String;
 
     use rustc_ast::expand::autodiff_attrs::{
         AutoDiffAttrs, DiffActivity, DiffMode, valid_input_activity, valid_ret_activity,

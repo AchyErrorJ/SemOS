@@ -1,12 +1,17 @@
 //! HIR pretty-printing is layered on top of AST pretty-printing. A number of
 //! the definitions in this file have equivalents in `rustc_ast_pretty`.
 
+// M27 Phase 3 D2: no_std hygiene per RECIPE §1.2.
+#![no_std]
 // tidy-alphabetical-start
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
 
-use std::cell::Cell;
-use std::vec;
+#[macro_use]
+extern crate alloc;
+
+use core::cell::Cell;
+use alloc::vec;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::util::parser::{self, ExprPrecedence, Fixity};
@@ -232,14 +237,14 @@ impl<'a> State<'a> {
     }
 }
 
-impl std::ops::Deref for State<'_> {
+impl core::ops::Deref for State<'_> {
     type Target = pp::Printer;
     fn deref(&self) -> &Self::Target {
         &self.s
     }
 }
 
-impl std::ops::DerefMut for State<'_> {
+impl core::ops::DerefMut for State<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.s
     }

@@ -22,7 +22,7 @@ use crate::{MethodKind, Target};
 pub struct LanguageItems {
     /// Mappings from lang items to their possibly found [`DefId`]s.
     /// The index corresponds to the order in [`LangItem`].
-    items: [Option<DefId>; std::mem::variant_count::<LangItem>()],
+    items: [Option<DefId>; core::mem::variant_count::<LangItem>()],
     reverse_items: FxIndexMap<DefId, LangItem>,
     /// Lang items that were not found during collection.
     pub missing: Vec<LangItem>,
@@ -32,7 +32,7 @@ impl LanguageItems {
     /// Construct an empty collection of lang items and no missing ones.
     pub fn new() -> Self {
         Self {
-            items: [None; std::mem::variant_count::<LangItem>()],
+            items: [None; core::mem::variant_count::<LangItem>()],
             reverse_items: FxIndexMap::default(),
             missing: Vec::new(),
         }
@@ -146,7 +146,7 @@ macro_rules! language_item_table {
 
 impl<CTX> HashStable<CTX> for LangItem {
     fn hash_stable(&self, _: &mut CTX, hasher: &mut StableHasher) {
-        ::std::hash::Hash::hash(self, hasher);
+        ::core::hash::Hash::hash(self, hasher);
     }
 }
 

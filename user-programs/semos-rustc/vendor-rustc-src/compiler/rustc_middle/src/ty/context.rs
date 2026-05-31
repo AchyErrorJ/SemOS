@@ -4,15 +4,29 @@
 
 pub mod tls;
 
-use std::borrow::{Borrow, Cow};
-use std::cmp::Ordering;
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
+use core::borrow::Borrow;
+use core::cmp::Ordering;
+use core::hash::{Hash, Hasher};
+use core::marker::{PhantomData, PointeeSized};
+use core::ops::{Bound, Deref};
+use core::{fmt, iter, mem};
+
+// M27 R4 B5: OsStr alias provided by semos_std on SemOS target via
+// rustc_data_structures re-export chain; on host this is std::ffi::OsStr.
+#[cfg(not(target_os = "none"))]
 use std::env::VarError;
+#[cfg(not(target_os = "none"))]
 use std::ffi::OsStr;
-use std::hash::{Hash, Hasher};
-use std::marker::{PhantomData, PointeeSized};
-use std::ops::{Bound, Deref};
-use std::sync::{Arc, OnceLock};
-use std::{fmt, iter, mem};
+#[cfg(not(target_os = "none"))]
+use std::sync::OnceLock;
+#[cfg(target_os = "none")]
+use semos_std::env::VarError;
+#[cfg(target_os = "none")]
+use semos_std::ffi::OsStr;
+#[cfg(target_os = "none")]
+use semos_std::sync::OnceLock;
 
 use rustc_abi::{ExternAbi, FieldIdx, Layout, LayoutData, TargetDataLayout, VariantIdx};
 use rustc_ast as ast;
@@ -2553,7 +2567,7 @@ macro_rules! sty_debug_print {
                 all_infer: usize,
             }
 
-            pub(crate) fn go(fmt: &mut std::fmt::Formatter<'_>, tcx: TyCtxt<'_>) -> std::fmt::Result {
+            pub(crate) fn go(fmt: &mut core::fmt::Formatter<'_>, tcx: TyCtxt<'_>) -> core::fmt::Result {
                 let mut total = DebugStat {
                     total: 0,
                     lt_infer: 0,
@@ -2946,7 +2960,7 @@ impl<'tcx> TyCtxt<'tcx> {
             own_args
         };
 
-        for (param, arg) in std::iter::zip(&generics.own_params, own_args) {
+        for (param, arg) in core::iter::zip(&generics.own_params, own_args) {
             match (&param.kind, arg.kind()) {
                 (ty::GenericParamDefKind::Type { .. }, ty::GenericArgKind::Type(_))
                 | (ty::GenericParamDefKind::Lifetime, ty::GenericArgKind::Lifetime(_))

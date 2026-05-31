@@ -1,4 +1,4 @@
-use std::cmp;
+use core::cmp;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::sorted_map::SortedMap;

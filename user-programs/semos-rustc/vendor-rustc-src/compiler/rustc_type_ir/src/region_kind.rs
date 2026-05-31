@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
@@ -220,7 +220,7 @@ where
 {
     #[inline]
     fn hash_stable(&self, hcx: &mut CTX, hasher: &mut StableHasher) {
-        std::mem::discriminant(self).hash_stable(hcx, hasher);
+        core::mem::discriminant(self).hash_stable(hcx, hasher);
         match self {
             ReErased | ReStatic | ReError(_) => {
                 // No variant fields to hash for these ...

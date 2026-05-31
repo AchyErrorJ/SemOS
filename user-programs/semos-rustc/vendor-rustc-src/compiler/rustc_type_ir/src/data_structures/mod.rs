@@ -1,4 +1,4 @@
-use std::hash::BuildHasherDefault;
+use core::hash::BuildHasherDefault;
 
 pub use ena::unify::{NoError, UnifyKey, UnifyValue};
 use rustc_hash::FxHasher;
@@ -17,7 +17,7 @@ mod impl_ {
 
 #[cfg(not(feature = "nightly"))]
 mod impl_ {
-    pub use std::collections::{HashMap as SsoHashMap, HashSet as SsoHashSet};
+    pub use hashbrown::{HashMap as SsoHashMap, HashSet as SsoHashSet};
 
     #[inline]
     pub fn ensure_sufficient_stack<R>(f: impl FnOnce() -> R) -> R {

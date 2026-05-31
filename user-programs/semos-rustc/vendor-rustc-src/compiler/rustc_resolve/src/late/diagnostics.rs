@@ -1,8 +1,8 @@
 // ignore-tidy-filelength
 
-use std::borrow::Cow;
-use std::iter;
-use std::ops::Deref;
+use alloc::borrow::Cow;
+use core::iter;
+use core::ops::Deref;
 
 use rustc_ast::visit::{FnCtxt, FnKind, LifetimeCtxt, Visitor, walk_ty};
 use rustc_ast::{
@@ -2396,7 +2396,7 @@ impl<'ast, 'ra, 'tcx> LateResolutionVisitor<'_, 'ast, 'ra, 'tcx> {
             .collect::<Vec<_>>();
         items.sort_by_key(|(order, _, _)| *order);
         let suggestion = |name, args| {
-            format!("::{name}({})", std::iter::repeat_n("_", args).collect::<Vec<_>>().join(", "))
+            format!("::{name}({})", core::iter::repeat_n("_", args).collect::<Vec<_>>().join(", "))
         };
         match &items[..] {
             [] => {}
@@ -3309,7 +3309,7 @@ impl<'ast, 'ra, 'tcx> LateResolutionVisitor<'_, 'ast, 'ra, 'tcx> {
                 |err, _, span, message, suggestion, span_suggs| {
                     err.multipart_suggestion_verbose(
                         message,
-                        std::iter::once((span, suggestion)).chain(span_suggs).collect(),
+                        core::iter::once((span, suggestion)).chain(span_suggs).collect(),
                         Applicability::MaybeIncorrect,
                     );
                     true
@@ -3665,14 +3665,14 @@ impl<'ast, 'ra, 'tcx> LateResolutionVisitor<'_, 'ast, 'ra, 'tcx> {
                 (lt.span.shrink_to_hi(), format!("{existing_name} "))
             }
             MissingLifetimeKind::Comma => {
-                let sugg: String = std::iter::repeat_n([existing_name.as_str(), ", "], lt.count)
+                let sugg: String = core::iter::repeat_n([existing_name.as_str(), ", "], lt.count)
                     .flatten()
                     .collect();
                 (lt.span.shrink_to_hi(), sugg)
             }
             MissingLifetimeKind::Brackets => {
-                let sugg: String = std::iter::once("<")
-                    .chain(std::iter::repeat_n(existing_name.as_str(), lt.count).intersperse(", "))
+                let sugg: String = core::iter::once("<")
+                    .chain(core::iter::repeat_n(existing_name.as_str(), lt.count).intersperse(", "))
                     .chain([">"])
                     .collect();
                 (lt.span.shrink_to_hi(), sugg)
@@ -3695,7 +3695,7 @@ impl<'ast, 'ra, 'tcx> LateResolutionVisitor<'_, 'ast, 'ra, 'tcx> {
                     |err, higher_ranked, span, message, intro_sugg, _| {
                         err.multipart_suggestion_verbose(
                             message,
-                            std::iter::once((span, intro_sugg))
+                            core::iter::once((span, intro_sugg))
                                 .chain(spans_suggs.clone())
                                 .collect(),
                             Applicability::MaybeIncorrect,
@@ -3824,7 +3824,7 @@ impl<'ast, 'ra, 'tcx> LateResolutionVisitor<'_, 'ast, 'ra, 'tcx> {
                                 |err, higher_ranked, span, message, intro_sugg, _| {
                                     err.multipart_suggestion_verbose(
                                         message,
-                                        std::iter::once((span, intro_sugg))
+                                        core::iter::once((span, intro_sugg))
                                             .chain(spans_suggs.clone())
                                             .collect(),
                                         Applicability::MaybeIncorrect,

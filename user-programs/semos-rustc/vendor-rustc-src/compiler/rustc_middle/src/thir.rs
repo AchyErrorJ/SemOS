@@ -8,10 +8,10 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/thir.html
 
-use std::cmp::Ordering;
-use std::fmt;
-use std::ops::Index;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::cmp::Ordering;
+use core::fmt;
+use core::ops::Index;
 
 use rustc_abi::{FieldIdx, Integer, Size, VariantIdx};
 use rustc_ast::{AsmMacro, InlineAsmOptions, InlineAsmTemplatePiece, Mutability};
@@ -892,7 +892,7 @@ impl<'tcx> PatRange<'tcx> {
     #[inline]
     pub fn is_full_range(&self, tcx: TyCtxt<'tcx>) -> Option<bool> {
         let (min, max, size, bias) = match *self.ty.kind() {
-            ty::Char => (0, std::char::MAX as u128, Size::from_bits(32), 0),
+            ty::Char => (0, core::char::MAX as u128, Size::from_bits(32), 0),
             ty::Int(ity) => {
                 let size = Integer::from_int_ty(&tcx, ity).size();
                 let max = size.truncate(u128::MAX);

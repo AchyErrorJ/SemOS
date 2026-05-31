@@ -22,7 +22,7 @@ pub struct ExternalConstraints<'tcx>(
     pub(crate) Interned<'tcx, ExternalConstraintsData<TyCtxt<'tcx>>>,
 );
 
-impl<'tcx> std::ops::Deref for ExternalConstraints<'tcx> {
+impl<'tcx> core::ops::Deref for ExternalConstraints<'tcx> {
     type Target = ExternalConstraintsData<TyCtxt<'tcx>>;
 
     fn deref(&self) -> &Self::Target {

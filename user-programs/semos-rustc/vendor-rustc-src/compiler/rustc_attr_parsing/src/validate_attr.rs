@@ -1,7 +1,7 @@
 //! Meta-syntax validation logic of attributes for post-expansion.
 
-use std::convert::identity;
-use std::slice;
+use core::convert::identity;
+use core::slice;
 
 use rustc_ast::token::Delimiter;
 use rustc_ast::tokenstream::DelimSpan;

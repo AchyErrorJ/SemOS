@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
@@ -51,7 +51,7 @@ pub enum ConstKind<I: Interner> {
 impl<I: Interner> Eq for ConstKind<I> {}
 
 impl<I: Interner> fmt::Debug for ConstKind<I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use ConstKind::*;
 
         match self {

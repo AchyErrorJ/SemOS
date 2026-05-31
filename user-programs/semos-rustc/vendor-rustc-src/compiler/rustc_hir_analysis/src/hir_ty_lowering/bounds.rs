@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_errors::codes::*;

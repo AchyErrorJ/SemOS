@@ -1,7 +1,33 @@
-use std::any::Any;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use core::any::Any;
+use core::{convert, fmt, mem, ops};
+
+// M27 §1.9 (R4 B1): std::backtrace::Backtrace is unavailable on SemOS (no
+// stack unwinder). On SemOS we replace it with a unit-shaped stub; capture
+// is a no-op and printing is a no-op. The InterpErrorBacktrace public API
+// is preserved.
+#[cfg(not(target_os = "none"))]
 use std::backtrace::Backtrace;
-use std::borrow::Cow;
-use std::{convert, fmt, mem, ops};
+
+#[cfg(target_os = "none")]
+mod backtrace_shim {
+    use core::fmt;
+    #[derive(Debug)]
+    pub struct Backtrace;
+    impl Backtrace {
+        pub fn force_capture() -> Self {
+            Backtrace
+        }
+    }
+    impl fmt::Display for Backtrace {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("<backtrace unavailable on SemOS>")
+        }
+    }
+}
+#[cfg(target_os = "none")]
+use backtrace_shim::Backtrace;
 
 use either::Either;
 use rustc_abi::{Align, Size, VariantIdx, WrappingRange};
@@ -218,7 +244,14 @@ impl<'tcx> InterpErrorInfo<'tcx> {
 }
 
 fn print_backtrace(backtrace: &Backtrace) {
+    #[cfg(not(target_os = "none"))]
     eprintln!("\n\nAn error occurred in the MIR interpreter:\n{backtrace}");
+    // M27 §1.9: SemOS has no backtrace and no stable eprintln; the shim
+    // backtrace display already says "<backtrace unavailable>".
+    #[cfg(target_os = "none")]
+    {
+        let _ = backtrace;
+    }
 }
 
 impl From<ErrorHandled> for InterpErrorInfo<'_> {
@@ -777,7 +810,14 @@ struct Guard;
 impl Drop for Guard {
     fn drop(&mut self) {
         // We silence the guard if we are already panicking, to avoid double-panics.
-        if !std::thread::panicking() {
+        // M27 §1.9: SemOS uses panic=abort, so we cannot meaningfully detect an
+        // unwinding panic. Conservatively always check the guard — the host
+        // build retains the std::thread::panicking() gate.
+        #[cfg(not(target_os = "none"))]
+        let already_panicking = std::thread::panicking();
+        #[cfg(target_os = "none")]
+        let already_panicking = false;
+        if !already_panicking {
             panic!(
                 "an interpreter error got improperly discarded; use `discard_err()` if this is intentional"
             );

@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use super::prelude::*;
 use crate::session_diagnostics;

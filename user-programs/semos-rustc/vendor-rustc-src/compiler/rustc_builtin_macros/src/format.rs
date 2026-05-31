@@ -1,4 +1,4 @@
-use std::ops::Range;
+use core::ops::Range;
 
 use parse::Position::ArgumentNamed;
 use rustc_ast::tokenstream::TokenStream;
@@ -211,7 +211,7 @@ fn make_format_args(
                                 };
 
                                 let mut sugg_fmt = String::new();
-                                for kind in std::iter::once(&efmt.kind)
+                                for kind in core::iter::once(&efmt.kind)
                                     .chain(args.explicit_args().into_iter().map(|a| &a.expr.kind))
                                 {
                                     sugg_fmt.push_str(if should_suggest(kind) {

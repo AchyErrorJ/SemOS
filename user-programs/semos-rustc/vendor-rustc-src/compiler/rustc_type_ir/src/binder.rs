@@ -1,6 +1,6 @@
-use std::fmt;
-use std::marker::PhantomData;
-use std::ops::{ControlFlow, Deref};
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::{ControlFlow, Deref};
 
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]

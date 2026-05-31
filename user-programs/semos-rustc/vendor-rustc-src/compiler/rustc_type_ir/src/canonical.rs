@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::Index;
+use core::fmt;
+use core::ops::Index;
 
 use arrayvec::ArrayVec;
 use derive_where::derive_where;

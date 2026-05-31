@@ -1,7 +1,7 @@
 //! Check properties that are required by built-in traits and set
 //! up data structures required by type-checking/codegen.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_errors::{ErrorGuaranteed, MultiSpan};

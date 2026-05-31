@@ -1,4 +1,4 @@
-use std::convert::identity;
+use core::convert::identity;
 
 use rustc_ast as ast;
 use rustc_ast::token::DocFragmentKind;

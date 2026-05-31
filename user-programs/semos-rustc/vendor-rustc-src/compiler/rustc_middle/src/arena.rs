@@ -33,7 +33,7 @@ macro_rules! arena_types {
             >,
             [] resolver: rustc_data_structures::steal::Steal<(
                 rustc_middle::ty::ResolverAstLowering,
-                std::sync::Arc<rustc_ast::Crate>,
+                alloc::sync::Arc<rustc_ast::Crate>,
             )>,
             [] crate_for_resolver: rustc_data_structures::steal::Steal<(rustc_ast::Crate, rustc_ast::AttrVec)>,
             [] resolutions: rustc_middle::ty::ResolverGlobalCtxt,

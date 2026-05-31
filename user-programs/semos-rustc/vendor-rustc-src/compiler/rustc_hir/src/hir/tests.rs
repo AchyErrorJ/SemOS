@@ -7,11 +7,11 @@ macro_rules! define_tests {
         #[test]
         fn $name() {
             let unambig = $kind::$variant::<'_, ()> { $($init)* };
-            let unambig_to_ambig = unsafe { std::mem::transmute::<_, $kind<'_, AmbigArg>>(unambig) };
+            let unambig_to_ambig = unsafe { core::mem::transmute::<_, $kind<'_, AmbigArg>>(unambig) };
 
             assert!(matches!(&unambig_to_ambig, &$kind::$variant { $($init)* }));
 
-            let ambig_to_unambig = unsafe { std::mem::transmute::<_, $kind<'_, ()>>(unambig_to_ambig) };
+            let ambig_to_unambig = unsafe { core::mem::transmute::<_, $kind<'_, ()>>(unambig_to_ambig) };
 
             assert!(matches!(&ambig_to_unambig, &$kind::$variant { $($init)* }));
         }
@@ -61,7 +61,7 @@ fn trait_object_roundtrips_impl(syntax: TraitObjectSyntax) {
         syntax: LifetimeSyntax::Implicit,
     };
     let unambig = TyKind::TraitObject::<'_, ()>(&[], TaggedRef::new(&lt, syntax));
-    let unambig_to_ambig = unsafe { std::mem::transmute::<_, TyKind<'_, AmbigArg>>(unambig) };
+    let unambig_to_ambig = unsafe { core::mem::transmute::<_, TyKind<'_, AmbigArg>>(unambig) };
 
     match unambig_to_ambig {
         TyKind::TraitObject(_, tagged_ref) => {
@@ -70,7 +70,7 @@ fn trait_object_roundtrips_impl(syntax: TraitObjectSyntax) {
         _ => panic!("`TyKind::TraitObject` did not roundtrip"),
     };
 
-    let ambig_to_unambig = unsafe { std::mem::transmute::<_, TyKind<'_, ()>>(unambig_to_ambig) };
+    let ambig_to_unambig = unsafe { core::mem::transmute::<_, TyKind<'_, ()>>(unambig_to_ambig) };
 
     match ambig_to_unambig {
         TyKind::TraitObject(_, tagged_ref) => {

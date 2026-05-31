@@ -1,6 +1,6 @@
 //! A bunch of methods and structures more or less related to resolving imports.
 
-use std::mem;
+use core::mem;
 
 use rustc_ast::NodeId;
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
@@ -106,8 +106,8 @@ pub(crate) enum ImportKind<'ra> {
 
 /// Manually implement `Debug` for `ImportKind` because the `source/target_bindings`
 /// contain `Cell`s which can introduce infinite loops while printing.
-impl<'ra> std::fmt::Debug for ImportKind<'ra> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'ra> core::fmt::Debug for ImportKind<'ra> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         use ImportKind::*;
         match self {
             Single { source, target, decls, type_ns_only, nested, id, .. } => f
@@ -196,10 +196,10 @@ pub(crate) type Import<'ra> = Interned<'ra, ImportData<'ra>>;
 // contained data.
 // FIXME: We may wish to actually have at least debug-level assertions that Interned's guarantees
 // are upheld.
-impl std::hash::Hash for ImportData<'_> {
+impl core::hash::Hash for ImportData<'_> {
     fn hash<H>(&self, _: &mut H)
     where
-        H: std::hash::Hasher,
+        H: core::hash::Hasher,
     {
         unreachable!()
     }

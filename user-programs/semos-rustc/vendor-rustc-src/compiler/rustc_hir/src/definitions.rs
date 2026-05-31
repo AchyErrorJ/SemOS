@@ -4,8 +4,8 @@
 //! There are also some rather random cases (like const initializer
 //! expressions) that are mostly just leftovers.
 
-use std::fmt::{self, Write};
-use std::hash::Hash;
+use core::fmt::{self, Write};
+use core::hash::Hash;
 
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_data_structures::unord::UnordMap;
@@ -146,7 +146,7 @@ impl DefKey {
 
         let DisambiguatedDefPathData { ref data, disambiguator } = self.disambiguated_data;
 
-        std::mem::discriminant(data).hash(&mut hasher);
+        core::mem::discriminant(data).hash(&mut hasher);
         if let Some(name) = data.hashed_symbol() {
             // Get a stable hash by considering the symbol chars rather than
             // the symbol index.

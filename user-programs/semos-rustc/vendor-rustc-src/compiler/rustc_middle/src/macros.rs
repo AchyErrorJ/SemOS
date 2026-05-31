@@ -15,7 +15,7 @@ macro_rules! bug {
         $crate::bug!("impossible case reached")
     );
     ($($arg:tt)+) => (
-        $crate::util::bug::bug_fmt(::std::format_args!($($arg)+))
+        $crate::util::bug::bug_fmt(::core::format_args!($($arg)+))
     );
 }
 
@@ -31,7 +31,7 @@ macro_rules! bug {
 #[macro_export]
 macro_rules! span_bug {
     ($span:expr, $($arg:tt)+) => (
-        $crate::util::bug::span_bug_fmt($span, ::std::format_args!($($arg)+))
+        $crate::util::bug::span_bug_fmt($span, ::core::format_args!($($arg)+))
     );
 }
 
@@ -63,7 +63,7 @@ macro_rules! TrivialTypeTraversalImpls {
                 fn try_fold_with<F: $crate::ty::FallibleTypeFolder<$crate::ty::TyCtxt<'tcx>>>(
                     self,
                     _: &mut F,
-                ) -> ::std::result::Result<Self, F::Error> {
+                ) -> ::core::result::Result<Self, F::Error> {
                     Ok(self)
                 }
 

@@ -14,9 +14,9 @@
 //! At present, however, we do run collection across all items in the
 //! crate as a kind of pass. This should eventually be factored away.
 
-use std::cell::Cell;
-use std::iter;
-use std::ops::Bound;
+use core::cell::Cell;
+use core::iter;
+use core::ops::Bound;
 
 use rustc_abi::{ExternAbi, Size};
 use rustc_ast::Recovered;
@@ -588,7 +588,7 @@ fn get_new_lifetime_name<'tcx>(
     let a_to_z_repeat_n = |n| {
         (b'a'..=b'z').map(move |c| {
             let mut s = '\''.to_string();
-            s.extend(std::iter::repeat_n(char::from(c), n));
+            s.extend(core::iter::repeat_n(char::from(c), n));
             s
         })
     };
@@ -858,7 +858,7 @@ fn adt_def(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::AdtDef<'_> {
                 ItemKind::Struct(..) => AdtKind::Struct,
                 _ => AdtKind::Union,
             };
-            let variants = std::iter::once(lower_variant(
+            let variants = core::iter::once(lower_variant(
                 tcx,
                 None,
                 *ident,

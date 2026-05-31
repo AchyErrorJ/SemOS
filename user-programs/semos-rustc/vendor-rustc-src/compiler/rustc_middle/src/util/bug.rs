@@ -1,10 +1,24 @@
 // These functions are used by macro expansion for `bug!` and `span_bug!`.
 
-use std::fmt;
-use std::panic::{Location, panic_any};
+use core::fmt;
+use core::panic::Location;
 
 use rustc_errors::MultiSpan;
 use rustc_span::Span;
+
+// M27 §1.9 (R4 B1): rustc upstream uses `panic_any(msg)` to deliver the bug
+// message via `catch_unwind` in `rustc_interface`. SemOS has no unwinder, so
+// the SemOS variant of `panic_any` panics with the message (which under
+// no_std + panic=abort terminates the process). The user already sees the
+// formatted bug text from the `dcx().bug(...)` path in almost all cases; the
+// (None, _) fallback below is only hit when there is no TyCtxt in TLS.
+#[cfg(target_os = "none")]
+fn panic_any<M: core::fmt::Display>(msg: M) -> ! {
+    panic!("rustc bug: {}", msg)
+}
+
+#[cfg(not(target_os = "none"))]
+use std::panic::panic_any;
 
 use crate::ty::{TyCtxt, tls};
 

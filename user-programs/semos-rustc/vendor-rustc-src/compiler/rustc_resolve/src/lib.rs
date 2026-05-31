@@ -21,14 +21,18 @@
 #![feature(ptr_as_ref_unchecked)]
 #![feature(rustc_attrs)]
 #![feature(trim_prefix_suffix)]
+#![no_std]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
 
-use std::cell::Ref;
-use std::collections::BTreeSet;
-use std::fmt::{self};
-use std::ops::ControlFlow;
-use std::sync::Arc;
+#[macro_use]
+extern crate alloc;
+
+use core::cell::Ref;
+use alloc::collections::BTreeSet;
+use core::fmt::{self};
+use core::ops::ControlFlow;
+use alloc::sync::Arc;
 
 use diagnostics::{ImportSuggestion, LabelSuggestion, Suggestion};
 use effective_visibilities::EffectiveVisibilitiesVisitor;
@@ -655,10 +659,10 @@ struct Module<'ra>(Interned<'ra, ModuleData<'ra>>);
 // contained data.
 // FIXME: We may wish to actually have at least debug-level assertions that Interned's guarantees
 // are upheld.
-impl std::hash::Hash for ModuleData<'_> {
+impl core::hash::Hash for ModuleData<'_> {
     fn hash<H>(&self, _: &mut H)
     where
-        H: std::hash::Hasher,
+        H: core::hash::Hasher,
     {
         unreachable!()
     }
@@ -799,7 +803,7 @@ impl<'ra> Module<'ra> {
     }
 }
 
-impl<'ra> std::ops::Deref for Module<'ra> {
+impl<'ra> core::ops::Deref for Module<'ra> {
     type Target = ModuleData<'ra>;
 
     fn deref(&self) -> &Self::Target {
@@ -838,10 +842,10 @@ type Decl<'ra> = Interned<'ra, DeclData<'ra>>;
 // contained data.
 // FIXME: We may wish to actually have at least debug-level assertions that Interned's guarantees
 // are upheld.
-impl std::hash::Hash for DeclData<'_> {
+impl core::hash::Hash for DeclData<'_> {
     fn hash<H>(&self, _: &mut H)
     where
-        H: std::hash::Hasher,
+        H: core::hash::Hasher,
     {
         unreachable!()
     }
@@ -1716,7 +1720,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         start
     }
 
-    fn next_node_ids(&mut self, count: usize) -> std::ops::Range<NodeId> {
+    fn next_node_ids(&mut self, count: usize) -> core::ops::Range<NodeId> {
         let start = self.next_node_id;
         let end = start.as_usize().checked_add(count).expect("input too large; ran out of NodeIds");
         self.next_node_id = ast::NodeId::from_usize(end);
@@ -2529,14 +2533,14 @@ type CmResolver<'r, 'ra, 'tcx> = ref_mut::RefOrMut<'r, Resolver<'ra, 'tcx>>;
 // FIXME: These are cells for caches that can be populated even during speculative resolution,
 // and should be replaced with mutexes, atomics, or other synchronized data when migrating to
 // parallel name resolution.
-use std::cell::{Cell as CacheCell, RefCell as CacheRefCell};
+use core::cell::{Cell as CacheCell, RefCell as CacheRefCell};
 
 // FIXME: `*_unchecked` methods in the module below should be eliminated in the process
 // of migration to parallel name resolution.
 mod ref_mut {
-    use std::cell::{BorrowMutError, Cell, Ref, RefCell, RefMut};
-    use std::fmt;
-    use std::ops::Deref;
+    use core::cell::{BorrowMutError, Cell, Ref, RefCell, RefMut};
+    use core::fmt;
+    use core::ops::Deref;
 
     use crate::Resolver;
 

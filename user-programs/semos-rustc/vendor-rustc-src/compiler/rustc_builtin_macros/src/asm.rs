@@ -358,7 +358,7 @@ fn expand_preparsed_asm(
         if args.options.contains(ast::InlineAsmOptions::RAW) {
             template.push(ast::InlineAsmTemplatePiece::String(template_str.to_string().into()));
             let template_num_lines = 1 + template_str.matches('\n').count();
-            line_spans.extend(std::iter::repeat_n(template_sp, template_num_lines));
+            line_spans.extend(core::iter::repeat_n(template_sp, template_num_lines));
             continue;
         }
 
@@ -513,7 +513,7 @@ fn expand_preparsed_asm(
 
         if parser.line_spans.is_empty() {
             let template_num_lines = 1 + template_str.matches('\n').count();
-            line_spans.extend(std::iter::repeat_n(template_sp, template_num_lines));
+            line_spans.extend(core::iter::repeat_n(template_sp, template_num_lines));
         } else {
             line_spans.extend(
                 parser

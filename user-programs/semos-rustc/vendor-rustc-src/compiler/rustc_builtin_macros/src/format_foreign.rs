@@ -75,7 +75,7 @@ pub(crate) mod printf {
         /// Returns `Err` in cases where the `printf` directive does not have an exact Rust
         /// equivalent, rather than guessing.
         pub(crate) fn translate(&self) -> Result<String, Option<String>> {
-            use std::fmt::Write;
+            use core::fmt::Write;
 
             let (c_alt, c_zero, c_left, c_plus) = {
                 let mut c_alt = false;
@@ -276,12 +276,12 @@ pub(crate) mod printf {
             }
         }
 
-        fn translate(&self, s: &mut String) -> std::fmt::Result {
-            use std::fmt::Write;
+        fn translate(&self, s: &mut String) -> core::fmt::Result {
+            use core::fmt::Write;
             match *self {
                 Num::Num(n) => write!(s, "{n}"),
                 Num::Arg(n) => {
-                    let n = n.checked_sub(1).ok_or(std::fmt::Error)?;
+                    let n = n.checked_sub(1).ok_or(core::fmt::Error)?;
                     write!(s, "{n}$")
                 }
                 Num::Next => write!(s, "*"),
@@ -782,7 +782,7 @@ mod strcursor {
             if !str_eq_literal(self.s, until.s) {
                 None
             } else {
-                use std::cmp::{max, min};
+                use core::cmp::{max, min};
                 let beg = min(self.at, until.at);
                 let end = max(self.at, until.at);
                 Some(&self.s[beg..end])
@@ -816,8 +816,8 @@ mod strcursor {
         }
     }
 
-    impl std::fmt::Debug for StrCursor<'_> {
-        fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    impl core::fmt::Debug for StrCursor<'_> {
+        fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             write!(fmt, "StrCursor({:?} | {:?})", self.slice_before(), self.slice_after())
         }
     }

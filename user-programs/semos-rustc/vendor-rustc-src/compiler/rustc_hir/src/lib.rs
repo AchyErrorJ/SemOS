@@ -2,6 +2,8 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/hir.html
 
+// M27 Phase 3 D2: no_std hygiene per RECIPE §1.2.
+#![no_std]
 // tidy-alphabetical-start
 #![feature(associated_type_defaults)]
 #![feature(closure_track_caller)]
@@ -13,6 +15,9 @@
 #![feature(variant_count)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
 
 extern crate self as rustc_hir;
 

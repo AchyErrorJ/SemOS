@@ -1,4 +1,4 @@
-use std::mem;
+use core::mem;
 
 use rustc_ast::visit::Visitor;
 use rustc_ast::{Crate, EnumDef, ast, visit};

@@ -4,7 +4,7 @@
 //! conflicts between multiple such attributes attached to the same
 //! item.
 
-use std::fmt::{self, Display};
+use core::fmt::{self, Display};
 
 use rustc_ast::visit::AssocCtxt;
 use rustc_ast::{AssocItemKind, ForeignItemKind, ast};

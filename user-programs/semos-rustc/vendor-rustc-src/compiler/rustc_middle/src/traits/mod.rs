@@ -8,9 +8,9 @@ pub mod solve;
 pub mod specialization_graph;
 mod structural_impls;
 
-use std::borrow::Cow;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use alloc::borrow::Cow;
+use alloc::sync::Arc;
+use core::hash::{Hash, Hasher};
 
 use rustc_errors::{Applicability, Diag, EmissionGuarantee, ErrorGuaranteed};
 use rustc_hir as hir;
@@ -99,7 +99,7 @@ impl<'tcx> ObligationCause<'tcx> {
         &mut self,
         f: impl FnOnce(ObligationCauseCodeHandle<'tcx>) -> ObligationCauseCode<'tcx>,
     ) {
-        self.code = f(std::mem::take(&mut self.code)).into();
+        self.code = f(core::mem::take(&mut self.code)).into();
     }
 
     pub fn derived_cause(
@@ -153,8 +153,8 @@ pub struct ObligationCauseCodeHandle<'tcx> {
     code: Option<Arc<ObligationCauseCode<'tcx>>>,
 }
 
-impl<'tcx> std::fmt::Debug for ObligationCauseCodeHandle<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'tcx> core::fmt::Debug for ObligationCauseCodeHandle<'tcx> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let cause: &ObligationCauseCode<'_> = self;
         cause.fmt(f)
     }
@@ -169,7 +169,7 @@ impl<'tcx> ObligationCauseCode<'tcx> {
     }
 }
 
-impl<'tcx> std::ops::Deref for ObligationCauseCodeHandle<'tcx> {
+impl<'tcx> core::ops::Deref for ObligationCauseCodeHandle<'tcx> {
     type Target = ObligationCauseCode<'tcx>;
 
     fn deref(&self) -> &Self::Target {

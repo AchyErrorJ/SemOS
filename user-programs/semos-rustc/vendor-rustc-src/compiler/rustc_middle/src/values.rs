@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
-use std::fmt::Write;
-use std::ops::ControlFlow;
+use alloc::collections::VecDeque;
+use core::fmt::Write;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_errors::codes::*;
@@ -20,7 +20,7 @@ impl<'tcx> Value<TyCtxt<'tcx>> for Ty<'_> {
     fn from_cycle_error(tcx: TyCtxt<'tcx>, _: &CycleError, guar: ErrorGuaranteed) -> Self {
         // SAFETY: This is never called when `Self` is not `Ty<'tcx>`.
         // FIXME: Represent the above fact in the trait system somehow.
-        unsafe { std::mem::transmute::<Ty<'tcx>, Ty<'_>>(Ty::new_error(tcx, guar)) }
+        unsafe { core::mem::transmute::<Ty<'tcx>, Ty<'_>>(Ty::new_error(tcx, guar)) }
     }
 }
 
@@ -35,7 +35,7 @@ impl<'tcx> Value<TyCtxt<'tcx>> for ty::SymbolName<'_> {
         // SAFETY: This is never called when `Self` is not `SymbolName<'tcx>`.
         // FIXME: Represent the above fact in the trait system somehow.
         unsafe {
-            std::mem::transmute::<ty::SymbolName<'tcx>, ty::SymbolName<'_>>(ty::SymbolName::new(
+            core::mem::transmute::<ty::SymbolName<'tcx>, ty::SymbolName<'_>>(ty::SymbolName::new(
                 tcx, "<error>",
             ))
         }
@@ -63,7 +63,7 @@ impl<'tcx> Value<TyCtxt<'tcx>> for ty::Binder<'_, ty::FnSig<'_>> {
         };
 
         let fn_sig = ty::Binder::dummy(tcx.mk_fn_sig(
-            std::iter::repeat_n(err, arity),
+            core::iter::repeat_n(err, arity),
             err,
             false,
             rustc_hir::Safety::Safe,
@@ -72,7 +72,7 @@ impl<'tcx> Value<TyCtxt<'tcx>> for ty::Binder<'_, ty::FnSig<'_>> {
 
         // SAFETY: This is never called when `Self` is not `ty::Binder<'tcx, ty::FnSig<'tcx>>`.
         // FIXME: Represent the above fact in the trait system somehow.
-        unsafe { std::mem::transmute::<ty::PolyFnSig<'tcx>, ty::Binder<'_, ty::FnSig<'_>>>(fn_sig) }
+        unsafe { core::mem::transmute::<ty::PolyFnSig<'tcx>, ty::Binder<'_, ty::FnSig<'_>>>(fn_sig) }
     }
 }
 

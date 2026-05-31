@@ -58,17 +58,15 @@ impl UnstableFeatures {
     /// If `krate` is [`Some`], then setting `RUSTC_BOOTSTRAP=krate` will enable the nightly
     /// features. Otherwise, only `RUSTC_BOOTSTRAP=1` will work.
     pub fn from_environment(krate: Option<&str>) -> Self {
-        // M27 R4 B5: semos_std::env::var returns Option<String> (no VarError on
-        // SemOS today; parent integrator to add VarError shim per the
-        // rustc_log precedent). Synthesize a Result-shaped value so the
-        // helper below keeps the same signature shape.
+        // M27 R4 B5: semos_std::env::var now returns Result<String, VarError>
+        // (commit c9f0b2d); the host/target shapes match, so the call site
+        // collapses to a single env::var call. The `<E>` generic on
+        // `from_environment_value` is retained to keep tests' Result-shape
+        // injection compatible across both targets.
         #[cfg(not(target_os = "none"))]
         let env_var = std::env::var("RUSTC_BOOTSTRAP");
         #[cfg(target_os = "none")]
-        let env_var: Result<alloc::string::String, ()> = match semos_std::env::var("RUSTC_BOOTSTRAP") {
-            Some(s) => Ok(s),
-            None => Err(()),
-        };
+        let env_var = semos_std::env::var("RUSTC_BOOTSTRAP");
         Self::from_environment_value(krate, env_var)
     }
 

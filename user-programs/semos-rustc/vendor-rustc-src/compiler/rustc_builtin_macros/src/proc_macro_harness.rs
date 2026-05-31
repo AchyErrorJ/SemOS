@@ -1,4 +1,4 @@
-use std::{mem, slice};
+use core::{mem, slice};
 
 use rustc_ast::visit::{self, Visitor};
 use rustc_ast::{self as ast, HasNodeId, NodeId, attr};

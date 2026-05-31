@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::{Div, Mul};
+use core::fmt;
+use core::ops::{Div, Mul};
 
 use rustc_error_messages::{DiagArgValue, IntoDiagArg};
 use rustc_macros::{Decodable, Encodable, HashStable_Generic};
@@ -57,7 +57,7 @@ impl Mul<usize> for Limit {
 }
 
 impl IntoDiagArg for Limit {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         self.to_string().into_diag_arg(&mut None)
     }
 }

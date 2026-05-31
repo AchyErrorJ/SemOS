@@ -25,6 +25,7 @@
 //! This API is completely unstable and subject to change.
 
 // tidy-alphabetical-start
+#![cfg_attr(target_os = "none", no_std)]
 #![allow(internal_features)]
 #![allow(rustc::direct_use_of_rustc_type_ir)]
 #![cfg_attr(bootstrap, feature(array_windows))]
@@ -61,6 +62,12 @@
 #![feature(yeet_expr)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 #[cfg(test)]
 mod tests;

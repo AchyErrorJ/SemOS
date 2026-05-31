@@ -6,10 +6,10 @@
 //! If you wonder why there's no `early.rs`, that's because it's split into three files -
 //! `build_reduced_graph.rs`, `macros.rs` and `imports.rs`.
 
-use std::borrow::Cow;
-use std::collections::hash_map::Entry;
-use std::mem::{replace, swap, take};
-use std::ops::ControlFlow;
+use alloc::borrow::Cow;
+use hashbrown::hash_map::Entry;
+use core::mem::{replace, swap, take};
+use core::ops::ControlFlow;
 
 use rustc_ast::visit::{
     AssocCtxt, BoundKind, FnCtxt, FnKind, Visitor, try_visit, visit_opt, walk_list,
@@ -98,7 +98,7 @@ impl PatternSource {
 }
 
 impl IntoDiagArg for PatternSource {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Borrowed(self.descr()))
     }
 }
@@ -4511,7 +4511,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
                             // new suggestions cannot be added or removed from the diagnostic. Therefore,
                             // we assign both types of suggestions to err's suggestions and discard the
                             // existing suggestions in err.
-                            err.suggestions = std::mem::take(&mut parent_err.suggestions);
+                            err.suggestions = core::mem::take(&mut parent_err.suggestions);
                         }
                     },
                     Suggestions::Sealed(_) | Suggestions::Disabled => (),
@@ -5231,7 +5231,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         // FIXME: This caching may be incorrect in case of multiple `macro_rules`
         // items with the same name in the same module.
         // Also hygiene is not considered.
-        let mut doc_link_resolutions = std::mem::take(&mut self.r.doc_link_resolutions);
+        let mut doc_link_resolutions = core::mem::take(&mut self.r.doc_link_resolutions);
         let res = *doc_link_resolutions
             .entry(self.parent_scope.module.nearest_parent_mod().expect_local())
             .or_default()
@@ -5316,7 +5316,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
 
         if need_traits_in_scope {
             // FIXME: hygiene is not considered.
-            let mut doc_link_traits_in_scope = std::mem::take(&mut self.r.doc_link_traits_in_scope);
+            let mut doc_link_traits_in_scope = core::mem::take(&mut self.r.doc_link_traits_in_scope);
             doc_link_traits_in_scope
                 .entry(self.parent_scope.module.nearest_parent_mod().expect_local())
                 .or_insert_with(|| {

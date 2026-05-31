@@ -1,8 +1,21 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+use core::hash::{Hash, Hasher};
+
+// M27 §1: long-type-to-disk diagnostic uses std::fs / std::io / std::path /
+// DefaultHasher. SemOS skips the write and always returns the regular
+// (long) string. The PathBuf type is still part of the API surface via
+// `temp_path_for_diagnostic`'s return; on SemOS that's a stub PathBuf from
+// semos_std::path::PathBuf in rustc_session's output_filenames module.
+#[cfg(not(target_os = "none"))]
 use std::fs::File;
-use std::hash::{DefaultHasher, Hash, Hasher};
+#[cfg(not(target_os = "none"))]
+use std::hash::DefaultHasher;
+#[cfg(not(target_os = "none"))]
 use std::io::{Read, Write};
+#[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
 
 use rustc_errors::pluralize;
 use rustc_hir as hir;
@@ -291,29 +304,41 @@ impl<'tcx> TyCtxt<'tcx> {
         if regular == short {
             return regular;
         }
-        // Ensure we create an unique file for the type passed in when we create a file.
-        let mut s = DefaultHasher::new();
-        t.hash(&mut s);
-        let hash = s.finish();
-        *path = Some(path.take().unwrap_or_else(|| {
-            self.output_filenames(()).temp_path_for_diagnostic(&format!("long-type-{hash}.txt"))
-        }));
-        let Ok(mut file) =
-            File::options().create(true).read(true).append(true).open(&path.as_ref().unwrap())
-        else {
-            return regular;
-        };
 
-        // Do not write the same type to the file multiple times.
-        let mut contents = String::new();
-        let _ = file.read_to_string(&mut contents);
-        if let Some(_) = contents.lines().find(|line| line == &regular) {
-            return short;
+        #[cfg(not(target_os = "none"))]
+        {
+            // Ensure we create an unique file for the type passed in when we create a file.
+            let mut s = DefaultHasher::new();
+            t.hash(&mut s);
+            let hash = s.finish();
+            *path = Some(path.take().unwrap_or_else(|| {
+                self.output_filenames(()).temp_path_for_diagnostic(&format!("long-type-{hash}.txt"))
+            }));
+            let Ok(mut file) =
+                File::options().create(true).read(true).append(true).open(&path.as_ref().unwrap())
+            else {
+                return regular;
+            };
+
+            // Do not write the same type to the file multiple times.
+            let mut contents = String::new();
+            let _ = file.read_to_string(&mut contents);
+            if let Some(_) = contents.lines().find(|line| line == &regular) {
+                return short;
+            }
+
+            match write!(file, "{regular}\n") {
+                Ok(_) => short,
+                Err(_) => regular,
+            }
         }
-
-        match write!(file, "{regular}\n") {
-            Ok(_) => short,
-            Err(_) => regular,
+        // M27 §1: SemOS target — skip on-disk long-type log; return the
+        // long string verbatim. The `path` argument is left unset.
+        #[cfg(target_os = "none")]
+        {
+            let _ = t;
+            let _ = path;
+            regular
         }
     }
 }

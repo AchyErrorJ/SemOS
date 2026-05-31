@@ -1,6 +1,7 @@
 //! Built-in attributes and `cfg` flag gating.
 
-use std::sync::LazyLock;
+// M27 R4: std::sync::LazyLock supplied by semos_std (commit c9f0b2d).
+use semos_std::sync::LazyLock;
 
 use AttributeDuplicates::*;
 use AttributeGate::*;
@@ -148,7 +149,7 @@ impl AttributeTemplate {
     pub fn suggestions(
         &self,
         style: AttrSuggestionStyle,
-        name: impl std::fmt::Display,
+        name: impl core::fmt::Display,
     ) -> Vec<String> {
         let (start, macro_call, end) = match style {
             AttrSuggestionStyle::Attribute(AttrStyle::Outer) => ("#[", "", "]"),

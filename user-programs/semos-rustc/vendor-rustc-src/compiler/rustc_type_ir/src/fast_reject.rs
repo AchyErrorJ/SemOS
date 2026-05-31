@@ -1,7 +1,7 @@
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::iter;
-use std::marker::PhantomData;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::iter;
+use core::marker::PhantomData;
 
 use rustc_ast_ir::Mutability;
 #[cfg(feature = "nightly")]

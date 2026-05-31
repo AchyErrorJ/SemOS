@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use derive_where::derive_where;
 use rustc_ast_ir::Mutability;
@@ -532,7 +532,7 @@ pub fn structurally_relate_consts<I: Interner, R: TypeRelation<I>>(
 ) -> RelateResult<I, I::Const> {
     trace!(
         "structurally_relate_consts::<{}>(a = {:?}, b = {:?})",
-        std::any::type_name::<R>(),
+        core::any::type_name::<R>(),
         a,
         b
     );
@@ -545,7 +545,7 @@ pub fn structurally_relate_consts<I: Interner, R: TypeRelation<I>>(
 
     trace!(
         "structurally_relate_consts::<{}>(normed_a = {:?}, normed_b = {:?})",
-        std::any::type_name::<R>(),
+        core::any::type_name::<R>(),
         a,
         b
     );

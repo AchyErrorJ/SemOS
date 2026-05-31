@@ -1,5 +1,5 @@
-use std::num::NonZero;
-use std::ops::Deref;
+use core::num::NonZero;
+use core::ops::Deref;
 
 use rustc_abi::Align;
 use rustc_ast::attr::data_structures::CfgEntry;

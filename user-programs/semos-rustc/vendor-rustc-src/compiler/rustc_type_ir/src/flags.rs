@@ -146,7 +146,7 @@ pub struct FlagComputation<I> {
     /// see `Ty::outer_exclusive_binder` for details
     pub outer_exclusive_binder: ty::DebruijnIndex,
 
-    interner: std::marker::PhantomData<I>,
+    interner: core::marker::PhantomData<I>,
 }
 
 impl<I: Interner> FlagComputation<I> {
@@ -154,7 +154,7 @@ impl<I: Interner> FlagComputation<I> {
         FlagComputation {
             flags: TypeFlags::empty(),
             outer_exclusive_binder: ty::INNERMOST,
-            interner: std::marker::PhantomData,
+            interner: core::marker::PhantomData,
         }
     }
 

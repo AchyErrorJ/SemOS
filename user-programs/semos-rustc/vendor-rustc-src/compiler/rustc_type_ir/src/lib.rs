@@ -1,3 +1,6 @@
+// M27 Phase 3 D3: no_std port (RECIPE §1.2). `nightly` feature is the
+// active SemOS target (rustc-analyzer reuses the non-nightly surface upstream).
+#![no_std]
 #![cfg_attr(feature = "nightly", rustc_diagnostic_item = "type_ir")]
 // tidy-alphabetical-start
 #![allow(rustc::direct_use_of_rustc_type_ir)]
@@ -11,10 +14,13 @@
 )]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+
 extern crate self as rustc_type_ir;
 
-use std::fmt;
-use std::hash::Hash;
+use core::fmt;
+use core::hash::Hash;
 
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable, Encodable, HashStable_NoContext};
@@ -199,11 +205,11 @@ impl DebruijnIndex {
     }
 }
 
-pub fn debug_bound_var<T: std::fmt::Write>(
+pub fn debug_bound_var<T: core::fmt::Write>(
     fmt: &mut T,
     bound_index: BoundVarIndexKind,
-    var: impl std::fmt::Debug,
-) -> Result<(), std::fmt::Error> {
+    var: impl core::fmt::Debug,
+) -> Result<(), core::fmt::Error> {
     match bound_index {
         BoundVarIndexKind::Bound(debruijn) => {
             if debruijn == INNERMOST {

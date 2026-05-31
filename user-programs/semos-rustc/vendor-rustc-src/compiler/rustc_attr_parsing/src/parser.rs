@@ -3,8 +3,8 @@
 //!
 //! FIXME(jdonszelmann): delete `rustc_ast/attr/mod.rs`
 
-use std::borrow::Borrow;
-use std::fmt::{Debug, Display};
+use core::borrow::Borrow;
+use core::fmt::{Debug, Display};
 
 use rustc_ast::token::{self, Delimiter, MetaVarKind};
 use rustc_ast::tokenstream::TokenStream;
@@ -82,7 +82,7 @@ impl<P: Borrow<Path>> PathParser<P> {
 }
 
 impl<P: Borrow<Path>> Display for PathParser<P> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", pprust::path_to_string(self.0.borrow()))
     }
 }
@@ -251,7 +251,7 @@ pub struct MetaItemParser {
 }
 
 impl Debug for MetaItemParser {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MetaItemParser")
             .field("path", &self.path)
             .field("args", &self.args)
@@ -306,7 +306,7 @@ pub struct NameValueParser {
 }
 
 impl Debug for NameValueParser {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("NameValueParser")
             .field("eq_span", &self.eq_span)
             .field("value", &self.value)

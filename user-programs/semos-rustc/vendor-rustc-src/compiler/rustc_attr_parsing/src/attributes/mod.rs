@@ -14,7 +14,7 @@
 //!
 //! Attributes should be added to `crate::context::ATTRIBUTE_PARSERS` to be parsed.
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use rustc_feature::{AttributeTemplate, template};
 use rustc_hir::attrs::AttributeKind;

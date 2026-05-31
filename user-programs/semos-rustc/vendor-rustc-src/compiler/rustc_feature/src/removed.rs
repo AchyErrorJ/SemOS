@@ -1,6 +1,6 @@
 //! List of the removed feature gates.
 
-use std::num::{NonZero, NonZeroU32};
+use core::num::{NonZero, NonZeroU32};
 
 use rustc_span::sym;
 

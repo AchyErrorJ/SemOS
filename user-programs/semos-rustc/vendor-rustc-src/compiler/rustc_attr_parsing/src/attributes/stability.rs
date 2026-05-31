@@ -1,4 +1,4 @@
-use std::num::NonZero;
+use core::num::NonZero;
 
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::target::GenericParamKind;

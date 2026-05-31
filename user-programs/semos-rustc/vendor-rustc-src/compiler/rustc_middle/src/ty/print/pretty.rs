@@ -1,7 +1,7 @@
-use std::cell::Cell;
-use std::fmt::{self, Write as _};
-use std::iter;
-use std::ops::{Deref, DerefMut};
+use core::cell::Cell;
+use core::fmt::{self, Write as _};
+use core::iter;
+use core::ops::{Deref, DerefMut};
 
 use rustc_abi::{ExternAbi, Size};
 use rustc_apfloat::Float;

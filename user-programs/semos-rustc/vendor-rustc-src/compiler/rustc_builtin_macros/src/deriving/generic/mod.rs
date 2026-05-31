@@ -174,9 +174,9 @@
 //! )
 //! ```
 
-use std::cell::RefCell;
-use std::ops::Not;
-use std::{iter, vec};
+use core::cell::RefCell;
+use core::ops::Not;
+use core::iter;
 
 pub(crate) use StaticFields::*;
 pub(crate) use SubstructureFields::*;

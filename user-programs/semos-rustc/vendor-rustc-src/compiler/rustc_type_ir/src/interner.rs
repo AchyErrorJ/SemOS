@@ -1,7 +1,7 @@
-use std::borrow::Borrow;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops::Deref;
+use core::borrow::Borrow;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::ops::Deref;
 
 use rustc_ast_ir::Movability;
 use rustc_index::bit_set::DenseBitSet;

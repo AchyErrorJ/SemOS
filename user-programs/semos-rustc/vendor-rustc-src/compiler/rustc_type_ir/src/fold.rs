@@ -45,9 +45,9 @@
 //! - u.fold_with(folder)
 //! ```
 
-use std::convert::Infallible;
-use std::mem;
-use std::sync::Arc;
+use core::convert::Infallible;
+use core::mem;
+use alloc::sync::Arc;
 
 use rustc_index::{Idx, IndexVec};
 use thin_vec::ThinVec;

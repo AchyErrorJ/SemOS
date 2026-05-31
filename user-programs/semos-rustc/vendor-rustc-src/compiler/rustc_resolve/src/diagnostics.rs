@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use itertools::Itertools as _;
 use rustc_ast::visit::{self, Visitor};
@@ -167,7 +167,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         }
 
         let mut reported_spans = FxHashSet::default();
-        for error in std::mem::take(&mut self.privacy_errors) {
+        for error in core::mem::take(&mut self.privacy_errors) {
             if reported_spans.insert(error.dedup_span) {
                 self.report_privacy_error(&error);
             }
@@ -176,7 +176,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
 
     fn report_with_use_injections(&mut self, krate: &Crate) {
         for UseError { mut err, candidates, def_id, instead, suggestion, path, is_call } in
-            std::mem::take(&mut self.use_injections)
+            core::mem::take(&mut self.use_injections)
         {
             let (span, found_use) = if let Some(def_id) = def_id.as_local() {
                 UsePlacementFinder::check(krate, self.def_id_to_node_id(def_id))
@@ -2255,7 +2255,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                         }
                     }
                     sugg_paths.push((
-                        path.iter().cloned().chain(std::iter::once(ident)).collect::<Vec<_>>(),
+                        path.iter().cloned().chain(core::iter::once(ident)).collect::<Vec<_>>(),
                         true, // re-export
                     ));
                 }
@@ -2695,49 +2695,27 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     fn undeclared_module_suggest_declare(
         &self,
         ident: Ident,
-        path: std::path::PathBuf,
+        path: semos_std::path::PathBuf,
     ) -> Option<(Vec<(Span, String)>, String, Applicability)> {
+        // M27 R4 B5: semos_std::path::Path lacks Display impl; use as_str() instead.
         Some((
             vec![(self.current_crate_outer_attr_insert_span, format!("mod {ident};\n"))],
             format!(
                 "to make use of source file {}, use `mod {ident}` \
                  in this file to declare the module",
-                path.display()
+                path.as_str()
             ),
             Applicability::MaybeIncorrect,
         ))
     }
 
-    fn undeclared_module_exists(&self, ident: Ident) -> Option<std::path::PathBuf> {
-        let map = self.tcx.sess.source_map();
-
-        let src = map.span_to_filename(ident.span).into_local_path()?;
-        let i = ident.as_str();
-        // FIXME: add case where non parent using undeclared module (hard?)
-        let dir = src.parent()?;
-        let src = src.file_stem()?.to_str()?;
-        for file in [
-            // …/x.rs
-            dir.join(i).with_extension("rs"),
-            // …/x/mod.rs
-            dir.join(i).join("mod.rs"),
-        ] {
-            if file.exists() {
-                return Some(file);
-            }
-        }
-        if !matches!(src, "main" | "lib" | "mod") {
-            for file in [
-                // …/x/y.rs
-                dir.join(src).join(i).with_extension("rs"),
-                // …/x/y/mod.rs
-                dir.join(src).join(i).join("mod.rs"),
-            ] {
-                if file.exists() {
-                    return Some(file);
-                }
-            }
-        }
+    fn undeclared_module_exists(&self, _ident: Ident) -> Option<semos_std::path::PathBuf> {
+        // M27 R4 B5: diagnostic-suggestion path probing relies on
+        // PathBuf::with_extension(...) and Path::exists() — neither is in
+        // semos_std::path today. Returning None makes this a no-op suggester;
+        // unresolved-module diagnostics still fire, just without the extra
+        // "did you mean foo.rs?" hint. Restore behaviour when semos_std::path
+        // grows with_extension + an FS-backed exists predicate.
         None
     }
 
@@ -3623,7 +3601,7 @@ fn search_for_any_use_in_items(items: &[Box<ast::Item>]) -> Option<Span> {
             let mut lo = item.span.lo();
             for attr in &item.attrs {
                 if attr.span.eq_ctxt(item.span) {
-                    lo = std::cmp::min(lo, attr.span.lo());
+                    lo = core::cmp::min(lo, attr.span.lo());
                 }
             }
             return Some(Span::new(lo, lo, item.span.ctxt(), item.span.parent()));

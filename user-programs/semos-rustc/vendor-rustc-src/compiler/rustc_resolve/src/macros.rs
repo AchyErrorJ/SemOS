@@ -1,8 +1,8 @@
 //! A bunch of methods and structures more or less related to resolving macros and
 //! interface provided by `Resolver` to macro expander.
 
-use std::mem;
-use std::sync::Arc;
+use core::mem;
+use alloc::sync::Arc;
 
 use rustc_ast::{self as ast, Crate, NodeId, attr};
 use rustc_ast_pretty::pprust;

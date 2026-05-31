@@ -1,5 +1,5 @@
-use std::fmt;
-use std::hash::Hash;
+use core::fmt;
+use core::hash::Hash;
 
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]

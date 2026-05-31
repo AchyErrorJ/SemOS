@@ -1,5 +1,14 @@
+use core::fmt;
+
+#[cfg(not(target_os = "none"))]
 use std::path::Path;
-use std::{fmt, io};
+#[cfg(not(target_os = "none"))]
+use std::io;
+
+#[cfg(target_os = "none")]
+use semos_std::path::Path;
+#[cfg(target_os = "none")]
+use semos_std::io;
 
 use rustc_errors::codes::*;
 use rustc_errors::{DiagArgName, DiagArgValue, DiagMessage};

@@ -8,22 +8,13 @@
 // uses CARGO_PKG_VERSION etc.). On SemOS we never *build* code there, but
 // `rustc-on-SemOS` still expands env!/option_env! for the user's
 // `--env-set` map (logical_env) first; only when that misses do we fall
-// through to the process env. semos_std::env::var returns Option<String>
-// rather than std's Result<String, VarError>; we adapt below.
+// through to the process env. semos_std::env::var now returns
+// Result<String, VarError> natively (commit c9f0b2d), so host and target
+// call sites share one shape.
 #[cfg(not(target_os = "none"))]
-use std::env;
-#[cfg(not(target_os = "none"))]
-use std::env::VarError;
-
-// M27 R4 B5: VarError shim — semos_std lacks VarError. We mirror std's
-// variants so downstream pattern-matching keeps shape.
+use std::env::{self, VarError};
 #[cfg(target_os = "none")]
-#[derive(Debug, Clone)]
-enum VarError {
-    NotPresent,
-    #[allow(dead_code)]
-    NotUnicode(alloc::string::String),
-}
+use semos_std::env::{self, VarError};
 
 use rustc_ast::token::{self, LitKind};
 use rustc_ast::tokenstream::TokenStream;
@@ -36,16 +27,6 @@ use thin_vec::thin_vec;
 use crate::errors;
 use crate::util::{expr_to_string, get_exprs_from_tts, get_single_expr_from_tts};
 
-#[cfg(target_os = "none")]
-fn env_var(name: &str) -> Result<alloc::string::String, VarError> {
-    semos_std::env::var(name).ok_or(VarError::NotPresent)
-}
-
-#[cfg(not(target_os = "none"))]
-fn env_var(name: &str) -> Result<alloc::string::String, VarError> {
-    env::var(name)
-}
-
 fn lookup_env<'cx>(cx: &'cx ExtCtxt<'_>, var: Symbol) -> Result<Symbol, VarError> {
     let var = var.as_str();
     if let Some(value) = cx.sess.opts.logical_env.get(var) {
@@ -53,7 +34,7 @@ fn lookup_env<'cx>(cx: &'cx ExtCtxt<'_>, var: Symbol) -> Result<Symbol, VarError
     }
     // If the environment variable was not defined with the `--env-set` option, we try to retrieve it
     // from rustc's environment.
-    Ok(Symbol::intern(&env_var(var)?))
+    Ok(Symbol::intern(&env::var(var)?))
 }
 
 pub(crate) fn expand_option_env<'cx>(
