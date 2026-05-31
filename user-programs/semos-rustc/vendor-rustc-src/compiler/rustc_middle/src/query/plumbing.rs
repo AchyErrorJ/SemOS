@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use core::ops::Deref;
 
 use rustc_data_structures::sync::{AtomicU64, WorkerLocal};
 use rustc_hir::def_id::{DefId, LocalDefId};
@@ -605,7 +605,7 @@ mod sealed {
 pub struct CyclePlaceholder(pub ErrorGuaranteed);
 
 #[cold]
-pub(crate) fn default_query(name: &str, key: &dyn std::fmt::Debug) -> ! {
+pub(crate) fn default_query(name: &str, key: &dyn core::fmt::Debug) -> ! {
     bug!(
         "`tcx.{name}({key:?})` is not supported for this key;\n\
         hint: Queries can be either made to the local crate, or the external crate. \
@@ -615,7 +615,7 @@ pub(crate) fn default_query(name: &str, key: &dyn std::fmt::Debug) -> ! {
 }
 
 #[cold]
-pub(crate) fn default_extern_query(name: &str, key: &dyn std::fmt::Debug) -> ! {
+pub(crate) fn default_extern_query(name: &str, key: &dyn core::fmt::Debug) -> ! {
     bug!(
         "`tcx.{name}({key:?})` unsupported by its crate; \
          perhaps the `{name}` query was never assigned a provider function",

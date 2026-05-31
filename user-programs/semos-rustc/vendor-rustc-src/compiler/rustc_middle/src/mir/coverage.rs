@@ -1,6 +1,6 @@
 //! Metadata from source code coverage analysis and instrumentation.
 
-use std::fmt::{self, Debug, Formatter};
+use core::fmt::{self, Debug, Formatter};
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_index::{Idx, IndexVec};

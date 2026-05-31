@@ -1,4 +1,4 @@
-use std::io;
+use semos_std::io;
 
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_index::IndexVec;

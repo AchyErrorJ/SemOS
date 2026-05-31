@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use rustc_ast::{self as ast, DUMMY_NODE_ID, Expr, ExprKind};
 use rustc_ast_pretty::pprust;

@@ -13,7 +13,7 @@ mod pretty;
 pub use self::pretty::*;
 use super::Lift;
 
-pub type PrintError = std::fmt::Error;
+pub type PrintError = core::fmt::Error;
 
 pub trait Print<'tcx, P> {
     fn print(&self, p: &mut P) -> Result<(), PrintError>;
@@ -347,7 +347,7 @@ impl<'tcx, P: Printer<'tcx>> Print<'tcx, P> for Ty<'tcx> {
     }
 }
 
-impl<'tcx, P: Printer<'tcx> + std::fmt::Write> Print<'tcx, P> for ty::Instance<'tcx> {
+impl<'tcx, P: Printer<'tcx> + core::fmt::Write> Print<'tcx, P> for ty::Instance<'tcx> {
     fn print(&self, cx: &mut P) -> Result<(), PrintError> {
         cx.print_def_path(self.def_id(), self.args)?;
         match self.def {
@@ -400,7 +400,7 @@ impl<T> rustc_type_ir::ir_print::IrPrint<T> for TyCtxt<'_>
 where
     T: Copy + for<'a, 'tcx> Lift<TyCtxt<'tcx>, Lifted: Print<'tcx, FmtPrinter<'a, 'tcx>>>,
 {
-    fn print(t: &T, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn print(t: &T, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         ty::tls::with(|tcx| {
             let mut p = FmtPrinter::new(tcx, Namespace::TypeNS);
             tcx.lift(*t).expect("could not lift for printing").print(&mut p)?;
@@ -409,7 +409,7 @@ where
         })
     }
 
-    fn print_debug(t: &T, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn print_debug(t: &T, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         with_no_trimmed_paths!(Self::print(t, fmt))
     }
 }

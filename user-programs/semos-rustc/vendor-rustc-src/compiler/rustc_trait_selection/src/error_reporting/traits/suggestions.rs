@@ -1,8 +1,9 @@
 // ignore-tidy-filelength
 
-use std::borrow::Cow;
-use std::iter;
-use std::path::PathBuf;
+use alloc::borrow::Cow;
+use core::iter;
+// M27 R4 B5: PathBuf carries through from semos_std on this target.
+use semos_std::path::PathBuf;
 
 use itertools::{EitherOrBoth, Itertools};
 use rustc_abi::ExternAbi;

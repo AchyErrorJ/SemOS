@@ -114,7 +114,7 @@ pub fn transitive_bounds_that_define_assoc_item<'tcx>(
     let mut seen = FxHashSet::default();
     let mut stack: Vec<_> = trait_refs.collect();
 
-    std::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         while let Some(trait_ref) = stack.pop() {
             if !seen.insert(tcx.anonymize_bound_vars(trait_ref)) {
                 continue;

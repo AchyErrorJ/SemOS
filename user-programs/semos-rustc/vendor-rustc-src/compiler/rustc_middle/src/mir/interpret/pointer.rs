@@ -1,5 +1,5 @@
-use std::fmt;
-use std::num::NonZero;
+use core::fmt;
+use core::num::NonZero;
 
 use rustc_abi::{HasDataLayout, Size};
 use rustc_data_structures::static_assert_size;

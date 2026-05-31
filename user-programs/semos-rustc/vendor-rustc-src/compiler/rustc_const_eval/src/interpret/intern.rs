@@ -254,7 +254,7 @@ pub fn intern_const_alloc_recursive<'tcx, M: CompileTimeMachine<'tcx>>(
     };
     // We need to distinguish "has just been interned" from "was already in `tcx`",
     // so we track this in a separate set.
-    let mut just_interned: FxHashSet<_> = std::iter::once(base_alloc_id).collect();
+    let mut just_interned: FxHashSet<_> = core::iter::once(base_alloc_id).collect();
     // Whether we encountered a bad mutable pointer.
     // We want to first report "dangling" and then "mutable", so we need to delay reporting these
     // errors.

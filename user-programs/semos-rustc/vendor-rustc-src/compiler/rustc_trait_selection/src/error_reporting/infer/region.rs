@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_errors::{

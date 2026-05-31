@@ -1,4 +1,4 @@
-use std::collections::hash_map::Entry;
+use rustc_data_structures::fx::StdEntry as Entry;
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;

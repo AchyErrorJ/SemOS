@@ -1,7 +1,7 @@
 //! See `README.md`.
 
-use std::ops::Range;
-use std::{cmp, fmt, mem};
+use core::ops::Range;
+use core::{cmp, fmt, mem};
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::undo_log::UndoLogs;

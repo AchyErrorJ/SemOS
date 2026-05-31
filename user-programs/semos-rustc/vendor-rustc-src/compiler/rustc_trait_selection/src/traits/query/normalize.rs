@@ -52,7 +52,7 @@ impl<'a, 'tcx> At<'a, 'tcx> {
     {
         debug!(
             "normalize::<{}>(value={:?}, param_env={:?}, cause={:?})",
-            std::any::type_name::<T>(),
+            core::any::type_name::<T>(),
             value,
             self.param_env,
             self.cause,
@@ -107,13 +107,13 @@ impl<'a, 'tcx> At<'a, 'tcx> {
         let result = value.try_fold_with(&mut normalizer);
         info!(
             "normalize::<{}>: result={:?} with {} obligations",
-            std::any::type_name::<T>(),
+            core::any::type_name::<T>(),
             result,
             normalizer.obligations.len(),
         );
         debug!(
             "normalize::<{}>: obligations={:?}",
-            std::any::type_name::<T>(),
+            core::any::type_name::<T>(),
             normalizer.obligations,
         );
         result.map(|value| Normalized { value, obligations: normalizer.obligations })

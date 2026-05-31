@@ -1,6 +1,6 @@
 //! Some helper functions for `AutoDeref`.
 
-use std::iter;
+use core::iter;
 
 use itertools::Itertools;
 use rustc_hir_analysis::autoderef::{Autoderef, AutoderefKind};

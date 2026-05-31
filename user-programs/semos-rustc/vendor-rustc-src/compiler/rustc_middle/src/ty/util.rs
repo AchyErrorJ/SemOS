@@ -1,6 +1,6 @@
 //! Miscellaneous type-system utilities that are too small to deserve their own modules.
 
-use std::{fmt, iter};
+use core::{fmt, iter};
 
 use rustc_abi::{Float, Integer, IntegerType, Size};
 use rustc_apfloat::Float as _;
@@ -1107,7 +1107,7 @@ impl<'tcx> Ty<'tcx> {
                     if signed { size.signed_int_max() as u128 } else { size.unsigned_int_max() };
                 (min, max)
             }
-            ty::Char => (0, std::char::MAX as u128),
+            ty::Char => (0, core::char::MAX as u128),
             ty::Float(ty::FloatTy::F16) => ((-Half::INFINITY).to_bits(), Half::INFINITY.to_bits()),
             ty::Float(ty::FloatTy::F32) => {
                 ((-Single::INFINITY).to_bits(), Single::INFINITY.to_bits())

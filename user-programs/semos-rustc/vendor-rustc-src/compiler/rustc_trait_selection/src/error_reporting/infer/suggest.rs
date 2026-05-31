@@ -549,7 +549,7 @@ impl<'tcx> TypeErrCtxt<'_, 'tcx> {
                     self.tcx.is_diagnostic_item(*name, exp_def.did()).then_some(msg)
                 }) {
                     let mut show_suggestion = true;
-                    for (exp_ty, found_ty) in std::iter::zip(exp_args.types(), found_args.types()) {
+                    for (exp_ty, found_ty) in core::iter::zip(exp_args.types(), found_args.types()) {
                         match *exp_ty.kind() {
                             ty::Ref(_, exp_ty, _) => {
                                 match (exp_ty.kind(), found_ty.kind()) {
@@ -789,7 +789,7 @@ impl<'tcx> TypeErrCtxt<'_, 'tcx> {
                     (
                         hir::OpaqueTy { bounds: last_bounds, .. },
                         hir::OpaqueTy { bounds: exp_bounds, .. },
-                    ) if std::iter::zip(*last_bounds, *exp_bounds).all(|(left, right)| match (
+                    ) if core::iter::zip(*last_bounds, *exp_bounds).all(|(left, right)| match (
                         left, right,
                     ) {
                         // FIXME: Suspicious

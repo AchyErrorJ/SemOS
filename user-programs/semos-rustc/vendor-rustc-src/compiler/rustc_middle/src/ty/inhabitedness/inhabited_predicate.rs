@@ -79,7 +79,7 @@ impl<'tcx> InhabitedPredicate<'tcx> {
     }
 
     #[instrument(level = "debug", skip(tcx, typing_env, in_module, reveal_opaque), ret)]
-    fn apply_inner<E: std::fmt::Debug>(
+    fn apply_inner<E: core::fmt::Debug>(
         self,
         tcx: TyCtxt<'tcx>,
         typing_env: TypingEnv<'tcx>,

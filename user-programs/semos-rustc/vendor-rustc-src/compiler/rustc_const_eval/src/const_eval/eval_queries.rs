@@ -1,4 +1,4 @@
-use std::sync::atomic::Ordering::Relaxed;
+use core::sync::atomic::Ordering::Relaxed;
 
 use either::{Left, Right};
 use rustc_abi::{self as abi, BackendRepr};

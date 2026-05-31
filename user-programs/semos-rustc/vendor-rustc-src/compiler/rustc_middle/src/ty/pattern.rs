@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_data_structures::intern::Interned;
 use rustc_macros::HashStable;
@@ -51,7 +51,7 @@ impl<'tcx> Flags for Pattern<'tcx> {
     }
 }
 
-impl<'tcx> std::ops::Deref for Pattern<'tcx> {
+impl<'tcx> core::ops::Deref for Pattern<'tcx> {
     type Target = PatternKind<'tcx>;
 
     fn deref(&self) -> &Self::Target {

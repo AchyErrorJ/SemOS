@@ -1,6 +1,6 @@
-use std::borrow::Cow;
-use std::fmt;
-use std::hash::Hash;
+use alloc::borrow::Cow;
+use core::fmt;
+use core::hash::Hash;
 
 use rustc_data_structures::base_n::{BaseNString, CASE_INSENSITIVE, ToBaseN};
 use rustc_data_structures::fingerprint::Fingerprint;
@@ -651,7 +651,7 @@ impl<'tcx> CodegenUnitNameBuilder<'tcx> {
         C: fmt::Display,
         S: fmt::Display,
     {
-        use std::fmt::Write;
+        use core::fmt::Write;
 
         let mut cgu_name = String::with_capacity(64);
 

@@ -1,7 +1,7 @@
 // ignore-tidy-filelength
 
-use std::iter;
-use std::ops::ControlFlow;
+use core::iter;
+use core::ops::ControlFlow;
 
 use either::Either;
 use hir::{ClosureKind, Path};
@@ -1969,7 +1969,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
         }
 
         impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for Holds<'tcx> {
-            type Result = std::ops::ControlFlow<()>;
+            type Result = core::ops::ControlFlow<()>;
 
             fn visit_ty(&mut self, t: Ty<'tcx>) -> Self::Result {
                 if t == self.ty {
@@ -3623,7 +3623,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
                 let predecessors = body.basic_blocks.predecessors()[location.block].to_vec();
                 Either::Left(predecessors.into_iter().map(move |bb| body.terminator_loc(bb)))
             } else {
-                Either::Right(std::iter::once(Location {
+                Either::Right(core::iter::once(Location {
                     statement_index: location.statement_index - 1,
                     ..location
                 }))

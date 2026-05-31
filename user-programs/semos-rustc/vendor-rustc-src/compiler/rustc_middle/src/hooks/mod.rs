@@ -110,7 +110,7 @@ declare_hooks! {
 }
 
 #[cold]
-fn default_hook(name: &str, args: &dyn std::fmt::Debug) -> ! {
+fn default_hook(name: &str, args: &dyn core::fmt::Debug) -> ! {
     bug!(
         "`tcx.{name}{args:?}` cannot be called as `{name}` was never assigned to a provider function"
     )

@@ -2,8 +2,8 @@
 //! `rustc_graphviz` traits, specialized to attaching borrowck analysis
 //! data to rendered labels.
 
-use std::borrow::Cow;
-use std::io::{self, Write};
+use alloc::borrow::Cow;
+use semos_std::io::{self, Write};
 
 use itertools::Itertools;
 use rustc_graphviz as dot;

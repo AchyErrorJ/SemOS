@@ -1,5 +1,8 @@
+use alloc::sync::Arc;
+#[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
 
 use rustc_hir::attrs::DebuggerVisualizerType;
 use rustc_macros::{Decodable, Encodable, HashStable};

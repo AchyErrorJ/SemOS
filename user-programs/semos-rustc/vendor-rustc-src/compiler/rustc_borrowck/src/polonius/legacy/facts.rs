@@ -1,8 +1,16 @@
-use std::error::Error;
-use std::fmt::Debug;
+use core::error::Error;
+use core::fmt::Debug;
+#[cfg(not(target_os = "none"))]
 use std::fs::{self, File};
+#[cfg(not(target_os = "none"))]
 use std::io::Write;
+#[cfg(not(target_os = "none"))]
 use std::path::Path;
+#[cfg(target_os = "none")]
+use semos_std::path::Path;
+
+use alloc::boxed::Box;
+use alloc::string::String;
 
 use polonius_engine::{AllFacts, Atom, Output};
 use rustc_macros::extension;
@@ -60,6 +68,7 @@ impl PoloniusFacts {
             || tcx.sess.opts.unstable_opts.polonius.is_legacy_enabled()
     }
 
+    #[cfg(not(target_os = "none"))]
     fn write_to_dir(
         &self,
         dir: impl AsRef<Path>,
@@ -104,6 +113,18 @@ impl PoloniusFacts {
         }
         Ok(())
     }
+
+    // M27 §1.3 R4 facts dump deferred — needs FS surface we don't expose.
+    // SemOS target: -Znll-facts is not supported, returns Ok(()) as a no-op
+    // so callers don't blow up. R2 flagged this in polonius/legacy/facts.rs.
+    #[cfg(target_os = "none")]
+    fn write_to_dir(
+        &self,
+        _dir: impl AsRef<Path>,
+        _location_table: &PoloniusLocationTable,
+    ) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
 }
 
 impl Atom for BorrowIndex {
@@ -118,11 +139,13 @@ impl Atom for LocationIndex {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 struct FactWriter<'w> {
     location_table: &'w PoloniusLocationTable,
     dir: &'w Path,
 }
 
+#[cfg(not(target_os = "none"))]
 impl<'w> FactWriter<'w> {
     fn write_facts_to_path<T>(&self, rows: &[T], file_name: &str) -> Result<(), Box<dyn Error>>
     where
@@ -137,6 +160,7 @@ impl<'w> FactWriter<'w> {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 trait FactRow {
     fn write(
         &self,
@@ -145,6 +169,7 @@ trait FactRow {
     ) -> Result<(), Box<dyn Error>>;
 }
 
+#[cfg(not(target_os = "none"))]
 impl FactRow for PoloniusRegionVid {
     fn write(
         &self,
@@ -155,6 +180,7 @@ impl FactRow for PoloniusRegionVid {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl<A, B> FactRow for (A, B)
 where
     A: FactCell,
@@ -169,6 +195,7 @@ where
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl<A, B, C> FactRow for (A, B, C)
 where
     A: FactCell,
@@ -184,6 +211,7 @@ where
     }
 }
 
+#[cfg(not(target_os = "none"))]
 fn write_row(
     out: &mut dyn Write,
     location_table: &PoloniusLocationTable,
@@ -196,40 +224,47 @@ fn write_row(
     Ok(())
 }
 
+#[cfg(not(target_os = "none"))]
 trait FactCell {
     fn to_string(&self, location_table: &PoloniusLocationTable) -> String;
 }
 
+#[cfg(not(target_os = "none"))]
 impl FactCell for BorrowIndex {
     fn to_string(&self, _location_table: &PoloniusLocationTable) -> String {
         format!("{self:?}")
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl FactCell for Local {
     fn to_string(&self, _location_table: &PoloniusLocationTable) -> String {
         format!("{self:?}")
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl FactCell for MovePathIndex {
     fn to_string(&self, _location_table: &PoloniusLocationTable) -> String {
         format!("{self:?}")
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl FactCell for PoloniusRegionVid {
     fn to_string(&self, _location_table: &PoloniusLocationTable) -> String {
         format!("{self:?}")
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl FactCell for RegionVid {
     fn to_string(&self, _location_table: &PoloniusLocationTable) -> String {
         format!("{self:?}")
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl FactCell for LocationIndex {
     fn to_string(&self, location_table: &PoloniusLocationTable) -> String {
         format!("{:?}", location_table.to_rich_location(*self))

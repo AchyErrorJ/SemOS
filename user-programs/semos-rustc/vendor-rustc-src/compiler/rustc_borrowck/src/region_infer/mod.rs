@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
-use std::rc::Rc;
+use alloc::collections::VecDeque;
+use alloc::rc::Rc;
 
 use rustc_data_structures::frozen::Frozen;
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -825,7 +825,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                     // If we get here, we don't have any reason to prefer
                     // one region over the other. Just pick the
                     // one with the lower index for now.
-                    lub = std::cmp::min(ur, lub);
+                    lub = core::cmp::min(ur, lub);
                 }
             } else {
                 lub = new_lub;

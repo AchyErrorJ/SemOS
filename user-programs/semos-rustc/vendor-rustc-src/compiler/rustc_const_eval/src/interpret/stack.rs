@@ -1,7 +1,7 @@
 //! Manages the low-level pushing and popping of stack frames and the (de)allocation of local variables.
 //! For handling of argument passing and return values, see the `call` module.
-use std::cell::Cell;
-use std::{fmt, mem};
+use core::cell::Cell;
+use core::{fmt, mem};
 
 use either::{Either, Left, Right};
 use rustc_hir as hir;
@@ -24,12 +24,12 @@ use crate::{enter_trace_span, errors};
 
 // The Phantomdata exists to prevent this type from being `Send`. If it were sent across a thread
 // boundary and dropped in the other thread, it would exit the span in the other thread.
-struct SpanGuard(tracing::Span, std::marker::PhantomData<*const u8>);
+struct SpanGuard(tracing::Span, core::marker::PhantomData<*const u8>);
 
 impl SpanGuard {
     /// By default a `SpanGuard` does nothing.
     fn new() -> Self {
-        Self(tracing::Span::none(), std::marker::PhantomData)
+        Self(tracing::Span::none(), core::marker::PhantomData)
     }
 
     /// If a span is entered, we exit the previous span (if any, normally none) and enter the
@@ -41,7 +41,7 @@ impl SpanGuard {
         // we never enter or exit more spans than vice versa. Unless you `mem::leak`, then we
         // can't protect the tracing stack, but that'll just lead to weird logging, no actual
         // problems.
-        *self = Self(span, std::marker::PhantomData);
+        *self = Self(span, core::marker::PhantomData);
         self.0.with_subscriber(|(id, dispatch)| {
             dispatch.enter(id);
         });
@@ -144,8 +144,8 @@ pub struct LocalState<'tcx, Prov: Provenance = CtfeProvenance> {
     layout: Cell<Option<TyAndLayout<'tcx>>>,
 }
 
-impl<Prov: Provenance> std::fmt::Debug for LocalState<'_, Prov> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Prov: Provenance> core::fmt::Debug for LocalState<'_, Prov> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("LocalState")
             .field("value", &self.value)
             .field("ty", &self.layout.get().map(|l| l.ty))
@@ -630,8 +630,8 @@ impl<'tcx, Prov: Provenance> LocalState<'tcx, Prov> {
     pub(super) fn print(
         &self,
         allocs: &mut Vec<Option<AllocId>>,
-        fmt: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+        fmt: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
         match self.value {
             LocalValue::Dead => write!(fmt, " is dead")?,
             LocalValue::Live(Operand::Immediate(Immediate::Uninit)) => {

@@ -3,8 +3,8 @@
 //! written by hand, though we've recently added some macros and proc-macros
 //! to help with the tedium.
 
-use std::fmt::{self, Debug};
-use std::marker::PhantomData;
+use core::fmt::{self, Debug};
+use core::marker::PhantomData;
 
 use rustc_abi::TyAndLayout;
 use rustc_hir::def::Namespace;

@@ -2461,7 +2461,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             let suggestion = |name, args| {
                 format!(
                     "::{name}({})",
-                    std::iter::repeat_n("_", args).collect::<Vec<_>>().join(", ")
+                    core::iter::repeat_n("_", args).collect::<Vec<_>>().join(", ")
                 )
             };
             match &items[..] {

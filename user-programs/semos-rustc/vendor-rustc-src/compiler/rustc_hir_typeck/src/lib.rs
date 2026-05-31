@@ -1,3 +1,4 @@
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(assert_matches)]
 #![feature(box_patterns)]
@@ -7,6 +8,12 @@
 #![feature(never_type)]
 #![feature(trim_prefix_suffix)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 mod _match;
 mod autoderef;

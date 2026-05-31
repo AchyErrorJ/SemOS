@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_errors::{Diag, E0275, EmissionGuarantee, ErrorGuaranteed, struct_span_code_err};
 use rustc_hir::def::Namespace;

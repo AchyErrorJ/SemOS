@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests;
 
-use std::ops::Range;
-use std::{hash, iter};
+use core::ops::Range;
+use core::{hash, iter};
 
 use rustc_abi::Size;
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable};

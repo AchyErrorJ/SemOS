@@ -35,7 +35,7 @@
 //! // and are then unable to coerce `&7i32` to `&mut i32`.
 //! ```
 
-use std::ops::{ControlFlow, Deref};
+use core::ops::{ControlFlow, Deref};
 
 use rustc_errors::codes::*;
 use rustc_errors::{Applicability, Diag, struct_span_code_err};
@@ -209,7 +209,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
             success(
                 adjustments
                     .into_iter()
-                    .chain(std::iter::once(Adjustment { target: ty, kind: final_adjustment }))
+                    .chain(core::iter::once(Adjustment { target: ty, kind: final_adjustment }))
                     .collect(),
                 ty,
                 obligations,
@@ -1642,7 +1642,7 @@ impl<'tcx> CoerceMany<'tcx> {
                                 prior_arm_ty,
                                 prior_non_diverging_arms
                                     .iter()
-                                    .chain(std::iter::once(&arm_span))
+                                    .chain(core::iter::once(&arm_span))
                                     .copied(),
                             );
                         }

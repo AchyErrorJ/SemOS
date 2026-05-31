@@ -23,8 +23,8 @@ mod util;
 pub mod vtable;
 pub mod wf;
 
-use std::fmt::Debug;
-use std::ops::ControlFlow;
+use core::fmt::Debug;
+use core::ops::ControlFlow;
 
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::def::DefKind;
@@ -126,7 +126,7 @@ pub enum FulfillmentErrorCode<'tcx> {
 }
 
 impl<'tcx> Debug for FulfillmentErrorCode<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match *self {
             FulfillmentErrorCode::Select(ref e) => write!(f, "{e:?}"),
             FulfillmentErrorCode::Project(ref e) => write!(f, "{e:?}"),

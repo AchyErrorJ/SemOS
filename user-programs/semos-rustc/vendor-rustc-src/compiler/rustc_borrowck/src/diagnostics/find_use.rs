@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_middle::mir::visit::{PlaceContext, Visitor};

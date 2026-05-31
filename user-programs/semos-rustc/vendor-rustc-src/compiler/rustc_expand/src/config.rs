@@ -1,6 +1,6 @@
 //! Conditional compilation stripping.
 
-use std::iter;
+use core::iter;
 
 use rustc_ast::token::{Delimiter, Token, TokenKind};
 use rustc_ast::tokenstream::{
@@ -126,7 +126,7 @@ pub fn features(sess: &Session, krate_attrs: &[Attribute], crate_name: Symbol) -
                 // The bug is probably in the standard library and not the compiler in that case,
                 // but that doesn't really matter - we want a bug report.
                 if features.internal(name) && !STDLIB_STABLE_CRATES.contains(&crate_name) {
-                    sess.using_internal_features.store(true, std::sync::atomic::Ordering::Relaxed);
+                    sess.using_internal_features.store(true, core::sync::atomic::Ordering::Relaxed);
                 }
 
                 features.set_enabled_lang_feature(EnabledLangFeature {
@@ -145,7 +145,7 @@ pub fn features(sess: &Session, krate_attrs: &[Attribute], crate_name: Symbol) -
             // Similar to above, detect internal lib features to suppress
             // the ICE message that asks for a report.
             if features.internal(name) && !STDLIB_STABLE_CRATES.contains(&crate_name) {
-                sess.using_internal_features.store(true, std::sync::atomic::Ordering::Relaxed);
+                sess.using_internal_features.store(true, core::sync::atomic::Ordering::Relaxed);
             }
         }
     }

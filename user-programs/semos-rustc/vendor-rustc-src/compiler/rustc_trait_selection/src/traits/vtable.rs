@@ -1,5 +1,5 @@
-use std::fmt::Debug;
-use std::ops::ControlFlow;
+use core::fmt::Debug;
+use core::ops::ControlFlow;
 
 use rustc_hir::def_id::DefId;
 use rustc_infer::traits::util::PredicateSet;

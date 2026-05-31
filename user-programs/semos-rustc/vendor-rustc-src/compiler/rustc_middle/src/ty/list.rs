@@ -1,8 +1,8 @@
-use std::alloc::Layout;
-use std::cmp::Ordering;
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::{fmt, iter, mem, ptr, slice};
+use core::alloc::Layout;
+use core::cmp::Ordering;
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
+use core::{fmt, iter, mem, ptr, slice};
 
 use rustc_data_structures::aligned::{Aligned, align_of};
 use rustc_data_structures::sync::DynSync;

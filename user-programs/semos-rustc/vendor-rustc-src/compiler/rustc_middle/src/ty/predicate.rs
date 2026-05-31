@@ -1,4 +1,5 @@
-use std::cmp::Ordering;
+use alloc::borrow::Cow;
+use core::cmp::Ordering;
 
 use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::DefId;
@@ -144,19 +145,19 @@ impl<'tcx> Predicate<'tcx> {
 }
 
 impl<'tcx> rustc_errors::IntoDiagArg for Predicate<'tcx> {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         ty::tls::with(|tcx| {
             let pred = tcx.short_string(self, path);
-            rustc_errors::DiagArgValue::Str(std::borrow::Cow::Owned(pred))
+            rustc_errors::DiagArgValue::Str(Cow::Owned(pred))
         })
     }
 }
 
 impl<'tcx> rustc_errors::IntoDiagArg for Clause<'tcx> {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         ty::tls::with(|tcx| {
             let clause = tcx.short_string(self, path);
-            rustc_errors::DiagArgValue::Str(std::borrow::Cow::Owned(clause))
+            rustc_errors::DiagArgValue::Str(Cow::Owned(clause))
         })
     }
 }

@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_hir::LangItem;
 use rustc_infer::infer::InferCtxt;
@@ -197,7 +197,7 @@ impl<'tcx> BestObligation<'tcx> {
         derived_obligation: PredicateObligation<'tcx>,
         and_then: impl FnOnce(&mut Self) -> <Self as ProofTreeVisitor<'tcx>>::Result,
     ) -> <Self as ProofTreeVisitor<'tcx>>::Result {
-        let old_obligation = std::mem::replace(&mut self.obligation, derived_obligation);
+        let old_obligation = core::mem::replace(&mut self.obligation, derived_obligation);
         let res = and_then(self);
         self.obligation = old_obligation;
         res

@@ -2441,7 +2441,7 @@ impl<'tcx> PrettyPrinter<'tcx> for FmtPrinter<'_, 'tcx> {
         def_id: DefId,
         args: &'tcx [GenericArg<'tcx>],
     ) -> Result<(), PrintError> {
-        let was_in_value = std::mem::replace(&mut self.in_value, true);
+        let was_in_value = core::mem::replace(&mut self.in_value, true);
         self.print_def_path(def_id, args)?;
         self.in_value = was_in_value;
 
@@ -2481,7 +2481,7 @@ impl<'tcx> PrettyPrinter<'tcx> for FmtPrinter<'_, 'tcx> {
         self.write_str("{")?;
         f(self)?;
         self.write_str(conversion)?;
-        let was_in_value = std::mem::replace(&mut self.in_value, false);
+        let was_in_value = core::mem::replace(&mut self.in_value, false);
         t(self)?;
         self.in_value = was_in_value;
         self.write_str("}")?;
@@ -2494,7 +2494,7 @@ impl<'tcx> PrettyPrinter<'tcx> for FmtPrinter<'_, 'tcx> {
     ) -> Result<(), PrintError> {
         write!(self, "<")?;
 
-        let was_in_value = std::mem::replace(&mut self.in_value, false);
+        let was_in_value = core::mem::replace(&mut self.in_value, false);
         f(self)?;
         self.in_value = was_in_value;
 
@@ -2934,10 +2934,10 @@ where
 pub struct TraitRefPrintOnlyTraitPath<'tcx>(ty::TraitRef<'tcx>);
 
 impl<'tcx> rustc_errors::IntoDiagArg for TraitRefPrintOnlyTraitPath<'tcx> {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         ty::tls::with(|tcx| {
             let trait_ref = tcx.short_string(self, path);
-            rustc_errors::DiagArgValue::Str(std::borrow::Cow::Owned(trait_ref))
+            rustc_errors::DiagArgValue::Str(alloc::borrow::Cow::Owned(trait_ref))
         })
     }
 }
@@ -2954,10 +2954,10 @@ impl<'tcx> fmt::Debug for TraitRefPrintOnlyTraitPath<'tcx> {
 pub struct TraitRefPrintSugared<'tcx>(ty::TraitRef<'tcx>);
 
 impl<'tcx> rustc_errors::IntoDiagArg for TraitRefPrintSugared<'tcx> {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         ty::tls::with(|tcx| {
             let trait_ref = tcx.short_string(self, path);
-            rustc_errors::DiagArgValue::Str(std::borrow::Cow::Owned(trait_ref))
+            rustc_errors::DiagArgValue::Str(alloc::borrow::Cow::Owned(trait_ref))
         })
     }
 }
@@ -3496,7 +3496,10 @@ pub fn trimmed_def_paths(tcx: TyCtxt<'_>, (): ()) -> DefIdMap<Symbol> {
     // Put the symbol from all the unique namespace+symbol pairs into `map`.
     let mut map: DefIdMap<Symbol> = Default::default();
     for ((_, symbol), opt_def_id) in unique_symbols_rev.drain(..) {
+        #[cfg(not(target_os = "none"))]
         use std::collections::hash_map::Entry::{Occupied, Vacant};
+        #[cfg(target_os = "none")]
+        use hashbrown::hash_map::Entry::{Occupied, Vacant};
 
         if let Some(def_id) = opt_def_id {
             match map.entry(def_id) {

@@ -2,6 +2,7 @@
 
 // tidy-alphabetical-start
 #![allow(internal_features)]
+#![cfg_attr(target_os = "none", no_std)]
 #![feature(assert_matches)]
 #![feature(box_patterns)]
 #![feature(file_buffered)]
@@ -13,11 +14,17 @@
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
-use std::borrow::Cow;
-use std::cell::{OnceCell, RefCell};
-use std::marker::PhantomData;
-use std::ops::{ControlFlow, Deref};
-use std::rc::Rc;
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use alloc::borrow::Cow;
+use core::cell::{OnceCell, RefCell};
+use core::marker::PhantomData;
+use core::ops::{ControlFlow, Deref};
+use alloc::rc::Rc;
 
 use borrow_set::LocalsStateAtExit;
 use polonius_engine::AllFacts;

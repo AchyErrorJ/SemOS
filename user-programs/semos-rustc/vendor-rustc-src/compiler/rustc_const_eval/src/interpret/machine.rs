@@ -2,9 +2,10 @@
 //! This separation exists to ensure that no fancy miri features like
 //! interpreting common C functions leak into CTFE.
 
-use std::borrow::{Borrow, Cow};
-use std::fmt::Debug;
-use std::hash::Hash;
+use alloc::borrow::Cow;
+use core::borrow::Borrow;
+use core::fmt::Debug;
+use core::hash::Hash;
 
 use rustc_abi::{Align, Size};
 use rustc_apfloat::{Float, FloatConvert};
@@ -98,7 +99,7 @@ pub trait AllocMap<K: Hash + Eq, V> {
 /// and some use case dependent behaviour can instead be applied.
 pub trait Machine<'tcx>: Sized {
     /// Additional memory kinds a machine wishes to distinguish from the builtin ones
-    type MemoryKind: Debug + std::fmt::Display + MayLeak + Eq + 'static;
+    type MemoryKind: Debug + core::fmt::Display + MayLeak + Eq + 'static;
 
     /// Pointers are "tagged" with provenance information; typically the `AllocId` they belong to.
     type Provenance: Provenance + Eq + Hash + 'static;

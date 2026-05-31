@@ -90,7 +90,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
         // For example:
         // - casting between `dyn for<'a> Trait<fn(&'a u8)>` and `dyn Trait<fn(&'static u8)>` is OK
         // - casting between `dyn Trait<for<'a> fn(&'a u8)>` and either of the above is UB
-        for (a_pred, b_pred) in std::iter::zip(sorted_vtable, sorted_expected) {
+        for (a_pred, b_pred) in core::iter::zip(sorted_vtable, sorted_expected) {
             let a_pred = self.tcx.normalize_erasing_late_bound_regions(self.typing_env, a_pred);
             let b_pred = self.tcx.normalize_erasing_late_bound_regions(self.typing_env, b_pred);
 

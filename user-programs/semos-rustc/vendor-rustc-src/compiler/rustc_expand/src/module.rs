@@ -1,5 +1,5 @@
-use std::iter::once;
-use std::path::{self, Path, PathBuf};
+use core::iter::once;
+use semos_std::path::{self, Path, PathBuf}; // M27 R4 B5
 
 use rustc_ast::{AttrVec, Attribute, Inline, Item, ModSpans};
 use rustc_attr_parsing::validate_attr;

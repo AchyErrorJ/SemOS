@@ -5,8 +5,8 @@ mod checks;
 mod inspect_obligations;
 mod suggestions;
 
-use std::cell::{Cell, RefCell};
-use std::ops::Deref;
+use core::cell::{Cell, RefCell};
+use core::ops::Deref;
 
 use hir::def_id::CRATE_DEF_ID;
 use rustc_errors::DiagCtxtHandle;

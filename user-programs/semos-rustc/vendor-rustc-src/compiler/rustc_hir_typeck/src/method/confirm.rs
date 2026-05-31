@@ -1,5 +1,5 @@
-use std::fmt::Debug;
-use std::ops::Deref;
+use core::fmt::Debug;
+use core::ops::Deref;
 
 use rustc_hir as hir;
 use rustc_hir::GenericArg;

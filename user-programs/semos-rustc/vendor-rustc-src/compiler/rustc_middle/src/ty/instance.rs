@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_data_structures::assert_matches;
 use rustc_data_structures::fx::FxHashMap;

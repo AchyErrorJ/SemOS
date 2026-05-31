@@ -1,7 +1,14 @@
-use std::collections::BTreeSet;
-use std::fmt::{Display, Write as _};
+use alloc::collections::BTreeSet;
+use core::fmt::{Display, Write as _};
+
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "none"))]
 use std::{fs, io};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::{fs, io};
 
 use rustc_abi::Size;
 use rustc_ast::InlineAsmTemplatePiece;
@@ -289,6 +296,7 @@ impl<'dis, 'de, 'tcx> MirDumper<'dis, 'de, 'tcx> {
     /// bit of MIR-related data. Used by `mir-dump`, but also by other
     /// bits of code (e.g., NLL inference) that dump graphviz data or
     /// other things, and hence takes the extension as an argument.
+    #[cfg(not(target_os = "none"))]
     pub fn create_dump_file(
         &self,
         extension: &str,
@@ -306,6 +314,18 @@ impl<'dis, 'de, 'tcx> MirDumper<'dis, 'de, 'tcx> {
         fs::File::create_buffered(&file_path).map_err(|e| {
             io::Error::new(e.kind(), format!("IO error creating MIR dump file: {file_path:?}; {e}"))
         })
+    }
+
+    // M27 §1.5: SemOS skips MIR file dumps entirely (no buffered writer +
+    // simplified fs surface). Returns the existing file_path but errors at
+    // creation; callers (mir-dump diagnostics) treat this as opt-out.
+    #[cfg(target_os = "none")]
+    pub fn create_dump_file(
+        &self,
+        _extension: &str,
+        _body: &Body<'tcx>,
+    ) -> io::Result<fs::File> {
+        Err(io::Error::other())
     }
 }
 
@@ -859,7 +879,7 @@ impl Debug for StmtDebugInfo<'_> {
 }
 
 impl Display for NonDivergingIntrinsic<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Assume(op) => write!(f, "assume({op:?})"),
             Self::CopyNonOverlapping(CopyNonOverlapping { src, dst, count }) => {
@@ -1636,10 +1656,10 @@ pub struct RenderAllocation<'a, 'tcx, Prov: Provenance, Extra, Bytes: AllocBytes
     alloc: &'a Allocation<Prov, Extra, Bytes>,
 }
 
-impl<'a, 'tcx, Prov: Provenance, Extra, Bytes: AllocBytes> std::fmt::Display
+impl<'a, 'tcx, Prov: Provenance, Extra, Bytes: AllocBytes> core::fmt::Display
     for RenderAllocation<'a, 'tcx, Prov, Extra, Bytes>
 {
-    fn fmt(&self, w: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let RenderAllocation { tcx, alloc } = *self;
         write!(w, "size: {}, align: {})", alloc.size().bytes(), alloc.align.bytes())?;
         if alloc.size() == Size::ZERO {
@@ -1657,7 +1677,7 @@ impl<'a, 'tcx, Prov: Provenance, Extra, Bytes: AllocBytes> std::fmt::Display
     }
 }
 
-fn write_allocation_endline(w: &mut dyn std::fmt::Write, ascii: &str) -> std::fmt::Result {
+fn write_allocation_endline(w: &mut dyn core::fmt::Write, ascii: &str) -> core::fmt::Result {
     for _ in 0..(BYTES_PER_LINE - ascii.chars().count()) {
         write!(w, "   ")?;
     }
@@ -1669,12 +1689,12 @@ const BYTES_PER_LINE: usize = 16;
 
 /// Prints the line start address and returns the new line start address.
 fn write_allocation_newline(
-    w: &mut dyn std::fmt::Write,
+    w: &mut dyn core::fmt::Write,
     mut line_start: Size,
     ascii: &str,
     pos_width: usize,
     prefix: &str,
-) -> Result<Size, std::fmt::Error> {
+) -> Result<Size, core::fmt::Error> {
     write_allocation_endline(w, ascii)?;
     line_start += Size::from_bytes(BYTES_PER_LINE);
     write!(w, "{}0x{:02$x} │ ", prefix, line_start.bytes(), pos_width)?;
@@ -1687,9 +1707,9 @@ fn write_allocation_newline(
 pub fn write_allocation_bytes<'tcx, Prov: Provenance, Extra, Bytes: AllocBytes>(
     tcx: TyCtxt<'tcx>,
     alloc: &Allocation<Prov, Extra, Bytes>,
-    w: &mut dyn std::fmt::Write,
+    w: &mut dyn core::fmt::Write,
     prefix: &str,
-) -> std::fmt::Result {
+) -> core::fmt::Result {
     let num_lines = alloc.size().bytes_usize().saturating_sub(BYTES_PER_LINE);
     // Number of chars needed to represent all line numbers.
     let pos_width = hex_number_length(alloc.size().bytes());

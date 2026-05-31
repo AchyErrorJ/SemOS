@@ -3,7 +3,7 @@
 //! Will be removed in the future, once the in-tree `-Zpolonius=next` implementation reaches feature
 //! parity.
 
-use std::iter;
+use core::iter;
 
 use either::Either;
 use rustc_middle::mir::{Body, Local, LocalKind, Location, START_BLOCK};

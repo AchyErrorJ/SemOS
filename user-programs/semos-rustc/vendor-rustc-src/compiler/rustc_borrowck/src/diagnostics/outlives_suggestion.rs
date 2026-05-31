@@ -1,7 +1,7 @@
 //! Contains utilities for generating suggestions for borrowck errors related to unsatisfied
 //! outlives constraints.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_errors::Diag;

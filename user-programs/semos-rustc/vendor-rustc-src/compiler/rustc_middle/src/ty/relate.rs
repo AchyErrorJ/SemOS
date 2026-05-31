@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 pub use rustc_type_ir::relate::*;
 

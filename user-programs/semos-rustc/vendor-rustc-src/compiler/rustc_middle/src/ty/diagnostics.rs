@@ -1,7 +1,7 @@
 //! Diagnostics related methods for `Ty`.
 
-use std::fmt::Write;
-use std::ops::ControlFlow;
+use core::fmt::Write;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_errors::{
@@ -20,19 +20,19 @@ use crate::ty::{
 };
 
 impl IntoDiagArg for Ty<'_> {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         ty::tls::with(|tcx| {
             let ty = tcx.short_string(self, path);
-            DiagArgValue::Str(std::borrow::Cow::Owned(ty))
+            DiagArgValue::Str(alloc::borrow::Cow::Owned(ty))
         })
     }
 }
 
 impl IntoDiagArg for Instance<'_> {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         ty::tls::with(|tcx| {
             let instance = tcx.short_string_namespace(self, path, Namespace::ValueNS);
-            DiagArgValue::Str(std::borrow::Cow::Owned(instance))
+            DiagArgValue::Str(alloc::borrow::Cow::Owned(instance))
         })
     }
 }

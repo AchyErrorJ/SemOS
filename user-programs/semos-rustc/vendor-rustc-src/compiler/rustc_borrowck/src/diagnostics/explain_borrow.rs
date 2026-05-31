@@ -454,7 +454,7 @@ impl<'tcx> BorrowExplanation<'tcx> {
             let mut failed = false;
 
             let elaborated_args =
-                std::iter::zip(*args, &generics.own_params).map(|(arg, param)| {
+                core::iter::zip(*args, &generics.own_params).map(|(arg, param)| {
                     if let Some(ty::Dynamic(obj, _)) = arg.as_type().map(Ty::kind) {
                         let default = tcx.object_lifetime_default(param.def_id);
 

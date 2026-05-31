@@ -1,7 +1,7 @@
 //! Visitor for a run-time value with a given layout: Traverse enums, structs and other compound
 //! types until we arrive at the leaves, with custom handling for primitive types.
 
-use std::num::NonZero;
+use core::num::NonZero;
 
 use rustc_abi::{FieldIdx, FieldsShape, VariantIdx, Variants};
 use rustc_middle::mir::interpret::InterpResult;

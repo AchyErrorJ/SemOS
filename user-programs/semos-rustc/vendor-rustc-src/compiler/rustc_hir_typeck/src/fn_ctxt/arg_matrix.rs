@@ -1,5 +1,5 @@
 use core::cmp::Ordering;
-use std::cmp;
+use core::cmp;
 
 use rustc_index::IndexVec;
 use rustc_middle::ty::error::TypeError;

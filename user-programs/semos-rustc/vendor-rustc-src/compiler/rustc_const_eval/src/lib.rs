@@ -1,3 +1,5 @@
+// M27 Phase 3 E3: cfg_attr no_std (RECIPE §1.2 D1 preferred pattern).
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(array_try_map)]
 #![feature(assert_matches)]
@@ -13,13 +15,19 @@
 #![warn(unqualified_local_imports)]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
 pub mod check_consts;
 pub mod const_eval;
 mod errors;
 pub mod interpret;
 pub mod util;
 
-use std::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicBool;
 
 use rustc_middle::ty;
 use rustc_middle::util::Providers;

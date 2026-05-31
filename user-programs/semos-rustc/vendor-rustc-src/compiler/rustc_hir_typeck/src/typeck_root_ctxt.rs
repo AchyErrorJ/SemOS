@@ -1,5 +1,5 @@
-use std::cell::{Cell, RefCell};
-use std::ops::Deref;
+use core::cell::{Cell, RefCell};
+use core::ops::Deref;
 
 use rustc_data_structures::unord::UnordSet;
 use rustc_hir::def_id::LocalDefId;

@@ -1,5 +1,5 @@
-use std::fmt::{self, Display};
-use std::iter;
+use core::fmt::{self, Display};
+use core::iter;
 
 use rustc_data_structures::fx::IndexEntry;
 use rustc_errors::{Diag, EmissionGuarantee};
@@ -191,7 +191,7 @@ impl Display for RegionName {
 }
 
 impl rustc_errors::IntoDiagArg for RegionName {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         self.to_string().into_diag_arg(path)
     }
 }

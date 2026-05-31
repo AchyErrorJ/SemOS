@@ -7,8 +7,8 @@
 //! but we still need to do bounds checking and adjust the layout. To not duplicate that with MPlaceTy, we actually
 //! implement the logic on OpTy, and MPlaceTy calls that.
 
-use std::marker::PhantomData;
-use std::ops::Range;
+use core::marker::PhantomData;
+use core::ops::Range;
 
 use rustc_abi::{self as abi, FieldIdx, Size, VariantIdx};
 use rustc_middle::ty::Ty;
@@ -31,7 +31,7 @@ pub enum OffsetMode {
 }
 
 /// A thing that we can project into, and that has a layout.
-pub trait Projectable<'tcx, Prov: Provenance>: Sized + std::fmt::Debug {
+pub trait Projectable<'tcx, Prov: Provenance>: Sized + core::fmt::Debug {
     /// Get the layout.
     fn layout(&self) -> TyAndLayout<'tcx>;
 
@@ -387,7 +387,7 @@ where
     #[instrument(skip(self), level = "trace")]
     pub fn project<P>(&self, base: &P, proj_elem: mir::PlaceElem<'tcx>) -> InterpResult<'tcx, P>
     where
-        P: Projectable<'tcx, M::Provenance> + From<MPlaceTy<'tcx, M::Provenance>> + std::fmt::Debug,
+        P: Projectable<'tcx, M::Provenance> + From<MPlaceTy<'tcx, M::Provenance>> + core::fmt::Debug,
     {
         use rustc_middle::mir::ProjectionElem::*;
         interp_ok(match proj_elem {

@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use core::fmt::Write;
 
 use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::{CrateNum, DefId};
@@ -196,7 +196,7 @@ impl<'tcx> PrettyPrinter<'tcx> for TypeNamePrinter<'tcx> {
 }
 
 impl Write for TypeNamePrinter<'_> {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.path.push_str(s);
         Ok(())
     }

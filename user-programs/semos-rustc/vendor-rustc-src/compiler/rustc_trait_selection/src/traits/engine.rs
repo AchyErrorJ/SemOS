@@ -1,5 +1,5 @@
-use std::cell::RefCell;
-use std::fmt::Debug;
+use core::cell::RefCell;
+use core::fmt::Debug;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_errors::ErrorGuaranteed;

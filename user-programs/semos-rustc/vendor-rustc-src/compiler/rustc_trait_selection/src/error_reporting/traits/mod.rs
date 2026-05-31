@@ -7,7 +7,7 @@ pub mod on_unimplemented_format;
 mod overflow;
 pub mod suggestions;
 
-use std::{fmt, iter};
+use core::{fmt, iter};
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_data_structures::unord::UnordSet;
@@ -452,7 +452,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
 /// Recovers the "impl X for Y" signature from `impl_def_id` and returns it as a
 /// string.
 pub(crate) fn to_pretty_impl_header(tcx: TyCtxt<'_>, impl_def_id: DefId) -> Option<String> {
-    use std::fmt::Write;
+    use core::fmt::Write;
 
     let trait_ref = tcx.impl_opt_trait_ref(impl_def_id)?.instantiate_identity();
     let mut w = "impl".to_owned();

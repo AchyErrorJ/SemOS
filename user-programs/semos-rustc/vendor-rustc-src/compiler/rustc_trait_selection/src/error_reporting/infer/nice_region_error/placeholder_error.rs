@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_data_structures::intern::Interned;
 use rustc_errors::{Diag, IntoDiagArg};
@@ -31,7 +31,8 @@ impl<'tcx, T> IntoDiagArg for Highlighted<'tcx, T>
 where
     T: for<'a> Print<'tcx, FmtPrinter<'a, 'tcx>>,
 {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         rustc_errors::DiagArgValue::Str(self.to_string().into())
     }
 }
@@ -444,7 +445,7 @@ impl<'tcx> NiceRegionError<'_, 'tcx> {
 
         let (lt_kind, lifetime_1, lifetime_2) = match (has_sub, has_sup) {
             (Some(n1), Some(n2)) => {
-                (ActualImplExpectedLifetimeKind::Two, std::cmp::min(n1, n2), std::cmp::max(n1, n2))
+                (ActualImplExpectedLifetimeKind::Two, core::cmp::min(n1, n2), core::cmp::max(n1, n2))
             }
             (Some(n), _) | (_, Some(n)) => (ActualImplExpectedLifetimeKind::Any, n, 0),
             (None, None) => {

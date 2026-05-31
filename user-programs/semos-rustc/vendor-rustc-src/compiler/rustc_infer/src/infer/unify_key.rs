@@ -1,5 +1,5 @@
-use std::cmp;
-use std::marker::PhantomData;
+use core::cmp;
+use core::marker::PhantomData;
 
 use rustc_data_structures::unify::{NoError, UnifyKey, UnifyValue};
 use rustc_middle::{bug, ty};

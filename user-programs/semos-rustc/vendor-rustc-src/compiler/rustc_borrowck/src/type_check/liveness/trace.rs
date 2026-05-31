@@ -253,7 +253,7 @@ impl<'a, 'typeck, 'tcx> LivenessResults<'a, 'typeck, 'tcx> {
             let previous_live_at = self.use_live_at.last_set_in(block_start..=p);
 
             let exclusive_start = match (previous_defs, previous_live_at) {
-                (Some(a), Some(b)) => Some(std::cmp::max(a, b)),
+                (Some(a), Some(b)) => Some(core::cmp::max(a, b)),
                 (Some(a), None) | (None, Some(a)) => Some(a),
                 (None, None) => None,
             };

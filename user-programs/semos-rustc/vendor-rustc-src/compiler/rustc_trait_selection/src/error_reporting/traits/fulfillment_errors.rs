@@ -1,8 +1,9 @@
 // ignore-tidy-filelength
 use core::ops::ControlFlow;
-use std::borrow::Cow;
-use std::collections::hash_set;
-use std::path::PathBuf;
+use alloc::borrow::Cow;
+use hashbrown::hash_set;
+// M27 R4 B5: PathBuf carries through from semos_std on this target.
+use semos_std::path::PathBuf;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::ast::LitKind;
@@ -1505,19 +1506,19 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
 
         if let Some(error) = error.predicate.as_trait_clause() {
             self.enter_forall(error, |error| {
-                elaborate(self.tcx, std::iter::once(cond.predicate))
+                elaborate(self.tcx, core::iter::once(cond.predicate))
                     .filter_map(|implied| implied.as_trait_clause())
                     .any(|implied| self.can_match_trait(param_env, error, implied))
             })
         } else if let Some(error) = Self::as_host_effect_clause(error.predicate) {
             self.enter_forall(error, |error| {
-                elaborate(self.tcx, std::iter::once(cond.predicate))
+                elaborate(self.tcx, core::iter::once(cond.predicate))
                     .filter_map(Self::as_host_effect_clause)
                     .any(|implied| self.can_match_host_effect(param_env, error, implied))
             })
         } else if let Some(error) = error.predicate.as_projection_clause() {
             self.enter_forall(error, |error| {
-                elaborate(self.tcx, std::iter::once(cond.predicate))
+                elaborate(self.tcx, core::iter::once(cond.predicate))
                     .filter_map(|implied| implied.as_projection_clause())
                     .any(|implied| self.can_match_projection(param_env, error, implied))
             })
@@ -2083,7 +2084,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
 
                     let mut terrs = vec![];
                     for (obligation_arg, impl_arg) in
-                        std::iter::zip(obligation_trait_ref.trait_ref.args, impl_trait_ref.args)
+                        core::iter::zip(obligation_trait_ref.trait_ref.args, impl_trait_ref.args)
                     {
                         if (obligation_arg, impl_arg).references_error() {
                             return false;

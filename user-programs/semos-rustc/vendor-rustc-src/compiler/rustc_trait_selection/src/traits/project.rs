@@ -1,6 +1,6 @@
 //! Code for projecting associated types out of trait references.
 
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::sso::SsoHashSet;
 use rustc_data_structures::stack::ensure_sufficient_stack;

@@ -12,12 +12,20 @@
 //!
 //! This API is completely unstable and subject to change.
 
+// M27 Phase 3 E3: cfg_attr no_std (RECIPE §1.2 D1 preferred pattern).
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![allow(rustc::direct_use_of_rustc_type_ir)]
 #![feature(assert_matches)]
 #![feature(extend_one)]
 #![recursion_limit = "512"] // For rustdoc
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 mod errors;
 pub mod infer;

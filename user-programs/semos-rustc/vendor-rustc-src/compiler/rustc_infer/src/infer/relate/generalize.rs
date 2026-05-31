@@ -1,4 +1,4 @@
-use std::mem;
+use core::mem;
 
 use rustc_data_structures::sso::SsoHashMap;
 use rustc_data_structures::stack::ensure_sufficient_stack;

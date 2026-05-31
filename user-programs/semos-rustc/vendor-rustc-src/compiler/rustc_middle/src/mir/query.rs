@@ -1,6 +1,6 @@
 //! Values computed by queries that use MIR.
 
-use std::fmt::{self, Debug};
+use core::fmt::{self, Debug};
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_errors::ErrorGuaranteed;

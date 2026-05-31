@@ -1,6 +1,7 @@
-use std::collections::hash_map::Entry;
-use std::hash::Hash;
-use std::iter;
+use core::hash::Hash;
+use core::iter;
+
+use rustc_data_structures::fx::StdEntry as Entry;
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -623,7 +624,7 @@ impl<'a, V> LocalTableInContext<'a, V> {
     }
 }
 
-impl<'a, V> ::std::ops::Index<HirId> for LocalTableInContext<'a, V> {
+impl<'a, V> ::core::ops::Index<HirId> for LocalTableInContext<'a, V> {
     type Output = V;
 
     fn index(&self, key: HirId) -> &V {
@@ -826,20 +827,20 @@ impl<'tcx> IsIdentity for CanonicalUserType<'tcx> {
     }
 }
 
-impl<'tcx> std::fmt::Display for UserType<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'tcx> core::fmt::Display for UserType<'tcx> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.bounds.is_empty() {
             self.kind.fmt(f)
         } else {
             self.kind.fmt(f)?;
             write!(f, " + ")?;
-            std::fmt::Debug::fmt(&self.bounds, f)
+            core::fmt::Debug::fmt(&self.bounds, f)
         }
     }
 }
 
-impl<'tcx> std::fmt::Display for UserTypeKind<'tcx> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'tcx> core::fmt::Display for UserTypeKind<'tcx> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Ty(arg0) => {
                 ty::print::with_no_trimmed_paths!(write!(f, "Ty({})", arg0))

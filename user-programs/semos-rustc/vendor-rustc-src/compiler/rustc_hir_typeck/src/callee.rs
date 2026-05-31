@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use rustc_abi::{CanonAbi, ExternAbi};
 use rustc_ast::util::parser::ExprPrecedence;

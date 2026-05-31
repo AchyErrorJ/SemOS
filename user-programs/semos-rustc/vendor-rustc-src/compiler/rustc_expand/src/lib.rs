@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![cfg_attr(bootstrap, feature(array_windows))]
@@ -14,14 +14,20 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
 mod build;
 mod errors;
 mod mbe;
 mod placeholders;
 // M27 §1.5: proc-macro server (load+drive client-side dylib via mpsc).
-// Production body is host-only on SemOS v1 (no dlopen). Module is
-// retained on the SemOS target as a thin shape-preserving stub via
-// the in-file cfg gates inside proc_macro_server.rs.
+// Production body is host-only on SemOS v1 (no dlopen / mpsc / dlopen).
+// Per C3 §3 recommendation, the entire module is host-only — the
+// SemOS-target `proc_macro` module's expand() stubs do not reach
+// any proc_macro_server::Rustc constructor, so the module never compiles
+// on target. Upstream file body is preserved verbatim under this gate.
+#[cfg(not(target_os = "none"))]
 mod proc_macro_server;
 mod stats;
 

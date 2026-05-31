@@ -44,7 +44,7 @@ impl<'tcx> TyCtxt<'tcx> {
     {
         debug!(
             "normalize_erasing_regions::<{}>(value={:?}, typing_env={:?})",
-            std::any::type_name::<T>(),
+            core::any::type_name::<T>(),
             value,
             typing_env,
         );
@@ -76,7 +76,7 @@ impl<'tcx> TyCtxt<'tcx> {
     {
         debug!(
             "try_normalize_erasing_regions::<{}>(value={:?}, typing_env={:?})",
-            std::any::type_name::<T>(),
+            core::any::type_name::<T>(),
             value,
             typing_env,
         );

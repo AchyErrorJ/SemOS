@@ -238,7 +238,7 @@ impl FilterFormatString {
                         None => {
                             // FIXME(mejrs) If we start checking as mentioned in
                             // FilterFormatString::parse then this shouldn't happen
-                            let _ = std::fmt::write(&mut ret, format_args!("{{{s}}}"));
+                            let _ = core::fmt::write(&mut ret, format_args!("{{{s}}}"));
                         }
                     }
                 }

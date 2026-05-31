@@ -497,7 +497,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 // Find what argument caused our rcvr to become incompatible
                 // with the expected ty.
                 for (idx, (expected_arg_ty, arg_expr)) in
-                    std::iter::zip(&method.sig.inputs()[1..], args).enumerate()
+                    core::iter::zip(&method.sig.inputs()[1..], args).enumerate()
                 {
                     let Some(arg_ty) = self.node_ty_opt(arg_expr.hir_id) else {
                         continue;

@@ -316,7 +316,7 @@ pub enum InvalidMetaKind {
 }
 
 impl IntoDiagArg for InvalidMetaKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Borrowed(match self {
             InvalidMetaKind::SliceTooBig => "slice_too_big",
             InvalidMetaKind::TooBig => "too_big",
@@ -350,7 +350,7 @@ pub struct Misalignment {
 macro_rules! impl_into_diag_arg_through_debug {
     ($($ty:ty),*$(,)?) => {$(
         impl IntoDiagArg for $ty {
-            fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+            fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
                 DiagArgValue::Str(Cow::Owned(format!("{self:?}")))
             }
         }
@@ -445,7 +445,7 @@ pub enum UndefinedBehaviorInfo<'tcx> {
         expected_dyn_type: &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>>,
     },
     /// Using a string that is not valid UTF-8,
-    InvalidStr(std::str::Utf8Error),
+    InvalidStr(core::str::Utf8Error),
     /// Using uninitialized data where it is not allowed.
     InvalidUninitBytes(Option<(AllocId, BadBytesAccess)>),
     /// Working with a local that is not currently live.
@@ -476,7 +476,7 @@ pub enum PointerKind {
 }
 
 impl IntoDiagArg for PointerKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(
             match self {
                 Self::Ref(_) => "ref",

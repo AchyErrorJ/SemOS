@@ -1,4 +1,9 @@
-use std::sync::{Arc, OnceLock};
+use alloc::sync::Arc;
+
+#[cfg(not(target_os = "none"))]
+use std::sync::OnceLock;
+#[cfg(target_os = "none")]
+use semos_std::sync::OnceLock;
 
 use rustc_data_structures::graph;
 use rustc_data_structures::graph::dominators::{Dominators, dominators};
@@ -117,7 +122,7 @@ impl<'tcx> BasicBlocks<'tcx> {
     }
 }
 
-impl<'tcx> std::ops::Deref for BasicBlocks<'tcx> {
+impl<'tcx> core::ops::Deref for BasicBlocks<'tcx> {
     type Target = IndexSlice<BasicBlock, BasicBlockData<'tcx>>;
 
     #[inline]

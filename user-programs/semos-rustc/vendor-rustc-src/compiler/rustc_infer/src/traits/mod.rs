@@ -7,8 +7,8 @@ mod project;
 mod structural_impls;
 pub mod util;
 
-use std::cmp;
-use std::hash::{Hash, Hasher};
+use core::cmp;
+use core::hash::{Hash, Hasher};
 
 use hir::def_id::LocalDefId;
 use rustc_hir as hir;

@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use core::ops::Deref;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::undo_log::UndoLogs;
@@ -62,7 +62,7 @@ impl<'tcx> OpaqueTypeStorage<'tcx> {
         &mut self,
     ) -> impl Iterator<Item = (OpaqueTypeKey<'tcx>, ProvisionalHiddenType<'tcx>)> {
         let OpaqueTypeStorage { opaque_types, duplicate_entries } = self;
-        std::mem::take(opaque_types).into_iter().chain(std::mem::take(duplicate_entries))
+        core::mem::take(opaque_types).into_iter().chain(core::mem::take(duplicate_entries))
     }
 
     pub fn num_entries(&self) -> OpaqueTypeStorageEntries {
@@ -149,7 +149,7 @@ impl<'a, 'tcx> OpaqueTypeTable<'a, 'tcx> {
         hidden_type: ProvisionalHiddenType<'tcx>,
     ) -> Option<Ty<'tcx>> {
         if let Some(entry) = self.storage.opaque_types.get_mut(&key) {
-            let prev = std::mem::replace(entry, hidden_type);
+            let prev = core::mem::replace(entry, hidden_type);
             self.undo_log.push(UndoLog::OpaqueTypes(key, Some(prev)));
             return Some(prev.ty);
         }

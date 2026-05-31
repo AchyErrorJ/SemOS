@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_ast::Mutability;
 use rustc_macros::HashStable;

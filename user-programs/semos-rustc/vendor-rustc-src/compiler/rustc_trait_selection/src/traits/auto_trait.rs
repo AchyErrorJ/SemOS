@@ -1,8 +1,8 @@
 //! Support code for rustdoc and external tools.
 //! You really don't want to be using this unless you need to.
 
-use std::collections::VecDeque;
-use std::iter;
+use alloc::collections::VecDeque;
+use core::iter;
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet, IndexEntry};
 use rustc_data_structures::unord::UnordSet;

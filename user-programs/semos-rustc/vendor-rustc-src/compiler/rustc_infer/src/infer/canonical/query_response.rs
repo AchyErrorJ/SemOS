@@ -7,8 +7,8 @@
 //!
 //! [c]: https://rust-lang.github.io/chalk/book/canonical_queries/canonicalization.html
 
-use std::fmt::Debug;
-use std::iter;
+use core::fmt::Debug;
+use core::iter;
 
 use rustc_index::{Idx, IndexVec};
 use rustc_middle::arena::ArenaAllocatable;

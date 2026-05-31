@@ -8,9 +8,13 @@ mod pointer;
 mod queries;
 mod value;
 
-use std::io::{Read, Write};
-use std::num::NonZero;
-use std::{fmt, io};
+use core::fmt;
+use core::num::NonZero;
+
+#[cfg(not(target_os = "none"))]
+use std::io::{self, Read, Write};
+#[cfg(target_os = "none")]
+use semos_std::io::{self, Read, Write};
 
 use rustc_abi::{AddressSpace, Align, Endian, HasDataLayout, Size};
 use rustc_ast::{LitKind, Mutability};
@@ -166,7 +170,7 @@ impl AllocDecodingState {
 
     pub fn new(data_offsets: Vec<u64>) -> Self {
         let decoding_state =
-            std::iter::repeat_with(|| Lock::new(State::Empty)).take(data_offsets.len()).collect();
+            core::iter::repeat_with(|| Lock::new(State::Empty)).take(data_offsets.len()).collect();
 
         Self { decoding_state, data_offsets }
     }
@@ -448,7 +452,7 @@ impl<'tcx> AllocMap<'tcx> {
         // Technically there is a window here where we overflow and then another thread
         // increments `next_id` *again* and uses it before we panic and tear down the entire session.
         // We consider this fine since such overflows cannot realistically occur.
-        let next_id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let next_id = self.next_id.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         AllocId(NonZero::new(next_id).unwrap())
     }
 }

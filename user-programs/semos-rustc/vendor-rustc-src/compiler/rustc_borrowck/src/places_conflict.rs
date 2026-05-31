@@ -50,8 +50,8 @@
 //!    and either equal or disjoint.
 //!  - If we did run out of access, the borrow can access a part of it.
 
-use std::cmp::max;
-use std::iter;
+use core::cmp::max;
+use core::iter;
 
 use rustc_hir as hir;
 use rustc_middle::bug;

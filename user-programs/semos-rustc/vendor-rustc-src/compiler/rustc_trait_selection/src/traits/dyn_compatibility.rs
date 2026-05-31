@@ -4,7 +4,7 @@
 //!
 //! [^1]: Formerly known as "object safety".
 
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_errors::FatalError;
 use rustc_hir::def_id::DefId;

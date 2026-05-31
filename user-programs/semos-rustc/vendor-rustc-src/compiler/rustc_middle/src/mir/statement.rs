@@ -1,6 +1,6 @@
 //! Functionality for statements, operands, places, and things that appear in them.
 
-use std::ops;
+use core::ops;
 
 use tracing::{debug, instrument};
 
@@ -28,7 +28,7 @@ impl<'tcx> Statement<'tcx> {
         if self.kind == StatementKind::Nop {
             return;
         }
-        let replaced_stmt = std::mem::replace(&mut self.kind, StatementKind::Nop);
+        let replaced_stmt = core::mem::replace(&mut self.kind, StatementKind::Nop);
         if !drop_debuginfo {
             let Some(debuginfo) = replaced_stmt.as_debuginfo() else {
                 bug!("debuginfo is not yet supported.")
@@ -183,7 +183,7 @@ impl<'tcx> PlaceTy<'tcx> {
     /// Convenience wrapper around `projection_ty_core` for `PlaceElem`,
     /// where we can just use the `Ty` that is already stored inline on
     /// field projection elems.
-    pub fn projection_ty<V: ::std::fmt::Debug>(
+    pub fn projection_ty<V: ::core::fmt::Debug>(
         self,
         tcx: TyCtxt<'tcx>,
         elem: ProjectionElem<V, Ty<'tcx>>,
@@ -205,8 +205,8 @@ impl<'tcx> PlaceTy<'tcx> {
         mut handle_opaque_cast_and_subtype: impl FnMut(T) -> Ty<'tcx>,
     ) -> PlaceTy<'tcx>
     where
-        V: ::std::fmt::Debug,
-        T: ::std::fmt::Debug + Copy,
+        V: ::core::fmt::Debug,
+        T: ::core::fmt::Debug + Copy,
     {
         if self.variant_index.is_some() && !matches!(elem, ProjectionElem::Field(..)) {
             bug!("cannot use non field projection on downcasted place")
@@ -534,7 +534,7 @@ impl<'tcx> PlaceRef<'tcx> {
 
     /// Return the place accessed locals that include the base local.
     pub fn accessed_locals(self) -> impl Iterator<Item = Local> {
-        std::iter::once(self.local).chain(self.projection.iter().filter_map(|proj| match proj {
+        core::iter::once(self.local).chain(self.projection.iter().filter_map(|proj| match proj {
             ProjectionElem::Index(local) => Some(*local),
             ProjectionElem::Deref
             | ProjectionElem::Field(_, _)
@@ -1032,7 +1032,7 @@ impl<'tcx> StmtDebugInfos<'tcx> {
             return;
         };
         debuginfos.0.append(self);
-        std::mem::swap(debuginfos, self);
+        core::mem::swap(debuginfos, self);
     }
 
     pub fn append(&mut self, debuginfos: &mut Self) {

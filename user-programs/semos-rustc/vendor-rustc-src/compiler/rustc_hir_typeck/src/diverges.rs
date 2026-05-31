@@ -1,4 +1,4 @@
-use std::{cmp, ops};
+use core::{cmp, ops};
 
 use rustc_span::{DUMMY_SP, Span};
 

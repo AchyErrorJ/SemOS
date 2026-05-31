@@ -6,9 +6,9 @@
 //! The functionality in here is shared between persisting to crate metadata and
 //! persisting to incr. comp. caches.
 
-use std::hash::Hash;
-use std::intrinsics;
-use std::marker::{DiscriminantKind, PointeeSized};
+use core::hash::Hash;
+use core::intrinsics;
+use core::marker::{DiscriminantKind, PointeeSized};
 
 use rustc_abi::FieldIdx;
 use rustc_data_structures::fx::FxHashMap;

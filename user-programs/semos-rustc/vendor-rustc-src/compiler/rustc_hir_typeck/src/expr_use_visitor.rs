@@ -5,8 +5,8 @@
 //! In the compiler, this is only used for upvar inference, but there
 //! are many uses within clippy.
 
-use std::cell::{Ref, RefCell};
-use std::ops::Deref;
+use core::cell::{Ref, RefCell};
+use core::ops::Deref;
 
 use hir::def::DefKind;
 use hir::pat_util::EnumerateAndAdjustIterator as _;

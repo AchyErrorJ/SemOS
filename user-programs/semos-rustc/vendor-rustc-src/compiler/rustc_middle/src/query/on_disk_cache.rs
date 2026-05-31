@@ -1,6 +1,7 @@
-use std::collections::hash_map::Entry;
-use std::mem;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::mem;
+
+use rustc_data_structures::fx::StdEntry as Entry;
 
 use rustc_data_structures::fx::{FxHashMap, FxIndexMap, FxIndexSet};
 use rustc_data_structures::memmap::Mmap;
@@ -509,7 +510,7 @@ impl<'a, 'tcx> CacheDecoder<'a, 'tcx> {
 // tag matches and the correct amount of bytes was read.
 fn decode_tagged<D, T, V>(decoder: &mut D, expected_tag: T) -> V
 where
-    T: Decodable<D> + Eq + std::fmt::Debug,
+    T: Decodable<D> + Eq + core::fmt::Debug,
     V: Decodable<D>,
     D: Decoder,
 {

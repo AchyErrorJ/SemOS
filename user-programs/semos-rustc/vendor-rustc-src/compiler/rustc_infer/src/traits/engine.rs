@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, Ty, Upcast};

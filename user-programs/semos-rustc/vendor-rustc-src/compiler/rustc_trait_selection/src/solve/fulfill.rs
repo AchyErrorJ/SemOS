@@ -1,6 +1,6 @@
-use std::marker::PhantomData;
-use std::mem;
-use std::ops::ControlFlow;
+use core::marker::PhantomData;
+use core::mem;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::thinvec::ExtractIf;
 use rustc_hir::def_id::LocalDefId;

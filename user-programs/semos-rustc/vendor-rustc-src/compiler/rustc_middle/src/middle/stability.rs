@@ -1,7 +1,7 @@
 //! A pass that annotates every item and method with its stability level,
 //! propagating default levels lexically from parent to children ast nodes.
 
-use std::num::NonZero;
+use core::num::NonZero;
 
 use rustc_ast::NodeId;
 use rustc_errors::{Applicability, Diag, EmissionGuarantee, LintBuffer};

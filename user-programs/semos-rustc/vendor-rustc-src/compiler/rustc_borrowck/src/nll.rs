@@ -1,9 +1,9 @@
 //! The entry point of the NLL borrow checker.
 
-use std::io;
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::str::FromStr;
+use semos_std::io;
+use semos_std::path::PathBuf;
+use alloc::rc::Rc;
+use core::str::FromStr;
 
 use polonius_engine::{Algorithm, AllFacts, Output};
 use rustc_data_structures::frozen::Frozen;
@@ -221,7 +221,7 @@ pub(super) fn dump_nll_mir<'tcx>(
         ),
     };
 
-    let extra_data = &|pass_where, out: &mut dyn std::io::Write| {
+    let extra_data = &|pass_where, out: &mut dyn semos_std::io::Write| {
         emit_nll_mir(tcx, regioncx, closure_region_requirements, borrow_set, pass_where, out)
     };
 

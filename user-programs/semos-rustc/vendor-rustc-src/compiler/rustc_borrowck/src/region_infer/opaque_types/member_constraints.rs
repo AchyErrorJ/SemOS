@@ -182,7 +182,7 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for CollectMemberConstraintsVisitor<'_, '_,
                 // Skip lifetime parameters that are not captured, since they do
                 // not need member constraints registered for them; we'll erase
                 // them (and hopefully in the future replace them with placeholders).
-                for (&v, arg) in std::iter::zip(variances, args.iter()) {
+                for (&v, arg) in core::iter::zip(variances, args.iter()) {
                     if v != ty::Bivariant {
                         arg.visit_with(self)
                     }

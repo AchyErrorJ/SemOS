@@ -1,4 +1,4 @@
-use std::ops::Range;
+use core::ops::Range;
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_data_structures::graph;

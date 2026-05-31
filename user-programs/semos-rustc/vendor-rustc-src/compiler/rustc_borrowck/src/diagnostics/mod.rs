@@ -1,6 +1,6 @@
 //! Borrow checker diagnostics.
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::fx::FxIndexMap;
@@ -156,11 +156,11 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
         let mut res = self.infcx.tainted_by_errors();
 
         // Buffer any move errors that we collected and de-duplicated.
-        for (_, (_, diag)) in std::mem::take(&mut self.diags_buffer.buffered_move_errors) {
+        for (_, (_, diag)) in core::mem::take(&mut self.diags_buffer.buffered_move_errors) {
             // We have already set tainted for this error, so just buffer it.
             self.buffer_error(diag);
         }
-        for (_, (mut diag, count)) in std::mem::take(&mut self.diags_buffer.buffered_mut_errors) {
+        for (_, (mut diag, count)) in core::mem::take(&mut self.diags_buffer.buffered_mut_errors) {
             if count > 10 {
                 diag.note(format!("...and {} other attempted mutable borrows", count - 10));
             }

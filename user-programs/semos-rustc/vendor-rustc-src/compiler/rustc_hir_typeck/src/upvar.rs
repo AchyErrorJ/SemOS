@@ -30,7 +30,7 @@
 //! then mean that all later passes would have to check for these figments
 //! and report an error, and it just seems like more mess in the end.)
 
-use std::iter;
+use core::iter;
 
 use rustc_abi::FIRST_VARIANT;
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -943,7 +943,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         capture1.place.projections, capture2.place.projections
                     ),
                 );
-                std::cmp::Ordering::Equal
+                core::cmp::Ordering::Equal
             });
         }
 
@@ -2524,7 +2524,7 @@ fn determine_place_ancestry_relation<'tcx>(
         iter::zip(projections_a, projections_b).all(|(proj_a, proj_b)| proj_a.kind == proj_b.kind);
 
     if same_initial_projections {
-        use std::cmp::Ordering;
+        use core::cmp::Ordering;
 
         // First min(n, m) projections are the same
         // Select Ancestor/Descendant

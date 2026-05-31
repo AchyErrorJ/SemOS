@@ -11,12 +11,12 @@
 
 #![allow(rustc::usage_of_ty_tykind)]
 
-use std::fmt::Debug;
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::num::NonZero;
-use std::ptr::NonNull;
-use std::{fmt, iter, str};
+use core::fmt::Debug;
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::num::NonZero;
+use core::ptr::NonNull;
+use core::{fmt, iter, str};
 
 pub use adt::*;
 pub use assoc::*;
@@ -730,25 +730,25 @@ impl<'tcx> InstantiatedPredicates<'tcx> {
 impl<'tcx> IntoIterator for InstantiatedPredicates<'tcx> {
     type Item = (Clause<'tcx>, Span);
 
-    type IntoIter = std::iter::Zip<std::vec::IntoIter<Clause<'tcx>>, std::vec::IntoIter<Span>>;
+    type IntoIter = core::iter::Zip<alloc::vec::IntoIter<Clause<'tcx>>, alloc::vec::IntoIter<Span>>;
 
     fn into_iter(self) -> Self::IntoIter {
         debug_assert_eq!(self.predicates.len(), self.spans.len());
-        std::iter::zip(self.predicates, self.spans)
+        core::iter::zip(self.predicates, self.spans)
     }
 }
 
 impl<'a, 'tcx> IntoIterator for &'a InstantiatedPredicates<'tcx> {
     type Item = (Clause<'tcx>, Span);
 
-    type IntoIter = std::iter::Zip<
-        std::iter::Copied<std::slice::Iter<'a, Clause<'tcx>>>,
-        std::iter::Copied<std::slice::Iter<'a, Span>>,
+    type IntoIter = core::iter::Zip<
+        core::iter::Copied<core::slice::Iter<'a, Clause<'tcx>>>,
+        core::iter::Copied<core::slice::Iter<'a, Span>>,
     >;
 
     fn into_iter(self) -> Self::IntoIter {
         debug_assert_eq!(self.predicates.len(), self.spans.len());
-        std::iter::zip(self.predicates.iter().copied(), self.spans.iter().copied())
+        core::iter::zip(self.predicates.iter().copied(), self.spans.iter().copied())
     }
 }
 

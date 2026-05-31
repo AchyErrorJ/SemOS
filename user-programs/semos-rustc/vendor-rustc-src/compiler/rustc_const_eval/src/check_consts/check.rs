@@ -1,9 +1,9 @@
 //! The `Visitor` responsible for actually checking a `mir::Body` for invalid operations.
 
-use std::borrow::Cow;
-use std::mem;
-use std::num::NonZero;
-use std::ops::Deref;
+use alloc::borrow::Cow;
+use core::mem;
+use core::num::NonZero;
+use core::ops::Deref;
 
 use rustc_data_structures::assert_matches;
 use rustc_errors::{Diag, ErrorGuaranteed};

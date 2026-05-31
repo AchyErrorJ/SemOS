@@ -1,7 +1,7 @@
 //! Helper functions that serve as the immediate implementation of
 //! `tcx.$query(..)` and its variations.
 
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_query_system::dep_graph::{DepKind, DepNodeParams};

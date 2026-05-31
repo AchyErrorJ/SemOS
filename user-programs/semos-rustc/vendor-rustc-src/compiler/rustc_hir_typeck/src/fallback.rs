@@ -1,5 +1,5 @@
-use std::cell::OnceCell;
-use std::ops::ControlFlow;
+use core::cell::OnceCell;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::graph::vec_graph::VecGraph;

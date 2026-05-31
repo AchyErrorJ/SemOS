@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use core::fmt::Write;
 
 use hir::def_id::DefId;
 use hir::{HirId, ItemKind};
@@ -298,9 +298,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     format!(
                         "{}<{}>",
                         trait_path,
-                        std::iter::repeat("'_")
+                        core::iter::repeat("'_")
                             .take(counts.lifetimes)
-                            .chain(std::iter::repeat("_").take(
+                            .chain(core::iter::repeat("_").take(
                                 counts.types + counts.consts - trait_generics.has_self as usize
                             ))
                             .collect::<Vec<_>>()
@@ -323,9 +323,9 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                         let counts = generics.own_counts();
                         self_ty_name += &format!(
                             "<{}>",
-                            std::iter::repeat("'_")
+                            core::iter::repeat("'_")
                                 .take(counts.lifetimes)
-                                .chain(std::iter::repeat("_").take(counts.types + counts.consts))
+                                .chain(core::iter::repeat("_").take(counts.types + counts.consts))
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         );

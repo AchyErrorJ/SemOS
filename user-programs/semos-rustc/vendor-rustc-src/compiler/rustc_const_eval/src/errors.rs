@@ -1,5 +1,5 @@
-use std::borrow::Cow;
-use std::fmt::Write;
+use alloc::borrow::Cow;
+use core::fmt::Write;
 
 use either::Either;
 use rustc_abi::WrappingRange;
@@ -938,7 +938,8 @@ impl ReportErrorExt for ResourceExhaustionInfo {
 }
 
 impl rustc_errors::IntoDiagArg for InternKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Borrowed(match self {
             InternKind::Static(Mutability::Not) => "static",
             InternKind::Static(Mutability::Mut) => "static_mut",

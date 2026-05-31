@@ -103,7 +103,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
 
     fn group_move_errors(&mut self) -> Vec<GroupedMoveError<'tcx>> {
         let mut grouped_errors = Vec::new();
-        let errors = std::mem::take(&mut self.move_errors);
+        let errors = core::mem::take(&mut self.move_errors);
         for error in errors {
             self.append_to_grouped_errors(&mut grouped_errors, error);
         }

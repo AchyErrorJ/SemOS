@@ -1,7 +1,7 @@
 //! This pass type-checks the MIR to ensure it is not broken.
 
-use std::rc::Rc;
-use std::{fmt, iter, mem};
+use alloc::rc::Rc;
+use core::{fmt, iter, mem};
 
 use rustc_abi::FieldIdx;
 use rustc_data_structures::frozen::Frozen;
@@ -564,7 +564,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
 
     #[instrument(skip(self, body), level = "debug")]
     fn visit_body(&mut self, body: &Body<'tcx>) {
-        debug_assert!(std::ptr::eq(self.body, body));
+        debug_assert!(core::ptr::eq(self.body, body));
 
         for (local, local_decl) in body.local_decls.iter_enumerated() {
             self.visit_local_decl(local, local_decl);

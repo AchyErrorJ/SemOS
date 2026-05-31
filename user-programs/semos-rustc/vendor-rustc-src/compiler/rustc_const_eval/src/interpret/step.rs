@@ -2,7 +2,7 @@
 //!
 //! The main entry point is the `step` method.
 
-use std::iter;
+use core::iter;
 
 use either::Either;
 use rustc_abi::{FIRST_VARIANT, FieldIdx};

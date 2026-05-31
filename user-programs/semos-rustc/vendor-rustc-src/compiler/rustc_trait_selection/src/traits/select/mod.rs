@@ -2,10 +2,10 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/traits/resolution.html#selection
 
-use std::cell::{Cell, RefCell};
-use std::cmp;
-use std::fmt::{self, Display};
-use std::ops::ControlFlow;
+use core::cell::{Cell, RefCell};
+use core::cmp;
+use core::fmt::{self, Display};
+use core::ops::ControlFlow;
 
 use hir::def::DefKind;
 use rustc_data_structures::assert_matches;
@@ -566,7 +566,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         predicates: I,
     ) -> Result<EvaluationResult, OverflowError>
     where
-        I: IntoIterator<Item = PredicateObligation<'tcx>> + std::fmt::Debug,
+        I: IntoIterator<Item = PredicateObligation<'tcx>> + core::fmt::Debug,
     {
         let mut result = EvaluatedToOk;
         for mut obligation in predicates {

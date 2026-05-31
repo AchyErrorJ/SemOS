@@ -127,7 +127,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     pub(crate) fn suggest_method_call(
         &self,
         err: &mut Diag<'_>,
-        msg: impl Into<SubdiagMessage> + std::fmt::Debug,
+        msg: impl Into<SubdiagMessage> + core::fmt::Debug,
         method_name: Ident,
         self_ty: Ty<'tcx>,
         call_expr: &hir::Expr<'tcx>,

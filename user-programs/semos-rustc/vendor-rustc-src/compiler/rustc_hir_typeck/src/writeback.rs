@@ -8,8 +8,8 @@
 //! of the replacement happens at the end in [`FnCtxt::resolve_type_vars_in_body`],
 //! which creates a new `TypeckResults` which doesn't contain any inference variables.
 
-use std::mem;
-use std::ops::ControlFlow;
+use core::mem;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
 use rustc_data_structures::unord::ExtendUnord;

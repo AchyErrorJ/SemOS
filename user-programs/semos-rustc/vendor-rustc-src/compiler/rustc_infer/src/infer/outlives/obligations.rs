@@ -167,7 +167,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// Trait queries just want to pass back type obligations "as is"
     pub fn take_registered_region_obligations(&self) -> Vec<TypeOutlivesConstraint<'tcx>> {
         assert!(!self.in_snapshot(), "cannot take registered region obligations in a snapshot");
-        std::mem::take(&mut self.inner.borrow_mut().region_obligations)
+        core::mem::take(&mut self.inner.borrow_mut().region_obligations)
     }
 
     pub fn clone_registered_region_obligations(&self) -> Vec<TypeOutlivesConstraint<'tcx>> {
@@ -182,7 +182,7 @@ impl<'tcx> InferCtxt<'tcx> {
 
     pub fn take_registered_region_assumptions(&self) -> Vec<ty::ArgOutlivesPredicate<'tcx>> {
         assert!(!self.in_snapshot(), "cannot take registered region assumptions in a snapshot");
-        std::mem::take(&mut self.inner.borrow_mut().region_assumptions)
+        core::mem::take(&mut self.inner.borrow_mut().region_assumptions)
     }
 
     /// Process the region obligations that must be proven (during

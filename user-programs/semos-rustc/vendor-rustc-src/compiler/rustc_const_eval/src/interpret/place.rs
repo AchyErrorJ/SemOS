@@ -101,8 +101,8 @@ pub struct MPlaceTy<'tcx, Prov: Provenance = CtfeProvenance> {
     pub layout: TyAndLayout<'tcx>,
 }
 
-impl<Prov: Provenance> std::fmt::Debug for MPlaceTy<'_, Prov> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Prov: Provenance> core::fmt::Debug for MPlaceTy<'_, Prov> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Printing `layout` results in too much noise; just print a nice version of the type.
         f.debug_struct("MPlaceTy")
             .field("mplace", &self.mplace)
@@ -209,8 +209,8 @@ pub struct PlaceTy<'tcx, Prov: Provenance = CtfeProvenance> {
     pub layout: TyAndLayout<'tcx>,
 }
 
-impl<Prov: Provenance> std::fmt::Debug for PlaceTy<'_, Prov> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Prov: Provenance> core::fmt::Debug for PlaceTy<'_, Prov> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Printing `layout` results in too much noise; just print a nice version of the type.
         f.debug_struct("PlaceTy")
             .field("place", &self.place)

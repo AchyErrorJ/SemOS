@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::Deref;
+use core::fmt;
+use core::ops::Deref;
 
 use rustc_abi::{FIRST_VARIANT, VariantIdx};
 use rustc_data_structures::intern::Interned;

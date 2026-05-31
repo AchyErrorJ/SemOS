@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::Index;
+use core::fmt;
+use core::ops::Index;
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_index::bit_set::DenseBitSet;

@@ -1,5 +1,5 @@
-use std::iter;
-use std::rc::Rc;
+use core::iter;
+use alloc::rc::Rc;
 
 use rustc_data_structures::frozen::Frozen;
 use rustc_data_structures::fx::FxIndexMap;
@@ -340,7 +340,7 @@ fn compute_definition_site_hidden_types_from_defining_uses<'tcx>(
         if let Some((prev_decl_key, prev_span)) = decls_modulo_regions.insert(
             rcx.infcx.tcx.erase_and_anonymize_regions(opaque_type_key),
             (opaque_type_key, hidden_type.span),
-        ) && let Some((arg1, arg2)) = std::iter::zip(
+        ) && let Some((arg1, arg2)) = core::iter::zip(
             prev_decl_key.iter_captured_args(infcx.tcx).map(|(_, arg)| arg),
             opaque_type_key.iter_captured_args(infcx.tcx).map(|(_, arg)| arg),
         )
@@ -458,7 +458,7 @@ impl<'tcx> FallibleTypeFolder<TyCtxt<'tcx>> for ToArgRegionsFolder<'_, 'tcx> {
             ty::Alias(kind, ty::AliasTy { def_id, args, .. })
                 if let Some(variances) = tcx.opt_alias_variances(kind, def_id) =>
             {
-                let args = tcx.mk_args_from_iter(std::iter::zip(variances, args.iter()).map(
+                let args = tcx.mk_args_from_iter(core::iter::zip(variances, args.iter()).map(
                     |(&v, s)| {
                         if v == ty::Bivariant {
                             Ok(self.fold_non_member_arg(s))

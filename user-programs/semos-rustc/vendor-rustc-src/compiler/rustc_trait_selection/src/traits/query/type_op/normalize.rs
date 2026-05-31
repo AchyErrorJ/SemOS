@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_middle::traits::ObligationCause;
 use rustc_middle::traits::query::NoSolution;

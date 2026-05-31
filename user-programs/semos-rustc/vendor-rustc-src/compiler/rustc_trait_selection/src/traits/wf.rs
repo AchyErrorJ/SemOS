@@ -3,7 +3,7 @@
 //! well formed is performed elsewhere (e.g. during type checking or item well formedness
 //! checking).
 
-use std::iter;
+use core::iter;
 
 use rustc_hir as hir;
 use rustc_hir::def::DefKind;

@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use rustc_data_structures::undo_log::{Rollback, UndoLogs};
 use rustc_data_structures::{assert_matches, snapshot_vec as sv, unify as ut};
@@ -197,7 +197,7 @@ impl<'tcx> InferCtxtUndoLogs<'tcx> {
     }
 }
 
-impl<'tcx> std::ops::Index<usize> for InferCtxtUndoLogs<'tcx> {
+impl<'tcx> core::ops::Index<usize> for InferCtxtUndoLogs<'tcx> {
     type Output = UndoLog<'tcx>;
 
     fn index(&self, key: usize) -> &Self::Output {
@@ -205,7 +205,7 @@ impl<'tcx> std::ops::Index<usize> for InferCtxtUndoLogs<'tcx> {
     }
 }
 
-impl<'tcx> std::ops::IndexMut<usize> for InferCtxtUndoLogs<'tcx> {
+impl<'tcx> core::ops::IndexMut<usize> for InferCtxtUndoLogs<'tcx> {
     fn index_mut(&mut self, key: usize) -> &mut Self::Output {
         &mut self.logs[key]
     }

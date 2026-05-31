@@ -1,6 +1,7 @@
-use std::borrow::Cow;
-use std::iter;
-use std::path::PathBuf;
+use alloc::borrow::Cow;
+use core::iter;
+// M27 R4 B5: PathBuf carries through from semos_std on this target.
+use semos_std::path::PathBuf;
 
 use rustc_errors::codes::*;
 use rustc_errors::{Diag, IntoDiagArg};
@@ -137,7 +138,8 @@ impl InferenceDiagnosticsParentData {
 }
 
 impl IntoDiagArg for UnderspecifiedArgKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         let kind = match self {
             Self::Type { .. } => "type",
             Self::Const { is_parameter: true } => "const_with_param",

@@ -1,8 +1,8 @@
 //! This module contains `HashStable` implementations for various data types
 //! from `rustc_middle::ty` in no particular order.
 
-use std::cell::RefCell;
-use std::ptr;
+use core::cell::RefCell;
+use core::ptr;
 
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_data_structures::fx::FxHashMap;

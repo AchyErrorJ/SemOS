@@ -1,5 +1,6 @@
-use std::iter;
-use std::path::PathBuf;
+use core::iter;
+// M27 R4 B5: PathBuf carries through from semos_std on this target.
+use semos_std::path::PathBuf;
 
 use rustc_ast::{LitKind, MetaItem, MetaItemInner, MetaItemKind, MetaItemLit};
 use rustc_errors::codes::*;

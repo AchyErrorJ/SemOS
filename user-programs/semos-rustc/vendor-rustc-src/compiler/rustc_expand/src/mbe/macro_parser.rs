@@ -70,10 +70,10 @@
 //! eof: [a $( a )* a b ·]
 //! ```
 
-use std::borrow::Cow;
-use std::collections::hash_map::Entry::{Occupied, Vacant};
-use std::fmt::Display;
-use std::rc::Rc;
+use alloc::borrow::Cow;
+use hashbrown::hash_map::Entry::{Occupied, Vacant};
+use core::fmt::Display;
+use alloc::rc::Rc;
 
 pub(crate) use NamedMatch::*;
 pub(crate) use ParseResult::*;
@@ -145,7 +145,7 @@ impl MatcherLoc {
 }
 
 impl Display for MatcherLoc {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             MatcherLoc::Token { token } | MatcherLoc::SequenceSep { separator: token } => {
                 write!(f, "{}", token_descr(token))

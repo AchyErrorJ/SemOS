@@ -1,7 +1,7 @@
-use std::cell::RefCell;
-use std::hash::{Hash, Hasher};
-use std::ops::Range;
-use std::str;
+use core::cell::RefCell;
+use core::hash::{Hash, Hasher};
+use core::ops::Range;
+use core::str;
 
 use rustc_abi::{FIRST_VARIANT, ReprOptions, VariantIdx};
 use rustc_data_structures::fingerprint::Fingerprint;

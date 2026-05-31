@@ -967,7 +967,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
             .compute_size_in_bytes(layout.size, count)
             .ok_or_else(|| err_ub_custom!(fluent::const_eval_size_overflow, name = name))?;
 
-        let bytes = std::iter::repeat_n(byte, len.bytes_usize());
+        let bytes = core::iter::repeat_n(byte, len.bytes_usize());
         self.write_bytes_ptr(dst, bytes)
     }
 

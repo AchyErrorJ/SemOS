@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_index::bit_set::{DenseBitSet, MixedBitSet};

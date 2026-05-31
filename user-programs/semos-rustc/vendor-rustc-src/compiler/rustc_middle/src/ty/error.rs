@@ -173,7 +173,7 @@ impl<'tcx> Ty<'tcx> {
             ty::Error(_) => "type error".into(),
             _ => {
                 let width = tcx.sess.diagnostic_width();
-                let length_limit = std::cmp::max(width / 4, 40);
+                let length_limit = core::cmp::max(width / 4, 40);
                 format!(
                     "`{}`",
                     tcx.string_with_limit(self, length_limit, hir::def::Namespace::TypeNS)

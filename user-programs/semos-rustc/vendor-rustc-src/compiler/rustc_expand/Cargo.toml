@@ -12,6 +12,7 @@ doctest = false
 
 [dependencies]
 # tidy-alphabetical-start
+hashbrown = { version = "0.14", default-features = false, features = ["inline-more"] }
 rustc_ast = { path = "../rustc_ast" }
 rustc_ast_passes = { path = "../rustc_ast_passes" }
 rustc_ast_pretty = { path = "../rustc_ast_pretty" }
@@ -33,6 +34,8 @@ rustc_serialize = { path = "../rustc_serialize" }
 rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 scoped-tls = "1.0"
+# M27 R4 B5: PathBuf in base.rs, expand.rs, module.rs.
+semos_std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 thin-vec = "0.2.12"
 tracing = "0.1"

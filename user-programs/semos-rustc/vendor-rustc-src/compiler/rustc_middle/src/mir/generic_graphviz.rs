@@ -1,4 +1,7 @@
+#[cfg(not(target_os = "none"))]
 use std::io::{self, Write};
+#[cfg(target_os = "none")]
+use semos_std::io::{self, Write};
 
 use rustc_data_structures::graph::{self, iterate};
 use rustc_graphviz as dot;

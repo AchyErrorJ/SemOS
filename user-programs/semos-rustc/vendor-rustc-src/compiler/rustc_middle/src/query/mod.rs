@@ -62,10 +62,17 @@
 
 #![allow(unused_parens)]
 
+use alloc::sync::Arc;
+use core::mem;
+
+#[cfg(not(target_os = "none"))]
 use std::ffi::OsStr;
-use std::mem;
+#[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::ffi::OsStr;
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
 
 use rustc_abi::Align;
 use rustc_arena::TypedArena;

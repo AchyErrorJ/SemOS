@@ -1,6 +1,7 @@
-use std::borrow::{Borrow, Cow};
-use std::fmt;
-use std::hash::Hash;
+use alloc::borrow::Cow;
+use core::borrow::Borrow;
+use core::fmt;
+use core::hash::Hash;
 
 use rustc_abi::{Align, Size};
 use rustc_ast::Mutability;

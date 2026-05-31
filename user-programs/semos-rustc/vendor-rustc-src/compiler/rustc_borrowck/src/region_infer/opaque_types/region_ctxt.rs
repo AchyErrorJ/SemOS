@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use alloc::rc::Rc;
 
 use rustc_data_structures::frozen::Frozen;
 use rustc_index::IndexVec;

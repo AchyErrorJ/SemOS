@@ -1,6 +1,9 @@
 //! Defines the set of legal keys that can be used in queries.
 
+#[cfg(not(target_os = "none"))]
 use std::ffi::OsStr;
+#[cfg(target_os = "none")]
+use semos_std::ffi::OsStr;
 
 use rustc_ast::tokenstream::TokenStream;
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE, LocalDefId, LocalModDefId, ModDefId};

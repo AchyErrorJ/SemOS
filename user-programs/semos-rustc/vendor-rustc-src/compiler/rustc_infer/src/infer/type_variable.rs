@@ -1,6 +1,6 @@
-use std::cmp;
-use std::marker::PhantomData;
-use std::ops::Range;
+use core::cmp;
+use core::marker::PhantomData;
+use core::ops::Range;
 
 use rustc_data_structures::undo_log::Rollback;
 use rustc_data_structures::{snapshot_vec as sv, unify as ut};

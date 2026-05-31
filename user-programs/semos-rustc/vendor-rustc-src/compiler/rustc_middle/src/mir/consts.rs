@@ -1,4 +1,4 @@
-use std::fmt::{self, Debug, Display, Formatter};
+use core::fmt::{self, Debug, Display, Formatter};
 
 use rustc_abi::{HasDataLayout, Size};
 use rustc_hir::def_id::DefId;

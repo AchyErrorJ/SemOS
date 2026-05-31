@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_infer::infer::InferCtxt;
 use rustc_infer::traits::solve::inspect::ProbeKind;

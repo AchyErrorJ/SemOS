@@ -1,4 +1,7 @@
+#[cfg(not(target_os = "none"))]
 use std::io::{self, Write};
+#[cfg(target_os = "none")]
+use semos_std::io::{self, Write};
 
 use gsgdt::GraphvizSettings;
 use rustc_graphviz as dot;
@@ -82,11 +85,11 @@ where
 /// Write the graphviz DOT label for the overall graph. This is essentially a block of text that
 /// will appear below the graph, showing the type of the `fn` this MIR represents and the types of
 /// all the variables and temporaries.
-fn write_graph_label<'tcx, W: std::fmt::Write>(
+fn write_graph_label<'tcx, W: core::fmt::Write>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'_>,
     w: &mut W,
-) -> std::fmt::Result {
+) -> core::fmt::Result {
     let def_id = body.source.def_id();
 
     write!(w, "fn {}(", dot::escape_html(&tcx.def_path_str(def_id)))?;

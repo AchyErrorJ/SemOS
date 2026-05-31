@@ -53,7 +53,7 @@ pub enum DiagImportance {
 }
 
 /// An operation that is *not allowed* in a const context.
-pub trait NonConstOp<'tcx>: std::fmt::Debug {
+pub trait NonConstOp<'tcx>: core::fmt::Debug {
     /// Returns an enum indicating whether this operation can be enabled with a feature gate.
     fn status_in_item(&self, _ccx: &ConstCx<'_, 'tcx>) -> Status {
         Status::Forbidden

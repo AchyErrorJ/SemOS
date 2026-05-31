@@ -4,10 +4,10 @@
 //! That's useful because it means other passes (e.g. promotion) can rely on `const`s
 //! to be const-safe.
 
-use std::borrow::Cow;
-use std::fmt::Write;
-use std::hash::Hash;
-use std::num::NonZero;
+use alloc::borrow::Cow;
+use core::fmt::Write;
+use core::hash::Hash;
+use core::num::NonZero;
 
 use either::{Left, Right};
 use hir::def::DefKind;
@@ -168,7 +168,7 @@ pub struct RefTracking<T, PATH = ()> {
     todo: Vec<(T, PATH)>,
 }
 
-impl<T: Clone + Eq + Hash + std::fmt::Debug, PATH: Default> RefTracking<T, PATH> {
+impl<T: Clone + Eq + Hash + core::fmt::Debug, PATH: Default> RefTracking<T, PATH> {
     pub fn empty() -> Self {
         RefTracking { seen: FxHashSet::default(), todo: vec![] }
     }

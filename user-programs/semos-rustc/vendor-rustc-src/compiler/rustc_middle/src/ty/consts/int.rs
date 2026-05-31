@@ -1,5 +1,5 @@
-use std::fmt;
-use std::num::NonZero;
+use core::fmt;
+use core::num::NonZero;
 
 use rustc_abi::Size;
 use rustc_apfloat::Float;
@@ -48,8 +48,8 @@ pub enum SimdAlign {
     Vector = 2,
 }
 
-impl std::fmt::Debug for ConstInt {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for ConstInt {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let Self { int, signed, is_ptr_sized_integral } = *self;
         let size = int.size().bytes();
         let raw = int.data;
@@ -140,7 +140,7 @@ impl std::fmt::Debug for ConstInt {
 impl IntoDiagArg for ConstInt {
     // FIXME this simply uses the Debug impl, but we could probably do better by converting both
     // to an inherent method that returns `Cow`.
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(format!("{self:?}").into())
     }
 }
@@ -541,9 +541,9 @@ macro_rules! from_scalar_int_for_x_signed {
 from_x_for_scalar_int_signed!(i8, i16, i32, i64, i128);
 from_scalar_int_for_x_signed!(i8, i16, i32, i64, i128);
 
-impl From<std::cmp::Ordering> for ScalarInt {
+impl From<core::cmp::Ordering> for ScalarInt {
     #[inline]
-    fn from(c: std::cmp::Ordering) -> Self {
+    fn from(c: core::cmp::Ordering) -> Self {
         // Here we rely on `cmp::Ordering` having the same values in host and target!
         ScalarInt::from(c as i8)
     }

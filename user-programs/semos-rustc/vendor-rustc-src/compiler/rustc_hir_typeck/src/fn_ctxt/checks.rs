@@ -1,5 +1,5 @@
-use std::ops::Deref;
-use std::{fmt, iter};
+use core::ops::Deref;
+use core::{fmt, iter};
 
 use itertools::Itertools;
 use rustc_data_structures::fx::FxIndexSet;
@@ -75,7 +75,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         let mut deferred_cast_checks = self.root_ctxt.deferred_cast_checks.borrow_mut();
         debug!("FnCtxt::check_casts: {} deferred checks", deferred_cast_checks.len());
         for cast in deferred_cast_checks.drain(..) {
-            let body_id = std::mem::replace(&mut self.body_id, cast.body_id);
+            let body_id = core::mem::replace(&mut self.body_id, cast.body_id);
             cast.check(self);
             self.body_id = body_id;
         }
@@ -1964,7 +1964,7 @@ impl<'a, 'b, 'tcx> FnCallDiagCtxt<'a, 'b, 'tcx> {
 
                 let mut satisfied = true;
                 // Check if the newly wrapped tuple + rest of the arguments are compatible.
-                for ((_, expected_ty), provided_ty) in std::iter::zip(
+                for ((_, expected_ty), provided_ty) in core::iter::zip(
                     self.formal_and_expected_inputs[mismatch_idx.to_expected_idx()..].iter(),
                     [provided_as_tuple]
                         .into_iter()
@@ -2887,7 +2887,7 @@ impl<'a, 'b, 'tcx> ArgMatchingCtxt<'a, 'b, 'tcx> {
             .enumerate()
             .filter_map(|(j, arg)| if idx == j { None } else { Some(arg) })
             .collect::<IndexVec<ProvidedIdx, _>>();
-        std::iter::zip(self.formal_and_expected_inputs.iter(), removed_arg_tys.iter()).all(
+        core::iter::zip(self.formal_and_expected_inputs.iter(), removed_arg_tys.iter()).all(
             |((expected_ty, _), (provided_ty, _))| {
                 !provided_ty.references_error() && self.may_coerce(*provided_ty, *expected_ty)
             },

@@ -6,7 +6,7 @@
 //!
 //! [rustc dev guide]:https://rustc-dev-guide.rust-lang.org/traits/resolution.html#candidate-assembly
 
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use hir::LangItem;
 use hir::def_id::DefId;

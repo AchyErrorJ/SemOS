@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use rustc_hir::def_id::DefId;
 use rustc_index::bit_set::SparseBitMatrix;

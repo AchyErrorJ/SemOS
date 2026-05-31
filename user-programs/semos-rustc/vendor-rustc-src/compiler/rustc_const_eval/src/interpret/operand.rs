@@ -194,14 +194,14 @@ pub struct ImmTy<'tcx, Prov: Provenance = CtfeProvenance> {
     pub layout: TyAndLayout<'tcx>,
 }
 
-impl<Prov: Provenance> std::fmt::Display for ImmTy<'_, Prov> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Prov: Provenance> core::fmt::Display for ImmTy<'_, Prov> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         /// Helper function for printing a scalar to a FmtPrinter
         fn print_scalar<'a, 'tcx, Prov: Provenance>(
             p: &mut FmtPrinter<'a, 'tcx>,
             s: Scalar<Prov>,
             ty: Ty<'tcx>,
-        ) -> Result<(), std::fmt::Error> {
+        ) -> Result<(), core::fmt::Error> {
             match s {
                 Scalar::Int(int) => p.pretty_print_const_scalar_int(int, ty, true),
                 Scalar::Ptr(ptr, _sz) => {
@@ -236,8 +236,8 @@ impl<Prov: Provenance> std::fmt::Display for ImmTy<'_, Prov> {
     }
 }
 
-impl<Prov: Provenance> std::fmt::Debug for ImmTy<'_, Prov> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Prov: Provenance> core::fmt::Debug for ImmTy<'_, Prov> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Printing `layout` results in too much noise; just print a nice version of the type.
         f.debug_struct("ImmTy")
             .field("imm", &self.imm)
@@ -246,7 +246,7 @@ impl<Prov: Provenance> std::fmt::Debug for ImmTy<'_, Prov> {
     }
 }
 
-impl<'tcx, Prov: Provenance> std::ops::Deref for ImmTy<'tcx, Prov> {
+impl<'tcx, Prov: Provenance> core::ops::Deref for ImmTy<'tcx, Prov> {
     type Target = Immediate<Prov>;
     #[inline(always)]
     fn deref(&self) -> &Immediate<Prov> {
@@ -318,7 +318,7 @@ impl<'tcx, Prov: Provenance> ImmTy<'tcx, Prov> {
     }
 
     #[inline]
-    pub fn from_ordering(c: std::cmp::Ordering, tcx: TyCtxt<'tcx>) -> Self {
+    pub fn from_ordering(c: core::cmp::Ordering, tcx: TyCtxt<'tcx>) -> Self {
         // Can use any typing env, since `Ordering` is always monomorphic.
         let ty = tcx.ty_ordering_enum(DUMMY_SP);
         let layout =
@@ -492,8 +492,8 @@ pub struct OpTy<'tcx, Prov: Provenance = CtfeProvenance> {
     pub layout: TyAndLayout<'tcx>,
 }
 
-impl<Prov: Provenance> std::fmt::Debug for OpTy<'_, Prov> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<Prov: Provenance> core::fmt::Debug for OpTy<'_, Prov> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Printing `layout` results in too much noise; just print a nice version of the type.
         f.debug_struct("OpTy")
             .field("op", &self.op)
@@ -721,7 +721,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     pub fn read_str(&self, mplace: &MPlaceTy<'tcx, M::Provenance>) -> InterpResult<'tcx, &str> {
         let len = mplace.len(self)?;
         let bytes = self.read_bytes_ptr_strip_provenance(mplace.ptr(), Size::from_bytes(len))?;
-        let s = std::str::from_utf8(bytes).map_err(|err| err_ub!(InvalidStr(err)))?;
+        let s = core::str::from_utf8(bytes).map_err(|err| err_ub!(InvalidStr(err)))?;
         interp_ok(s)
     }
 

@@ -1,3 +1,6 @@
+[workspace]
+members = []
+
 [package]
 name = "rustc_hir_typeck"
 version = "0.0.0"
@@ -5,6 +8,7 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
+hashbrown = { version = "0.14", default-features = false, features = ["inline-more"] }
 itertools = "0.12"
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
@@ -23,6 +27,8 @@ rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
 rustc_trait_selection = { path = "../rustc_trait_selection" }
+# M27 R4 B5: PathBuf in IntoDiagArg (errors.rs) and method/suggest.rs.
+semos_std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 tracing = "0.1"
 # tidy-alphabetical-end

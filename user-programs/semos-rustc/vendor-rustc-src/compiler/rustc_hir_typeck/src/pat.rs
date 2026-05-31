@@ -1,5 +1,5 @@
-use std::cmp;
-use std::collections::hash_map::Entry::{Occupied, Vacant};
+use core::cmp;
+use hashbrown::hash_map::Entry::{Occupied, Vacant};
 
 use rustc_abi::FieldIdx;
 use rustc_ast as ast;

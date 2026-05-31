@@ -18,7 +18,11 @@ use rustc_span::{LocalExpnId, Span};
 use {rustc_ast as ast, rustc_proc_macro as pm};
 
 use crate::base::{self, *};
-use crate::{errors, proc_macro_server};
+use crate::errors;
+// M27 §1.5: proc_macro_server is host-only (the SemOS expand stubs never
+// construct a Rustc server).
+#[cfg(not(target_os = "none"))]
+use crate::proc_macro_server;
 
 // M27 §1.5: mpsc-backed MessagePipe is the cross-thread channel for the
 // proc-macro server. semos_std has no mpsc shim yet; host-only.

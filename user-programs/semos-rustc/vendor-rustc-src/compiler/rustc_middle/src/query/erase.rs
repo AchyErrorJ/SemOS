@@ -1,6 +1,10 @@
+use core::intrinsics::transmute_unchecked;
+use core::mem::MaybeUninit;
+
+#[cfg(not(target_os = "none"))]
 use std::ffi::OsStr;
-use std::intrinsics::transmute_unchecked;
-use std::mem::MaybeUninit;
+#[cfg(target_os = "none")]
+use semos_std::ffi::OsStr;
 
 use rustc_ast::tokenstream::TokenStream;
 use rustc_span::ErrorGuaranteed;

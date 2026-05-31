@@ -1,5 +1,5 @@
-use std::mem;
-use std::rc::Rc;
+use core::mem;
+use alloc::rc::Rc;
 
 use rustc_abi::FieldIdx;
 use rustc_data_structures::fx::{FxHashMap, FxIndexMap};
@@ -248,7 +248,7 @@ impl<'tcx> BorrowCheckRootCtxt<'tcx> {
             .tcx
             .nested_bodies_within(self.root_def_id)
             .iter()
-            .chain(std::iter::once(self.root_def_id));
+            .chain(core::iter::once(self.root_def_id));
         for def_id in all_bodies {
             let result = borrowck_collect_region_constraints(self, def_id);
             self.collect_region_constraints_results.insert(def_id, result);

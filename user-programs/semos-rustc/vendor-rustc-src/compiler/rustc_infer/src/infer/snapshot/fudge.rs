@@ -1,5 +1,5 @@
-use std::fmt::Debug;
-use std::ops::Range;
+use core::fmt::Debug;
+use core::ops::Range;
 
 use rustc_data_structures::{snapshot_vec as sv, unify as ut};
 use rustc_middle::ty::{

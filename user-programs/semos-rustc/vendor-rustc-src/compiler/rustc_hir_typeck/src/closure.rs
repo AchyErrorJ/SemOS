@@ -1,7 +1,7 @@
 //! Code for type-checking closure expressions.
 
-use std::iter;
-use std::ops::ControlFlow;
+use core::iter;
+use core::ops::ControlFlow;
 
 use rustc_abi::ExternAbi;
 use rustc_errors::ErrorGuaranteed;

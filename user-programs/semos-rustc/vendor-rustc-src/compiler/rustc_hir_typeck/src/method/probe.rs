@@ -1,6 +1,6 @@
-use std::cell::{Cell, RefCell};
-use std::cmp::max;
-use std::ops::Deref;
+use core::cell::{Cell, RefCell};
+use core::cmp::max;
+use core::ops::Deref;
 
 use rustc_data_structures::debug_assert_matches;
 use rustc_data_structures::fx::FxHashSet;
@@ -638,7 +638,7 @@ pub(crate) fn method_autoderef_steps<'tcx>(
         tcx.features().arbitrary_self_types() || tcx.features().arbitrary_self_types_pointers();
     let (mut steps, reached_recursion_limit): (Vec<_>, bool) = if arbitrary_self_types_enabled {
         let reachable_via_deref =
-            autoderef_via_deref.by_ref().map(|_| true).chain(std::iter::repeat(false));
+            autoderef_via_deref.by_ref().map(|_| true).chain(core::iter::repeat(false));
 
         let mut autoderef_via_receiver =
             Autoderef::new(infcx, param_env, hir::def_id::CRATE_DEF_ID, DUMMY_SP, self_ty)
@@ -1181,7 +1181,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
 
         debug!("pick: actual search failed, assemble diagnostics");
 
-        let static_candidates = std::mem::take(self.static_candidates.get_mut());
+        let static_candidates = core::mem::take(self.static_candidates.get_mut());
         let private_candidate = self.private_candidate.take();
 
         // things failed, so lets look at all traits, for diagnostic purposes now:

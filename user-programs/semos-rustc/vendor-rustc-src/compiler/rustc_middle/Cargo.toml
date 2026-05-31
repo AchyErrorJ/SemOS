@@ -36,6 +36,7 @@ rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
 rustc_thread_pool = { path = "../rustc_thread_pool" }
 rustc_type_ir = { path = "../rustc_type_ir" }
+semos_std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", default-features = false, features = ["union", "may_dangle"] }
 thin-vec = "0.2.12"
 tracing = { version = "0.1", default-features = false }

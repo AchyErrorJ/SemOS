@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use either::{Either, Left, Right};
 use rustc_abi::{HasDataLayout, Size};
@@ -352,7 +352,7 @@ impl<'tcx, Prov: Provenance> Scalar<Prov> {
 
     pub fn to_char(self) -> InterpResult<'tcx, char> {
         let val = self.to_u32()?;
-        match std::char::from_u32(val) {
+        match core::char::from_u32(val) {
             Some(c) => interp_ok(c),
             None => throw_ub!(InvalidChar(val)),
         }

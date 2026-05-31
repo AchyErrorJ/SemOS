@@ -1,5 +1,5 @@
-use std::fmt;
-use std::rc::Rc;
+use core::fmt;
+use alloc::rc::Rc;
 
 use rustc_errors::Diag;
 use rustc_hir::def_id::LocalDefId;

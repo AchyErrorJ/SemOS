@@ -367,8 +367,8 @@ impl rustc_type_ir::inherent::ParamLike for EarlyParamRegion {
     }
 }
 
-impl std::fmt::Debug for EarlyParamRegion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for EarlyParamRegion {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}/#{}", self.name, self.index)
     }
 }
@@ -487,7 +487,7 @@ impl<'tcx> rustc_type_ir::inherent::BoundVarLike<TyCtxt<'tcx>> for BoundRegion {
 }
 
 impl core::fmt::Debug for BoundRegion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.kind {
             BoundRegionKind::Anon => write!(f, "{:?}", self.var),
             BoundRegionKind::ClosureEnv => write!(f, "{:?}.Env", self.var),

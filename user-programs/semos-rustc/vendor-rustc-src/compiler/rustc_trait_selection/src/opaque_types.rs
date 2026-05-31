@@ -136,12 +136,12 @@ struct LazyOpaqueTyEnv<'tcx> {
     ///     `type Opaque<'a: 'static, 'b: 'c, 'c: 'b> = impl Sized;`
     ///     Identity args: `['a, 'b, 'c]`
     ///     Canonical args: `['static, 'b, 'b]`
-    canonical_args: std::cell::OnceCell<ty::GenericArgsRef<'tcx>>,
+    canonical_args: core::cell::OnceCell<ty::GenericArgsRef<'tcx>>,
 }
 
 impl<'tcx> LazyOpaqueTyEnv<'tcx> {
     fn new(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> Self {
-        Self { tcx, def_id, canonical_args: std::cell::OnceCell::new() }
+        Self { tcx, def_id, canonical_args: core::cell::OnceCell::new() }
     }
 
     fn param_equal_static(&self, param_index: usize) -> bool {

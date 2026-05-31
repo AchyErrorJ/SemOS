@@ -1,5 +1,5 @@
-use std::cell::{Cell, RefCell};
-use std::fmt;
+use core::cell::{Cell, RefCell};
+use core::fmt;
 
 pub use at::DefineOpaqueTypes;
 use free_regions::RegionRelations;
@@ -1065,7 +1065,7 @@ impl<'tcx> InferCtxt<'tcx> {
         &self,
     ) -> Vec<PredicateObligation<'tcx>> {
         assert!(!self.in_snapshot(), "cannot take goals in a snapshot");
-        std::mem::take(&mut self.inner.borrow_mut().hir_typeck_potentially_region_dependent_goals)
+        core::mem::take(&mut self.inner.borrow_mut().hir_typeck_potentially_region_dependent_goals)
     }
 
     pub fn ty_to_string(&self, t: Ty<'tcx>) -> String {

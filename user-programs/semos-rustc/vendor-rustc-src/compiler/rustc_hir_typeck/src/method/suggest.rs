@@ -4,8 +4,8 @@
 // ignore-tidy-filelength
 
 use core::ops::ControlFlow;
-use std::borrow::Cow;
-use std::path::PathBuf;
+use alloc::borrow::Cow;
+use semos_std::path::PathBuf; // M27 R4 B5
 
 use hir::Expr;
 use rustc_ast::ast::Mutability;
@@ -2483,7 +2483,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             {
                 // The first arg is the same kind as the receiver
                 let explicit_args = if first_arg.is_some() {
-                    std::iter::once(receiver).chain(args.iter()).collect::<Vec<_>>()
+                    core::iter::once(receiver).chain(args.iter()).collect::<Vec<_>>()
                 } else {
                     // There is no `Self` kind to infer the arguments from
                     if has_unsuggestable_args {

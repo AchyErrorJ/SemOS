@@ -652,8 +652,8 @@ pub struct PlacePrinter<'a, 'tcx, M: Machine<'tcx>> {
     place: Place<M::Provenance>,
 }
 
-impl<'a, 'tcx, M: Machine<'tcx>> std::fmt::Debug for PlacePrinter<'a, 'tcx, M> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'a, 'tcx, M: Machine<'tcx>> core::fmt::Debug for PlacePrinter<'a, 'tcx, M> {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.place {
             Place::Local { local, offset, locals_addr } => {
                 debug_assert_eq!(locals_addr, self.ecx.frame().locals_addr());

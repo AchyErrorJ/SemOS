@@ -1,6 +1,6 @@
 //! Functionality for terminators and helper types that appear in terminators.
 
-use std::slice;
+use core::slice;
 
 use rustc_ast::InlineAsmOptions;
 use rustc_data_structures::packed::Pu128;

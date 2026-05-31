@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::graph::dominators::Dominators;
 use rustc_middle::bug;

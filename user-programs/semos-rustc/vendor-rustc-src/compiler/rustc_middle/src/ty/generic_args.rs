@@ -1,9 +1,9 @@
 // Generic arguments.
 
 use core::intrinsics;
-use std::marker::PhantomData;
-use std::num::NonZero;
-use std::ptr::NonNull;
+use core::marker::PhantomData;
+use core::num::NonZero;
+use core::ptr::NonNull;
 
 use rustc_data_structures::intern::Interned;
 use rustc_errors::{DiagArgValue, IntoDiagArg};
@@ -150,7 +150,7 @@ unsafe impl<'tcx> Sync for GenericArg<'tcx> where
 }
 
 impl<'tcx> IntoDiagArg for GenericArg<'tcx> {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         self.to_string().into_diag_arg(&mut None)
     }
 }

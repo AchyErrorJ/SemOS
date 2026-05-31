@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use core::ops::Deref;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::LangItem;
@@ -24,7 +24,7 @@ pub struct SolverDelegate<'tcx>(InferCtxt<'tcx>);
 impl<'a, 'tcx> From<&'a InferCtxt<'tcx>> for &'a SolverDelegate<'tcx> {
     fn from(infcx: &'a InferCtxt<'tcx>) -> Self {
         // SAFETY: `repr(transparent)`
-        unsafe { std::mem::transmute(infcx) }
+        unsafe { core::mem::transmute(infcx) }
     }
 }
 

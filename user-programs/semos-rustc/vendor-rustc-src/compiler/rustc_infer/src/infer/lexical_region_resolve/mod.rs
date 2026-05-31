@@ -1,6 +1,6 @@
 //! Lexical region resolution.
 
-use std::fmt;
+use core::fmt;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::graph::linked_graph::{

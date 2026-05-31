@@ -592,6 +592,14 @@ pub enum DiagArgValue {
 /// Implemented as a custom trait rather than `From` so that it is implemented on the type being
 /// converted rather than on `DiagArgValue`, which enables types from other `rustc_*` crates to
 /// implement this.
+// M27 R4 B5 TODO(Phase 4/5): IntoDiagArg's `path: &mut Option<std::path::PathBuf>`
+// parameter is inconsistent with all 4+ impl sites (rustc_hir, rustc_errors, rustc_middle,
+// rustc_borrowck, rustc_const_eval, rustc_trait_selection, rustc_hir_typeck) which use
+// `semos_std::path::PathBuf`. rustc_error_messages itself isn't ported yet (still on the §1.8
+// fluent-deferral list). When Phase 4/5 integrates and the trait def is required to compile
+// against impls, either (a) port rustc_error_messages full no_std + swap the trait param to
+// `semos_std::path::PathBuf`, or (b) cfg-gate via type alias. Patching here would force a
+// cascading Cargo.toml change (semos_std dep) for a crate we plan to gut anyway.
 pub trait IntoDiagArg {
     /// Convert `Self` into a `DiagArgValue` suitable for rendering in a diagnostic.
     ///

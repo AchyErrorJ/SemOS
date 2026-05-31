@@ -1,10 +1,9 @@
-use std::any::Any;
-use std::default::Default;
-use std::iter;
-use std::path::Component::Prefix;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::Arc;
+use core::any::Any;
+use core::iter;
+use semos_std::path::Component::Prefix; // M27 R4 B5
+use semos_std::path::{Path, PathBuf};   // M27 R4 B5
+use alloc::rc::Rc;
+use alloc::sync::Arc;
 
 use rustc_ast::attr::MarkedAttrs;
 use rustc_ast::token::MetaVarKind;

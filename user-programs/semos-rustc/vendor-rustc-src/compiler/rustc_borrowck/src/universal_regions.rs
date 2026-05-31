@@ -11,8 +11,8 @@
 //! The code in this file doesn't *do anything* with those results; it
 //! just returns them for other code to use.
 
-use std::cell::Cell;
-use std::iter;
+use core::cell::Cell;
+use core::iter;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_errors::Diag;

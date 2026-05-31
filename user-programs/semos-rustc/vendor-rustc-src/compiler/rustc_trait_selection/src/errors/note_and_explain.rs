@@ -106,7 +106,8 @@ pub enum SuffixKind {
 }
 
 impl IntoDiagArg for PrefixKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         let kind = match self {
             Self::Empty => "empty",
             Self::RefValidFor => "ref_valid_for",
@@ -128,7 +129,8 @@ impl IntoDiagArg for PrefixKind {
 }
 
 impl IntoDiagArg for SuffixKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         let kind = match self {
             Self::Empty => "empty",
             Self::Continues => "continues",

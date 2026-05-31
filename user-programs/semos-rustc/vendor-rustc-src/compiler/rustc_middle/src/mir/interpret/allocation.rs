@@ -3,10 +3,10 @@
 mod init_mask;
 mod provenance_map;
 
-use std::borrow::Cow;
-use std::hash::Hash;
-use std::ops::{Deref, DerefMut, Range};
-use std::{fmt, hash, ptr};
+use alloc::borrow::Cow;
+use core::hash::Hash;
+use core::ops::{Deref, DerefMut, Range};
+use core::{fmt, hash, ptr};
 
 use either::{Left, Right};
 use init_mask::*;

@@ -1,7 +1,7 @@
-use std::borrow::Cow;
-use std::collections::hash_map::Entry;
-use std::sync::Arc;
-use std::{mem, slice};
+use alloc::borrow::Cow;
+use hashbrown::hash_map::Entry;
+use alloc::sync::Arc;
+use core::{mem, slice};
 
 use ast::token::IdentIsRaw;
 use rustc_ast::token::NtPatKind::*;

@@ -779,7 +779,8 @@ pub enum TyOrSig<'tcx> {
 }
 
 impl IntoDiagArg for TyOrSig<'_> {
-    fn into_diag_arg(self, path: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, path: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         match self {
             TyOrSig::Ty(ty) => ty.into_diag_arg(path),
             TyOrSig::ClosureSig(sig) => sig.into_diag_arg(path),

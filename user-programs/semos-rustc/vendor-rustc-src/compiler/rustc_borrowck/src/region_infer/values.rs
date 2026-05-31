@@ -1,5 +1,5 @@
-use std::fmt::Debug;
-use std::rc::Rc;
+use core::fmt::Debug;
+use alloc::rc::Rc;
 
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
 use rustc_index::Idx;

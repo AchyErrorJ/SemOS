@@ -2,10 +2,10 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/mir/index.html
 
-use std::borrow::Cow;
-use std::fmt::{self, Debug, Formatter};
-use std::iter;
-use std::ops::{Index, IndexMut};
+use alloc::borrow::Cow;
+use core::fmt::{self, Debug, Formatter};
+use core::iter;
+use core::ops::{Index, IndexMut};
 
 pub use basic_blocks::{BasicBlocks, SwitchTargetValue};
 use either::Either;
@@ -916,7 +916,7 @@ mod binding_form_impl {
     impl<'a, 'tcx> HashStable<StableHashingContext<'a>> for super::BindingForm<'tcx> {
         fn hash_stable(&self, hcx: &mut StableHashingContext<'a>, hasher: &mut StableHasher) {
             use super::BindingForm::*;
-            std::mem::discriminant(self).hash_stable(hcx, hasher);
+            core::mem::discriminant(self).hash_stable(hcx, hasher);
 
             match self {
                 Var(binding) => binding.hash_stable(hcx, hasher),

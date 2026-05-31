@@ -1,4 +1,4 @@
-use std::mem;
+use core::mem;
 
 use rustc_ast::token::{
     self, Delimiter, IdentIsRaw, InvisibleOrigin, Lit, LitKind, MetaVarKind, Token, TokenKind,

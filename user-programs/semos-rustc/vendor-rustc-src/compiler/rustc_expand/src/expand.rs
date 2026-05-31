@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::{iter, mem, slice};
+use semos_std::path::PathBuf; // M27 R4 B5
+use alloc::rc::Rc;
+use alloc::sync::Arc;
+use core::{iter, mem, slice};
 
 use rustc_ast::mut_visit::*;
 use rustc_ast::tokenstream::TokenStream;

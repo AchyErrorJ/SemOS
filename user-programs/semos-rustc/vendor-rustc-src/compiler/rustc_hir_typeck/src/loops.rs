@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
-use std::fmt;
+use alloc::collections::BTreeMap;
+use core::fmt;
 
 use Context::*;
 use rustc_hir as hir;

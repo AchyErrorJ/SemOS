@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use core::fmt::Write;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_hir as hir;
@@ -484,7 +484,7 @@ fn child_prefix_matches_parent_projections(
     };
 
     parent_base.var_path.hir_id == child_base.var_path.hir_id
-        && std::iter::zip(&child_capture.place.projections, &parent_capture.place.projections)
+        && core::iter::zip(&child_capture.place.projections, &parent_capture.place.projections)
             .all(|(child, parent)| child.kind == parent.kind)
 }
 

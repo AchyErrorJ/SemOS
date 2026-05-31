@@ -3,7 +3,7 @@
 //! state of region inference. This code handles emitting the region
 //! context internal state.
 
-use std::io::{self, Write};
+use semos_std::io::{self, Write};
 
 use rustc_infer::infer::NllRegionVariableOrigin;
 use rustc_middle::ty::TyCtxt;

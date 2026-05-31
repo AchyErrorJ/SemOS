@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use core::ops::Deref;
 
 use rustc_errors::DiagCtxtHandle;
 use rustc_infer::infer::InferCtxt;
@@ -20,7 +20,7 @@ pub mod traits;
 pub struct TypeErrCtxt<'a, 'tcx> {
     pub infcx: &'a InferCtxt<'tcx>,
 
-    pub typeck_results: Option<std::cell::Ref<'a, ty::TypeckResults<'tcx>>>,
+    pub typeck_results: Option<core::cell::Ref<'a, ty::TypeckResults<'tcx>>>,
     pub diverging_fallback_has_occurred: bool,
 
     pub normalize_fn_sig: Box<dyn Fn(ty::PolyFnSig<'tcx>) -> ty::PolyFnSig<'tcx> + 'a>,

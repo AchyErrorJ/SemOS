@@ -2,8 +2,8 @@
 //!
 //! This contains the dataflow analysis used to track `Qualif`s on complex control-flow graphs.
 
-use std::fmt;
-use std::marker::PhantomData;
+use core::fmt;
+use core::marker::PhantomData;
 
 use rustc_index::bit_set::MixedBitSet;
 use rustc_middle::mir::visit::Visitor;

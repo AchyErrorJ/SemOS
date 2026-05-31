@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::Index;
+use core::fmt;
+use core::ops::Index;
 
 use rustc_index::{IndexSlice, IndexVec};
 use rustc_middle::mir::ConstraintCategory;

@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_type_ir::TypeFoldable;

@@ -50,7 +50,7 @@ mod liveness_constraints;
 mod loan_liveness;
 mod typeck_constraints;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_index::bit_set::SparseBitMatrix;

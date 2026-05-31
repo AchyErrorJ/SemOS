@@ -1,6 +1,6 @@
 //! Errors emitted by `rustc_hir_typeck`.
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::{AssignOpKind, Label};
@@ -90,7 +90,7 @@ pub(crate) enum ReturnLikeStatementKind {
 }
 
 impl IntoDiagArg for ReturnLikeStatementKind {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         let kind = match self {
             Self::Return => "return",
             Self::Become => "become",

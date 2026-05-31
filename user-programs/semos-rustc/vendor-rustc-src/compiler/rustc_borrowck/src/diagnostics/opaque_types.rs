@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use either::Either;
 use itertools::Itertools as _;
@@ -224,7 +224,7 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for FindOpaqueRegion<'_, 'tcx> {
                 self.tcx.opaque_ty_origin(opaque.def_id)
         {
             let variances = self.tcx.variances_of(opaque.def_id);
-            for (idx, (arg, variance)) in std::iter::zip(opaque.args, variances).enumerate() {
+            for (idx, (arg, variance)) in core::iter::zip(opaque.args, variances).enumerate() {
                 // Skip uncaptured args.
                 if *variance == ty::Bivariant {
                     continue;

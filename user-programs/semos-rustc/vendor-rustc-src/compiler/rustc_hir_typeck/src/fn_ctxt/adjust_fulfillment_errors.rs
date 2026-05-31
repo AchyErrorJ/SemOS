@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use rustc_hir as hir;
 use rustc_hir::def::{DefKind, Res};

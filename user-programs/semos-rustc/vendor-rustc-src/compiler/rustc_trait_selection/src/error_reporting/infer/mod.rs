@@ -45,10 +45,11 @@
 //! ported to this system, and which relies on string concatenation at the
 //! time of error detection.
 
-use std::borrow::Cow;
-use std::ops::ControlFlow;
-use std::path::PathBuf;
-use std::{cmp, fmt, iter};
+use alloc::borrow::Cow;
+use core::ops::ControlFlow;
+// M27 R4 B5: PathBuf carries through from semos_std on this target.
+use semos_std::path::PathBuf;
+use core::{cmp, fmt, iter};
 
 use rustc_abi::ExternAbi;
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -847,7 +848,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
             values.0.push_normal("<");
             values.1.push_normal("<");
         }
-        for (i, (a, b)) in std::iter::zip(args1, args2).enumerate() {
+        for (i, (a, b)) in core::iter::zip(args1, args2).enumerate() {
             let a_str = a.to_string();
             let b_str = b.to_string();
             if let (Some(a), Some(b)) = (a.as_type(), b.as_type()) {
@@ -1274,9 +1275,9 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
                 // here we want to visit two separate types with no relation to each other, so we
                 // move the results from `types` to `expected` or `found` as appropriate.
                 expected.visit_with(&mut types_visitor);
-                std::mem::swap(&mut types_visitor.expected, &mut types_visitor.types);
+                core::mem::swap(&mut types_visitor.expected, &mut types_visitor.types);
                 found.visit_with(&mut types_visitor);
-                std::mem::swap(&mut types_visitor.found, &mut types_visitor.types);
+                core::mem::swap(&mut types_visitor.found, &mut types_visitor.types);
                 types_visitor
             }
 
@@ -2276,7 +2277,8 @@ impl<'tcx> ObligationCause<'tcx> {
 pub struct ObligationCauseAsDiagArg<'tcx>(pub ObligationCause<'tcx>);
 
 impl IntoDiagArg for ObligationCauseAsDiagArg<'_> {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> rustc_errors::DiagArgValue {
+    // M27 R4 B5: PathBuf carries through from semos_std on this target.
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> rustc_errors::DiagArgValue {
         let kind = match self.0.code() {
             ObligationCauseCode::CompareImplItem { kind: ty::AssocKind::Fn { .. }, .. } => {
                 "method_compat"

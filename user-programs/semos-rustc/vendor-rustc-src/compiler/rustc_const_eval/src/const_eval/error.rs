@@ -1,4 +1,4 @@
-use std::mem;
+use core::mem;
 
 use rustc_errors::{Diag, DiagArgName, DiagArgValue, DiagMessage, IntoDiagArg};
 use rustc_middle::mir::AssertKind;
@@ -110,7 +110,7 @@ pub fn get_span_and_frames<'tcx>(
             if frame.times < 3 {
                 let times = frame.times;
                 frame.times = 0;
-                frames.extend(std::iter::repeat_n(frame, times as usize));
+                frames.extend(core::iter::repeat_n(frame, times as usize));
             } else {
                 frames.push(frame);
             }

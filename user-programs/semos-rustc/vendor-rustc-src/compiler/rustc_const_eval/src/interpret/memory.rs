@@ -6,10 +6,11 @@
 //! integer. It is crucial that these operations call `check_align` *before*
 //! short-circuiting the empty case!
 
-use std::borrow::{Borrow, Cow};
-use std::cell::Cell;
-use std::collections::VecDeque;
-use std::{fmt, ptr};
+use alloc::borrow::Cow;
+use core::borrow::Borrow;
+use core::cell::Cell;
+use alloc::collections::VecDeque;
+use core::{fmt, ptr};
 
 use rustc_abi::{Align, HasDataLayout, Size};
 use rustc_ast::Mutability;
@@ -1216,15 +1217,15 @@ pub struct DumpAllocs<'a, 'tcx, M: Machine<'tcx>> {
     allocs: Vec<AllocId>,
 }
 
-impl<'a, 'tcx, M: Machine<'tcx>> std::fmt::Debug for DumpAllocs<'a, 'tcx, M> {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'a, 'tcx, M: Machine<'tcx>> core::fmt::Debug for DumpAllocs<'a, 'tcx, M> {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Cannot be a closure because it is generic in `Prov`, `Extra`.
         fn write_allocation_track_relocs<'tcx, Prov: Provenance, Extra, Bytes: AllocBytes>(
-            fmt: &mut std::fmt::Formatter<'_>,
+            fmt: &mut core::fmt::Formatter<'_>,
             tcx: TyCtxt<'tcx>,
             allocs_to_print: &mut VecDeque<AllocId>,
             alloc: &Allocation<Prov, Extra, Bytes>,
-        ) -> std::fmt::Result {
+        ) -> core::fmt::Result {
             for alloc_id in alloc.provenance().provenances().filter_map(|prov| prov.get_alloc_id())
             {
                 allocs_to_print.push_back(alloc_id);

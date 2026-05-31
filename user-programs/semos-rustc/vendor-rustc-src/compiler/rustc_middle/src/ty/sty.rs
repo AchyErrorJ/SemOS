@@ -2,8 +2,8 @@
 
 #![allow(rustc::usage_of_ty_tykind)]
 
-use std::borrow::Cow;
-use std::ops::{ControlFlow, Range};
+use alloc::borrow::Cow;
+use core::ops::{ControlFlow, Range};
 
 use hir::def::{CtorKind, DefKind};
 use rustc_abi::{FIRST_VARIANT, FieldIdx, ScalableElt, VariantIdx};
@@ -232,7 +232,7 @@ impl<'tcx> InlineConstArgs<'tcx> {
     ) -> InlineConstArgs<'tcx> {
         InlineConstArgs {
             args: tcx.mk_args_from_iter(
-                parts.parent_args.iter().copied().chain(std::iter::once(parts.ty.into())),
+                parts.parent_args.iter().copied().chain(core::iter::once(parts.ty.into())),
             ),
         }
     }
