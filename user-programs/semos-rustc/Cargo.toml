@@ -3,8 +3,36 @@ name = "semos-rustc"
 version = "0.0.1"
 edition = "2021"
 
-# Opt out of any parent workspace.
+# semos-rustc is a WORKSPACE ROOT that owns the entire vendored rustc tree.
+# Per-crate `[workspace] members = []` headers (added during Phase 2-4 port
+# to opt them out of cargo's parent-workspace search) get overridden by
+# this root workspace definition via glob membership.
 [workspace]
+members = [
+    ".",
+    "vendor-rustc-src/compiler/*",
+]
+# rustc_codegen_llvm + rustc_codegen_gcc + rustc_llvm + rustc_baked_icu_data
+# + rustc_sanitizers + rustc_codegen_cranelift get excluded — per §1 we
+# dropped LLVM/GCC backends, the LLVM C++ bindings, ICU data baking,
+# sanitizer support, and we vendor Cranelift separately in semos-cc.
+# Also exclude rustc_windows_rc + rustc_public + rustc_public_bridge +
+# rustc_proc_macro + rustc_query_impl + rustc_query_system + rustc_traits
+# + rustc_transmute + rustc_ty_utils + rustc_next_trait_solver +
+# rustc_sanitizers + rustc_symbol_mangling + rustc_pattern_analysis +
+# rustc_interface + rustc_target + rustc_abi until we discover whether
+# they're transitively needed by rustc_driver_impl (some likely are; this
+# is the discovery wave).
+exclude = [
+    "vendor-rustc-src/compiler/rustc",
+    "vendor-rustc-src/compiler/rustc_codegen_llvm",
+    "vendor-rustc-src/compiler/rustc_codegen_gcc",
+    "vendor-rustc-src/compiler/rustc_codegen_cranelift",
+    "vendor-rustc-src/compiler/rustc_llvm",
+    "vendor-rustc-src/compiler/rustc_baked_icu_data",
+    "vendor-rustc-src/compiler/rustc_sanitizers",
+    "vendor-rustc-src/compiler/rustc_windows_rc",
+]
 
 [[bin]]
 name = "semos-rustc"
@@ -16,13 +44,8 @@ semos-std = { path = "../std-shim" }
 # rustc_driver_impl is the M27 Phase 5 integration target — the actual
 # rustc CLI entry point. Wires through all 48 ported rustc_* crates
 # transitively as path deps from vendor-rustc-src/.
-#
-# Commented out until Phase 5b integration starts; first the scaffold
-# builds standalone to validate the Ring-3 layout (non-PIE ET_EXEC at
-# USER_CODE_BASE 0x400000) per the semos-cc template.
-#
-# rustc_driver_impl = { path = "vendor-rustc-src/compiler/rustc_driver_impl" }
-# rustc_driver       = { path = "vendor-rustc-src/compiler/rustc_driver" }
+rustc_driver_impl = { path = "vendor-rustc-src/compiler/rustc_driver_impl" }
+rustc_driver      = { path = "vendor-rustc-src/compiler/rustc_driver" }
 
 [profile.release]
 panic = "abort"

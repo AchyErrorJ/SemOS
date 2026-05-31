@@ -1,6 +1,3 @@
-[workspace]
-members = []
-
 [package]
 name = "rustc_lint_defs"
 version = "0.0.0"
@@ -17,6 +14,6 @@ rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
 # M27 R4 B5: semos_std for PathBuf in IntoDiagArg trait impl (line ~309).
 # Parent: confirm the path; might also be available via rustc_error_messages re-export.
-semos_std = { path = "../../../../std-shim" }
+semos-std = { path = "../../../../std-shim" }
 serde = { version = "1.0.125", features = ["derive"] }
 # tidy-alphabetical-end

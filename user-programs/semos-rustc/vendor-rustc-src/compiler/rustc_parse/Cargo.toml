@@ -1,7 +1,3 @@
-[workspace]
-# M27 Phase 3a C1: opt out of any parent workspace.
-members = []
-
 [package]
 name = "rustc_parse"
 version = "0.0.0"

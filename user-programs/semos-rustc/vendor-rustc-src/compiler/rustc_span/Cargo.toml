@@ -1,8 +1,3 @@
-[workspace]
-# M27 Phase 2a A2: opt out of any parent workspace (Cargo otherwise walks up
-# to the worktree root and tries to resolve dev-deps from an unrelated tree).
-members = []
-
 [package]
 name = "rustc_span"
 version = "0.0.0"

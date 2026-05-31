@@ -1,6 +1,3 @@
-[workspace]
-members = []
-
 [package]
 name = "rustc_trait_selection"
 version = "0.0.0"

@@ -1,8 +1,5 @@
 # M27 Phase 2b B1: opt out of any parent workspace (Cargo otherwise walks up
 # to the worktree root and tries to resolve dev-deps from an unrelated tree).
-[workspace]
-members = []
-
 [package]
 name = "rustc_ast"
 version = "0.0.0"
