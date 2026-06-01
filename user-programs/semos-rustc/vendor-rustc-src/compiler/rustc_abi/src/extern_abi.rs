@@ -1,6 +1,8 @@
-use std::cmp::Ordering;
-use std::fmt;
-use std::hash::{Hash, Hasher};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::fmt;
+use core::hash::{Hash, Hasher};
 
 #[cfg(feature = "nightly")]
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher, StableOrd};

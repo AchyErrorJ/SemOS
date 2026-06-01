@@ -1,7 +1,9 @@
-use std::collections::BTreeSet;
-use std::fmt::{self, Write};
-use std::ops::{Bound, Deref};
-use std::{cmp, iter};
+use alloc::collections::BTreeSet;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt::{self, Write};
+use core::ops::{Bound, Deref};
+use core::{cmp, iter};
 
 use rustc_hashes::Hash64;
 use rustc_index::Idx;

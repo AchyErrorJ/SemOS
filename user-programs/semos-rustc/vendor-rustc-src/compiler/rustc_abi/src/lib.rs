@@ -1,3 +1,7 @@
+// M27 Stage F6: no_std + alloc. x86_64-unknown-none has no `std`,
+// so we need to declare no_std and pull alloc explicitly.
+#![no_std]
+
 // tidy-alphabetical-start
 #![cfg_attr(feature = "nightly", allow(internal_features))]
 #![cfg_attr(feature = "nightly", feature(assert_matches))]
@@ -37,12 +41,17 @@ even other Rust compilers, such as rust-analyzer!
 
 */
 
-use std::fmt;
+#[macro_use]
+extern crate alloc;
+
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 #[cfg(feature = "nightly")]
-use std::iter::Step;
-use std::num::{NonZeroUsize, ParseIntError};
-use std::ops::{Add, AddAssign, Deref, Mul, RangeFull, RangeInclusive, Sub};
-use std::str::FromStr;
+use core::iter::Step;
+use core::num::{NonZeroUsize, ParseIntError};
+use core::ops::{Add, AddAssign, Deref, Mul, RangeFull, RangeInclusive, Sub};
+use core::str::FromStr;
 
 use bitflags::bitflags;
 #[cfg(feature = "nightly")]
@@ -108,8 +117,8 @@ bitflags! {
 
 // This is the same as `rustc_data_structures::external_bitflags_debug` but without the
 // `rustc_data_structures` to make it build on stable.
-impl std::fmt::Debug for ReprFlags {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for ReprFlags {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         bitflags::parser::to_writer(self, f)
     }
 }

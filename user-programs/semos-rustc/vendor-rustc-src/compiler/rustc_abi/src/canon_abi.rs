@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 #[cfg(feature = "nightly")]
 use rustc_macros::HashStable_Generic;

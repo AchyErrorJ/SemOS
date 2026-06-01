@@ -19,7 +19,7 @@
 //! These are included as fields on the "outer" layout; they are not part
 //! of any variant.
 
-use std::iter;
+use core::iter;
 
 use rustc_index::bit_set::{BitMatrix, DenseBitSet};
 use rustc_index::{Idx, IndexSlice, IndexVec};

@@ -1,4 +1,4 @@
-use std::num::NonZero;
+use core::num::NonZero;
 
 use rustc_hashes::Hash64;
 use rustc_index::{Idx, IndexVec};

@@ -2258,3 +2258,26 @@ pattern, probably also no_std-missing-prelude. F6 next. Crates
 closed cumulatively: 8 (data_structures, span, serialize, ast,
 ast_pretty, error_messages, type_ir, next_trait_solver).
 
+
+────────────────────────────────────────────────────────────────────
+## Stage F6: rustc_abi (492 → 0 errors)
+
+Ninth patched crate. Identical root cause to F5 (rustc_next_trait_solver):
+the crate had no `#![no_std]` and no `extern crate alloc;`.
+
+Steps:
+1. `#![no_std]` + `#[macro_use] extern crate alloc;` added to lib.rs
+   (placed AFTER the `/*! ... */` inner doc block to avoid E0753).
+2. Bulk `use std::*` → `use core::*` / `use alloc::collections::*`
+   across canon_abi, extern_abi (+ tests), layout/{coroutine, simple,
+   ty}, layout.rs, lib.rs.
+3. Body refs `std::fmt`/`std::mem` etc. → `core::*` via sed sweep.
+4. One `#[tracing::instrument(...)]` in callconv.rs commented.
+5. Per-file alloc prelude bundles added to extern_abi.rs, layout.rs,
+   lib.rs.
+
+Error trajectory: **492 → 34 → 13 → 2 → 0**
+
+Workspace check now blocks on the next downstream crate. Crates closed
+cumulatively in Stage F: 9 (data_structures, span, serialize, ast,
+ast_pretty, error_messages, type_ir, next_trait_solver, abi).

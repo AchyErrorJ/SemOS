@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::Deref;
+use core::fmt;
+use core::ops::Deref;
 
 use rustc_data_structures::intern::Interned;
 use rustc_macros::HashStable_Generic;
@@ -155,7 +155,7 @@ impl<'a, Ty> AsRef<LayoutData<FieldIdx, VariantIdx>> for TyAndLayout<'a, Ty> {
 
 /// Trait that needs to be implemented by the higher-level type representation
 /// (e.g. `rustc_middle::ty::Ty`), to provide `rustc_target::abi` functionality.
-pub trait TyAbiInterface<'a, C>: Sized + std::fmt::Debug + std::fmt::Display {
+pub trait TyAbiInterface<'a, C>: Sized + core::fmt::Debug + core::fmt::Display {
     fn ty_and_layout_for_variant(
         this: TyAndLayout<'a, Self>,
         cx: &C,
