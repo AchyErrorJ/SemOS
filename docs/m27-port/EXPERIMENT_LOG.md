@@ -1904,3 +1904,72 @@ than upstream no_std issues.
 
 The patched-crate followups should be the next focus — each is
 small + structural rather than batch-pattern work.
+
+### Stage E iter 10 (commit `f8a8757`) — ALL 5 patched-crate followups CLEARED
+
+Six fixes (5 patched-crate + 1 parent prep):
+
+1. **rustc_hashes**: cfg-gate `use rustc_stable_hash::{FromStableHash,
+   SipHasher128Hash}` (we host-gated the dep iter 8 since
+   rustc-stable-hash 0.1.0 is unconditionally std). SemOS-target arm
+   gets a 6-line stub matching upstream's
+   `SipHasher128Hash(pub [u64; 2])` shape.
+
+2. **rustc_proc_macro**: upstream lib.rs points at
+   `../../library/proc_macro/src/lib.rs` which we don't vendor. Per
+   §1.5 (drop proc-macro runtime), provide a 130-line stub
+   (`src/lib_stub.rs`) exposing only the public type names that
+   downstream consumers (rustc_expand, rustc_metadata,
+   rustc_builtin_macros) import: TokenStream, Group, Ident, Punct,
+   Literal, Span, Delimiter, Spacing, Diagnostic, `bridge` module.
+
+3. **rustc_fs_util**: `Path::to_str()` doesn't exist on
+   semos_std::path::Path — it has `as_str()` (no UTF-8 validity
+   check needed). 1-line fix.
+
+4. **rustc_log**: added missing semos-std target-conditional dep
+   (body uses `semos_std::env::{self, VarError}`). Also fixed 6
+   `env::var(format!(...))` sites: semos_std::env::var takes &str,
+   `format!` returns String — added `&` prefix to each call.
+
+5. **rustc_thread_pool**: multiple structural fixes:
+   - Added `use alloc::{string::String, vec::Vec, boxed::Box};`
+     (source used these bare, expected std prelude).
+   - `std::sync::Arc` → `alloc::sync::Arc` inline.
+   - `std::ops::Deref` → `core::ops::Deref` (line 641).
+   - semos_std::thread_local!'s LocalKey requires T: Send+Sync (it's
+     OnceLock-backed, single-threaded SemOS). Cell<*const()> isn't.
+     Wrapped in a Sync-asserting `TlvCell` newtype on SemOS arm;
+     cfg-split the set/get helpers to dereference through the
+     newtype.
+
+6. **Parent prep**: `impl core::error::Error for semos_std::io::Error
+   {}` in user-programs/std-shim/src/io.rs (rustc_thread_pool casts
+   io::Error → &dyn core::error::Error).
+
+**Externals at iter 10 end: 9** (down from 14 at iter 9 end). The
+Stage E focus has decisively shifted — ALL remaining are pure
+external no_std issues:
+
+- **Big**: anstyle (156), unicode-normalization (158),
+  find-msvc-tools (69)
+- **Small**: scoped-tls (7), getrandom (3)
+- **Singletons**: either, memchr, indexmap, jiff (1 error each)
+
+### Iter 11+ next-steps
+
+For the singletons: `cargo tree -i <crate>` to find the df=false
+leak (same pattern as iter 7b's rustc_driver_impl tracing leak).
+
+For anstyle / unicode-normalization / find-msvc-tools / scoped-tls:
+- anstyle is via proc-macro chain (annotate-snippets ← rustc_fluent_macro);
+  even with iter 9 host-gates, proc-macro deps still appear in
+  workspace lockfile. May need vendor + fork with `default = []`
+  (tracing-core pattern).
+- unicode-normalization is in rustc_parse for ident normalization.
+  Has default features pulling std; df=false should work.
+- find-msvc-tools is in rustc_codegen_ssa (already host-gated as
+  part of ar_archive_writer block at iter 7c)... if still failing,
+  the target build is somehow seeing it.
+
+Cumulative this session: 26 commits, ~7.7M tokens.
