@@ -48,6 +48,12 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::fmt;
 
+// Phase 5b Stage E iter 10: source still uses String / Vec / Box bare
+// (upstream relied on std prelude). Bring them in from alloc.
+use alloc::string::String;
+use alloc::vec::Vec;
+use alloc::boxed::Box;
+
 #[cfg(not(target_os = "none"))]
 use std::io;
 #[cfg(target_os = "none")]
@@ -65,10 +71,20 @@ pub mod tlv {
     // the same accessor name) is sufficient.
     #[cfg(not(target_os = "none"))]
     std::thread_local!(pub static TLV: Cell<*const ()> = const { Cell::new(core::ptr::null()) });
-    // M27: semos_std::thread_local! doesn't support `const { }` initializer
-    // syntax — drop it, the closure init is cheap and called once.
+
+    // M27 Phase 5b iter 10: semos_std::thread_local! requires T: Send+Sync
+    // (because the LocalKey is backed by a shared OnceLock on single-
+    // threaded SemOS, not real per-thread TLS). Cell<*const()> is neither.
+    // Wrap in a Sync-asserting newtype since SemOS Ring 3 is single-threaded
+    // anyway.
     #[cfg(target_os = "none")]
-    semos_std::thread_local! { pub static TLV: Cell<*const ()> = Cell::new(core::ptr::null()); }
+    pub struct TlvCell(pub Cell<*const ()>);
+    #[cfg(target_os = "none")]
+    unsafe impl Sync for TlvCell {}
+    #[cfg(target_os = "none")]
+    unsafe impl Send for TlvCell {}
+    #[cfg(target_os = "none")]
+    semos_std::thread_local! { pub static TLV: TlvCell = TlvCell(Cell::new(core::ptr::null())); }
 
     #[derive(Copy, Clone)]
     pub(crate) struct Tlv(pub(crate) *const ());
@@ -83,14 +99,26 @@ pub mod tlv {
     unsafe impl Sync for Tlv {}
     unsafe impl Send for Tlv {}
 
+    #[cfg(not(target_os = "none"))]
     #[inline]
     pub(crate) fn set(value: Tlv) {
         TLV.with(|tlv| tlv.set(value.0));
     }
+    #[cfg(target_os = "none")]
+    #[inline]
+    pub(crate) fn set(value: Tlv) {
+        TLV.with(|tlv| tlv.0.set(value.0));
+    }
 
+    #[cfg(not(target_os = "none"))]
     #[inline]
     pub(crate) fn get() -> Tlv {
         TLV.with(|tlv| Tlv(tlv.get()))
+    }
+    #[cfg(target_os = "none")]
+    #[inline]
+    pub(crate) fn get() -> Tlv {
+        TLV.with(|tlv| Tlv(tlv.0.get()))
     }
 }
 
@@ -134,8 +162,8 @@ pub fn yield_local() -> Option<Yield> {
 pub struct Registry;
 
 impl Registry {
-    pub fn current() -> std::sync::Arc<Registry> {
-        std::sync::Arc::new(Registry)
+    pub fn current() -> alloc::sync::Arc<Registry> {
+        alloc::sync::Arc::new(Registry)
     }
 
     pub fn current_num_threads() -> usize {
@@ -610,7 +638,7 @@ impl<T: fmt::Debug> fmt::Debug for WorkerLocal<T> {
     }
 }
 
-impl<T> std::ops::Deref for WorkerLocal<T> {
+impl<T> core::ops::Deref for WorkerLocal<T> {
     type Target = T;
 
     #[inline(always)]

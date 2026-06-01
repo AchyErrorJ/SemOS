@@ -2481,6 +2481,7 @@ dependencies = [
 name = "rustc_log"
 version = "0.0.0"
 dependencies = [
+ "semos-std",
  "tracing",
  "tracing-core",
  "tracing-subscriber",

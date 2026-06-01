@@ -18,6 +18,11 @@ tracing-core = "0.1.34"
 tracing-subscriber = { version = "0.3.3", default-features = false, features = ["fmt", "env-filter", "smallvec", "parking_lot", "ansi"] }
 tracing-tree = "0.3.1"
 
+# Phase 5b Stage E iter 10: rustc_log's SemOS-target body uses
+# semos_std::env::{self, VarError} to read RUSTC_LOG-style config.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+
 [features]
 # tidy-alphabetical-start
 max_level_info = ['tracing/max_level_info', 'tracing/release_max_level_info']

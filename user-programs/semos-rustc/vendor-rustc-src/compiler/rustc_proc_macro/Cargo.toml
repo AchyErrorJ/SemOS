@@ -10,7 +10,13 @@ version = "0.0.0"
 edition = "2024"
 
 [lib]
-path = "../../library/proc_macro/src/lib.rs"
+# Phase 5b Stage E iter 10: upstream points at ../../library/proc_macro/
+# which we don't have (rustc-src vendoring is `compiler/` only, no
+# `library/`). Per §1.5 we drop proc-macro runtime entirely; provide
+# a tiny local stub that exposes the public API surface as no-op /
+# unreachable!() so downstream consumers (rustc_expand, rustc_metadata,
+# rustc_builtin_macros) still link.
+path = "src/lib_stub.rs"
 test = false
 doctest = false
 

@@ -177,8 +177,9 @@ pub fn path_to_c_string(p: &Path) -> CString {
 // there once Path lands a `to_str` method on the SemOS target.
 #[cfg(target_os = "none")]
 pub fn path_to_c_string(p: &Path) -> CString {
-    // Path::to_str is in semos-std; CString::new is in alloc::ffi.
-    let s: &str = p.to_str().expect("path_to_c_string: non-UTF8 path on SemOS");
+    // semos_std::path::Path uses `as_str` rather than std's `to_str`
+    // (no UTF-8 validity check needed — SemOS paths are UTF-8 throughout).
+    let s: &str = p.as_str();
     CString::new(s).expect("path_to_c_string: nul byte in path")
 }
 

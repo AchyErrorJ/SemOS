@@ -21,7 +21,21 @@ extern crate alloc;
 use core::fmt;
 use core::ops::BitXorAssign;
 
+// Phase 5b Stage E iter 10: rustc_stable_hash 0.1.0 is host-only
+// (R3-flagged unconditional std; see Cargo.toml host-gate). Provide
+// local trait stubs on SemOS target — the only consumer that depends
+// on real-hash quality is incremental compilation, which we drop per
+// §1.3.
+#[cfg(not(target_os = "none"))]
 use rustc_stable_hash::{FromStableHash, SipHasher128Hash as StableHasherHash};
+
+#[cfg(target_os = "none")]
+pub struct StableHasherHash(pub [u64; 2]);
+#[cfg(target_os = "none")]
+pub trait FromStableHash: Sized {
+    type Hash;
+    fn from(_h: Self::Hash) -> Self;
+}
 
 /// A `u64` but encoded with a fixed size; for hashes this encoding is more compact than `u64`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]

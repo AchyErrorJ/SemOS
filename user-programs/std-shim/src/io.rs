@@ -75,6 +75,11 @@ impl core::fmt::Display for Error {
     }
 }
 
+// Phase 5b Stage E iter 10: rustc_thread_pool casts `&io::Error` to
+// `&dyn core::error::Error` for its IOError variant. Implement the
+// trait — semos_std::io::Error already provides Display + Debug.
+impl core::error::Error for Error {}
+
 pub type Result<T> = core::result::Result<T, Error>;
 
 /// Default scratch size for `read_to_end` chunks. Matches the kernel's
