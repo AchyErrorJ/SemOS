@@ -1,4 +1,4 @@
-use std::ops::Index;
+use core::ops::Index;
 
 use derive_where::derive_where;
 use rustc_index::IndexVec;

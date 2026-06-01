@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use tracing::debug;
 
@@ -53,7 +53,7 @@ where
     I: Interner,
     R: PredicateEmittingRelation<Infcx>,
 {
-    debug!("super_combine_tys::<{}>({:?}, {:?})", std::any::type_name::<R>(), a, b);
+    debug!("super_combine_tys::<{}>({:?}, {:?})", core::any::type_name::<R>(), a, b);
     debug_assert!(!a.has_escaping_bound_vars());
     debug_assert!(!b.has_escaping_bound_vars());
 
@@ -161,7 +161,7 @@ where
     I: Interner,
     R: PredicateEmittingRelation<Infcx>,
 {
-    debug!("super_combine_consts::<{}>({:?}, {:?})", std::any::type_name::<R>(), a, b);
+    debug!("super_combine_consts::<{}>({:?}, {:?})", core::any::type_name::<R>(), a, b);
     debug_assert!(!a.has_escaping_bound_vars());
     debug_assert!(!b.has_escaping_bound_vars());
 

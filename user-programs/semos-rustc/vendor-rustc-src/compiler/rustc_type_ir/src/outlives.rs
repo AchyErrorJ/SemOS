@@ -2,6 +2,8 @@
 //! refers to rules defined in RFC 1214 (`OutlivesFooBar`), so see that
 //! RFC for reference.
 
+use alloc::vec::Vec;
+
 use derive_where::derive_where;
 use smallvec::{SmallVec, smallvec};
 

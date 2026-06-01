@@ -1,3 +1,4 @@
+// Stage F4: alloc prelude — see crate lib.rs for `extern crate alloc`.
 //! Data structure used to inspect trait solver behavior.
 //!
 //! During trait solving we optionally build "proof trees", the root of
@@ -16,6 +17,8 @@
 //! inference context when necessary.
 //!
 //! [canonicalized]: https://rustc-dev-guide.rust-lang.org/solve/canonicalization.html
+
+use alloc::vec::Vec;
 
 use derive_where::derive_where;
 use rustc_type_ir_macros::{GenericTypeVisitable, TypeFoldable_Generic, TypeVisitable_Generic};

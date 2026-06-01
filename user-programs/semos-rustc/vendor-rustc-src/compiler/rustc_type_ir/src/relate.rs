@@ -2,7 +2,7 @@ use core::iter;
 
 use derive_where::derive_where;
 use rustc_ast_ir::Mutability;
-use tracing::{instrument, trace};
+use tracing::trace;
 
 use crate::error::{ExpectedFound, TypeError};
 use crate::fold::TypeFoldable;
@@ -329,7 +329,7 @@ impl<I: Interner> Relate<I> for ty::ExistentialTraitRef<I> {
 /// Relates `a` and `b` structurally, calling the relation for all nested values.
 /// Any semantic equality, e.g. of projections, and inference variables have to be
 /// handled by the caller.
-#[instrument(level = "trace", skip(relation), ret)]
+// #[instrument(level = "trace", skip(relation), ret)]
 pub fn structurally_relate_tys<I: Interner, R: TypeRelation<I>>(
     relation: &mut R,
     a: I::Ty,

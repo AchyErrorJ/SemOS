@@ -2191,3 +2191,43 @@ Crates closed cumulatively this session: rustc_data_structures (F1),
 rustc_span + rustc_serialize (F2), rustc_ast + rustc_ast_pretty +
 rustc_error_messages (F3). Six down, ~42 remaining.
 
+
+────────────────────────────────────────────────────────────────────
+## Stage F4: rustc_type_ir (83 → 0 errors)
+
+Seventh patched crate closed. Same pattern, with two new wrinkles:
+
+1. **`use std::*;` lines persisted in source** — unlike F1-F3 where
+   the upstream was already partly cfg-split, rustc_type_ir had a lot
+   of un-touched `use std::*;` imports. Mechanical swap to
+   `use core::*;` / `use alloc::*;` across visit.rs, search_graph/
+   {mod.rs, stack.rs}, ty_info.rs, ty_kind.rs, ty_kind/closure.rs,
+   relate/combine.rs, solve/mod.rs.
+2. **`::std::` paths in macro emission** — `macros.rs` line 11
+   (`-> ::std::result::Result<...>` in the TypeFoldable macro body)
+   → `::core::result::Result`. Same shape as the F2/F1 fix to
+   rustc_macros and rustc_index_macros.
+
+Additional substitutions:
+- `std::collections::hash_map::Entry` (no_std) → `hashbrown::hash_map::Entry`
+- `ena::unify::{NoError, UnifyKey, UnifyValue}` host-only — guards
+  on re-export + on the 4 impl blocks in ty_kind.rs for IntVid/FloatVid
+- `rustc_hash::{FxHashMap, FxHashSet}` (gated by `std` feature) →
+  hashbrown::HashMap/HashSet aliased with FxBuildHasher on SemOS
+- Bulk `#[instrument(...)]` strip: 10 sites across binder.rs, fold.rs,
+  relate.rs, relate/solver_relating.rs, search_graph/mod.rs +
+  drop instrument from the `use tracing::{...}` lists
+- alloc preludes added to 14 files (canonical, const_kind, elaborate,
+  fold, infer_ctxt, inherent, interner, ir_print, outlives, relate/
+  solver_relating, search_graph/mod, solve/inspect, solve/mod, visit)
+- semos-std target dep added to Cargo.toml (ir_print.rs into_diag_arg
+  signatures reference `semos_std::path::PathBuf`)
+- hashbrown added as a direct dep (data_structures::HashMap alias)
+
+Error trajectory: **83 → 55 → 14 → 0**
+
+Workspace check now blocks on **rustc_next_trait_solver (1048 errors)**.
+That's a meaningfully bigger crate but should be tractable on the
+same playbook — Stage F5 next. Crates closed cumulatively: 7 of
+the ~48 internal rustc_* fork (data_structures, span, serialize,
+ast, ast_pretty, error_messages, type_ir).

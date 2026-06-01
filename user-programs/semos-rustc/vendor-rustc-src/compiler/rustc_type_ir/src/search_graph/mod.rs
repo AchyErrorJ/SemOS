@@ -11,19 +11,21 @@
 //! more details. Caching is split between a global cache and the per-cycle `provisional_cache`.
 //! The global cache has to be completely unobservable, while the per-cycle cache may impact
 //! behavior as long as the resulting behavior is still correct.
-use std::cmp::Ordering;
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, btree_map};
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::iter;
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, btree_map};
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::iter;
+use core::marker::PhantomData;
+use hashbrown::hash_map::Entry;
 
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
 use rustc_type_ir::data_structures::HashMap;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 mod stack;
 use stack::{Stack, StackDepth, StackEntry};
@@ -750,7 +752,7 @@ impl<D: Delegate<Cx = X>, X: Cx> SearchGraph<D> {
     ///
     /// While goals get computed via `D::compute_goal`, this function handles
     /// caching, overflow, and cycles.
-    #[instrument(level = "debug", skip(self, cx, inspect), ret)]
+    // #[instrument(level = "debug", skip(self, cx, inspect), ret)]
     pub fn evaluate_goal(
         &mut self,
         cx: X,
@@ -951,7 +953,7 @@ impl<D: Delegate<Cx = X>, X: Cx> SearchGraph<D, X> {
     /// cache entries to also be ambiguous. This causes some undesirable ambiguity for nested
     /// goals whose result doesn't actually depend on this cycle head, but that's acceptable
     /// to me.
-    #[instrument(level = "trace", skip(self, cx))]
+    // #[instrument(level = "trace", skip(self, cx))]
     fn rebase_provisional_cache_entries(
         &mut self,
         cx: X,
@@ -1276,7 +1278,7 @@ impl<D: Delegate<Cx = X>, X: Cx> SearchGraph<D, X> {
     }
 
     /// Whether we've reached a fixpoint when evaluating a cycle head.
-    #[instrument(level = "trace", skip(self, stack_entry), ret)]
+    // #[instrument(level = "trace", skip(self, stack_entry), ret)]
     fn reached_fixpoint(
         &mut self,
         stack_entry: &StackEntry<X>,

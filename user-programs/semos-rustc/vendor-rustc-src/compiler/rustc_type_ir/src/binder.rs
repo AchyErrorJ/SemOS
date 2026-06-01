@@ -6,7 +6,7 @@ use derive_where::derive_where;
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
 use rustc_type_ir_macros::{GenericTypeVisitable, TypeFoldable_Generic, TypeVisitable_Generic};
-use tracing::instrument;
+// stage F4: tracing::instrument attr off (df=false)
 
 use crate::data_structures::SsoHashSet;
 use crate::fold::{FallibleTypeFolder, TypeFoldable, TypeFolder, TypeSuperFoldable};
@@ -904,7 +904,7 @@ impl<'a, I: Interner> ArgFolder<'a, I> {
     /// As indicated in the diagram, here the same type `&'a i32` is instantiated once, but in the
     /// first case we do not increase the De Bruijn index and in the second case we do. The reason
     /// is that only in the second case have we passed through a fn binder.
-    #[instrument(level = "trace", skip(self), fields(binders_passed = self.binders_passed), ret)]
+    // #[instrument(level = "trace", skip(self), fields(binders_passed = self.binders_passed), ret)]
     fn shift_vars_through_binders<T: TypeFoldable<I>>(&self, val: T) -> T {
         if self.binders_passed == 0 || !val.has_escaping_bound_vars() {
             val

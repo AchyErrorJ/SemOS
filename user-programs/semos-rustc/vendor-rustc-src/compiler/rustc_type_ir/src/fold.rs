@@ -45,13 +45,15 @@
 //! - u.fold_with(folder)
 //! ```
 
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::convert::Infallible;
 use core::mem;
-use alloc::sync::Arc;
 
 use rustc_index::{Idx, IndexVec};
 use thin_vec::ThinVec;
-use tracing::{debug, instrument};
+use tracing::debug;
 
 use crate::inherent::*;
 use crate::visit::{TypeVisitable, TypeVisitableExt as _};
@@ -448,7 +450,7 @@ pub fn shift_region<I: Interner>(cx: I, region: I::Region, amount: u32) -> I::Re
     }
 }
 
-#[instrument(level = "trace", skip(cx), ret)]
+// #[instrument(level = "trace", skip(cx), ret)]
 pub fn shift_vars<I: Interner, T>(cx: I, value: T, amount: u32) -> T
 where
     T: TypeFoldable<I>,
@@ -518,7 +520,7 @@ where
         t
     }
 
-    #[instrument(skip(self), level = "debug", ret)]
+    // #[instrument(skip(self), level = "debug", ret)]
     fn fold_region(&mut self, r: I::Region) -> I::Region {
         match r.kind() {
             ty::ReBound(ty::BoundVarIndexKind::Bound(debruijn), _)

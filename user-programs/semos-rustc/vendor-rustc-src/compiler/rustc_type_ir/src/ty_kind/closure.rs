@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use derive_where::derive_where;
 use rustc_type_ir_macros::{

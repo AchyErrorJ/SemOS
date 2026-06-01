@@ -1,8 +1,21 @@
 use core::hash::BuildHasherDefault;
 
+// Stage F4: ena is host-only (R3 — pulls log w/ std). On SemOS we
+// don't need the unification machinery in rustc_type_ir at this v1
+// layer; consumers that need UnifyKey/UnifyValue (rustc_infer) are
+// themselves host-only. Re-exports are host-gated.
+#[cfg(not(target_os = "none"))]
 pub use ena::unify::{NoError, UnifyKey, UnifyValue};
-use rustc_hash::FxHasher;
+use rustc_hash::{FxBuildHasher, FxHasher};
+// `rustc_hash` only exports `FxHashMap`/`FxHashSet` with feature
+// `std`; we use df=false here. Alias via hashbrown directly using
+// FxBuildHasher (matches the host-feature shape).
+#[cfg(not(target_os = "none"))]
 pub use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+#[cfg(target_os = "none")]
+pub type HashMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
+#[cfg(target_os = "none")]
+pub type HashSet<V> = hashbrown::HashSet<V, FxBuildHasher>;
 
 pub type IndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<FxHasher>>;
 pub type IndexSet<V> = indexmap::IndexSet<V, BuildHasherDefault<FxHasher>>;

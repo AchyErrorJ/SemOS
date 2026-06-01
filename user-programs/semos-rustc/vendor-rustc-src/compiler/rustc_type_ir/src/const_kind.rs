@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::fmt;
 
 use derive_where::derive_where;

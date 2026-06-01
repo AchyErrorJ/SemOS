@@ -1,5 +1,5 @@
-use std::fmt;
-use std::ops::Deref;
+use core::fmt;
+use core::ops::Deref;
 
 use derive_where::derive_where;
 use rustc_ast_ir::Mutability;
@@ -7,6 +7,8 @@ use rustc_ast_ir::Mutability;
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
+// Stage F4: ena (NoError/UnifyKey/UnifyValue) is host-only.
+#[cfg(not(target_os = "none"))]
 use rustc_type_ir::data_structures::{NoError, UnifyKey, UnifyValue};
 use rustc_type_ir_macros::{
     GenericTypeVisitable, Lift_Generic, TypeFoldable_Generic, TypeVisitable_Generic,
@@ -604,6 +606,7 @@ pub enum InferTy {
     FreshFloatTy(u32),
 }
 
+#[cfg(not(target_os = "none"))]
 impl UnifyValue for IntVarValue {
     type Error = NoError;
 
@@ -623,6 +626,7 @@ impl UnifyValue for IntVarValue {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl UnifyKey for IntVid {
     type Value = IntVarValue;
     #[inline] // make this function eligible for inlining - it is quite hot.
@@ -638,6 +642,7 @@ impl UnifyKey for IntVid {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl UnifyValue for FloatVarValue {
     type Error = NoError;
 
@@ -655,6 +660,7 @@ impl UnifyValue for FloatVarValue {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 impl UnifyKey for FloatVid {
     type Value = FloatVarValue;
     #[inline]
@@ -674,7 +680,7 @@ impl UnifyKey for FloatVid {
 impl<CTX> HashStable<CTX> for InferTy {
     fn hash_stable(&self, ctx: &mut CTX, hasher: &mut StableHasher) {
         use InferTy::*;
-        std::mem::discriminant(self).hash_stable(ctx, hasher);
+        core::mem::discriminant(self).hash_stable(ctx, hasher);
         match self {
             TyVar(_) | IntVar(_) | FloatVar(_) => {
                 panic!("type variables should not be hashed: {self:?}")

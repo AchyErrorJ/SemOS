@@ -1,3 +1,5 @@
+use alloc::string::ToString;
+use alloc::vec::Vec;
 use core::borrow::Borrow;
 use core::fmt::Debug;
 use core::hash::Hash;

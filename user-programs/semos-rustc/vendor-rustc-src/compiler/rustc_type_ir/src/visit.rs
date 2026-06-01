@@ -41,9 +41,11 @@
 //! - u.visit_with(visitor)
 //! ```
 
-use std::fmt;
-use std::ops::ControlFlow;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt;
+use core::ops::ControlFlow;
 
 pub use rustc_ast_ir::visit::VisitorResult;
 pub use rustc_ast_ir::{try_visit, walk_visitable_list};
@@ -386,8 +388,8 @@ struct HasTypeFlagsVisitor {
     flags: ty::TypeFlags,
 }
 
-impl std::fmt::Debug for HasTypeFlagsVisitor {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for HasTypeFlagsVisitor {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.flags.fmt(fmt)
     }
 }

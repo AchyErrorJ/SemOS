@@ -8,6 +8,7 @@ edition = "2024"
 arrayvec = { version = "0.7", default-features = false }
 bitflags = "2.4.1"
 derive-where = "1.2.7"
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
 # Phase 5b Stage E iter 6: ena pulls `log` 0.4 with default features
 # (no_std-incompatible). Host-only since ena's use is internal to
 # rustc_infer's UnificationTable (algorithmic, not target-coupled);
@@ -30,6 +31,11 @@ tracing = { version = "0.1", default-features = false }
 # Phase 5b Stage E iter 6: ena host-only — see comment above the ena line.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 ena = "0.14.3"
+
+# Stage F4: ir_print.rs into_diag_arg signatures reference
+# `semos_std::path::PathBuf`.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
 
 [features]
 # tidy-alphabetical-start

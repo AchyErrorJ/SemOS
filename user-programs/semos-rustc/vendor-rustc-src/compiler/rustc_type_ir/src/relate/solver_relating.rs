@@ -1,4 +1,6 @@
-use tracing::{debug, instrument};
+use alloc::vec::Vec;
+
+use tracing::debug;
 
 use self::combine::{PredicateEmittingRelation, super_combine_consts, super_combine_tys};
 use crate::data_structures::DelayedSet;
@@ -177,7 +179,7 @@ where
         r
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // #[instrument(skip(self), level = "trace")]
     fn tys(&mut self, a: I::Ty, b: I::Ty) -> RelateResult<I, I::Ty> {
         if a == b {
             return Ok(a);
@@ -252,7 +254,7 @@ where
         Ok(a)
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // #[instrument(skip(self), level = "trace")]
     fn regions(&mut self, a: I::Region, b: I::Region) -> RelateResult<I, I::Region> {
         match self.ambient_variance {
             // Subtype(&'a u8, &'b u8) => Outlives('a: 'b) => SubRegion('b, 'a)
@@ -268,7 +270,7 @@ where
         Ok(a)
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // #[instrument(skip(self), level = "trace")]
     fn consts(&mut self, a: I::Const, b: I::Const) -> RelateResult<I, I::Const> {
         super_combine_consts(self.infcx, self, a, b)
     }

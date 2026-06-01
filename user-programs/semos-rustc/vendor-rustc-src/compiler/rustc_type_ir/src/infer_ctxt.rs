@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};

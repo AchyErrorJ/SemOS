@@ -8,7 +8,7 @@ macro_rules! TrivialTypeTraversalImpls {
                 fn try_fold_with<F: $crate::FallibleTypeFolder<I>>(
                     self,
                     _: &mut F,
-                ) -> ::std::result::Result<Self, F::Error> {
+                ) -> ::core::result::Result<Self, F::Error> {
                     Ok(self)
                 }
 

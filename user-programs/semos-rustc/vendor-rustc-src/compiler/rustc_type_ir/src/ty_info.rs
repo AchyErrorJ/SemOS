@@ -1,6 +1,6 @@
-use std::cmp::Ordering;
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
+use core::cmp::Ordering;
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
 
 #[cfg(feature = "nightly")]
 use rustc_data_structures::fingerprint::Fingerprint;

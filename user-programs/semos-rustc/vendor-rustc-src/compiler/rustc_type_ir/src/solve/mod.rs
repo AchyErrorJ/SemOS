@@ -1,6 +1,7 @@
 pub mod inspect;
 
-use std::hash::Hash;
+use alloc::vec::Vec;
+use core::hash::Hash;
 
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]

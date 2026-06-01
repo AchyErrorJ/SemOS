@@ -3,6 +3,8 @@
 //! scope when programming in interner-agnostic settings, and to avoid importing any of these
 //! directly elsewhere (i.e. specify the full path for an implementation downstream).
 
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::hash::Hash;
 
