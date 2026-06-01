@@ -2157,3 +2157,37 @@ Error trajectory: **58 → 78 → 45 → 28 → 4 → 1 → 0**
 Workspace state after F2: `cargo check` blocks on **rustc_ast (344
 errors)**. F3 next.
 
+
+────────────────────────────────────────────────────────────────────
+## Stage F3: rustc_ast + rustc_ast_pretty + rustc_error_messages
+
+**rustc_ast: 344 → 0 errors** — same pattern as F2 but at higher
+volume (mostly alloc preludes across 11 files: ast.rs, mut_visit.rs,
+tokenstream.rs, visit.rs, util/literal.rs, util/comments.rs,
+ast_traits.rs, expand/autodiff_attrs.rs, expand/typetree.rs,
+expand/allocator.rs, attr/data_structures.rs, attr/mod.rs, format.rs).
+Plus:
+- rustc_macros/src/hash_stable.rs already fixed in F2 (`::core::mem::
+  discriminant` instead of `::std::`)
+- `#[tracing::instrument(...)]` ast.rs site commented out
+- `#[cfg_attr(bootstrap, feature(array_windows))]` → unconditional
+- rustc_serialize: re-instated `impl Encodable/Decodable for
+  hashbrown::HashMap/HashSet` (was cfg(any())-disabled), added
+  `hashbrown` as a Cargo.toml dep — `FormatArguments` in rustc_ast
+  uses `FxHashMap<Symbol, usize>` with `derive(Encodable, Decodable)`
+- rustc_ast Cargo.toml — semos-std target-dep added (attr/version.rs
+  imports semos_std::sync::OnceLock + env::var)
+
+**rustc_ast_pretty: ~100 → 0 errors** — alloc preludes only.
+Files: pp.rs, pp/convenience.rs, pprust/mod.rs, pprust/state.rs,
+pprust/state/expr.rs, pprust/state/item.rs.
+
+**rustc_error_messages: 5 → 0 errors** — only needed the semos-std
+target-dep Cargo.toml line (lib.rs / diagnostic_impls.rs already
+imported `semos_std::{io,path}`).
+
+Workspace now blocks on **rustc_type_ir (83 errors)**. F4 next.
+Crates closed cumulatively this session: rustc_data_structures (F1),
+rustc_span + rustc_serialize (F2), rustc_ast + rustc_ast_pretty +
+rustc_error_messages (F3). Six down, ~42 remaining.
+

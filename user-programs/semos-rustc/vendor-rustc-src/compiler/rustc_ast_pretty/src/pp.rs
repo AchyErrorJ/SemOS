@@ -137,6 +137,8 @@ mod ring;
 
 use alloc::borrow::Cow;
 use alloc::collections::VecDeque;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::{cmp, iter};
 
 use ring::RingBuffer;

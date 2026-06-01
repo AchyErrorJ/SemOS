@@ -1,3 +1,5 @@
+use alloc::string::String;
+
 use rustc_macros::HashStable_Generic;
 use rustc_span::{Symbol, sym};
 

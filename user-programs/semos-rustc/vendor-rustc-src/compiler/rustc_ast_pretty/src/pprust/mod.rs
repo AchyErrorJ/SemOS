@@ -3,6 +3,8 @@ mod tests;
 
 pub mod state;
 use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use rustc_ast as ast;
 use rustc_ast::token::{Token, TokenKind};

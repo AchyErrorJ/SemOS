@@ -10,7 +10,7 @@
 // learned in A2-followup §lib.rs).
 #![no_std]
 // tidy-alphabetical-start
-#![cfg_attr(bootstrap, feature(array_windows))]
+#![feature(array_windows)]
 #![doc(test(attr(deny(warnings), allow(internal_features))))]
 #![feature(associated_type_defaults)]
 #![feature(box_patterns)]

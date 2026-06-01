@@ -7,7 +7,10 @@ mod fixup;
 mod item;
 
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use rustc_ast::attr::AttrIdGenerator;
 use rustc_ast::token::{self, CommentKind, Delimiter, DocFragmentKind, Token, TokenKind};

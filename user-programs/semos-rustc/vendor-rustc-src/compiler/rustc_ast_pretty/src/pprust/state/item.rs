@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use ast::StaticItem;
 use itertools::{Itertools, Position};
 use rustc_ast::{self as ast, EiiImpl, ModKind, Safety, TraitAlias};

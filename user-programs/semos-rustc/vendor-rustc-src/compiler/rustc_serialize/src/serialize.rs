@@ -642,8 +642,13 @@ where
 // (hashbrown re-exports under different type name) rather than std's HashMap.
 // Re-add either by (a) plumbing hashbrown in via Cargo.toml in a parent-owned pass,
 // or (b) adding `impl Encodable for FxHashMap` aliases in rustc_data_structures.
-#[cfg(any())]
-impl<E: Encoder, K, V, S> Encodable<E> for HashMap<K, V, S>
+// Stage F3: re-instate HashMap/HashSet Encodable/Decodable impls
+// over `hashbrown::{HashMap,HashSet}` (which `FxHashMap`/`FxHashSet`
+// alias). rustc_ast::format::FormatArguments derives Encodable on a
+// FxHashMap<Symbol, usize> so this needs to compile on both targets.
+// `extern crate` declared at bottom of imports above; access via
+// hashbrown::HashMap directly.
+impl<E: Encoder, K, V, S> Encodable<E> for hashbrown::HashMap<K, V, S>
 where
     K: Encodable<E> + Eq,
     V: Encodable<E>,
@@ -658,16 +663,39 @@ where
     }
 }
 
-#[cfg(any())]
-impl<D: Decoder, K, V, S> Decodable<D> for HashMap<K, V, S>
+impl<D: Decoder, K, V, S> Decodable<D> for hashbrown::HashMap<K, V, S>
 where
     K: Decodable<D> + Hash + Eq,
     V: Decodable<D>,
     S: BuildHasher + Default,
 {
-    fn decode(d: &mut D) -> HashMap<K, V, S> {
+    fn decode(d: &mut D) -> hashbrown::HashMap<K, V, S> {
         let len = d.read_usize();
         (0..len).map(|_| (Decodable::decode(d), Decodable::decode(d))).collect()
+    }
+}
+
+impl<E: Encoder, K, S> Encodable<E> for hashbrown::HashSet<K, S>
+where
+    K: Encodable<E> + Eq,
+    S: BuildHasher,
+{
+    fn encode(&self, e: &mut E) {
+        e.emit_usize(self.len());
+        for v in self {
+            v.encode(e);
+        }
+    }
+}
+
+impl<D: Decoder, K, S> Decodable<D> for hashbrown::HashSet<K, S>
+where
+    K: Decodable<D> + Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn decode(d: &mut D) -> hashbrown::HashSet<K, S> {
+        let len = d.read_usize();
+        (0..len).map(|_| Decodable::decode(d)).collect()
     }
 }
 

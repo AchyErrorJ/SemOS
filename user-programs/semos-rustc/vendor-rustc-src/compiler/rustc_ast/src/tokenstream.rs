@@ -5,7 +5,10 @@
 //! which are themselves a single [`Token`] or a `Delimited` subsequence of tokens.
 
 use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::hash::Hash;
 use core::ops::Range;
 use core::{cmp, fmt, iter, mem};

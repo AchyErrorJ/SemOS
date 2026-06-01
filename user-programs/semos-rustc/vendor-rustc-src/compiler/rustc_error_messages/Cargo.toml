@@ -21,3 +21,7 @@ rustc_macros = { path = "../rustc_macros" }
 rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
 # tidy-alphabetical-end
+
+# Stage F3: lib.rs / diagnostic_impls.rs import semos_std::{io,path}.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

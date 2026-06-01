@@ -1,5 +1,9 @@
 //! Code related to parsing literals.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::{ascii, fmt, str};
 
 use rustc_literal_escaper::{

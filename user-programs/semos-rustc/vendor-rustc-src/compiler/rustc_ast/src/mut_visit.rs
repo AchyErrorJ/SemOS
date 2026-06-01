@@ -11,6 +11,9 @@
 // used (`panic!` macro is in the prelude / core::panic). Confirmed via
 // grep: no `panic::`, `catch_unwind`, `panic_any`, or `resume_unwind`
 // in this file.
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::ops::DerefMut;
 
 use rustc_data_structures::flat_map_in_place::FlatMapInPlace;

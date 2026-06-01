@@ -19,6 +19,8 @@
 //! representations of some types might not be accurate. For example a vector of floats might be
 //! represented as a vector of u8s in MIR in some cases.
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 use crate::expand::{Decodable, Encodable, HashStable_Generic};

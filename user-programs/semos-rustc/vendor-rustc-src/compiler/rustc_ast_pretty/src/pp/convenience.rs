@@ -1,4 +1,5 @@
 use alloc::borrow::Cow;
+use alloc::string::String;
 
 use crate::pp::{
     BeginToken, BoxMarker, BreakToken, Breaks, IndentStyle, Printer, SIZE_INFINITY, Token,

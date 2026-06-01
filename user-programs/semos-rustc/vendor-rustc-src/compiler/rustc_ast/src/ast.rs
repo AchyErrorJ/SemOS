@@ -18,7 +18,10 @@
 //! - [`Attribute`]: Metadata associated with item.
 //! - [`UnOp`], [`BinOp`], and [`BinOpKind`]: Unary and binary operators.
 
-use alloc::borrow::{Borrow, Cow};
+use alloc::borrow::{Borrow, Cow, ToOwned};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::{cmp, fmt};
 
 pub use GenericArgs::*;
@@ -144,7 +147,7 @@ impl Path {
     ///
     /// Returns true iff the path has exactly one segment, and it has no generic args
     /// (i.e., it is _potentially_ a const parameter).
-    #[tracing::instrument(level = "debug", ret)]
+    // #[tracing::instrument(level = "debug", ret)]  // tracing attr off (df=false)
     pub fn is_potential_trivial_const_arg(&self) -> bool {
         self.segments.len() == 1 && self.segments.iter().all(|seg| seg.args.is_none())
     }

@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::fmt;
 
 use rustc_macros::{Decodable, Encodable, HashStable_Generic};

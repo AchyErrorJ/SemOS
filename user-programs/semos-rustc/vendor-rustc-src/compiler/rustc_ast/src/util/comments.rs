@@ -1,3 +1,6 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use rustc_span::{BytePos, Symbol};
 
 use crate::token::CommentKind;

@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use rustc_data_structures::fx::FxHashMap;
 use rustc_macros::{Decodable, Encodable, Walkable};
 use rustc_span::{Ident, Span, Symbol};

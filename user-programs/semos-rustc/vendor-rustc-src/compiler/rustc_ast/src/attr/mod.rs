@@ -3,6 +3,8 @@
 pub mod data_structures;
 pub mod version;
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU32, Ordering};
 
