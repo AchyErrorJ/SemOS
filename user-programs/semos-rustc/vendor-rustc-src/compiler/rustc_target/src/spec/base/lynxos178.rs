@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::spec::{
     Os, PanicStrategy, RelocModel, RelroLevel, SplitDebuginfo, StackProbeType, TargetOptions, cvs,

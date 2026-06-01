@@ -1,7 +1,7 @@
-use std::borrow::Cow;
-use std::fmt::{Display, from_fn};
-use std::num::ParseIntError;
-use std::str::FromStr;
+use alloc::borrow::Cow;
+use core::fmt::{Display, from_fn};
+use core::num::ParseIntError;
+use core::str::FromStr;
 
 use crate::spec::{
     Abi, BinaryFormat, Cc, DebuginfoKind, Env, FloatAbi, FramePointer, LinkerFlavor, Lld, Os,

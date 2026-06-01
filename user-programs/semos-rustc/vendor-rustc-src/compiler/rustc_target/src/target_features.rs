@@ -35,7 +35,7 @@ use Stability::*;
 impl<CTX> HashStable<CTX> for Stability {
     #[inline]
     fn hash_stable(&self, hcx: &mut CTX, hasher: &mut StableHasher) {
-        std::mem::discriminant(self).hash_stable(hcx, hasher);
+        core::mem::discriminant(self).hash_stable(hcx, hasher);
         match self {
             Stability::Stable => {}
             Stability::Unstable(nightly_feature) => {
@@ -890,7 +890,7 @@ static M68K_FEATURES: &[(&str, Stability, ImpliedFeatures)] = &[
 ///
 /// IMPORTANT: If you're adding another feature list above, make sure to add it to this iterator!
 pub fn all_rust_features() -> impl Iterator<Item = (&'static str, Stability)> {
-    std::iter::empty()
+    core::iter::empty()
         .chain(ARM_FEATURES.iter())
         .chain(AARCH64_FEATURES.iter())
         .chain(X86_FEATURES.iter())

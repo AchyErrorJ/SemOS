@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::spec::crt_objects::pre_mingw_self_contained;
 use crate::spec::{

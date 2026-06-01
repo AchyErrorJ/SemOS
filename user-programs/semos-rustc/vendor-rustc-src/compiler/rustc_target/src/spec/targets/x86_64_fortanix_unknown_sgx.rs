@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::spec::{
     Abi, Arch, Cc, Env, LinkerFlavor, Lld, Os, Target, TargetMetadata, TargetOptions, cvs,

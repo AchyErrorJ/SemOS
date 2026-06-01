@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_abi::Size;
 use rustc_data_structures::fx::{FxHashMap, FxIndexSet};

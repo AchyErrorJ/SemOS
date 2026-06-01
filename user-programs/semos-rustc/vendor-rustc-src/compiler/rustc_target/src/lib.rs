@@ -7,13 +7,28 @@
 //! more 'stuff' here in the future. It does not have a dependency on
 //! LLVM.
 
+// M27 Stage F7: no_std + alloc. Path/PathBuf routed via semos_std.
+#![no_std]
+
 // tidy-alphabetical-start
 #![expect(internal_features)]
+#![feature(debug_closure_helpers)]
 #![feature(iter_intersperse)]
 #![feature(rustc_attrs)]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
 
 pub mod asm;
 pub mod callconv;
@@ -41,7 +56,7 @@ pub fn relative_target_rustlib_path(sysroot: &Path, target_triple: &str) -> Path
 }
 
 /// The name of the directory rustc expects libraries to be located.
-fn find_relative_libdir(sysroot: &Path) -> std::borrow::Cow<'static, str> {
+fn find_relative_libdir(sysroot: &Path) -> alloc::borrow::Cow<'static, str> {
     // FIXME: This is a quick hack to make the rustc binary able to locate
     // Rust libraries in Linux environments where libraries might be installed
     // to lib64/lib32. This would be more foolproof by basing the sysroot off
@@ -81,13 +96,16 @@ macro_rules! target_spec_enum {
         }
         parse_error_type = $parse_error_type:literal;
     ) => {
+        // Stage F7: schemars + serde rename are host-only (schemars
+        // is in the host-only dep set; serde derive needs serde_derive
+        // proc-macro). SemOS target builds skip the JsonSchema layer.
         $( #[$attr] )*
         #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-        #[derive(schemars::JsonSchema)]
+        #[cfg_attr(not(target_os = "none"), derive(schemars::JsonSchema))]
         pub enum $Name {
             $(
                 $( #[$variant_attr] )*
-                #[serde(rename = $string)] // for JSON schema generation only
+                #[cfg_attr(not(target_os = "none"), serde(rename = $string))] // JSON schema generation only
                 $Variant,
             )*
         }
@@ -148,9 +166,10 @@ macro_rules! target_spec_enum {
             $OtherVariant(crate::spec::StaticCow<str>),
         }
 
+        #[cfg(not(target_os = "none"))]
         impl schemars::JsonSchema for $Name {
-            fn schema_name() -> std::borrow::Cow<'static, str> {
-                std::borrow::Cow::Borrowed(stringify!($Name))
+            fn schema_name() -> alloc::borrow::Cow<'static, str> {
+                alloc::borrow::Cow::Borrowed(stringify!($Name))
             }
 
             fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -193,8 +212,8 @@ macro_rules! target_spec_enum {
         crate::json::serde_deserialize_from_str!($Name);
 
 
-        impl std::fmt::Display for $Name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        impl core::fmt::Display for $Name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 f.write_str(self.desc())
             }
         }

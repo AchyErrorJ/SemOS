@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use rustc_abi::{BackendRepr, HasDataLayout, Primitive, TyAbiInterface};
 
@@ -16,7 +16,7 @@ pub(crate) enum AbiKind {
     Win64,
 }
 
-#[tracing::instrument(skip(cx), level = "debug")]
+// #[tracing::instrument(skip(cx), level = "debug")]
 fn is_homogeneous_aggregate<'a, Ty, C>(cx: &C, arg: &mut ArgAbi<'a, Ty>) -> Option<Uniform>
 where
     Ty: TyAbiInterface<'a, C> + Copy,
@@ -74,7 +74,7 @@ fn softfloat_float_abi<Ty>(target: &Target, arg: &mut ArgAbi<'_, Ty>) {
     }
 }
 
-#[tracing::instrument(skip(cx), level = "debug")]
+// #[tracing::instrument(skip(cx), level = "debug")]
 fn classify_ret<'a, Ty, C>(cx: &C, ret: &mut ArgAbi<'a, Ty>, kind: AbiKind)
 where
     Ty: TyAbiInterface<'a, C> + Copy,
@@ -107,7 +107,7 @@ where
     ret.make_indirect();
 }
 
-#[tracing::instrument(skip(cx), level = "debug")]
+// #[tracing::instrument(skip(cx), level = "debug")]
 fn classify_arg<'a, Ty, C>(cx: &C, arg: &mut ArgAbi<'a, Ty>, kind: AbiKind)
 where
     Ty: TyAbiInterface<'a, C> + Copy,

@@ -40,8 +40,13 @@
 //! but not gcc's. As a result rustc cannot link with C++ static libraries (#36710)
 //! when linking in self-contained mode.
 
-use std::borrow::Cow;
-use std::collections::BTreeMap;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
 
 use crate::spec::LinkOutputKind;
 

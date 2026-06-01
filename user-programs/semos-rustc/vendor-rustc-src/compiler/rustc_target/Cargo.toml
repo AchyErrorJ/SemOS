@@ -27,3 +27,7 @@ tracing = { version = "0.1", default-features = false }
 schemars = "1.0.4"
 serde_path_to_error = "0.1.17"
 
+# Stage F7: lib.rs routes Path/PathBuf via semos_std on the SemOS target.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+

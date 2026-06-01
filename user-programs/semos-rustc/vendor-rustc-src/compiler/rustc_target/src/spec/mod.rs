@@ -37,14 +37,24 @@
 //!
 //! [JSON]: https://json.org
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::result::Result;
-use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
-use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::{fmt, io};
+use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
+use core::hash::{Hash, Hasher};
+use core::ops::{Deref, DerefMut};
+#[cfg(not(target_os = "none"))] use std::path::{Path, PathBuf};
+#[cfg(target_os = "none")] use semos_std::path::{Path, PathBuf};
+use core::fmt;
+use core::str::FromStr;
+// Stage F7: `io::Error`/`ErrorKind` are std-only (core::io has only
+// BorrowedBuf). On SemOS the `from_path` API is host-gated below.
+#[cfg(not(target_os = "none"))]
+use std::io;
 
 use rustc_abi::{
     Align, CanonAbi, Endian, ExternAbi, Integer, Size, TargetDataLayout, TargetDataLayoutErrors,
@@ -70,6 +80,8 @@ mod json;
 pub use abi_map::{AbiMap, AbiMapping};
 pub use base::apple;
 pub use base::avr::ef_avr_arch;
+// Stage F7: `json_schema` is host-only (depends on `schemars`).
+#[cfg(not(target_os = "none"))]
 pub use json::json_schema;
 
 /// Linker is called through a C/C++ compiler.
@@ -524,8 +536,9 @@ linker_flavor_cli_impls! {
 }
 
 crate::json::serde_deserialize_from_str!(LinkerFlavorCli);
+#[cfg(not(target_os = "none"))]
 impl schemars::JsonSchema for LinkerFlavorCli {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
         "LinkerFlavor".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -591,8 +604,9 @@ impl FromStr for LinkSelfContainedDefault {
 }
 
 crate::json::serde_deserialize_from_str!(LinkSelfContainedDefault);
+#[cfg(not(target_os = "none"))]
 impl schemars::JsonSchema for LinkSelfContainedDefault {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
         "LinkSelfContainedDefault".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -735,8 +749,9 @@ impl FromStr for LinkSelfContainedComponents {
 }
 
 crate::json::serde_deserialize_from_str!(LinkSelfContainedComponents);
+#[cfg(not(target_os = "none"))]
 impl schemars::JsonSchema for LinkSelfContainedComponents {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
         "LinkSelfContainedComponents".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -874,7 +889,7 @@ crate::target_spec_enum! {
 }
 
 impl IntoDiagArg for PanicStrategy {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<PathBuf>) -> DiagArgValue {
         DiagArgValue::Str(Cow::Owned(self.desc().to_string()))
     }
 }
@@ -916,8 +931,9 @@ impl FromStr for SmallDataThresholdSupport {
 }
 
 crate::json::serde_deserialize_from_str!(SmallDataThresholdSupport);
+#[cfg(not(target_os = "none"))]
 impl schemars::JsonSchema for SmallDataThresholdSupport {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
         "SmallDataThresholdSupport".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -1116,7 +1132,7 @@ crate::target_spec_enum! {
 
 into_diag_arg_using_display!(SplitDebuginfo);
 
-#[derive(Clone, Debug, PartialEq, Eq, serde_derive::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, serde_derive::Deserialize)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "kebab-case")]
 pub enum StackProbeType {
@@ -1280,8 +1296,9 @@ impl FromStr for SanitizerSet {
 }
 
 crate::json::serde_deserialize_from_str!(SanitizerSet);
+#[cfg(not(target_os = "none"))]
 impl schemars::JsonSchema for SanitizerSet {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
         "SanitizerSet".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -1808,12 +1825,12 @@ supported_targets! {
 /// Cow-Vec-Str: Cow<'static, [Cow<'static, str>]>
 macro_rules! cvs {
     () => {
-        ::std::borrow::Cow::Borrowed(&[])
+        ::alloc::borrow::Cow::Borrowed(&[])
     };
     ($($x:expr),+ $(,)?) => {
-        ::std::borrow::Cow::Borrowed(&[
+        ::alloc::borrow::Cow::Borrowed(&[
             $(
-                ::std::borrow::Cow::Borrowed($x),
+                ::alloc::borrow::Cow::Borrowed($x),
             )*
         ])
     };
@@ -3295,6 +3312,8 @@ impl Target {
     ///
     /// The error string could come from any of the APIs called, including filesystem access and
     /// JSON decoding.
+    /// Stage F7: host-only — depends on `std::env` + `std::fs`.
+    #[cfg(not(target_os = "none"))]
     pub fn search(
         target_tuple: &TargetTuple,
         sysroot: &Path,
@@ -3560,6 +3579,8 @@ impl TargetTuple {
     }
 
     /// Creates a target tuple from the passed target path.
+    /// Stage F7: host-only — needs `std::io` + `std::fs`.
+    #[cfg(not(target_os = "none"))]
     pub fn from_path(path: &Path) -> Result<Self, io::Error> {
         let canonicalized_path = try_canonicalize(path)?;
         let contents = std::fs::read_to_string(&canonicalized_path).map_err(|err| {
@@ -3592,6 +3613,8 @@ impl TargetTuple {
     ///
     /// If this target is a path, a hash of the path is appended to the tuple returned
     /// by `tuple()`.
+    /// Stage F7: host-only — `DefaultHasher` lives in `std::hash`, not core.
+    #[cfg(not(target_os = "none"))]
     pub fn debug_tuple(&self) -> String {
         use std::hash::DefaultHasher;
 
@@ -3609,7 +3632,12 @@ impl TargetTuple {
 
 impl fmt::Display for TargetTuple {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.debug_tuple())
+        // Stage F7: `debug_tuple` (uses std::hash::DefaultHasher) is
+        // host-only; on SemOS we fall back to the plain tuple string.
+        #[cfg(not(target_os = "none"))]
+        { write!(f, "{}", self.debug_tuple()) }
+        #[cfg(target_os = "none")]
+        { write!(f, "{}", self.tuple()) }
     }
 }
 

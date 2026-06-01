@@ -1,5 +1,10 @@
-use std::borrow::Cow;
-use std::collections::BTreeMap;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
 
 pub use serde_json::Value as Json;
 use serde_json::{Map, Number, json};

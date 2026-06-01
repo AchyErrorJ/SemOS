@@ -1,5 +1,10 @@
-use std::collections::BTreeMap;
-use std::str::FromStr;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use alloc::collections::BTreeMap;
+use core::str::FromStr;
 
 use rustc_abi::{Align, AlignFromBytesError};
 
@@ -16,6 +21,8 @@ use crate::spec::AbiMap;
 
 impl Target {
     /// Loads a target descriptor from a JSON object.
+    /// Stage F7: `serde_path_to_error` is host-only.
+    #[cfg(not(target_os = "none"))]
     pub fn from_json(json: &str) -> Result<(Target, TargetWarnings), String> {
         let json_deserializer = &mut serde_json::Deserializer::from_str(json);
 
@@ -419,12 +426,12 @@ impl ToJson for Target {
     }
 }
 
-#[derive(serde_derive::Deserialize, schemars::JsonSchema)]
+#[derive(serde_derive::Deserialize)]
 struct LinkSelfContainedComponentsWrapper {
     components: Vec<LinkSelfContainedComponents>,
 }
 
-#[derive(serde_derive::Deserialize, schemars::JsonSchema)]
+#[derive(serde_derive::Deserialize)]
 #[serde(untagged)]
 enum TargetFamiliesJson {
     Array(StaticCow<[StaticCow<str>]>),
@@ -440,8 +447,9 @@ impl FromStr for EndianWrapper {
     }
 }
 crate::json::serde_deserialize_from_str!(EndianWrapper);
+#[cfg(not(target_os = "none"))]
 impl schemars::JsonSchema for EndianWrapper {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
         "Endian".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -464,8 +472,9 @@ impl FromStr for ExternAbiWrapper {
     }
 }
 crate::json::serde_deserialize_from_str!(ExternAbiWrapper);
+#[cfg(not(target_os = "none"))]
 impl schemars::JsonSchema for ExternAbiWrapper {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
+    fn schema_name() -> alloc::borrow::Cow<'static, str> {
         "ExternAbi".into()
     }
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -479,7 +488,7 @@ impl schemars::JsonSchema for ExternAbiWrapper {
     }
 }
 
-#[derive(serde_derive::Deserialize, schemars::JsonSchema)]
+#[derive(serde_derive::Deserialize)]
 struct TargetSpecJsonMetadata {
     description: Option<StaticCow<str>>,
     tier: Option<u64>,
@@ -487,7 +496,7 @@ struct TargetSpecJsonMetadata {
     std: Option<bool>,
 }
 
-#[derive(serde_derive::Deserialize, schemars::JsonSchema)]
+#[derive(serde_derive::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 // Ensure that all unexpected fields get turned into errors.
 // This helps users stay up to date when the schema changes instead of silently
@@ -634,6 +643,7 @@ struct TargetSpecJson {
     entry_abi: Option<ExternAbiWrapper>,
 }
 
+#[cfg(not(target_os = "none"))]
 pub fn json_schema() -> schemars::Schema {
     schemars::schema_for!(TargetSpecJson)
 }

@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_span::{Symbol, sym};

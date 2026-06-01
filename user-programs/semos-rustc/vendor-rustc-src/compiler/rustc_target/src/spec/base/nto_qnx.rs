@@ -106,7 +106,12 @@ pub(crate) enum Arch {
 // More information:
 // https://www.qnx.com/developers/docs/7.1/index.html#com.qnx.doc.neutrino.io_sock/topic/migrate_app.html
 fn get_iosock_param(arch_lib_dir: &str) -> &'static str {
+    // Stage F7: cfg-split env var lookup between std and semos_std.
+    #[cfg(not(target_os = "none"))]
     let target_dir = std::env::var("QNX_TARGET")
+        .unwrap_or_else(|_| "QNX_TARGET_not_set_please_source_qnxsdp-env.sh".into());
+    #[cfg(target_os = "none")]
+    let target_dir: alloc::string::String = semos_std::env::var("QNX_TARGET")
         .unwrap_or_else(|_| "QNX_TARGET_not_set_please_source_qnxsdp-env.sh".into());
     let linker_param = format!("-L{target_dir}/{arch_lib_dir}/io-sock/lib");
 

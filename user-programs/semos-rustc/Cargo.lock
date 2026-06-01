@@ -2884,6 +2884,7 @@ dependencies = [
  "rustc_serialize",
  "rustc_span",
  "schemars",
+ "semos-std",
  "serde",
  "serde_derive",
  "serde_json",

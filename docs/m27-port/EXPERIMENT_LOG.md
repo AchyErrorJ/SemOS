@@ -2281,3 +2281,34 @@ Error trajectory: **492 → 34 → 13 → 2 → 0**
 Workspace check now blocks on the next downstream crate. Crates closed
 cumulatively in Stage F: 9 (data_structures, span, serialize, ast,
 ast_pretty, error_messages, type_ir, next_trait_solver, abi).
+
+────────────────────────────────────────────────────────────────────
+## Stage F7: rustc_target (3946 → 0 errors)
+
+Tenth and largest patched crate. Same playbook as F5/F6 plus extensive
+schemars + serde + std-host gating:
+
+- `#![no_std]` + `#[macro_use] extern crate alloc;` in lib.rs
+- Bulk std→core/alloc swap across ~37 source files (sed sweep)
+- `use std::path::{Path, PathBuf}` → cfg-split for semos_std on SemOS
+- schemars host-gated: `impl JsonSchema for X` blocks wrapped with
+  cfg(not(target_os="none")) via awk; derive lists stripped via sed
+- `pub use json::json_schema` re-export host-gated
+- `Target::from_json` (serde_path_to_error), `Target::search` (env+fs),
+  `TargetTuple::from_path` (io::Error), `TargetTuple::debug_tuple`
+  (std::hash::DefaultHasher) all host-gated
+- `Display for TargetTuple` → falls back to `tuple()` on SemOS
+- `nto_qnx::get_iosock_param` env var lookup cfg-split host/semos_std
+- `IntoDiagArg for PanicStrategy` PathBuf ref uses crate-level alias
+- `#![feature(debug_closure_helpers)]` added for `core::fmt::from_fn`
+- 3 #[tracing::instrument] in callconv/aarch64.rs commented
+- alloc preludes added to 6 files (callconv/mod, json, lib, spec/{crt_objects, json, mod})
+- Cargo.toml: semos-std target dep added
+
+Error trajectory: **3946 → 444 → 196 → 146 → 113 → 108 → 27 → 0**
+
+Workspace check now blocks on **rustc_hir (27 errors)** + tail of
+others — multiple downstream crates unblocked. Crates closed
+cumulatively: **10** (data_structures, span, serialize, ast,
+ast_pretty, error_messages, type_ir, next_trait_solver, abi, target).
+

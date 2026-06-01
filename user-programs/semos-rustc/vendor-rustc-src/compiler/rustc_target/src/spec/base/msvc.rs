@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use crate::spec::{BinaryFormat, DebuginfoKind, LinkerFlavor, Lld, SplitDebuginfo, TargetOptions};
 
