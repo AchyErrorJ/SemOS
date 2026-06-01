@@ -1906,6 +1906,7 @@ dependencies = [
  "rustc_macros",
  "rustc_serialize",
  "rustc_thread_pool",
+ "semos-std",
  "smallvec",
  "stacker",
  "tempfile",

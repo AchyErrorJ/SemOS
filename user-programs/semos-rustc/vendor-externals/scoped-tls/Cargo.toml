@@ -11,6 +11,7 @@
 
 [package]
 rust-version = "1.59"
+edition = "2021"
 name = "scoped-tls"
 version = "1.0.1"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]

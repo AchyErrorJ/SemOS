@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use rustc_index::{Idx, IndexVec};
 
 use crate::graph::{DirectedGraph, NumEdges, Predecessors, Successors};

@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::hash::{BuildHasher, Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem;
@@ -25,7 +28,7 @@ pub struct StableHasher;
 #[cfg(target_os = "none")]
 impl StableHasher {
     pub fn new() -> Self { Self }
-    pub fn finish<T: FromStableHash>(self) -> T {
+    pub fn finish<T: FromStableHash<Hash = StableHasherHash>>(self) -> T {
         // SemOS uses passthrough — incremental hashes dead per §1.3.
         T::from(StableHasherHash([0; 2]))
     }
@@ -603,10 +606,10 @@ where
 }
 
 // Stage F1: ffi/path types are cfg-split — semos_std on target.
+// On SemOS `OsStr` is a type alias for `str`, so the impl for `str`
+// elsewhere in this file already covers it (re-impl would conflict).
 #[cfg(not(target_os = "none"))]
 impl_stable_traits_for_trivial_type!(::std::ffi::OsStr);
-#[cfg(target_os = "none")]
-impl_stable_traits_for_trivial_type!(::semos_std::ffi::OsStr);
 
 #[cfg(not(target_os = "none"))]
 impl_stable_traits_for_trivial_type!(::std::path::Path);

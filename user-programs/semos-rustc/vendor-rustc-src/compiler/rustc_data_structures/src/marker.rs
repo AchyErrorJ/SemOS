@@ -208,8 +208,11 @@ mod imp_none {
         [*const T where T: ?Sized + PointeeSized]
         [*mut T where T: ?Sized + PointeeSized]
         [core::ptr::NonNull<T> where T: ?Sized + PointeeSized]
-        [alloc::rc::Rc<T> where T: ?Sized]
-        [alloc::rc::Weak<T> where T: ?Sized]
+        // `Rc`/`Weak` carry an allocator generic in current alloc;
+        // include it so the negimpl covers all instantiations (else
+        // the compiler treats `Rc<T>` as a partial impl → E0366).
+        [alloc::rc::Rc<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
+        [alloc::rc::Weak<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
     );
 
     macro_rules! already_send {
@@ -255,8 +258,8 @@ mod imp_none {
         [core::cell::RefCell<T> where T: ?Sized]
         [core::cell::UnsafeCell<T> where T: ?Sized]
         [core::ptr::NonNull<T> where T: ?Sized + PointeeSized]
-        [alloc::rc::Rc<T> where T: ?Sized]
-        [alloc::rc::Weak<T> where T: ?Sized]
+        [alloc::rc::Rc<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
+        [alloc::rc::Weak<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
         [core::cell::OnceCell<T> where T]
     );
 

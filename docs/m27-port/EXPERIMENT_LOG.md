@@ -2063,3 +2063,49 @@ on the 48 patched crates rather than external-dep wrestling.
 Cumulative this session: ~30 commits, ~8.2M tokens. Stage E
 externally complete. The pattern is fully proven across the entire
 external dep graph.
+
+────────────────────────────────────────────────────────────────────
+## Stage F1: rustc_data_structures — body port (135 → 0 errors)
+
+Date: 2026-06-01 (continuation from previous Stage E iter 12 commit)
+
+Single-crate iteration on `rustc_data_structures` to bring it to a
+clean `cargo check -p rustc_data_structures` on x86_64-unknown-none.
+Pattern was the same one Stage E proved at the workspace level, just
+applied inside one large patched crate at a finer granularity:
+
+| Class | Files touched | Resolution |
+|-------|--------------|------------|
+| Missing `alloc::vec::Vec` / `alloc::string::String` / `alloc::boxed::Box` imports | `graph/dominators/mod.rs`, `graph/vec_graph/mod.rs`, `sorted_map/index_map.rs`, `stable_hasher.rs`, `sync/parallel.rs`, `thousands/mod.rs` | added per-file `use alloc::*;` at top |
+| std-only `core::alloc::Layout`/`alloc::alloc::*`/`core::mem::needs_drop` swaps | `vec_cache.rs` | bulk substitution std → core/alloc |
+| `std::sync::Mutex` cold-path locks | `vec_cache.rs` | cfg-split to `semos_std::sync::Mutex` (real futex-backed) on SemOS |
+| `parking_lot::Mutex/RwLock` | `sync/worker_local.rs`, `sync/vec.rs` | cfg-split to `semos_std::sync::Mutex/RwLock`; AppendOnlyVec/IndexVec cfg-split structs |
+| `thread_local!` proc-macro shape | `sync/worker_local.rs` + `semos-std/src/thread.rs` | extended semos_std::thread_local! macro to accept the `static FOO: T = const { ... };` form (rustc 1.59+) |
+| `worker_local` rayon machinery | `sync/worker_local.rs` | replaced body with cfg-split host (full impl) vs target (single-threaded WorkerLocal = single CacheAligned<T> stub) |
+| `elsa::sync::LockFreeFrozenVec` | `sync/vec.rs` (AppendOnlyIndexVec) | cfg-split: host = elsa; SemOS = `semos_std::sync::Mutex<Vec<T>>` |
+| `rustc_thread_pool::join` Send-bound mismatch | `sync/parallel.rs::Mutex` shim, `rustc_thread_pool::join` | dropped `Send` bound on join stub; added `unsafe impl DynSend/DynSync` for the local RefCell-Mutex shim (single-threaded so safe) |
+| `rustc_hash::FxHashMap`/`FxHashSet` gated behind `std` feature | `fx.rs`, `unord.rs` | local aliases over `hashbrown::HashMap<K, V, FxBuildHasher>` on SemOS; redirected `unord.rs` to import from local `fx` module; cfg-split `Entry`/`OccupiedError` aliases to absorb the extra hasher generic |
+| `rustc_index_macros` emits `::std::*` paths | `rustc_index_macros/src/newtype.rs` | swapped to `::core::*` (Step, Debug, Formatter, Result, ops::Add/AddAssign) |
+| `#![feature(file_buffered)]` + `#![feature(thread_id_value)]` invalid on no_std | `lib.rs` | cfg-gated to host-only |
+| `#![cfg_attr(bootstrap, feature(array_windows))]` | `lib.rs` | promoted to unconditional `#![feature(array_windows)]` |
+| `File::create_buffered` (file_buffered feature) | `obligation_forest/graphviz.rs` | cfg-split to `File::create(path.as_str())` on SemOS (also `.as_str()` for the `PathBuf → &str` arg coercion) |
+| `impl_stable_traits_for_trivial_type!(::semos_std::ffi::OsStr)` conflict | `stable_hasher.rs` | dropped (OsStr = str alias on SemOS — covered by the `impl for str` elsewhere) |
+| `Path: Ord`/`PathBuf: Ord` not satisfied | `semos-std/src/path.rs` | added `impl Hash + PartialOrd + Ord for Path`; `#[derive(... PartialOrd, Ord, Hash ...)]` for PathBuf |
+| `tracing::instrument` proc-macro attribute not available with df=false | `graph/scc/mod.rs` | dropped import + commented one call site (diagnostic-only) |
+| `crate::undo_log` ena re-export host-only | `lib.rs`, `snapshot_map/mod.rs` | host-gated `pub mod snapshot_map;` (ena is host-only) |
+| `!DynSend`/`!DynSync` neg-impls treating `Rc`/`Weak` as partial | `marker.rs` | added explicit `<T, A: Allocator>` to the negimpl arguments |
+| SemOS StableHasher::finish<T: FromStableHash> bound | `stable_hasher.rs` | added `<Hash = StableHasherHash>` projection |
+
+Error trajectory: **135 → 121 → 84 → 59 → 53 → 45 → 39 → 23 → 15 → 3 → 2 → 1 → 0**
+
+Workspace state after F1: `cargo check` reports **58 errors in
+rustc_span** (Stage F2 target). All previously patched crates
+upstream of rustc_span are now clean. Note: rustc_span has its own
+upstream-flagged issues (blake3 host-gating, `read_buf` feature
+gating, etc.) — same pattern as F1 at a different surface.
+
+Cumulative this session: Stage F1 = 1 crate, ~25 minutes of
+iteration, ~16 substitution categories. The cfg-split pattern
+proves across the entire crate body without needing to bisect or
+recon-agent — once F1 took 135 errors to 0 via straightforward
+mechanical rules, F2-F* should be tightly bounded too.

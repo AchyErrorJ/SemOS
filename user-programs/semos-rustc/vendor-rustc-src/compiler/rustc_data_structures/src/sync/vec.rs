@@ -3,12 +3,31 @@ use core::marker::PhantomData;
 
 use rustc_index::Idx;
 
+// Stage F1: elsa::sync::LockFreeFrozenVec / parking_lot::RwLock are
+// host-only deps. On SemOS we substitute futex-backed semos_std
+// primitives (Mutex<Vec<T>> for both append-only types — single-
+// threaded per §1.4 so the perf hit is irrelevant).
+#[cfg(not(target_os = "none"))]
 #[derive(Default)]
 pub struct AppendOnlyIndexVec<I: Idx, T: Copy> {
     vec: elsa::sync::LockFreeFrozenVec<T>,
     _marker: PhantomData<fn(&I)>,
 }
 
+#[cfg(target_os = "none")]
+pub struct AppendOnlyIndexVec<I: Idx, T: Copy> {
+    vec: semos_std::sync::Mutex<Vec<T>>,
+    _marker: PhantomData<fn(&I)>,
+}
+
+#[cfg(target_os = "none")]
+impl<I: Idx, T: Copy> Default for AppendOnlyIndexVec<I, T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(not(target_os = "none"))]
 impl<I: Idx, T: Copy> AppendOnlyIndexVec<I, T> {
     pub fn new() -> Self {
         Self { vec: elsa::sync::LockFreeFrozenVec::new(), _marker: PhantomData }
@@ -25,14 +44,50 @@ impl<I: Idx, T: Copy> AppendOnlyIndexVec<I, T> {
     }
 }
 
+#[cfg(target_os = "none")]
+impl<I: Idx, T: Copy> AppendOnlyIndexVec<I, T> {
+    pub fn new() -> Self {
+        Self { vec: semos_std::sync::Mutex::new(Vec::new()), _marker: PhantomData }
+    }
+
+    pub fn push(&self, val: T) -> I {
+        let mut v = self.vec.lock();
+        let i = v.len();
+        v.push(val);
+        I::new(i)
+    }
+
+    pub fn get(&self, i: I) -> Option<T> {
+        let v = self.vec.lock();
+        v.get(i.index()).copied()
+    }
+}
+
+#[cfg(not(target_os = "none"))]
 #[derive(Default)]
 pub struct AppendOnlyVec<T: Copy> {
     vec: parking_lot::RwLock<Vec<T>>,
 }
 
+#[cfg(target_os = "none")]
+pub struct AppendOnlyVec<T: Copy> {
+    vec: semos_std::sync::RwLock<Vec<T>>,
+}
+
+#[cfg(target_os = "none")]
+impl<T: Copy> Default for AppendOnlyVec<T> {
+    fn default() -> Self { Self::new() }
+}
+
 impl<T: Copy> AppendOnlyVec<T> {
+    #[cfg(not(target_os = "none"))]
     pub fn new() -> Self {
         Self { vec: Default::default() }
+    }
+
+    #[cfg(target_os = "none")]
+    pub fn new() -> Self {
+        Self { vec: semos_std::sync::RwLock::new(Vec::new()) }
     }
 
     pub fn push(&self, val: T) -> usize {

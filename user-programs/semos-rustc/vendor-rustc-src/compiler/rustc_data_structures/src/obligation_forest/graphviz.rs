@@ -47,7 +47,14 @@ impl<O: ForestObligation> ObligationForest<O> {
 
         let file_path = dir.as_ref().join(format!("{counter:010}_{description}.gv"));
 
+        // Stage F1: `File::create_buffered` is gated on `file_buffered`
+        // nightly feature (host only). On SemOS fall back to plain
+        // `File::create` — the dump is diagnostic-only and never
+        // actually runs (the env-var guard above returns first).
+        #[cfg(not(target_os = "none"))]
         let mut gv_file = File::create_buffered(file_path).unwrap();
+        #[cfg(target_os = "none")]
+        let mut gv_file = File::create(file_path.as_str()).unwrap();
 
         dot::render(&self, &mut gv_file).unwrap();
     }

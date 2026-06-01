@@ -1,6 +1,8 @@
 //! This is a bare-bones alternative to the `thousands` crate on crates.io, for
 //! printing large numbers in a readable fashion.
 
+use alloc::string::String;
+
 #[cfg(test)]
 mod tests;
 

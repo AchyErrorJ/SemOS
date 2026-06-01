@@ -120,10 +120,10 @@ impl Parse for Newtype {
         let step = if ord {
             quote! {
                 #gate_rustc_only
-                impl ::std::iter::Step for #name {
+                impl ::core::iter::Step for #name {
                     #[inline]
                     fn steps_between(start: &Self, end: &Self) -> (usize, Option<usize>) {
-                        <usize as ::std::iter::Step>::steps_between(
+                        <usize as ::core::iter::Step>::steps_between(
                             &Self::index(*start),
                             &Self::index(*end),
                         )
@@ -145,8 +145,8 @@ impl Parse for Newtype {
         };
 
         let debug_impl = quote! {
-            impl ::std::fmt::Debug for #name {
-                fn fmt(&self, fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+            impl ::core::fmt::Debug for #name {
+                fn fmt(&self, fmt: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                     write!(fmt, #debug_format, self.as_u32())
                 }
             }
@@ -248,7 +248,7 @@ impl Parse for Newtype {
                 }
             }
 
-            impl std::ops::Add<usize> for #name {
+            impl ::core::ops::Add<usize> for #name {
                 type Output = Self;
 
                 #[inline]
@@ -257,7 +257,7 @@ impl Parse for Newtype {
                 }
             }
 
-            impl std::ops::AddAssign<usize> for #name {
+            impl ::core::ops::AddAssign<usize> for #name {
                 #[inline]
                 fn add_assign(&mut self, other: usize) {
                     *self = *self + other;

@@ -1,6 +1,8 @@
 //! This module defines parallel operations that are implemented in
 //! one way for the serial compiler, and another way the parallel compiler.
 
+use alloc::vec::Vec;
+
 // M27 R4 B1: `catch_unwind` on SemOS (panic=abort) is a no-op that
 // just runs the closure. The local definitions below give the same
 // signatures core::panic does so the body below compiles unchanged on
@@ -47,6 +49,16 @@ fn resume_unwind(_payload: Box<dyn Any + Send>) -> ! {
 // this minimal `Mutex` covers the parallel.rs usage of `panic` storage.
 #[cfg(target_os = "none")]
 struct Mutex<T>(RefCell<T>);
+// Stage F1: SemOS is single-threaded (§1.4) so the RefCell-backed
+// Mutex shim is trivially Sync — no other thread can observe the
+// interior cell. Also opt-in to the local marker traits since
+// `RefCell` is explicitly `!DynSync` in `marker.rs`'s negimpl list.
+#[cfg(target_os = "none")]
+unsafe impl<T> Sync for Mutex<T> {}
+#[cfg(target_os = "none")]
+unsafe impl<T> crate::sync::DynSync for Mutex<T> {}
+#[cfg(target_os = "none")]
+unsafe impl<T> crate::sync::DynSend for Mutex<T> {}
 #[cfg(target_os = "none")]
 impl<T> Mutex<T> {
     fn new(t: T) -> Self {

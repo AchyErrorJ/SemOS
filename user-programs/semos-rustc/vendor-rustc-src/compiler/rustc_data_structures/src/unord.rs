@@ -12,12 +12,23 @@ use core::ops::Index;
 // OccupiedError}. With rustc-hash in no_std mode, FxHashMap is
 // hashbrown-backed; pull the entry types from hashbrown so the
 // SemOS-target build resolves.
+// Stage F1: pull `FxHashMap`/`FxHashSet` from our local fx module
+// rather than rustc_hash directly — rustc-hash only exports those
+// names with `feature = "std"`, but our fx.rs provides hashbrown-
+// backed aliases on SemOS that match the std-feature shape.
+use rustc_hash::FxBuildHasher;
+use crate::fx::{FxHashMap, FxHashSet};
+
+// Per-target Entry/OccupiedError aliases. std's variants are
+// 2-generic; hashbrown's are 3-generic (extra hasher param). We
+// monomorphise to `FxBuildHasher` so the signatures below stay
+// 2-generic in source.
 #[cfg(not(target_os = "none"))]
 use std::collections::hash_map::{Entry, OccupiedError};
 #[cfg(target_os = "none")]
-use hashbrown::hash_map::{Entry, OccupiedError};
-
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
+type Entry<'a, K, V> = hashbrown::hash_map::Entry<'a, K, V, FxBuildHasher>;
+#[cfg(target_os = "none")]
+type OccupiedError<'a, K, V> = hashbrown::hash_map::OccupiedError<'a, K, V, FxBuildHasher>;
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext};
 
 use crate::fingerprint::Fingerprint;

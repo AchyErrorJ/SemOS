@@ -163,13 +163,31 @@ impl AsRef<Path> for String {
     fn as_ref(&self) -> &Path { Path::new(self.as_str()) }
 }
 
+impl core::hash::Hash for Path {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.inner.hash(state)
+    }
+}
+
+impl PartialOrd for Path {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Path {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.inner.cmp(&other.inner)
+    }
+}
+
 impl PartialEq for Path {
     fn eq(&self, other: &Self) -> bool { self.inner == other.inner }
 }
 impl Eq for Path {}
 
 /// Owned, mutable path. Backed by `String`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PathBuf {
     inner: String,
 }

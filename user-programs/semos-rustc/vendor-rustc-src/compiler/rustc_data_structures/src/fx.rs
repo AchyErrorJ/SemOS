@@ -1,6 +1,19 @@
 use core::hash::BuildHasherDefault;
 
-pub use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
+// Stage F1: rustc-hash gates `FxHashMap`/`FxHashSet` behind its `std`
+// feature (they're aliases over `std::collections::HashMap`/`HashSet`).
+// On the SemOS target with `default-features = false` we re-create the
+// same aliases on top of `hashbrown` directly.
+pub use rustc_hash::{FxBuildHasher, FxHasher};
+#[cfg(not(target_os = "none"))]
+pub use rustc_hash::{FxHashMap, FxHashSet};
+// Use `FxBuildHasher` (not `BuildHasherDefault<FxHasher>`) on both
+// branches so the `Default` impl from rustc_hash applies and the
+// `with_hasher(FxBuildHasher)` call below type-checks identically.
+#[cfg(target_os = "none")]
+pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
+#[cfg(target_os = "none")]
+pub type FxHashSet<V> = hashbrown::HashSet<V, FxBuildHasher>;
 
 // M27: upstream uses std::collections::hash_map::Entry here. With
 // rustc-hash's no_std fallback (see semos-cc PORT_LOG patch #2),

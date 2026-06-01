@@ -1,5 +1,6 @@
 //! A variant of `SortedMap` that preserves insertion order.
 
+use alloc::vec::Vec;
 use core::hash::{Hash, Hasher};
 
 use rustc_index::{Idx, IndexVec};

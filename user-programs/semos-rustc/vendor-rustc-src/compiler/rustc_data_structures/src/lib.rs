@@ -10,7 +10,7 @@
 #![allow(internal_features)]
 #![allow(rustc::default_hash_types)]
 #![allow(rustc::potential_query_instability)]
-#![cfg_attr(bootstrap, feature(array_windows))]
+#![feature(array_windows)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![feature(allocator_api)]
 #![feature(ascii_char)]
@@ -23,7 +23,7 @@
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
 #![feature(extend_one)]
-#![feature(file_buffered)]
+#![cfg_attr(not(target_os = "none"), feature(file_buffered))]
 #![feature(map_try_insert)]
 #![feature(min_specialization)]
 #![feature(negative_impls)]
@@ -32,7 +32,7 @@
 #![feature(rustc_attrs)]
 #![feature(sized_hierarchy)]
 #![feature(test)]
-#![feature(thread_id_value)]
+#![cfg_attr(not(target_os = "none"), feature(thread_id_value))]
 #![feature(trusted_len)]
 #![feature(type_alias_impl_trait)]
 #![feature(unwrap_infallible)]
@@ -96,6 +96,11 @@ pub mod packed;
 pub mod profiling;
 pub mod sharded;
 pub mod small_c_str;
+// Stage F1: snapshot_map depends on ena's undo_log/snapshots types,
+// which we only have on host (ena is a host-only dep per Cargo.toml).
+// rustc_infer consumes it; the SemOS-target build path doesn't run
+// inference work in this v1 cut so we can host-gate it cleanly.
+#[cfg(not(target_os = "none"))]
 pub mod snapshot_map;
 pub mod sorted_map;
 pub mod sso;

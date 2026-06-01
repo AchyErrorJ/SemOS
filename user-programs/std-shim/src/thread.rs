@@ -259,6 +259,22 @@ impl<T: 'static> LocalKey<core::cell::RefCell<T>> {
 #[macro_export]
 macro_rules! thread_local {
     () => {};
+    // const-init form: `static FOO: T = const { ... };`
+    // rustc 1.59+ thread_local! accepts a `const { ... }` block to force
+    // const-time evaluation of the initializer. Since our single-threaded
+    // LocalKey takes a closure anyway, we wrap the const-block as the
+    // closure body — semantically identical for our purposes.
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $ty:ty = const { $init:expr }; $($rest:tt)*) => {
+        $(#[$attr])*
+        $vis static $name: $crate::thread::LocalKey<$ty> =
+            $crate::thread::LocalKey::new(|| $init);
+        $crate::thread_local! { $($rest)* }
+    };
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $ty:ty = const { $init:expr }) => {
+        $(#[$attr])*
+        $vis static $name: $crate::thread::LocalKey<$ty> =
+            $crate::thread::LocalKey::new(|| $init);
+    };
     ($(#[$attr:meta])* $vis:vis static $name:ident: $ty:ty = $init:expr; $($rest:tt)*) => {
         $(#[$attr])*
         $vis static $name: $crate::thread::LocalKey<$ty> =

@@ -132,13 +132,19 @@ impl SlotIndex {
 
     #[cold]
     fn initialize_bucket<V>(&self, bucket: &AtomicPtr<Slot<V>>) -> *mut Slot<V> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // Stage F1: cfg-split LOCK between host std and SemOS futex-
+        // backed semos_std::sync::Mutex (same shape, no poisoning).
+        // This path is cold, so a global lock is cheap and ensures we
+        // never have multiple allocations for the same bucket.
+        #[cfg(not(target_os = "none"))]
+        static HOST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        #[cfg(target_os = "none")]
+        static TARGET_LOCK: semos_std::sync::Mutex<()> = semos_std::sync::Mutex::new(());
 
-        // If we are initializing the bucket, then acquire a global lock.
-        //
-        // This path is quite cold, so it's cheap to use a global lock. This ensures that we never
-        // have multiple allocations for the same bucket.
-        let _allocator_guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(not(target_os = "none"))]
+        let _allocator_guard = HOST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(target_os = "none")]
+        let _allocator_guard = TARGET_LOCK.lock();
 
         let ptr = bucket.load(Ordering::Acquire);
 
@@ -146,14 +152,14 @@ impl SlotIndex {
         // initialize this bucket.
         if ptr.is_null() {
             let bucket_layout =
-                std::alloc::Layout::array::<Slot<V>>(self.entries as usize).unwrap();
+                core::alloc::Layout::array::<Slot<V>>(self.entries as usize).unwrap();
             // This is more of a sanity check -- this code is very cold, so it's safe to pay a
             // little extra cost here.
             assert!(bucket_layout.size() > 0);
             // SAFETY: Just checked that size is non-zero.
-            let allocated = unsafe { std::alloc::alloc_zeroed(bucket_layout).cast::<Slot<V>>() };
+            let allocated = unsafe { alloc::alloc::alloc_zeroed(bucket_layout).cast::<Slot<V>>() };
             if allocated.is_null() {
-                std::alloc::handle_alloc_error(bucket_layout);
+                alloc::alloc::handle_alloc_error(bucket_layout);
             }
             bucket.store(allocated, Ordering::Release);
             allocated
@@ -261,15 +267,15 @@ unsafe impl<K: Idx, #[may_dangle] V, I> Drop for VecCache<K, V, I> {
         // Confirm no need to deallocate individual entries. Note that `V: Copy` is asserted on
         // insert/lookup but not necessarily construction, primarily to avoid annoyingly propagating
         // the bounds into struct definitions everywhere.
-        assert!(!std::mem::needs_drop::<K>());
-        assert!(!std::mem::needs_drop::<V>());
+        assert!(!core::mem::needs_drop::<K>());
+        assert!(!core::mem::needs_drop::<V>());
 
         for (idx, bucket) in self.buckets.iter().enumerate() {
             let bucket = bucket.load(Ordering::Acquire);
             if !bucket.is_null() {
-                let layout = std::alloc::Layout::array::<Slot<V>>(ENTRIES_BY_BUCKET[idx]).unwrap();
+                let layout = core::alloc::Layout::array::<Slot<V>>(ENTRIES_BY_BUCKET[idx]).unwrap();
                 unsafe {
-                    std::alloc::dealloc(bucket.cast(), layout);
+                    alloc::alloc::dealloc(bucket.cast(), layout);
                 }
             }
         }
@@ -277,9 +283,9 @@ unsafe impl<K: Idx, #[may_dangle] V, I> Drop for VecCache<K, V, I> {
         for (idx, bucket) in self.present.iter().enumerate() {
             let bucket = bucket.load(Ordering::Acquire);
             if !bucket.is_null() {
-                let layout = std::alloc::Layout::array::<Slot<()>>(ENTRIES_BY_BUCKET[idx]).unwrap();
+                let layout = core::alloc::Layout::array::<Slot<()>>(ENTRIES_BY_BUCKET[idx]).unwrap();
                 unsafe {
-                    std::alloc::dealloc(bucket.cast(), layout);
+                    alloc::alloc::dealloc(bucket.cast(), layout);
                 }
             }
         }

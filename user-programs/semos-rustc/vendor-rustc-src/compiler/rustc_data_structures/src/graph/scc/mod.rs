@@ -14,7 +14,11 @@ use core::marker::PhantomData;
 use core::ops::Range;
 
 use rustc_index::{Idx, IndexSlice, IndexVec};
-use tracing::{debug, instrument, trace};
+// `tracing::instrument` is a proc-macro attribute exported only when
+// tracing's `attributes` feature is on; we build with default-features
+// off (§1.4 — no proc-macro tier). Drop the import + cfg-gate the one
+// call site to keep host parity behind the same gate.
+use tracing::{debug, trace};
 
 use crate::debug_assert_matches;
 use crate::fx::FxHashSet;
@@ -507,7 +511,7 @@ where
     /// Call this method when `inspect_node` has returned `None`. Having the
     /// caller decide avoids mutual recursion between the two methods and allows
     /// us to maintain an allocated stack for nodes on the path between calls.
-    #[instrument(skip(self, initial), level = "trace")]
+    // #[instrument(skip(self, initial), level = "trace")]  // see top-of-file note
     fn walk_unvisited_node(&mut self, initial: G::Node) -> WalkReturn<A::SccIdx, A::Ann> {
         trace!("Walk unvisited node: {initial:?}");
         struct VisitingNodeFrame<G: DirectedGraph, Successors, A> {

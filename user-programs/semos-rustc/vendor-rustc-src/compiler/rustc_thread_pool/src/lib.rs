@@ -274,12 +274,14 @@ where
     op(&s)
 }
 
+// Stage F1: drop the `Send` bounds on the SemOS stub — there is only
+// one thread, so any FnOnce can run "across the join" without thread
+// safety concerns. Keeping the bounds caused rustc_data_structures's
+// `parallel.rs` to demand `Sync` on RefCell-bearing guard types.
 pub fn join<A, B, RA, RB>(oper_a: A, oper_b: B) -> (RA, RB)
 where
-    A: FnOnce() -> RA + Send,
-    B: FnOnce() -> RB + Send,
-    RA: Send,
-    RB: Send,
+    A: FnOnce() -> RA,
+    B: FnOnce() -> RB,
 {
     (oper_a(), oper_b())
 }
