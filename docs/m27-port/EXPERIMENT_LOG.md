@@ -1804,3 +1804,44 @@ For each remaining external:
 Singletons usually fall to a single df=false add on a specific dep
 declaration. Multi-hundred-error crates usually need approach (4):
 fork.
+
+### Stage E iter 8 (commit `f9e7045`) — bulk-batch sweep
+
+Two-pronged batch fix:
+
+(1) Bulk df=false (20 Cargo.tomls):
+    itertools / scoped-tls / indexmap / regex — these all had upstream
+    `default = ["std", ...]` features that propagated workspace-wide
+    via cargo feature unification.
+
+(2) Host-gate 7 std-coupled deps:
+    - rustc_session: getopts + termize (CLI/terminal — host-only)
+    - rustc_span: blake3 + md-5 + sha1 + sha2 (hash computation;
+      SemOS target stubs SourceFileHashAlgorithm machinery)
+    - rustc_data_structures: elsa (pulls stable_deref_trait)
+    - rustc_hashes: rustc-stable-hash (R3-flagged unconditional std)
+    - rustc_borrowck + rustc_middle + rustc_mir_dataflow:
+      polonius-engine (pulls datafrog 275 errors — debug analysis,
+      host-only)
+
+Cleared this iter (combined ~12 externals): termize (10), getopts
+(165), datafrog (275), polonius-engine, parking_lot_core×2 (now
+permanently), blake3, crc32fast (already), regex-syntax (1),
+stable_deref_trait (17), constant_time_eq (5), rustc-stable-hash
+(31).
+
+Externals at iter 8 end: **14**. New tail-end utility crates
+surfacing (were hidden behind earlier blockers):
+- punycode (40), pulldown-cmark-escape (16), ctrlc (32),
+  pathdiff (32), find-msvc-tools (69), anstyle (156 — still),
+  scoped-tls (7 — still, despite df=false), getrandom (3),
+  either (1), memchr (1), indexmap (1)
+- Patched-crate followups: rustc_hashes (1), rustc_proc_macro (1),
+  rustc_log (2 — was bigger before host-gates)
+
+Cumulative this session: 22 commits, ~7.4M tokens.
+
+Pattern continues to work: each iteration concretely advances cargo
+check past previously-blocking externals, surfacing the next layer.
+Stage E is genuinely converging — the latest blockers are tail-end
+utility crates rather than core no_std-incompatibility.
