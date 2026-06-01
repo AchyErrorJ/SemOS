@@ -462,10 +462,42 @@ macro_rules! tuple {
 
 tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, }
 
-// M27 §1.3: incremental compilation dropped; std::path::{Path,PathBuf} Encodable/Decodable
-// impls cfg'd out — semos-std does not yet expose `path::PathBuf::canonicalize`
-// (R2 top-5 deferred) and the metadata layer never serializes Path values directly.
-// Callers serialize paths via String today.
+// Stage F2: PathBuf Encodable/Decodable — required by rustc_span's
+// derive(Encodable, Decodable) on filename types. We encode as the
+// UTF-8 string (semos_std::path is str-backed, so this round-trips
+// losslessly; on host it falls back to to_string_lossy which is
+// also lossless for the paths rustc actually emits). Path encoding
+// remains unimplemented (no use site needs `&Path: Encodable`).
+#[cfg(target_os = "none")]
+impl<S: Encoder> Encodable<S> for semos_std::path::PathBuf {
+    fn encode(&self, s: &mut S) {
+        // semos_std::path::PathBuf is str-backed.
+        self.as_path().as_str().encode(s);
+    }
+}
+
+#[cfg(target_os = "none")]
+impl<D: Decoder> Decodable<D> for semos_std::path::PathBuf {
+    fn decode(d: &mut D) -> semos_std::path::PathBuf {
+        let s: alloc::string::String = Decodable::decode(d);
+        semos_std::path::PathBuf::from(s)
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+impl<S: Encoder> Encodable<S> for std::path::PathBuf {
+    fn encode(&self, s: &mut S) {
+        self.to_string_lossy().as_ref().encode(s);
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+impl<D: Decoder> Decodable<D> for std::path::PathBuf {
+    fn decode(d: &mut D) -> std::path::PathBuf {
+        let s: alloc::string::String = Decodable::decode(d);
+        std::path::PathBuf::from(s)
+    }
+}
 
 impl<S: Encoder, T: Encodable<S> + Copy> Encodable<S> for Cell<T> {
     fn encode(&self, s: &mut S) {

@@ -202,8 +202,8 @@ impl StableCrateId {
         // (renamed to `semos_std` in Rust path-syntax). For Phase 2a this
         // edit assumes that vendor patch will land — see plan §1.
         match semos_std::env::var("RUSTC_FORCE_RUSTC_VERSION") {
-            Some(val) => hasher.write(val.as_bytes()),
-            None => hasher.write(cfg_version.as_bytes()),
+            Ok(val) => hasher.write(val.as_bytes()),
+            Err(_) => hasher.write(cfg_version.as_bytes()),
         }
 
         StableCrateId(hasher.finish())

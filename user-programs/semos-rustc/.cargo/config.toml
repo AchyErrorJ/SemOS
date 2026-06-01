@@ -10,3 +10,13 @@ build-std-features = ["compiler-builtins-mem"]
 # sets this internally). M27 Phase 5b Stage E discovery.
 [env]
 RUSTC_BOOTSTRAP = "1"
+# rustc_span/symbol.rs reads `CFG_RELEASE` at compile time via env!().
+# Stage F2: pin a sentinel string here — the real value is normally
+# set by bootstrap to whatever release channel (1.86.0 etc.). The
+# value flows into `StableCrateId` hashing, so any stable string
+# works as long as it's consistent across compiler invocations.
+CFG_RELEASE = "1.84.0-semos-m27"
+CFG_RELEASE_CHANNEL = "nightly"
+CFG_VERSION = "1.84.0-semos-m27 (semos-rustc 2026-06-01)"
+CFG_VER_DATE = "2026-06-01"
+CFG_VER_HASH = "semos-m27"

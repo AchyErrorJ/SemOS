@@ -35,3 +35,9 @@ blake3 = "1.5.2"
 md5 = { package = "md-5", version = "0.10.0" }
 sha1 = "0.10.0"
 sha2 = "0.10.1"
+
+# Phase 5b Stage F2: lib.rs/source_map.rs/symbol.rs touch semos_std
+# (io::Read, path::{Path, PathBuf}). Declare the path dep so the
+# `use semos_std::*` resolves on the SemOS target.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

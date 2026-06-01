@@ -22,14 +22,14 @@
 #![no_std]
 // tidy-alphabetical-start
 #![allow(internal_features)]
-#![cfg_attr(bootstrap, feature(array_windows))]
+#![feature(array_windows)]
 #![cfg_attr(target_arch = "loongarch64", feature(stdarch_loongarch))]
 #![feature(cfg_select)]
-#![feature(core_io_borrowed_buf)]
 #![feature(if_let_guard)]
 #![feature(map_try_insert)]
 #![feature(negative_impls)]
-#![feature(read_buf)]
+#![cfg_attr(not(target_os = "none"), feature(read_buf))]
+#![cfg_attr(not(target_os = "none"), feature(core_io_borrowed_buf))]
 #![feature(rustc_attrs)]
 // tidy-alphabetical-end
 
@@ -45,7 +45,11 @@ extern crate self as rustc_span;
 use derive_where::derive_where;
 use rustc_data_structures::{AtomicRef, outline};
 use rustc_macros::{Decodable, Encodable, HashStable_Generic};
-use rustc_serialize::opaque::{FileEncoder, MemDecoder};
+// Stage F2: §1.3 dropped FileEncoder (incremental cache writer).
+// rustc_serialize::opaque cfg(any())'s it out, so only MemDecoder
+// remains in scope; the SpanEncoder/FileEncoder impl below is also
+// dropped via cfg(any()).
+use rustc_serialize::opaque::MemDecoder;
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use tracing::debug;
 pub use unicode_width::UNICODE_VERSION;
@@ -85,7 +89,8 @@ pub mod profiling;
 // M27 R2: std::* → core::* / alloc::* / semos_std::* per the
 // substitution recipe. R4 B5 markers tag the path/io/fs sites that
 // route through semos_std (single-target UTF-8-only OsString shim).
-use alloc::borrow::Cow;
+use alloc::borrow::{Cow, ToOwned};
+use alloc::boxed::Box;
 use core::cmp::{self, Ordering};
 use core::fmt::Display;
 use core::hash::Hash;
@@ -101,12 +106,19 @@ use core::{fmt, iter};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+// Stage F2: hash impls are host-only (md5/sha1/sha2/blake3 pull
+// std-only crypto crates). SourceFileHashAlgorithm still crosses
+// ABI boundaries; the SemOS-target build keeps the enum but the
+// per-variant hash routines are cfg-gated to no-ops below.
+#[cfg(not(target_os = "none"))]
 use md5::{Digest, Md5};
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_data_structures::sync::{FreezeLock, FreezeWriteGuard, Lock};
 use rustc_data_structures::unord::UnordMap;
 use rustc_hashes::{Hash64, Hash128};
+#[cfg(not(target_os = "none"))]
 use sha1::Sha1;
+#[cfg(not(target_os = "none"))]
 use sha2::Sha256;
 
 #[cfg(test)]
@@ -503,7 +515,7 @@ impl RealFileName {
                 .maybe_remapped
                 .name
                 .file_name()
-                .map_or_else(|| "".into(), |f| f.to_string_lossy()),
+                .map_or_else(|| "".into(), |f| f.into()),
             FileNameDisplayPreference::Scope(scope) => self.path(scope).to_string_lossy(),
         }
     }
@@ -1393,6 +1405,7 @@ pub trait SpanEncoder: Encoder {
     fn encode_def_id(&mut self, def_id: DefId);
 }
 
+#[cfg(any())]
 impl SpanEncoder for FileEncoder {
     fn encode_span(&mut self, span: Span) {
         let span = span.data();
@@ -1759,11 +1772,20 @@ impl Display for SourceFileHash {
 }
 
 impl SourceFileHash {
+    // Stage F2: host computes real hashes via md5/sha1/sha2/blake3.
+    // On the SemOS target we leave the value buffer at its
+    // `Default::default()` zero state — `_kind` is recorded for the
+    // ABI but no compilation work depends on the digest's correctness
+    // in the SemOS-side rustc flow yet (incremental + sigs are dead
+    // per §1.3). Real hash crates can be revisited if SemOS-target
+    // rustc starts emitting metadata.
     pub fn new_in_memory(kind: SourceFileHashAlgorithm, src: impl AsRef<[u8]>) -> SourceFileHash {
         let mut hash = SourceFileHash { kind, value: Default::default() };
         let len = hash.hash_len();
         let value = &mut hash.value[..len];
         let data = src.as_ref();
+        let _ = (value, data, len);
+        #[cfg(not(target_os = "none"))]
         match kind {
             SourceFileHashAlgorithm::Md5 => {
                 value.copy_from_slice(&Md5::digest(data));
@@ -1781,6 +1803,12 @@ impl SourceFileHash {
 
     pub fn new(kind: SourceFileHashAlgorithm, src: impl Read) -> Result<SourceFileHash, io::Error> {
         let mut hash = SourceFileHash { kind, value: Default::default() };
+        let _ = src;
+        // Stage F2: host computes a real digest. On SemOS target we
+        // return the zero-initialised value (see `new_in_memory`
+        // comment above).
+        #[cfg(not(target_os = "none"))]
+        {
         let len = hash.hash_len();
         let value = &mut hash.value[..len];
         // Buffer size is the recommended amount to fully leverage SIMD instructions on AVX-512 as per
@@ -1856,6 +1884,7 @@ impl SourceFileHash {
                 )?;
             }
         }
+        } // end #[cfg(not(target_os = "none"))] block
         Ok(hash)
     }
 

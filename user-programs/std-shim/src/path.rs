@@ -520,3 +520,54 @@ impl core_alloc::borrow::ToOwned for Path {
 // pattern. They use `Cow<Path>` exclusively here, so this saves them
 // having to import alloc::borrow::Cow separately.
 pub use core_alloc::borrow::Cow;
+
+// Stage F2: explicit From impls for Cow<Path>. The alloc blanket
+// `impl<'a, B: ?Sized + ToOwned> From<&'a B> for Cow<'a, B>` does
+// not pick up our Path::ToOwned automatically for rustc_span's
+// `Into<Cow<'a, Path>>` bound (the inference layer trips on the
+// custom ToOwned impl through the Path newtype). Providing these
+// explicit impls lets the rustc_span signature compile.
+impl<'a> From<&'a Path> for Cow<'a, Path> {
+    fn from(p: &'a Path) -> Self {
+        Cow::Borrowed(p)
+    }
+}
+
+impl<'a> From<PathBuf> for Cow<'a, Path> {
+    fn from(p: PathBuf) -> Self {
+        Cow::Owned(p)
+    }
+}
+
+impl<'a> From<&'a PathBuf> for Cow<'a, Path> {
+    fn from(p: &'a PathBuf) -> Self {
+        Cow::Borrowed(p.as_path())
+    }
+}
+
+// `Path: Debug` — `std::path::Path` derives Debug; rustc_span uses it
+// in trace! messages. The `repr(transparent)` wrapping over str lets
+// us delegate cleanly.
+impl core::fmt::Debug for Path {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.inner, f)
+    }
+}
+
+impl Path {
+    /// Lossy UTF-8 string conversion. `std::path::Path` returns
+    /// `Cow<str>` (since on Unix the bytes may not be UTF-8). Our
+    /// Path is `str`-backed so the bytes are always UTF-8 and the
+    /// `Cow::Borrowed` variant always applies.
+    pub fn to_string_lossy(&self) -> core_alloc::borrow::Cow<'_, str> {
+        core_alloc::borrow::Cow::Borrowed(&self.inner)
+    }
+}
+
+impl PathBuf {
+    /// `std::path::PathBuf::to_string_lossy` — forwards to the
+    /// borrowed `Path::to_string_lossy`.
+    pub fn to_string_lossy(&self) -> core_alloc::borrow::Cow<'_, str> {
+        self.as_path().to_string_lossy()
+    }
+}

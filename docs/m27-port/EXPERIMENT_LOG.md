@@ -2109,3 +2109,51 @@ iteration, ~16 substitution categories. The cfg-split pattern
 proves across the entire crate body without needing to bisect or
 recon-agent — once F1 took 135 errors to 0 via straightforward
 mechanical rules, F2-F* should be tightly bounded too.
+
+────────────────────────────────────────────────────────────────────
+## Stage F2: rustc_span — body port (58 → 0 errors)
+
+Same pattern as F1, accelerated by re-using the substitution rules.
+Added Cargo.toml-side `[target.'cfg(target_os = "none")'.dependencies]`
+semos-std declaration to two more crates (rustc_span, rustc_serialize)
+that previously imported `semos_std` from source without declaring it.
+
+Per-class fixes (in order of impact):
+- alloc preludes — Vec/String/Box/ToString/ToOwned in source_map.rs,
+  hygiene.rs, symbol.rs, lib.rs + `mod monotonic {}` sub-mod
+- hash crates host-only — `use md5/sha1/sha2;` cfg-gated, and the
+  `new_in_memory` / `new(impl Read)` digest matches wrapped in
+  `#[cfg(not(target_os = "none"))]` (SemOS-side returns the zero-
+  initialised value, OK per §1.3 dropping incremental)
+- `is_x86_feature_detected!` (libstd only) → cfg-split to
+  `cfg!(target_feature = "sse2")` on SemOS (x86_64-unknown-none has
+  sse2 enabled in the baseline)
+- `eprintln!` (libstd only) → cfg-gated; SemOS falls straight through
+  to FatalError::raise
+- `#[instrument(...)]` proc-macro attribute (tracing's `attributes`
+  feature off) → commented-out (5 sites)
+- `#[feature(read_buf)]` / `#[feature(core_io_borrowed_buf)]` — host-only;
+  `#[feature(array_windows)]` promoted unconditional (R3-compat)
+- `FileEncoder` removed in §1.3 → drop the `use` + cfg-out the
+  `impl SpanEncoder for FileEncoder` block
+- `HashStable_Generic` proc-macro emitted `::std::mem::discriminant`
+  → changed to `::core::mem::discriminant` in rustc_macros/hash_stable.rs
+- semos_std::path Path/PathBuf gaps → added Debug + Hash + PartialOrd
+  + Ord + to_string_lossy + explicit `From<&Path>/<PathBuf>/<&PathBuf>
+  for Cow<Path>` impls (alloc's blanket `Cow<'a, B>: From<&'a B>` was
+  not picking up our custom ToOwned)
+- PathBuf Encodable/Decodable → added impls in rustc_serialize for
+  both target_os = "none" (semos_std::path::PathBuf) and host
+  (std::path::PathBuf) — serialize as UTF-8 string
+- `semos_std::env::var` returns Result<String, VarError>; def_id.rs
+  had a stale `Some(...)` pattern → `Ok(...)`/`Err(_)`
+- `.cargo/config.toml` `[env]` — added CFG_RELEASE / CFG_VERSION /
+  CFG_VER_HASH etc. (rustc_span/symbol.rs reads `env!("CFG_RELEASE")`
+  at compile time; normally bootstrap sets these)
+
+Error trajectory: **58 → 78 → 45 → 28 → 4 → 1 → 0**
+(58→78 was the semos-std-dep flip uncovering deeper errors)
+
+Workspace state after F2: `cargo check` blocks on **rustc_ast (344
+errors)**. F3 next.
+

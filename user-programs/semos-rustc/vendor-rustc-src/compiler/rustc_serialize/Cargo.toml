@@ -11,6 +11,11 @@ smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 thin-vec = { version = "0.2.12", default-features = false }
 # tidy-alphabetical-end
 
+# Stage F2: PathBuf Encodable/Decodable impls need the semos-std
+# path types on the SemOS target.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+
 [dev-dependencies]
 # tidy-alphabetical-start
 rustc_macros = { path = "../rustc_macros" }

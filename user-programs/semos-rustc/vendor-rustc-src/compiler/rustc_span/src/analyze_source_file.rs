@@ -36,7 +36,17 @@ cfg_select! {
             lines: &mut Vec<RelativeBytePos>,
             multi_byte_chars: &mut Vec<MultiByteChar>,
         ) {
-            if is_x86_feature_detected!("sse2") {
+            // Stage F2: `is_x86_feature_detected!` lives in libstd, not
+            // libcore. On the SemOS target the SSE2 path is statically
+            // selected via the target_feature CPU baseline (x86_64-
+            // unknown-none enables sse2 by default in rustc), so we
+            // can assume sse2 unconditionally. On host we keep the
+            // runtime detection.
+            #[cfg(not(target_os = "none"))]
+            let has_sse2 = is_x86_feature_detected!("sse2");
+            #[cfg(target_os = "none")]
+            let has_sse2 = cfg!(target_feature = "sse2");
+            if has_sse2 {
                 unsafe {
                     analyze_source_file_sse2(src, lines, multi_byte_chars);
                 }

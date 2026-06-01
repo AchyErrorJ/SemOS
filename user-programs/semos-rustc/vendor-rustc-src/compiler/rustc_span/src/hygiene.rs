@@ -27,8 +27,11 @@
 // M27 R2: rustc_span hygiene — only top-of-file import block changes.
 // scoped_tls!() macro calls below stay as-is; the scoped-tls vendor
 // patch (R4 B2) provides the macro from semos_std's surface.
-use core::hash::Hash;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::hash::Hash;
 use core::{fmt, iter, mem};
 
 use rustc_data_structures::fingerprint::Fingerprint;

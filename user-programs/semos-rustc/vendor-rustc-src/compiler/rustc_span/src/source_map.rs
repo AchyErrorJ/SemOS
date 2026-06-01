@@ -14,6 +14,11 @@
 // `read_binary_file` falls back to the byte-by-byte loop below; this
 // loses the std nice peak-memory behavior but is correct. See followup
 // notes for the Phase 2b semos_std::io::BorrowedBuf TODO.
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use semos_std::fs::{self, File};
 // NOTE: semos_std::io has no `BorrowedBuf` or `ErrorKind` yet — those
 // are Phase 2b deps. Sites that need them are marked `// M27 R4 B5
@@ -24,7 +29,10 @@ use semos_std::path::{self, Path, PathBuf};
 use rustc_data_structures::sync::{IntoDynSyncSend, MappedReadGuard, ReadGuard, RwLock};
 use rustc_data_structures::unhash::UnhashMap;
 use rustc_macros::{Decodable, Encodable};
-use tracing::{debug, instrument, trace};
+// Stage F2: tracing's `instrument` attribute proc-macro is only
+// exported with the `attributes` feature (off here). All call sites
+// in this file have been commented out.
+use tracing::{debug, trace};
 
 use crate::*;
 
@@ -52,6 +60,7 @@ pub fn original_sp(sp: Span, enclosing_sp: Span) -> Span {
 }
 
 mod monotonic {
+    use alloc::vec::Vec;
     use core::ops::{Deref, DerefMut};
 
     /// A `MonotonicVec` is a `Vec` which can only be grown.
@@ -316,6 +325,10 @@ impl SourceMap {
     /// unmodified.
     pub fn new_source_file(&self, filename: FileName, src: String) -> Arc<SourceFile> {
         self.try_new_source_file(filename, src).unwrap_or_else(|OffsetOverflowError| {
+            // Stage F2: no-std target has no `eprintln!`. Fall through
+            // straight to FatalError::raise (which panics/aborts on
+            // SemOS). The host-side path keeps the diagnostic line.
+            #[cfg(not(target_os = "none"))]
             eprintln!(
                 "fatal error: rustc does not support text files larger than {} bytes",
                 SourceFile::MAX_FILE_SIZE
@@ -503,7 +516,7 @@ impl SourceMap {
         f.lookup_line(lo) != f.lookup_line(hi)
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // #[instrument(skip(self), level = "trace")]  // tracing attr off
     pub fn is_valid_span(&self, sp: Span) -> Result<(Loc, Loc), SpanLinesError> {
         let lo = self.lookup_char_pos(sp.lo());
         trace!(?lo);
@@ -984,7 +997,7 @@ impl SourceMap {
 
     /// Finds the width of the character, either before or after the end of provided span,
     /// depending on the `forwards` parameter.
-    #[instrument(skip(self, sp))]
+    // #[instrument(skip(self, sp))]  // tracing attr off
     fn find_width_of_character_at_span(&self, sp: SpanData, forwards: bool) -> u32 {
         if sp.lo == sp.hi && !forwards {
             debug!("early return empty span");
@@ -1171,7 +1184,7 @@ impl FilePathMapping {
 
         return remap_path_prefix(&self.mapping, path);
 
-        #[instrument(level = "debug", skip(mapping), ret)]
+        // #[instrument(level = "debug", skip(mapping), ret)]  // tracing attr off
         fn remap_path_prefix<'a>(
             // M27 R4 B5:
             mapping: &'a [(PathBuf, PathBuf)],
@@ -1288,7 +1301,7 @@ impl FilePathMapping {
     // path::Component::Normal, path.strip_prefix(), from.join(rest) —
     // none of which exist in semos_std::path today. Kept upstream
     // shape; requires Phase 2b semos_std::path additions.
-    #[instrument(level = "debug", skip(self), ret)]
+    // #[instrument(level = "debug", skip(self), ret)]  // tracing attr off
     fn reverse_map_prefix_heuristically(&self, path: &Path) -> Option<PathBuf> {
         let mut found = None;
 

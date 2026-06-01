@@ -4,6 +4,8 @@
 
 // M27 R2: rustc_span symbol — std → core. String/Vec/Box resolve via
 // the crate-root `#[macro_use] extern crate alloc;` in lib.rs.
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::hash::{Hash, Hasher};
 use core::ops::Deref;
 use core::{fmt, str};
