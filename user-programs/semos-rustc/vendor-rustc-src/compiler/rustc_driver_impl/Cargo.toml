@@ -52,7 +52,6 @@ rustc_target = { path = "../rustc_target" }
 rustc_trait_selection = { path = "../rustc_trait_selection" }
 rustc_ty_utils = { path = "../rustc_ty_utils" }
 serde_json = { version = "1.0.59", default-features = false, features = ["alloc"] }
-shlex = "1.0"
 tracing = { version = "0.1.35", default-features = false }
 # tidy-alphabetical-end
 
@@ -69,7 +68,6 @@ features = [
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 # tidy-alphabetical-start
-ctrlc = "3.4.4"
 # tidy-alphabetical-end
 
 [features]
@@ -84,3 +82,9 @@ rustc_randomized_layouts = [
     'rustc_middle/rustc_randomized_layouts'
 ]
 # tidy-alphabetical-end
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+ctrlc = "3.4.4"
+# Phase 5b Stage E iter 9: shlex parses POSIX-style argv strings.
+# SemOS uses kernel-provided argv directly so this is host-only.
+shlex = "1.0"

@@ -10,7 +10,6 @@ bstr = "1.11.3"
 find-msvc-tools = "0.1.2"
 hashbrown = { version = "0.14", default-features = false, features = ["inline-more"] }
 itertools = { version = "0.12", default-features = false }
-pathdiff = "0.2.0"
 regex = { version = "1.4", default-features = false }
 rustc_abi = { path = "../rustc_abi" }
 rustc_arena = { path = "../rustc_arena" }
@@ -52,6 +51,7 @@ tracing = { version = "0.1", default-features = false }
 # remaining back/* (write,lto,metadata) sites that touch these crates
 # already cfg-split their usages.
 [target.'cfg(not(target_os = "none"))'.dependencies]
+pathdiff = "0.2.0"
 # ar_archive_writer pulls object 0.37 → crc32fast (21 errors).
 # Archive-writing is linker-related; F1+G1 §1.7-gated all back/link*
 # modules. Host-only.

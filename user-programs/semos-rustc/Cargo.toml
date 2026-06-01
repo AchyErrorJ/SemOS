@@ -8,6 +8,14 @@ edition = "2021"
 # to opt them out of cargo's parent-workspace search) get overridden by
 # this root workspace definition via glob membership.
 [workspace]
+# Phase 5b Stage E iter 9: resolver = "2" enables per-target feature
+# resolution. Without it (resolver = "1", the default for edition=2018-
+# legacy workspaces), cargo unifies features across the WHOLE workspace —
+# meaning a host-only dep's features get propagated to target=x86_64-
+# unknown-none resolution. The "tracing's std turns on workspace-wide
+# because one consumer forgot df=false" pattern is the iter 7b leak we
+# fixed by hand; resolver=2 fixes this category structurally.
+resolver = "2"
 members = [
     ".",
     "vendor-rustc-src/compiler/*",

@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-punycode = "0.4.0"
 rustc-demangle = "0.1.21"
 rustc_abi = { path = "../rustc_abi" }
 rustc_data_structures = { path = "../rustc_data_structures" }
@@ -17,3 +16,8 @@ rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+# Phase 5b Stage E iter 9: punycode pulls std prelude. v0 mangling
+# uses punycode but cg_clif handles emission per §1.7 — host-only.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+punycode = "0.4.0"
