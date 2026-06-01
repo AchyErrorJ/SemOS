@@ -1973,3 +1973,51 @@ For anstyle / unicode-normalization / find-msvc-tools / scoped-tls:
   the target build is somehow seeing it.
 
 Cumulative this session: 26 commits, ~7.7M tokens.
+
+### Stage E iter 11 (commit `00246a4`) — closing-out the externals
+
+Three [patch.crates-io] vendored forks landed (`vendor-externals/`):
+- **scoped-tls 1.0.1** — stubbed to forward to semos_std::thread::
+  ScopedKey (semos_std already had the macro shim from Phase 2a).
+- **either 1.16.0** — `default = ["std"]` → `default = []`. itertools
+  pulls either without df=false; can't fix from the consumer side.
+- **indexmap 2.14.0** — same default change.
+
+Host-gates added:
+- anstyle → host-only in rustc_driver_impl + rustc_errors (was direct
+  dep at 156 errors).
+- jiff → host-only in rustc_driver_impl (needs std feature upstream).
+- rand df=false in rustc_incremental + rustc_session.
+- bstr df=false in rustc_codegen_ssa.
+- unicode-normalization df=false in rustc_parse.
+- find-msvc-tools dropped from rustc_codegen_ssa main deps.
+
+§1.8 cleanup: stubbed `rustc_fluent_macro/src/fluent.rs` to emit a
+minimal token stream (empty `fluent_generated` module + placeholder
+`DEFAULT_LOCALE_RESOURCE`). Dropped fluent-bundle + fluent-syntax +
+annotate-snippets + unic-langid deps. Macro now compiles with just
+proc-macro2 + quote.
+
+Hashbrown pin: rustc_data_structures + rustc_query_system +
+rustc_mir_transform pinned to 0.15 (was 0.16.1). hashbrown 0.16's
+`nightly` feature uses `feature(trivial_clone)` which our pinned
+toolchain doesn't have.
+
+rustc_arena: added `#![feature(maybe_uninit_slice)]` for the
+MaybeUninit slice operation.
+
+**Composition shifted again** — externals nearly gone, now patched-
+crate prelude gaps:
+- rustc_parse_format (16): missing `use alloc::borrow::ToOwned;` for
+  16 `.to_owned()` calls on &str literals.
+- rustc_arena (1): feature gate addition (this iter's fix didn't
+  flush — needs verification).
+- few persistent externals: find-msvc-tools (69 — still pulled),
+  scoped-tls (1), either (1), indexmap (1), memchr (1).
+
+Stage E is genuinely in endgame. Stage E iter 12 next: read the
+post-iter-11 cargo check log carefully, distinguish patched-crate
+followups (alloc prelude additions are mechanical) from the last
+external leaks. Possibly 1-2 more iterations to settled.
+
+Cumulative this session: ~28 commits, ~7.9M tokens.
