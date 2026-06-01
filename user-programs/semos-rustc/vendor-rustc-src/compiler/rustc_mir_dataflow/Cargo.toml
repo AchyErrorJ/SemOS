@@ -5,8 +5,7 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-polonius-engine = "0.13.0"
-regex = "1"
+regex = { version = "1", default-features = false }
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_data_structures = { path = "../rustc_data_structures" }
@@ -20,3 +19,6 @@ rustc_span = { path = "../rustc_span" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+[target.'cfg(not(target_os = "none"))'.dependencies]
+polonius-engine = "0.13.0"

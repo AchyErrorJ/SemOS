@@ -17,7 +17,6 @@ edition = "2024"
 arrayvec = { version = "0.7", default-features = false }
 bitflags = "2.4.1"
 either = { version = "1.0", default-features = false }
-elsa = "1.11.0"
 indexmap = { version = "2.12.1", default-features = false }
 rustc-hash = { version = "2.0.0", default-features = false }
 rustc_arena = { path = "../rustc_arena" }
@@ -42,6 +41,10 @@ tracing = { version = "0.1", default-features = false }
 # host-only for now until vendor+patch in a later iteration.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 ena = "0.14.3"
+# Phase 5b Stage E iter 8: elsa pulls stable_deref_trait (17 errors).
+# elsa is a self-referential-collections crate used by SourceMap; the
+# specific use sites are dump/debug only.
+elsa = "1.11.0"
 jobserver_crate = { version = "0.1.28", package = "jobserver" }
 measureme = "12.0.1"
 parking_lot = "0.12"

@@ -9,9 +9,9 @@ bitflags = "2.4.1"
 bstr = "1.11.3"
 find-msvc-tools = "0.1.2"
 hashbrown = { version = "0.14", default-features = false, features = ["inline-more"] }
-itertools = "0.12"
+itertools = { version = "0.12", default-features = false }
 pathdiff = "0.2.0"
-regex = "1.4"
+regex = { version = "1.4", default-features = false }
 rustc_abi = { path = "../rustc_abi" }
 rustc_arena = { path = "../rustc_arena" }
 rustc_ast = { path = "../rustc_ast" }

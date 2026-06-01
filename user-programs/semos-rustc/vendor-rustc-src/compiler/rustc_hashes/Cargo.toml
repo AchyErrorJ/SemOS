@@ -5,5 +5,10 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-rustc-stable-hash = { version = "0.1.0" }
 # tidy-alphabetical-end
+
+# Phase 5b Stage E iter 8: rustc-stable-hash 0.1.0 is unconditionally
+# std (recon R3 flagged). Used only by the host-side hash-based
+# diagnostics machinery; SemOS target uses semos_std's FxHash directly.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+rustc-stable-hash = { version = "0.1.0" }

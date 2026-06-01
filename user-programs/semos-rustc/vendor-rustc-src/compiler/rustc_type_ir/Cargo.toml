@@ -12,7 +12,7 @@ derive-where = "1.2.7"
 # (no_std-incompatible). Host-only since ena's use is internal to
 # rustc_infer's UnificationTable (algorithmic, not target-coupled);
 # the no_std target can substitute or stub the unification at site.
-indexmap = "2.0.0"
+indexmap = { version = "2.0.0", default-features = false }
 rustc-hash = { version = "2.0.0", default-features = false }
 rustc_ast_ir = { path = "../rustc_ast_ir", default-features = false }
 rustc_data_structures = { path = "../rustc_data_structures", optional = true }

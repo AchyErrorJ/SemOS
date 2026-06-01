@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-indexmap = "2.4.0"
-itertools = "0.12"
+indexmap = { version = "2.4.0", default-features = false }
+itertools = { version = "0.12", default-features = false }
 pulldown-cmark = { version = "0.11", features = ["html"], default-features = false }
 rustc_arena = { path = "../rustc_arena" }
 rustc_ast = { path = "../rustc_ast" }

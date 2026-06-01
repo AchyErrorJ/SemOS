@@ -7,7 +7,6 @@ edition = "2024"
 # tidy-alphabetical-start
 bitflags = { version = "2.4.1", default-features = false }
 either = { version = "1.5.0", default-features = false }
-polonius-engine = "0.13.0"
 rustc_abi = { path = "../rustc_abi" }
 rustc_apfloat = "0.2.0"
 # Phase 5b Stage E iter 5: gsgdt 0.1.2 pulls serde without default-features
@@ -46,6 +45,7 @@ tracing = { version = "0.1", default-features = false }
 # Host-only since the use sites (mir/generic_graph.rs + mir/graphviz.rs) are
 # debug MIR-dump output paths.
 [target.'cfg(not(target_os = "none"))'.dependencies]
+polonius-engine = "0.13.0"
 gsgdt = "0.1.2"
 
 [features]

@@ -16,7 +16,7 @@ tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 # tidy-alphabetical-start
-itertools = "0.12"
+itertools = { version = "0.12", default-features = false }
 # tidy-alphabetical-end
 
 [features]

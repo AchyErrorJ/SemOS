@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 # tidy-alphabetical-start
 hashbrown = { version = "0.14", default-features = false, features = ["inline-more"] }
-itertools = "0.12"
+itertools = { version = "0.12", default-features = false }
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_data_structures = { path = "../rustc_data_structures" }
