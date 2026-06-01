@@ -1845,3 +1845,62 @@ Pattern continues to work: each iteration concretely advances cargo
 check past previously-blocking externals, surfacing the next layer.
 Stage E is genuinely converging — the latest blockers are tail-end
 utility crates rather than core no_std-incompatibility.
+
+### Stage E iter 9 (commit `61b0abd`) — resolver=2 + 5-crate host-gate
+
+Six fixes:
+
+1. **`resolver = "2"`** in workspace root Cargo.toml. Structural fix
+   for cargo's feature unification problem — enables per-target
+   feature resolution. Without it (default resolver=1 for edition-
+   2018-style workspaces), one consumer's default features
+   propagate workspace-wide. That's the same bug class that the
+   iter 7b rustc_driver_impl tracing leak created.
+2. **punycode** host-gated in rustc_symbol_mangling (40 errors).
+   v0 mangling uses punycode but cg_clif handles emission per §1.7.
+3. **ctrlc + shlex** host-gated in rustc_driver_impl (32 + 105).
+   CLI/process-control — irrelevant on SemOS Ring 3 v1.
+4. **pathdiff** host-gated in rustc_codegen_ssa (32). File-path
+   diffing for linker output (dead per §1.7).
+5. **pulldown-cmark** (incl. pulldown-cmark-escape transitively, 16)
+   host-gated in rustc_resolve. Used for rustdoc — host-only.
+6. **fluent-bundle + fluent-syntax + annotate-snippets + unic-langid**
+   host-gated in rustc_fluent_macro (proc-macro crate, all §1.8 i18n).
+
+Cleared this iter: punycode (40), pulldown-cmark-escape (16),
+ctrlc (32), pathdiff (32), shlex (105). **~225 errors gone.**
+
+Externals at iter 9 end: **14**. Composition shifted decisively
+from "tail-end utility" to mostly patched-crate followups:
+
+- **Patched-crate followups** (need port fixes, NOT external work):
+  rustc_hashes (1), rustc_proc_macro (1), rustc_fs_util (1),
+  rustc_log (2), rustc_thread_pool (12)
+- **Stubborn externals** (proc-macro chain — resolver=2 didn't help
+  the rustc_fluent_macro deps as much as expected): anstyle (156),
+  find-msvc-tools (69), unicode-normalization (158), jiff (1)
+- **Singletons**: getrandom (3), either (1), memchr (1), indexmap
+  (1), scoped-tls (7)
+
+Cumulative this session: 24 commits, ~7.5M tokens. Stage E has now
+cleared ~30 distinct externals cumulatively. The composition shift
+is the signal that Stage E is close to settled — most remaining
+failures are patched-crate port bugs (Phase 2-4 followups) rather
+than upstream no_std issues.
+
+### Stage E iter 10 next-steps
+
+1. **Patched-crate followups**: rustc_hashes (1), rustc_proc_macro
+   (1), rustc_fs_util (1), rustc_log (2), rustc_thread_pool (12)
+   are all in our own ported tree. Each is a small port-bug fix
+   (likely missing #![no_std], missing semos-std cfg-split, or
+   tracing macro that needs stubbing).
+2. **Stubborn proc-macro externals** (anstyle, unicode-normalization,
+   find-msvc-tools): resolver=2 should have isolated these to host-
+   only resolution, but cargo treats proc-macro crates specially.
+   Consider [patch.crates-io] forks with `default = []`.
+3. **Singletons** (likely df=false missing somewhere):
+   `cargo tree -i <crate>` to find the puller.
+
+The patched-crate followups should be the next focus — each is
+small + structural rather than batch-pattern work.
