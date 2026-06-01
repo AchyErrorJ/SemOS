@@ -1750,3 +1750,57 @@ Cumulative this session: 18 commits, ~7M tokens. Stage E grind
 continues; each iter clears 1-3 externals + sometimes uncovers
 re-surface chains. The fundamental wall is now the
 non-default-features-aware transitive resolution.
+
+### Stage E iter 7 (commits `83d4957` + `9176c33`) — BIG WINS
+
+Three sub-iterations rolled into iter 7:
+
+- **7a**: vendored tracing-core 0.1.36 into `vendor-externals/`
+  with `default = []`. Added `[patch.crates-io]` in workspace root.
+  But once_cell still pulled — see 7b.
+- **7b**: **THE LEAK**. `rustc_driver_impl/Cargo.toml` had
+  `tracing = { version = "0.1.35" }` without `default-features =
+  false`. Cargo's feature unification turned tracing/std ON
+  workspace-wide → tracing-core/std → once_cell. **One-line fix
+  cleared 245 errors.** Demonstrates: ONE consumer of N (45 here)
+  not disabling defaults wipes out everyone else's df=false work.
+- **7c**: host-gated measureme (rustc_query_impl) + parking_lot
+  (rustc_query_system) + ar_archive_writer (rustc_codegen_ssa).
+  Dropped object's "write" feature (was pulling crc32fast).
+  Cleared parking_lot_core (60), crc32fast (21), plus patched-crate
+  followups rustc_thread_pool (12) + rustc_fs_util (1).
+
+Externals at iter 7c end: **15** (down from 17 at iter 6 end).
+
+This session cumulatively cleared: log×2, crc32fast×2, serde_core
+(5829), once_cell (245), parking_lot_core×2, 4 patched-crate fixes
+(rustc_thread_pool, rustc_graphviz, rustc_fs_util×2).
+
+Remaining 15 externals:
+- Bigger: anstyle (156, via annotate-snippets ← proc-macro
+  rustc_fluent_macro), getopts (165, in rustc_session), rustc-stable-
+  hash (31), datafrog (275, new — via polonius-engine), stable_deref_
+  trait (17), termize (10), scoped-tls (7), constant_time_eq (5),
+  getrandom (3).
+- Singletons (1 error each — likely single df=false fix):
+  either, indexmap, memchr, rustc-hash, regex-syntax, crypto-common.
+
+Cumulative this session: 20 commits, ~7.2M tokens.
+
+### Iter 8+ pattern firmly established
+
+For each remaining external:
+1. `cargo tree --target x86_64-unknown-none -i <external>` to trace
+   the puller chain.
+2. Host-gate the deepest no_std-incompatible dep
+   (`[target.'cfg(not(target_os = "none"))'.dependencies]`).
+3. If the puller is a workspace path-dep crate: gate body sites with
+   `#[cfg(not(target_os = "none"))]`.
+4. If transitive default features can't be reached from consumer
+   declarations: vendor + fork in `vendor-externals/`, set
+   `default = []`, add `[patch.crates-io]` override (tracing-core
+   pattern).
+
+Singletons usually fall to a single df=false add on a specific dep
+declaration. Multi-hundred-error crates usually need approach (4):
+fork.
