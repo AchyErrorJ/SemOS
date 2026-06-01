@@ -18,7 +18,7 @@
 use rustc_type_ir::inherent::*;
 use rustc_type_ir::solve::GoalSource;
 use rustc_type_ir::{self as ty, Interner};
-use tracing::{instrument, trace};
+use tracing::{trace};
 
 use crate::delegate::SolverDelegate;
 use crate::solve::{Certainty, EvalCtxt, Goal, QueryResult};
@@ -28,7 +28,7 @@ where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     pub(super) fn compute_alias_relate_goal(
         &mut self,
         goal: Goal<I, (I::Term, I::Term, ty::AliasRelationDirection)>,

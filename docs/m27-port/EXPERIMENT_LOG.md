@@ -2231,3 +2231,30 @@ That's a meaningfully bigger crate but should be tractable on the
 same playbook — Stage F5 next. Crates closed cumulatively: 7 of
 the ~48 internal rustc_* fork (data_structures, span, serialize,
 ast, ast_pretty, error_messages, type_ir).
+
+────────────────────────────────────────────────────────────────────
+## Stage F5: rustc_next_trait_solver (1048 → 0 errors)
+
+Eighth patched crate. Massive error count, but a simple root cause:
+the crate had no `#![no_std]` declaration and no `extern crate alloc`,
+so on the SemOS target every prelude item (`Option`, `Result`,
+`Ok`/`Err`/`Some`/`None`, `Vec`, `vec!`, `panic!`, `derive`) was
+unresolved.
+
+Steps:
+1. Add `#![no_std]` + `#[macro_use] extern crate alloc;` to lib.rs.
+   This single edit took us 1048 → 140 errors.
+2. Bulk-add `use alloc::{boxed::Box, string::{String, ToString},
+   vec::Vec};` prelude to 13 files via awk one-liner.
+3. Bulk-comment `#[instrument(...)]` attrs in 13 files via sed.
+4. Strip `instrument` from `use tracing::{...}` lines.
+5. `use std::*` → `use core::*` (12 lines across 9 files).
+6. Two `std::fmt::Display` / `std::mem::take` body refs → `core::*`.
+
+Error trajectory: **1048 → 140 → 2 → 0**
+
+Workspace check now blocks on **rustc_abi (492 errors)** — same
+pattern, probably also no_std-missing-prelude. F6 next. Crates
+closed cumulatively: 8 (data_structures, span, serialize, ast,
+ast_pretty, error_messages, type_ir, next_trait_solver).
+

@@ -1,5 +1,5 @@
-use std::convert::Infallible;
-use std::marker::PhantomData;
+use core::convert::Infallible;
+use core::marker::PhantomData;
 
 use rustc_type_ir::data_structures::ensure_sufficient_stack;
 use rustc_type_ir::search_graph::{self, PathKind};

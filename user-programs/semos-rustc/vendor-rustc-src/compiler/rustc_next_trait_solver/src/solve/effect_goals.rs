@@ -1,13 +1,17 @@
 //! Dealing with host effect goals, i.e. enforcing the constness in
 //! `T: const Trait` or `T: [const] Trait`.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use rustc_type_ir::fast_reject::DeepRejectCtxt;
 use rustc_type_ir::inherent::*;
 use rustc_type_ir::lang_items::SolverTraitLangItem;
 use rustc_type_ir::solve::inspect::ProbeKind;
 use rustc_type_ir::solve::{AliasBoundKind, SizedTraitKind};
 use rustc_type_ir::{self as ty, Interner, TypingMode, elaborate};
-use tracing::instrument;
+// instrument off
 
 use super::assembly::{Candidate, structural_traits};
 use crate::delegate::SolverDelegate;
@@ -437,7 +441,7 @@ where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     pub(super) fn compute_host_effect_goal(
         &mut self,
         goal: Goal<I, ty::HostEffectPredicate<I>>,

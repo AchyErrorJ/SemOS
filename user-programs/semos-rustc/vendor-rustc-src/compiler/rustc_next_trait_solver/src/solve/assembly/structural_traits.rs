@@ -1,6 +1,10 @@
 //! Code which is used by built-in goals that match "structurally", such a auto
 //! traits, `Copy`/`Clone`.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use derive_where::derive_where;
 use rustc_type_ir::data_structures::HashMap;
 use rustc_type_ir::inherent::*;
@@ -12,13 +16,13 @@ use rustc_type_ir::{
     TypeSuperFoldable, Upcast as _, elaborate,
 };
 use rustc_type_ir_macros::{TypeFoldable_Generic, TypeVisitable_Generic};
-use tracing::instrument;
+// instrument off
 
 use crate::delegate::SolverDelegate;
 use crate::solve::{AdtDestructorKind, EvalCtxt, Goal, NoSolution};
 
 // Calculates the constituent types of a type for `auto trait` purposes.
-#[instrument(level = "trace", skip(ecx), ret)]
+// #[instrument(level = "trace", skip(ecx), ret)]
 pub(in crate::solve) fn instantiate_constituent_tys_for_auto_trait<D, I>(
     ecx: &EvalCtxt<'_, D>,
     ty: I::Ty,
@@ -104,7 +108,7 @@ where
     }
 }
 
-#[instrument(level = "trace", skip(ecx), ret)]
+// #[instrument(level = "trace", skip(ecx), ret)]
 pub(in crate::solve) fn instantiate_constituent_tys_for_sizedness_trait<D, I>(
     ecx: &EvalCtxt<'_, D>,
     sizedness: SizedTraitKind,
@@ -183,7 +187,7 @@ where
     }
 }
 
-#[instrument(level = "trace", skip(ecx), ret)]
+// #[instrument(level = "trace", skip(ecx), ret)]
 pub(in crate::solve) fn instantiate_constituent_tys_for_copy_clone_trait<D, I>(
     ecx: &EvalCtxt<'_, D>,
     ty: I::Ty,

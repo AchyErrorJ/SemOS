@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use core::panic;
 
 use rustc_type_ir::data_structures::IndexMap;

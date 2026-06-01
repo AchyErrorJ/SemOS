@@ -1,8 +1,8 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use rustc_type_ir::search_graph::CandidateHeadUsages;
 use rustc_type_ir::{InferCtxtLike, Interner};
-use tracing::instrument;
+// instrument off
 
 use crate::delegate::SolverDelegate;
 use crate::solve::assembly::Candidate;
@@ -88,7 +88,7 @@ where
     I: Interner,
     F: FnOnce(&QueryResult<I>) -> inspect::ProbeKind<I>,
 {
-    #[instrument(level = "debug", skip_all, fields(source = ?self.source))]
+    // #[instrument(level = "debug", skip_all, fields(source = ?self.source))]
     pub(in crate::solve) fn enter(
         self,
         f: impl FnOnce(&mut EvalCtxt<'_, D>) -> QueryResult<I>,

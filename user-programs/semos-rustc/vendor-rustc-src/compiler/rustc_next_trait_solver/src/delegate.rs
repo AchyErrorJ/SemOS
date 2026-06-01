@@ -1,4 +1,8 @@
-use std::ops::Deref;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use core::ops::Deref;
 
 use rustc_type_ir::solve::{Certainty, Goal, NoSolution};
 use rustc_type_ir::{self as ty, InferCtxtLike, Interner, TypeFoldable};

@@ -1,5 +1,5 @@
 use rustc_type_ir::{self as ty, Interner, ProjectionPredicate};
-use tracing::instrument;
+// instrument off
 
 use crate::delegate::SolverDelegate;
 use crate::solve::{Certainty, EvalCtxt, Goal, GoalSource, QueryResult};
@@ -9,7 +9,7 @@ where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     pub(super) fn compute_projection_goal(
         &mut self,
         goal: Goal<I, ProjectionPredicate<I>>,

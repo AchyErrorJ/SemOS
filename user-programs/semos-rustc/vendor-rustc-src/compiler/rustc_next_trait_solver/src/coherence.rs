@@ -1,5 +1,9 @@
-use std::fmt::Debug;
-use std::ops::ControlFlow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use core::fmt::Debug;
+use core::ops::ControlFlow;
 
 use derive_where::derive_where;
 use rustc_type_ir::inherent::*;
@@ -7,7 +11,7 @@ use rustc_type_ir::{
     self as ty, InferCtxtLike, Interner, TrivialTypeTraversalImpls, TypeVisitable,
     TypeVisitableExt, TypeVisitor,
 };
-use tracing::instrument;
+// instrument off
 
 /// Whether we do the orphan check relative to this crate or to some remote crate.
 #[derive(Copy, Clone, Debug)]
@@ -43,7 +47,7 @@ pub enum Conflict {
 /// This both checks whether any downstream or sibling crates could
 /// implement it and whether an upstream crate can add this impl
 /// without breaking backwards compatibility.
-#[instrument(level = "debug", skip(infcx, lazily_normalize_ty), ret)]
+// #[instrument(level = "debug", skip(infcx, lazily_normalize_ty), ret)]
 pub fn trait_ref_is_knowable<Infcx, I, E>(
     infcx: &Infcx,
     trait_ref: ty::TraitRef<I>,
@@ -217,7 +221,7 @@ pub struct UncoveredTyParams<I: Interner, T> {
 ///
 /// Note that this function is never called for types that have both type
 /// parameters and inference variables.
-#[instrument(level = "trace", skip(infcx, lazily_normalize_ty), ret)]
+// #[instrument(level = "trace", skip(infcx, lazily_normalize_ty), ret)]
 pub fn orphan_check_trait_ref<Infcx, I, E: Debug>(
     infcx: &Infcx,
     trait_ref: ty::TraitRef<I>,

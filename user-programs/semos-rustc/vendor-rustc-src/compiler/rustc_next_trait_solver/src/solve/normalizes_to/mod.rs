@@ -3,12 +3,16 @@ mod free_alias;
 mod inherent;
 mod opaque_types;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use rustc_type_ir::fast_reject::DeepRejectCtxt;
 use rustc_type_ir::inherent::*;
 use rustc_type_ir::lang_items::{SolverAdtLangItem, SolverLangItem, SolverTraitLangItem};
 use rustc_type_ir::solve::SizedTraitKind;
 use rustc_type_ir::{self as ty, Interner, NormalizesTo, PredicateKind, Upcast as _};
-use tracing::instrument;
+// instrument off
 
 use crate::delegate::SolverDelegate;
 use crate::solve::assembly::structural_traits::{self, AsyncCallableRelevantTypes};
@@ -24,7 +28,7 @@ where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     pub(super) fn compute_normalizes_to_goal(
         &mut self,
         goal: Goal<I, NormalizesTo<I>>,

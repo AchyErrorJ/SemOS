@@ -1,5 +1,9 @@
-use std::mem;
-use std::ops::ControlFlow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use core::mem;
+use core::ops::ControlFlow;
 
 #[cfg(feature = "nightly")]
 use rustc_macros::HashStable_NoContext;
@@ -14,7 +18,7 @@ use rustc_type_ir::{
     TypeSuperFoldable, TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor,
     TypingMode,
 };
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use super::has_only_region_constraints;
 use crate::canonical::{
@@ -194,7 +198,7 @@ where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    #[instrument(level = "debug", skip(self), ret)]
+    // #[instrument(level = "debug", skip(self), ret)]
     fn evaluate_root_goal(
         &self,
         goal: Goal<I, I::Predicate>,
@@ -206,7 +210,7 @@ where
         })
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // #[instrument(level = "debug", skip(self), ret)]
     fn root_goal_may_hold_opaque_types_jank(
         &self,
         goal: Goal<Self::Interner, <Self::Interner as Interner>::Predicate>,
@@ -238,7 +242,7 @@ where
         .is_ok()
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // #[instrument(level = "debug", skip(self))]
     fn evaluate_root_goal_for_proof_tree(
         &self,
         goal: Goal<I, I::Predicate>,
@@ -618,7 +622,7 @@ where
 
     // Recursively evaluates all the goals added to this `EvalCtxt` to completion, returning
     // the certainty of all the goals.
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     pub(super) fn try_evaluate_added_goals(&mut self) -> Result<Certainty, NoSolution> {
         for _ in 0..FIXPOINT_STEP_LIMIT {
             match self.evaluate_added_goals_step() {
@@ -756,7 +760,7 @@ where
         self.delegate.cx()
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // #[instrument(level = "debug", skip(self))]
     pub(super) fn add_goal(&mut self, source: GoalSource, mut goal: Goal<I, I::Predicate>) {
         goal.predicate =
             goal.predicate.fold_with(&mut ReplaceAliasWithInfer::new(self, source, goal.param_env));
@@ -764,7 +768,7 @@ where
         self.nested_goals.push((source, goal, None));
     }
 
-    #[instrument(level = "trace", skip(self, goals))]
+    // #[instrument(level = "trace", skip(self, goals))]
     pub(super) fn add_goals(
         &mut self,
         source: GoalSource,
@@ -806,7 +810,7 @@ where
     ///
     /// This is the case if the `term` does not occur in any other part of the predicate
     /// and is able to name all other placeholder and inference variables.
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     pub(super) fn term_is_fully_unconstrained(&self, goal: Goal<I, ty::NormalizesTo<I>>) -> bool {
         let universe_of_term = match goal.predicate.term.kind() {
             ty::TermKind::Ty(ty) => {
@@ -929,7 +933,7 @@ where
         self.delegate.sub_unify_ty_vids_raw(a, b)
     }
 
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     pub(super) fn eq<T: Relate<I>>(
         &mut self,
         param_env: I::ParamEnv,
@@ -944,7 +948,7 @@ where
     /// Normally we emit a nested `AliasRelate` when equating an inference
     /// variable and an alias. This causes us to instead constrain the inference
     /// variable to the alias without emitting a nested alias relate goals.
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     pub(super) fn relate_rigid_alias_non_alias(
         &mut self,
         param_env: I::ParamEnv,
@@ -983,7 +987,7 @@ where
     /// This should only be used when we're either instantiating a previously
     /// unconstrained "return value" or when we're sure that all aliases in
     /// the types are rigid.
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     pub(super) fn eq_structurally_relating_aliases<T: Relate<I>>(
         &mut self,
         param_env: I::ParamEnv,
@@ -1000,7 +1004,7 @@ where
         Ok(())
     }
 
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     pub(super) fn sub<T: Relate<I>>(
         &mut self,
         param_env: I::ParamEnv,
@@ -1010,7 +1014,7 @@ where
         self.relate(param_env, sub, ty::Variance::Covariant, sup)
     }
 
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     pub(super) fn relate<T: Relate<I>>(
         &mut self,
         param_env: I::ParamEnv,
@@ -1038,7 +1042,7 @@ where
     ///
     /// If possible, try using `eq` instead which automatically handles nested
     /// goals correctly.
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     pub(super) fn eq_and_get_goals<T: Relate<I>>(
         &self,
         param_env: I::ParamEnv,
@@ -1130,7 +1134,7 @@ where
         self.delegate.fetch_eligible_assoc_item(goal_trait_ref, trait_assoc_def_id, impl_def_id)
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // #[instrument(level = "debug", skip(self), ret)]
     pub(super) fn register_hidden_type_in_storage(
         &mut self,
         opaque_type_key: ty::OpaqueTypeKey<I>,
@@ -1217,7 +1221,7 @@ where
     /// In case this is `Certainty::Maybe`, there may still be additional nested goals
     /// or inference constraints required for this candidate to be hold. The candidate
     /// always requires all already added constraints and nested goals.
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     pub(in crate::solve) fn evaluate_added_goals_and_make_canonical_response(
         &mut self,
         shallow_certainty: Certainty,
@@ -1249,7 +1253,7 @@ where
                 // uplifting its nested goals. This is the case if the `shallow_certainty` is
                 // `Certainty::Yes`.
                 (CurrentGoalKind::NormalizesTo, Certainty::Yes) => {
-                    let goals = std::mem::take(&mut self.nested_goals);
+                    let goals = core::mem::take(&mut self.nested_goals);
                     // As we return all ambiguous nested goals, we can ignore the certainty
                     // returned by `self.try_evaluate_added_goals()`.
                     if goals.is_empty() {
@@ -1335,7 +1339,7 @@ where
     /// external constraints do not need to record that opaque, since if it is
     /// further constrained by inference, that will be passed back in the var
     /// values.
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     fn compute_external_query_constraints(
         &self,
         certainty: Certainty,

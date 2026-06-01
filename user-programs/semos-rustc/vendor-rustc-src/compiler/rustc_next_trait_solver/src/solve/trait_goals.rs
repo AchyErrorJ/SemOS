@@ -1,5 +1,9 @@
 //! Dealing with trait goals, i.e. `T: Trait<'a, U>`.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use rustc_type_ir::data_structures::IndexSet;
 use rustc_type_ir::fast_reject::DeepRejectCtxt;
 use rustc_type_ir::inherent::*;
@@ -11,7 +15,7 @@ use rustc_type_ir::{
     self as ty, Interner, Movability, PredicatePolarity, TraitPredicate, TraitRef,
     TypeVisitableExt as _, TypingMode, Upcast as _, elaborate,
 };
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::delegate::SolverDelegate;
 use crate::solve::assembly::structural_traits::{self, AsyncCallableRelevantTypes};
@@ -1352,7 +1356,7 @@ where
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // #[instrument(level = "debug", skip(self), ret)]
     pub(super) fn merge_trait_candidates(
         &mut self,
         candidate_preference_mode: CandidatePreferenceMode,
@@ -1479,7 +1483,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     pub(super) fn compute_trait_goal(
         &mut self,
         goal: Goal<I, TraitPredicate<I>>,

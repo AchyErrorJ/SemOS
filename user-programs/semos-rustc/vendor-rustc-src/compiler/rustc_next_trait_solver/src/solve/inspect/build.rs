@@ -4,7 +4,11 @@
 //! mostly ignored. For a general overview of how it works,
 //! see the comment on [ProofTreeBuilder].
 
-use std::marker::PhantomData;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use core::marker::PhantomData;
 
 use derive_where::derive_where;
 use rustc_type_ir::inherent::*;

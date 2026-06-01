@@ -2,8 +2,12 @@
 
 pub(super) mod structural_traits;
 
-use std::cell::Cell;
-use std::ops::ControlFlow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use core::cell::Cell;
+use core::ops::ControlFlow;
 
 use derive_where::derive_where;
 use rustc_type_ir::inherent::*;
@@ -15,7 +19,7 @@ use rustc_type_ir::{
     TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor, TypingMode, Upcast,
     elaborate,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::trait_goals::TraitGoalProvenVia;
 use super::{has_only_region_constraints, inspect};
@@ -40,7 +44,7 @@ pub(super) struct Candidate<I: Interner> {
 
 /// Methods used to assemble candidates for either trait or projection goals.
 pub(super) trait GoalKind<D, I = <D as SolverDelegate>::Interner>:
-    TypeFoldable<I> + Copy + Eq + std::fmt::Display
+    TypeFoldable<I> + Copy + Eq + core::fmt::Display
 where
     D: SolverDelegate<Interner = I>,
     I: Interner,
@@ -489,7 +493,7 @@ where
             .enter(|this| this.evaluate_added_goals_and_make_canonical_response(certainty))
     }
 
-    #[instrument(level = "trace", skip_all)]
+    // #[instrument(level = "trace", skip_all)]
     fn assemble_impl_candidates<G: GoalKind<D>>(
         &mut self,
         goal: Goal<I, G>,
@@ -516,7 +520,7 @@ where
         );
     }
 
-    #[instrument(level = "trace", skip_all)]
+    // #[instrument(level = "trace", skip_all)]
     fn assemble_builtin_impl_candidates<G: GoalKind<D>>(
         &mut self,
         goal: Goal<I, G>,
@@ -630,7 +634,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    // #[instrument(level = "trace", skip_all)]
     fn assemble_param_env_candidates<G: GoalKind<D>>(
         &mut self,
         goal: Goal<I, G>,
@@ -647,7 +651,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    // #[instrument(level = "trace", skip_all)]
     fn assemble_alias_bound_candidates<G: GoalKind<D>>(
         &mut self,
         goal: Goal<I, G>,
@@ -785,7 +789,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip_all)]
+    // #[instrument(level = "trace", skip_all)]
     fn assemble_object_bound_candidates<G: GoalKind<D>>(
         &mut self,
         goal: Goal<I, G>,
@@ -879,7 +883,7 @@ where
     ///
     /// To do so we return a single ambiguous candidate in case such an unknown
     /// impl could apply to the current goal.
-    #[instrument(level = "trace", skip_all)]
+    // #[instrument(level = "trace", skip_all)]
     fn consider_coherence_unknowable_candidate<G: GoalKind<D>>(
         &mut self,
         goal: Goal<I, G>,
@@ -1129,7 +1133,7 @@ where
     /// treat the alias as rigid.
     ///
     /// See trait-system-refactor-initiative#124 for more details.
-    #[instrument(level = "debug", skip_all, fields(proven_via, goal), ret)]
+    // #[instrument(level = "debug", skip_all, fields(proven_via, goal), ret)]
     pub(super) fn assemble_and_merge_candidates<G: GoalKind<D>>(
         &mut self,
         proven_via: Option<TraitGoalProvenVia>,

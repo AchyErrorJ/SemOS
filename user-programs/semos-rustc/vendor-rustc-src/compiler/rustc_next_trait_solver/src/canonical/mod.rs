@@ -9,7 +9,11 @@
 //!
 //! [c]: https://rustc-dev-guide.rust-lang.org/solve/canonicalization.html
 
-use std::iter;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+use core::iter;
 
 use canonicalizer::Canonicalizer;
 use rustc_index::IndexVec;
@@ -19,7 +23,7 @@ use rustc_type_ir::{
     self as ty, Canonical, CanonicalVarKind, CanonicalVarValues, InferCtxtLike, Interner,
     TypeFoldable,
 };
-use tracing::instrument;
+// instrument off
 
 use crate::delegate::SolverDelegate;
 use crate::resolve::eager_resolve_vars;
@@ -225,7 +229,7 @@ where
 /// whether an alias is rigid by using the trait solver. When instantiating a response
 /// from the solver we assume that the solver correctly handled aliases and therefore
 /// always relate them structurally here.
-#[instrument(level = "trace", skip(delegate))]
+// #[instrument(level = "trace", skip(delegate))]
 fn unify_query_var_values<D, I>(
     delegate: &D,
     param_env: I::ParamEnv,

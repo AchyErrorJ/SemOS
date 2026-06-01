@@ -21,11 +21,15 @@ mod project_goals;
 mod search_graph;
 mod trait_goals;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use derive_where::derive_where;
 use rustc_type_ir::inherent::*;
 pub use rustc_type_ir::solve::*;
 use rustc_type_ir::{self as ty, Interner, TyVid, TypingMode};
-use tracing::instrument;
+// instrument off
 
 pub use self::eval_ctxt::{
     EvalCtxt, GenerateProofTree, SolverDelegateEvalExt,
@@ -85,7 +89,7 @@ where
     D: SolverDelegate<Interner = I>,
     I: Interner,
 {
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     fn compute_type_outlives_goal(
         &mut self,
         goal: Goal<I, ty::OutlivesPredicate<I, I::Ty>>,
@@ -95,7 +99,7 @@ where
         self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     fn compute_region_outlives_goal(
         &mut self,
         goal: Goal<I, ty::OutlivesPredicate<I, I::Region>>,
@@ -105,7 +109,7 @@ where
         self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     fn compute_coerce_goal(&mut self, goal: Goal<I, ty::CoercePredicate<I>>) -> QueryResult<I> {
         self.compute_subtype_goal(Goal {
             param_env: goal.param_env,
@@ -117,7 +121,7 @@ where
         })
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     fn compute_subtype_goal(&mut self, goal: Goal<I, ty::SubtypePredicate<I>>) -> QueryResult<I> {
         match (goal.predicate.a.kind(), goal.predicate.b.kind()) {
             (ty::Infer(ty::TyVar(a_vid)), ty::Infer(ty::TyVar(b_vid))) => {
@@ -139,7 +143,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     fn compute_well_formed_goal(&mut self, goal: Goal<I, I::Term>) -> QueryResult<I> {
         match self.well_formed_goals(goal.param_env, goal.predicate) {
             Some(goals) => {
@@ -165,7 +169,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     fn compute_const_evaluatable_goal(
         &mut self,
         Goal { param_env, predicate: ct }: Goal<I, I::Const>,
@@ -202,7 +206,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     fn compute_const_arg_has_type_goal(
         &mut self,
         goal: Goal<I, (I::Const, I::Ty)>,
@@ -252,7 +256,7 @@ where
     /// Try to merge multiple possible ways to prove a goal, if that is not possible returns `None`.
     ///
     /// In this case we tend to flounder and return ambiguity by calling `[EvalCtxt::flounder]`.
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     fn try_merge_candidates(
         &mut self,
         candidates: &[Candidate<I>],
@@ -297,7 +301,7 @@ where
     }
 
     /// If we fail to merge responses we flounder and return overflow or ambiguity.
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]
     fn flounder(&mut self, candidates: &[Candidate<I>]) -> QueryResult<I> {
         if candidates.is_empty() {
             return Err(NoSolution);
@@ -311,7 +315,7 @@ where
     /// This function is necessary in nearly all cases before matching on a type.
     /// Not doing so is likely to be incomplete and therefore unsound during
     /// coherence.
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     fn structurally_normalize_ty(
         &mut self,
         param_env: I::ParamEnv,
@@ -326,7 +330,7 @@ where
     /// This function is necessary in nearly all cases before matching on a const.
     /// Not doing so is likely to be incomplete and therefore unsound during
     /// coherence.
-    #[instrument(level = "trace", skip(self, param_env), ret)]
+    // #[instrument(level = "trace", skip(self, param_env), ret)]
     fn structurally_normalize_const(
         &mut self,
         param_env: I::ParamEnv,
