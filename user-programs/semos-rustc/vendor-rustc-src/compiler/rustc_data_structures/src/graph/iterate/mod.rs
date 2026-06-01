@@ -138,11 +138,11 @@ where
     }
 }
 
-impl<G> std::fmt::Debug for DepthFirstSearch<G>
+impl<G> core::fmt::Debug for DepthFirstSearch<G>
 where
     G: DirectedGraph + Successors,
 {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut f = fmt.debug_set();
         for n in self.visited.iter() {
             f.entry(&n);

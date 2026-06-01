@@ -39,6 +39,12 @@ tracing = { version = "0.1", default-features = false }
 # parallel-query paths per §1.4).
 # rustc-stable-hash 0.1.0 is unconditionally std (recon flagged);
 # host-only for now until vendor+patch in a later iteration.
+
+# Phase 5b Stage F1: semos-std needed by graphviz.rs / memmap.rs /
+# temp_dir.rs / flock/unsupported.rs (all import `semos_std`).
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+
 [target.'cfg(not(target_os = "none"))'.dependencies]
 ena = "0.14.3"
 # Phase 5b Stage E iter 8: elsa pulls stable_deref_trait (17 errors).

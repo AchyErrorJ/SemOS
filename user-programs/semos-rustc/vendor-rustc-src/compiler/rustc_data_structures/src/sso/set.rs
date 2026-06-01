@@ -205,7 +205,7 @@ where
 }
 
 impl<T> IntoIterator for SsoHashSet<T> {
-    type IntoIter = std::iter::Map<<SsoHashMap<T, ()> as IntoIterator>::IntoIter, fn((T, ())) -> T>;
+    type IntoIter = core::iter::Map<<SsoHashMap<T, ()> as IntoIterator>::IntoIter, fn((T, ())) -> T>;
     type Item = <Self::IntoIter as Iterator>::Item;
 
     #[inline]
@@ -215,7 +215,7 @@ impl<T> IntoIterator for SsoHashSet<T> {
 }
 
 impl<'a, T> IntoIterator for &'a SsoHashSet<T> {
-    type IntoIter = std::iter::Map<
+    type IntoIter = core::iter::Map<
         <&'a SsoHashMap<T, ()> as IntoIterator>::IntoIter,
         fn((&'a T, &'a ())) -> &'a T,
     >;

@@ -11,9 +11,47 @@ use smallvec::SmallVec;
 mod tests;
 
 use rustc_hashes::{Hash64, Hash128};
+// Stage F1: rustc_stable_hash is host-only (R3 unconditional std).
+// SemOS target provides local stubs matching the upstream shape
+// (rustc_hashes already provides similar stubs in its own lib.rs).
+#[cfg(not(target_os = "none"))]
 pub use rustc_stable_hash::{
     FromStableHash, SipHasher128Hash as StableHasherHash, StableSipHasher128 as StableHasher,
 };
+#[cfg(target_os = "none")]
+pub use rustc_hashes::{FromStableHash, StableHasherHash};
+#[cfg(target_os = "none")]
+pub struct StableHasher;
+#[cfg(target_os = "none")]
+impl StableHasher {
+    pub fn new() -> Self { Self }
+    pub fn finish<T: FromStableHash>(self) -> T {
+        // SemOS uses passthrough — incremental hashes dead per §1.3.
+        T::from(StableHasherHash([0; 2]))
+    }
+    pub fn write(&mut self, _bytes: &[u8]) {}
+    pub fn write_u8(&mut self, _i: u8) {}
+    pub fn write_u16(&mut self, _i: u16) {}
+    pub fn write_u32(&mut self, _i: u32) {}
+    pub fn write_u64(&mut self, _i: u64) {}
+    pub fn write_u128(&mut self, _i: u128) {}
+    pub fn write_usize(&mut self, _i: usize) {}
+    pub fn write_i8(&mut self, _i: i8) {}
+    pub fn write_i16(&mut self, _i: i16) {}
+    pub fn write_i32(&mut self, _i: i32) {}
+    pub fn write_i64(&mut self, _i: i64) {}
+    pub fn write_i128(&mut self, _i: i128) {}
+    pub fn write_isize(&mut self, _i: isize) {}
+}
+#[cfg(target_os = "none")]
+impl Default for StableHasher {
+    fn default() -> Self { Self }
+}
+#[cfg(target_os = "none")]
+impl core::hash::Hasher for StableHasher {
+    fn write(&mut self, _b: &[u8]) {}
+    fn finish(&self) -> u64 { 0 }
+}
 
 /// Something that implements `HashStable<CTX>` can be hashed in a way that is
 /// stable across multiple compilation sessions.
@@ -112,7 +150,7 @@ impl<T: StableOrd> StableOrd for &T {
 pub trait StableCompare {
     const CAN_USE_UNSTABLE_SORT: bool;
 
-    fn stable_cmp(&self, other: &Self) -> std::cmp::Ordering;
+    fn stable_cmp(&self, other: &Self) -> core::cmp::Ordering;
 }
 
 /// `StableOrd` denotes that the type's `Ord` implementation is stable, so
@@ -120,7 +158,7 @@ pub trait StableCompare {
 impl<T: StableOrd> StableCompare for T {
     const CAN_USE_UNSTABLE_SORT: bool = T::CAN_USE_UNSTABLE_SORT;
 
-    fn stable_cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn stable_cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.cmp(other)
     }
 }
@@ -139,7 +177,7 @@ macro_rules! impl_stable_traits_for_trivial_type {
         impl<CTX> $crate::stable_hasher::HashStable<CTX> for $t {
             #[inline]
             fn hash_stable(&self, _: &mut CTX, hasher: &mut $crate::stable_hasher::StableHasher) {
-                ::std::hash::Hash::hash(self, hasher);
+                ::core::hash::Hash::hash(self, hasher);
             }
         }
 
@@ -230,7 +268,7 @@ impl<CTX> HashStable<CTX> for f64 {
     }
 }
 
-impl<CTX> HashStable<CTX> for ::std::cmp::Ordering {
+impl<CTX> HashStable<CTX> for ::core::cmp::Ordering {
     #[inline]
     fn hash_stable(&self, ctx: &mut CTX, hasher: &mut StableHasher) {
         (*self as i8).hash_stable(ctx, hasher);
@@ -380,14 +418,14 @@ impl<T: ?Sized + HashStable<CTX>, CTX> HashStable<CTX> for Box<T> {
     }
 }
 
-impl<T: ?Sized + HashStable<CTX>, CTX> HashStable<CTX> for ::std::rc::Rc<T> {
+impl<T: ?Sized + HashStable<CTX>, CTX> HashStable<CTX> for ::alloc::rc::Rc<T> {
     #[inline]
     fn hash_stable(&self, ctx: &mut CTX, hasher: &mut StableHasher) {
         (**self).hash_stable(ctx, hasher);
     }
 }
 
-impl<T: ?Sized + HashStable<CTX>, CTX> HashStable<CTX> for ::std::sync::Arc<T> {
+impl<T: ?Sized + HashStable<CTX>, CTX> HashStable<CTX> for ::alloc::sync::Arc<T> {
     #[inline]
     fn hash_stable(&self, ctx: &mut CTX, hasher: &mut StableHasher) {
         (**self).hash_stable(ctx, hasher);
@@ -501,14 +539,14 @@ where
     }
 }
 
-impl<T, CTX> HashStable<CTX> for ::std::mem::Discriminant<T> {
+impl<T, CTX> HashStable<CTX> for ::core::mem::Discriminant<T> {
     #[inline]
     fn hash_stable(&self, _: &mut CTX, hasher: &mut StableHasher) {
-        ::std::hash::Hash::hash(self, hasher);
+        ::core::hash::Hash::hash(self, hasher);
     }
 }
 
-impl<T, CTX> HashStable<CTX> for ::std::ops::RangeInclusive<T>
+impl<T, CTX> HashStable<CTX> for ::core::ops::RangeInclusive<T>
 where
     T: HashStable<CTX>,
 {
@@ -545,13 +583,13 @@ where
 
 impl<I: Idx, CTX> HashStable<CTX> for DenseBitSet<I> {
     fn hash_stable(&self, _ctx: &mut CTX, hasher: &mut StableHasher) {
-        ::std::hash::Hash::hash(self, hasher);
+        ::core::hash::Hash::hash(self, hasher);
     }
 }
 
 impl<R: Idx, C: Idx, CTX> HashStable<CTX> for bit_set::BitMatrix<R, C> {
     fn hash_stable(&self, _ctx: &mut CTX, hasher: &mut StableHasher) {
-        ::std::hash::Hash::hash(self, hasher);
+        ::core::hash::Hash::hash(self, hasher);
     }
 }
 
@@ -564,18 +602,34 @@ where
     }
 }
 
+// Stage F1: ffi/path types are cfg-split — semos_std on target.
+#[cfg(not(target_os = "none"))]
 impl_stable_traits_for_trivial_type!(::std::ffi::OsStr);
+#[cfg(target_os = "none")]
+impl_stable_traits_for_trivial_type!(::semos_std::ffi::OsStr);
 
+#[cfg(not(target_os = "none"))]
 impl_stable_traits_for_trivial_type!(::std::path::Path);
+#[cfg(not(target_os = "none"))]
 impl_stable_traits_for_trivial_type!(::std::path::PathBuf);
+#[cfg(target_os = "none")]
+impl_stable_traits_for_trivial_type!(::semos_std::path::Path);
+#[cfg(target_os = "none")]
+impl_stable_traits_for_trivial_type!(::semos_std::path::PathBuf);
 
 // It is not safe to implement HashStable for HashSet, HashMap or any other collection type
 // with unstable but observable iteration order.
 // See https://github.com/rust-lang/compiler-team/issues/533 for further information.
+#[cfg(not(target_os = "none"))]
 impl<V, HCX> !HashStable<HCX> for std::collections::HashSet<V> {}
+#[cfg(not(target_os = "none"))]
 impl<K, V, HCX> !HashStable<HCX> for std::collections::HashMap<K, V> {}
+#[cfg(target_os = "none")]
+impl<V, HCX> !HashStable<HCX> for hashbrown::HashSet<V> {}
+#[cfg(target_os = "none")]
+impl<K, V, HCX> !HashStable<HCX> for hashbrown::HashMap<K, V> {}
 
-impl<K, V, HCX> HashStable<HCX> for ::std::collections::BTreeMap<K, V>
+impl<K, V, HCX> HashStable<HCX> for ::alloc::collections::BTreeMap<K, V>
 where
     K: HashStable<HCX> + StableOrd,
     V: HashStable<HCX>,
@@ -588,7 +642,7 @@ where
     }
 }
 
-impl<K, HCX> HashStable<HCX> for ::std::collections::BTreeSet<K>
+impl<K, HCX> HashStable<HCX> for ::alloc::collections::BTreeSet<K>
 where
     K: HashStable<HCX> + StableOrd,
 {

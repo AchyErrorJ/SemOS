@@ -157,7 +157,7 @@ impl<I: Idx, K: Ord, V> FromIterator<(K, V)> for SortedIndexMultiMap<I, K, V> {
     }
 }
 
-impl<I: Idx, K, V> std::ops::Index<I> for SortedIndexMultiMap<I, K, V> {
+impl<I: Idx, K, V> core::ops::Index<I> for SortedIndexMultiMap<I, K, V> {
     type Output = V;
 
     fn index(&self, idx: I) -> &Self::Output {

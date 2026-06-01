@@ -35,7 +35,7 @@ impl<T> Steal<T> {
     pub fn borrow(&self) -> MappedReadGuard<'_, T> {
         let borrow = self.value.borrow();
         if borrow.is_none() {
-            panic!("attempted to read from stolen value: {}", std::any::type_name::<T>());
+            panic!("attempted to read from stolen value: {}", core::any::type_name::<T>());
         }
         ReadGuard::map(borrow, |opt| opt.as_ref().unwrap())
     }
@@ -48,7 +48,7 @@ impl<T> Steal<T> {
     pub fn risky_hack_borrow_mut(&self) -> MappedWriteGuard<'_, T> {
         let borrow = self.value.borrow_mut();
         if borrow.is_none() {
-            panic!("attempted to read from stolen value: {}", std::any::type_name::<T>());
+            panic!("attempted to read from stolen value: {}", core::any::type_name::<T>());
         }
         WriteGuard::map(borrow, |opt| opt.as_mut().unwrap())
     }

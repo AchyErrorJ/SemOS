@@ -104,7 +104,7 @@ fn dominators_impl<G: ControlFlowGraph>(graph: &G) -> Inner<G::Node> {
     let reachable_vertices = pre_order_to_real.len();
 
     let mut idom = IndexVec::from_elem_n(PreorderIndex::ZERO, reachable_vertices);
-    let mut semi = IndexVec::from_fn_n(std::convert::identity, reachable_vertices);
+    let mut semi = IndexVec::from_fn_n(core::convert::identity, reachable_vertices);
     let mut label = semi.clone();
     let mut bucket = IndexVec::from_elem_n(vec![], reachable_vertices);
     let mut lastlinked = None;
@@ -228,7 +228,7 @@ fn dominators_impl<G: ControlFlowGraph>(graph: &G) -> Inner<G::Node> {
             //  * v itself, if v has not yet been processed
             //  * A possible 'best' semidominator for w.
             let x = eval(&mut parent, lastlinked, &semi, &mut label, v);
-            semi[w] = std::cmp::min(semi[w], semi[x]);
+            semi[w] = core::cmp::min(semi[w], semi[x]);
         }
         // semi[w] is now semidominator(w) and won't change any more.
 
@@ -402,7 +402,7 @@ fn compute_access_time<N: Idx>(
 ) -> IndexVec<N, Time> {
     // Transpose the dominator tree edges, so that child nodes of vertex v are stored in
     // node[edges[v].start..edges[v].end].
-    let mut edges: IndexVec<N, std::ops::Range<u32>> =
+    let mut edges: IndexVec<N, core::ops::Range<u32>> =
         IndexVec::from_elem(0..0, immediate_dominators);
     for &idom in immediate_dominators.iter() {
         if let Some(idom) = idom {

@@ -602,7 +602,7 @@ impl<O: ForestObligation> ObligationForest<O> {
     where
         P: ObligationProcessor<Obligation = O>,
     {
-        let mut stack = std::mem::take(&mut self.reused_node_vec);
+        let mut stack = core::mem::take(&mut self.reused_node_vec);
         for (index, node) in self.nodes.iter().enumerate() {
             // For some benchmarks this state test is extremely hot. It's a win
             // to handle the no-op cases immediately to avoid the cost of the
@@ -656,7 +656,7 @@ impl<O: ForestObligation> ObligationForest<O> {
     #[inline(never)]
     fn compress(&mut self, mut outcome_cb: impl FnMut(&O)) {
         let orig_nodes_len = self.nodes.len();
-        let mut node_rewrites: Vec<_> = std::mem::take(&mut self.reused_node_vec);
+        let mut node_rewrites: Vec<_> = core::mem::take(&mut self.reused_node_vec);
         debug_assert!(node_rewrites.is_empty());
         node_rewrites.extend(0..orig_nodes_len);
         let mut dead_nodes = 0;

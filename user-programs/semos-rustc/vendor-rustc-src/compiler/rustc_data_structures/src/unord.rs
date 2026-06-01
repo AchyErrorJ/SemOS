@@ -130,9 +130,9 @@ impl<T, I: Iterator<Item = T>> UnordItems<T, I> {
     }
 }
 
-impl<T> UnordItems<T, std::iter::Empty<T>> {
+impl<T> UnordItems<T, core::iter::Empty<T>> {
     pub fn empty() -> Self {
-        UnordItems(std::iter::empty())
+        UnordItems(core::iter::empty())
     }
 }
 

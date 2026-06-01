@@ -67,6 +67,11 @@ pub use core::assert_matches::{assert_matches, debug_assert_matches};
 use core::fmt;
 
 pub use atomic_ref::AtomicRef;
+// Stage F1: ena is host-only (pulls log via std). On SemOS the
+// rustc_infer UnificationTable would need a no_std variant; for now
+// re-exports are host-only and target builds that touch them will
+// fail downstream (per §1.4 single-threaded acceptance).
+#[cfg(not(target_os = "none"))]
 pub use ena::{snapshot_vec, undo_log, unify};
 pub use rustc_index::static_assert_size;
 // Re-export some data-structure crates which are part of our public API.

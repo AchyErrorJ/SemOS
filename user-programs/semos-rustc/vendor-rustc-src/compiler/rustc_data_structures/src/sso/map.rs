@@ -237,7 +237,7 @@ impl<K: Eq + Hash, V> SsoHashMap<K, V> {
             SsoHashMap::Array(array) => {
                 for (k, v) in array.iter_mut() {
                     if *k == key {
-                        let old_value = std::mem::replace(v, value);
+                        let old_value = core::mem::replace(v, value);
                         return Some(old_value);
                     }
                 }
@@ -431,7 +431,7 @@ fn adapt_array_mut_it<K, V>(pair: &mut (K, V)) -> (&K, &mut V) {
 
 impl<'a, K, V> IntoIterator for &'a SsoHashMap<K, V> {
     type IntoIter = Either<
-        std::iter::Map<
+        core::iter::Map<
             <&'a ArrayVec<(K, V), SSO_ARRAY_SIZE> as IntoIterator>::IntoIter,
             fn(&'a (K, V)) -> (&'a K, &'a V),
         >,
@@ -449,7 +449,7 @@ impl<'a, K, V> IntoIterator for &'a SsoHashMap<K, V> {
 
 impl<'a, K, V> IntoIterator for &'a mut SsoHashMap<K, V> {
     type IntoIter = Either<
-        std::iter::Map<
+        core::iter::Map<
             <&'a mut ArrayVec<(K, V), SSO_ARRAY_SIZE> as IntoIterator>::IntoIter,
             fn(&'a mut (K, V)) -> (&'a K, &'a mut V),
         >,

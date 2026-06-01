@@ -124,7 +124,7 @@ impl<K: Ord, V> SortedMap<K, V> {
 
     /// Iterate over elements, sorted by key
     #[inline]
-    pub fn iter(&self) -> std::slice::Iter<'_, (K, V)> {
+    pub fn iter(&self) -> core::slice::Iter<'_, (K, V)> {
         self.data.iter()
     }
 
@@ -197,7 +197,7 @@ impl<K: Ord, V> SortedMap<K, V> {
         R: RangeBounds<K>,
     {
         let (start, end) = self.range_slice_indices(range);
-        self.data.splice(start..end, std::iter::empty());
+        self.data.splice(start..end, core::iter::empty());
     }
 
     /// Mutate all keys with the given function `f`. This mutation must not
@@ -241,7 +241,7 @@ impl<K: Ord, V> SortedMap<K, V> {
                     // We can copy the whole range without having to mix with
                     // existing elements.
                     self.data
-                        .splice(index..index, std::iter::once(first).chain(elements).chain(last));
+                        .splice(index..index, core::iter::once(first).chain(elements).chain(last));
                     return;
                 }
 
@@ -308,7 +308,7 @@ impl<K: Ord, V> SortedMap<K, V> {
 
 impl<K: Ord, V> IntoIterator for SortedMap<K, V> {
     type Item = (K, V);
-    type IntoIter = std::vec::IntoIter<(K, V)>;
+    type IntoIter = alloc::vec::IntoIter<(K, V)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.data.into_iter()
@@ -356,7 +356,7 @@ impl<K: HashStable<CTX> + StableOrd, V: HashStable<CTX>, CTX> HashStable<CTX> fo
 }
 
 impl<K: Debug, V: Debug> Debug for SortedMap<K, V> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_map().entries(self.data.iter().map(|(a, b)| (a, b))).finish()
     }
 }
