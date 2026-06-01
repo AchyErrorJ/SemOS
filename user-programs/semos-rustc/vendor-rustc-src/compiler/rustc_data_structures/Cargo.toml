@@ -53,9 +53,9 @@ stacker = "0.1.17"
 tempfile = "3.2"
 
 [dependencies.hashbrown]
-version = "0.16.1"
+version = "0.15"
 default-features = false
-features = ["nightly", "default-hasher"] # for may_dangle + Default/Clone hasher
+features = ["default-hasher"] # for may_dangle + Default/Clone hasher
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61.0"

@@ -74,3 +74,13 @@ codegen-units = 1
 # builds in no_std mode unless a consumer explicitly opts in.
 [patch.crates-io]
 tracing-core = { path = "vendor-externals/tracing-core" }
+# Phase 5b Stage E iter 11: scoped-tls 1.0 fundamentally needs std::
+# thread_local. Vendored fork forwards to semos_std::scoped_thread_local!
+# on SemOS target (no-op stub on host since real test runs use the
+# semos-rustc binary which is target-side).
+scoped-tls = { path = "vendor-externals/scoped-tls" }
+# Phase 5b Stage E iter 11c: either + indexmap have `default = ["std"]`.
+# itertools pulls either without df=false (we can't fix from consumer).
+# Forks change default = [].
+either = { path = "vendor-externals/either" }
+indexmap = { path = "vendor-externals/indexmap" }

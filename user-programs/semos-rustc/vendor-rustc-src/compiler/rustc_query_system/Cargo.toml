@@ -24,9 +24,9 @@ tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
 
 [dependencies.hashbrown]
-version = "0.16.1"
+version = "0.15"
 default-features = false
-features = ["nightly"] # for may_dangle
+features = ["default-hasher"] # for may_dangle
 
 # Phase 5b Stage E iter 7: parking_lot → parking_lot_core (60 errors,
 # no_std-incompatible). Query system is single-threaded on SemOS per

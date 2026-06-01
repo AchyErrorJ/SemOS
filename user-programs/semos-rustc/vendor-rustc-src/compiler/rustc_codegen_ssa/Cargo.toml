@@ -6,8 +6,7 @@ edition = "2024"
 [dependencies]
 # tidy-alphabetical-start
 bitflags = "2.4.1"
-bstr = "1.11.3"
-find-msvc-tools = "0.1.2"
+bstr = { version = "1.11.3", default-features = false }
 hashbrown = { version = "0.14", default-features = false, features = ["inline-more"] }
 itertools = { version = "0.12", default-features = false }
 regex = { version = "1.4", default-features = false }

@@ -5,8 +5,6 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-anstyle = "1.0.13"
-jiff = { version = "0.2.5", default-features = false, features = ["std"] }
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_ast_lowering = { path = "../rustc_ast_lowering" }
@@ -84,7 +82,14 @@ rustc_randomized_layouts = [
 # tidy-alphabetical-end
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
+# Phase 5b Stage E iter 11b: anstyle pulled std prelude (156 errors).
+# Diagnostics-only; SemOS uses raw serial output via semos_std::io.
+anstyle = "1.0.13"
 ctrlc = "3.4.4"
+# Phase 5b Stage E iter 11: jiff is the rustc-version-info timestamp
+# library; needs std (it has `features = ["std"]` upstream). Pure
+# host-only diagnostics.
+jiff = { version = "0.2.5", default-features = false, features = ["std"] }
 # Phase 5b Stage E iter 9: shlex parses POSIX-style argv strings.
 # SemOS uses kernel-provided argv directly so this is host-only.
 shlex = "1.0"

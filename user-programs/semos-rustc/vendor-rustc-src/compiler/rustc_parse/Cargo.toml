@@ -26,7 +26,7 @@ rustc_session = { path = "../rustc_session" }
 rustc_span = { path = "../rustc_span" }
 thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
-unicode-normalization = "0.1.25"
+unicode-normalization = { version = "0.1.25", default-features = false }
 unicode-width = "0.2.2"
 # tidy-alphabetical-end
 

@@ -7,17 +7,10 @@ edition = "2024"
 proc-macro = true
 
 [dependencies]
-# tidy-alphabetical-start
+# Phase 5b Stage E iter 11: fluent-bundle / fluent-syntax /
+# annotate-snippets / unic-langid all dropped per §1.8 — fluent.rs
+# is now a minimal stub that emits `pub static DEFAULT_LOCALE_RESOURCE`
+# + an empty `fluent_generated` module, no parsing or validation.
+# Just proc-macro2 + quote (no syn either; we don't parse input).
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full"] }
-# tidy-alphabetical-end
-
-# Phase 5b Stage E iter 9: proc-macro host-only deps. fluent + annotate-snippets
-# pull memchr/pulldown-cmark-escape/anstyle (156 errors). proc-macro
-# crates only run host-side at build time anyway.
-[target.'cfg(not(target_os = "none"))'.dependencies]
-annotate-snippets = "0.11"
-fluent-bundle = "0.16"
-fluent-syntax = "0.12"
-unic-langid = { version = "0.9.0", features = ["macros"] }
