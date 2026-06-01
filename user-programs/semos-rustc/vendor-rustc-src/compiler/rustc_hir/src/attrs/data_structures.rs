@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use alloc::borrow::Cow;
 use semos_std::path::PathBuf;
 

@@ -11,3 +11,7 @@ rustc_span = { path = "../rustc_span" }
 serde = { version = "1.0.125", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0.59", default-features = false, features = ["alloc"] }
 # tidy-alphabetical-end
+
+# Stage F8: source refs semos_std::{env, path, sync::LazyLock}.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

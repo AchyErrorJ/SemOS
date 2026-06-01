@@ -1,6 +1,10 @@
 //! List of the unstable feature gates.
 
 // M27 R4 B5: PathBuf flows through dump_feature_usage_metrics' arg.
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 #[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
 #[cfg(target_os = "none")]

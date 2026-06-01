@@ -4,6 +4,7 @@
 //! conflicts between multiple such attributes attached to the same
 //! item.
 
+use alloc::string::ToString;
 use core::fmt::{self, Display};
 
 use rustc_ast::visit::AssocCtxt;

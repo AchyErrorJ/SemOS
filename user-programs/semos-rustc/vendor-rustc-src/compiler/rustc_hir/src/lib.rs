@@ -8,6 +8,7 @@
 #![feature(associated_type_defaults)]
 #![feature(closure_track_caller)]
 #![feature(const_default)]
+#![feature(debug_closure_helpers)]
 #![feature(const_trait_impl)]
 #![feature(derive_const)]
 #![feature(exhaustive_patterns)]

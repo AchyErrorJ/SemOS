@@ -2312,3 +2312,55 @@ others — multiple downstream crates unblocked. Crates closed
 cumulatively: **10** (data_structures, span, serialize, ast,
 ast_pretty, error_messages, type_ir, next_trait_solver, abi, target).
 
+
+────────────────────────────────────────────────────────────────────
+## Stage F8: rustc_hir + rustc_feature + rustc_hir_pretty + rustc_errors
+
+Four more patched crates closed in this push.
+
+**rustc_hir: 27 → 0**
+- `#![feature(debug_closure_helpers)]` for `fmt::from_fn`
+- `def_path_hash_map.rs`: odht host-gated; SemOS uses
+  `alloc::collections::BTreeMap<Hash64, DefIndex>` as drop-in
+- alloc preludes added to 7 files
+- ToString trait imports in limit.rs + target.rs
+- 1 #[instrument] + tracing import in definitions.rs
+- BTreeMap insert/get owned-vs-ref signature cfg-splits at the
+  2 call sites
+
+**rustc_feature: 10 → 0**
+- semos-std target dep in Cargo.toml
+- alloc preludes in builtin_attrs.rs + unstable.rs
+- std::path::PathBuf import cfg-fixed (awk-insert had clobbered
+  the existing cfg-split)
+
+**rustc_hir_pretty: 17 → 0**
+- single-file alloc prelude expansion in lib.rs
+
+**rustc_errors: 85 → 0** (the big one)
+- semos-std target dep + anstyle promoted from host-only to universal
+  with `default-features = false` (anstyle IS no_std-clean)
+- annotate-snippets / anstream / termize stay host-only
+- `pub mod annotate_snippet_emitter_writer` / `emitter` / `json` /
+  `markdown` modules all cfg-gated to host (anstream-dependent)
+- minimal SemOS `emitter_stub` module providing
+  `Emitter`/`DynEmitter`/`SilentEmitter`/`ColorConfig`/`TimingEvent`
+  with no-op default methods so DiagCtxt's field types still
+  type-check on SemOS
+- **rustc_fluent_macro upgrade**: macro now actually parses the
+  `.ftl` file and emits `pub const NAME: DiagMessage =
+  DiagMessage::FluentIdentifier(::alloc::borrow::Cow::Borrowed("..."), None)`
+  for every top-level message name. Previous stub was empty,
+  causing downstream `fluent_generated::*` references to fail.
+- decorate_diag.rs alloc preludes
+- codes.rs + backtrace_shim ToString imports
+- `Backtrace: IntoDiagArg` via `into_diag_arg_using_display!`
+- `#![feature(array_windows)]`, `error_reporter` host-gated
+
+Workspace cumulative: **14 patched crates closed** (data_structures,
+span, serialize, ast, ast_pretty, error_messages, type_ir,
+next_trait_solver, abi, target, hir, feature, hir_pretty, errors).
+
+Workspace check now blocks on **rustc_session (2415 errors)** + tail.
+Session has the biggest cargo dep graph below it — F9 will be a slog.
+

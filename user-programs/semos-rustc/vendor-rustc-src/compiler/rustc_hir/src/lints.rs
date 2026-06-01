@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use rustc_data_structures::fingerprint::Fingerprint;
 pub use rustc_lint_defs::AttributeLintKind;
 use rustc_lint_defs::LintId;

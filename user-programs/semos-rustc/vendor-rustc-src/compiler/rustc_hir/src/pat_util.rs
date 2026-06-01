@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use core::iter::Enumerate;
 
 use rustc_span::{Ident, Span};

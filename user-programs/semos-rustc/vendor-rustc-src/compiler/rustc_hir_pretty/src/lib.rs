@@ -10,8 +10,10 @@
 #[macro_use]
 extern crate alloc;
 
-use core::cell::Cell;
+use alloc::string::{String, ToString};
 use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::Cell;
 
 use rustc_abi::ExternAbi;
 use rustc_ast::util::parser::{self, ExprPrecedence, Fixity};

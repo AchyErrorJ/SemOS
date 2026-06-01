@@ -6,11 +6,12 @@
 #![allow(internal_features)]
 #![allow(rustc::direct_use_of_rustc_type_ir)]
 #![cfg_attr(bootstrap, feature(array_windows))]
+#![feature(array_windows)]
 #![feature(assert_matches)]
 #![feature(associated_type_defaults)]
 #![feature(box_patterns)]
 #![feature(default_field_values)]
-#![feature(error_reporter)]
+#![cfg_attr(not(target_os = "none"), feature(error_reporter))]
 #![feature(macro_metavar_expr_concat)]
 #![feature(negative_impls)]
 #![feature(never_type)]
@@ -31,6 +32,7 @@ extern crate self as rustc_errors;
 // real frames. delayed_bug paths still record-and-print these, the
 // difference being that the printed body is just "(no backtrace available)".
 mod backtrace_shim {
+    use alloc::string::ToString;
     use core::fmt;
     #[derive(Debug, Clone)]
     pub struct Backtrace;
@@ -46,6 +48,11 @@ mod backtrace_shim {
             f.write_str("(no backtrace available on SemOS)")
         }
     }
+    // Stage F8: rustc_errors's `DelayedDiagnostic::decorate` calls
+    // `diag.arg("note", self.note)` which expects `IntoDiagArg`. The
+    // host-Backtrace gets it via core::error::Error → display impl in
+    // rustc_error_messages; we apply the same Display-based route.
+    rustc_error_messages::into_diag_arg_using_display!(Backtrace);
 }
 use backtrace_shim::{Backtrace, BacktraceStatus};
 
@@ -89,6 +96,8 @@ mod panic {
 use Level::*;
 // Used by external projects such as `rust-gpu`.
 // See https://github.com/rust-lang/rust/pull/115393.
+// Stage F8: anstream is host-only (real terminal IO + std).
+#[cfg(not(target_os = "none"))]
 pub use anstream::{AutoStream, ColorChoice};
 pub use anstyle::{
     Ansi256Color, AnsiColor, Color, EffectIter, Effects, Reset, RgbColor, Style as Anstyle,
@@ -103,8 +112,49 @@ pub use diagnostic_impls::{
     DiagSymbolList, ElidedLifetimeInPathSubdiag, ExpectedLifetimeParameter,
     IndicateAnonymousLifetime, SingleLabelManySpans,
 };
+// Stage F8: emitter module is host-only (anstream dep). On SemOS we
+// provide minimal stub types so DiagCtxt's signature still type-checks
+// (the runtime path through them is dead — §1.9 panic-abort).
+#[cfg(not(target_os = "none"))]
 pub use emitter::ColorConfig;
+#[cfg(not(target_os = "none"))]
 use emitter::{DynEmitter, Emitter};
+#[cfg(target_os = "none")]
+mod emitter_stub {
+    use alloc::vec::Vec;
+    use crate::translation::Translator;
+    use crate::registry::Registry;
+    use crate::timings::TimingRecord;
+    use crate::{DiagInner, DynSend};
+    use semos_std::path::Path;
+
+    pub enum ColorConfig { Auto, Always, Never }
+    pub enum TimingEvent { Start, End }
+
+    pub trait Emitter {
+        fn emit_diagnostic(&mut self, _diag: DiagInner, _registry: &Registry) {}
+        fn emit_artifact_notification(&mut self, _path: &Path, _artifact_type: &str) {}
+        fn emit_timing_section(&mut self, _record: TimingRecord, _event: TimingEvent) {}
+        fn emit_future_breakage_report(&mut self, _diags: Vec<DiagInner>, _registry: &Registry) {}
+        fn emit_unused_externs(&mut self, _lint_level: rustc_lint_defs::Level, _unused_externs: &[&str]) {}
+        fn should_show_explain(&self) -> bool { true }
+        fn translator(&self) -> &Translator;
+    }
+    pub type DynEmitter = dyn Emitter + DynSend;
+
+    pub struct SilentEmitter {
+        pub translator: Translator,
+    }
+    impl Emitter for SilentEmitter {
+        fn translator(&self) -> &Translator { &self.translator }
+    }
+}
+#[cfg(target_os = "none")]
+use emitter_stub::{DynEmitter, Emitter, TimingEvent};
+#[cfg(target_os = "none")]
+pub use emitter_stub::{ColorConfig};
+#[cfg(target_os = "none")]
+use emitter_stub as emitter;
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_data_structures::sync::{DynSend, Lock};
@@ -124,19 +174,28 @@ use rustc_span::source_map::SourceMap;
 use rustc_span::{DUMMY_SP, Span};
 use tracing::debug;
 
-use crate::emitter::TimingEvent;
+// TimingEvent comes from emitter (or emitter_stub) above.
 use crate::registry::Registry;
 use crate::timings::TimingRecord;
 
+// Stage F8: annotate_snippet_emitter_writer builds on host-only
+// `annotate-snippets`. SemOS has no terminal emitter path.
+#[cfg(not(target_os = "none"))]
 pub mod annotate_snippet_emitter_writer;
 pub mod codes;
 mod decorate_diag;
 mod diagnostic;
 mod diagnostic_impls;
+// Stage F8: emitter/json/markdown all depend on host-only `anstream`
+// (real terminal I/O, std::io::Stdout). SemOS-target builds skip them
+// entirely — errors panic-abort per §1.9 instead of being rendered.
+#[cfg(not(target_os = "none"))]
 pub mod emitter;
 pub mod error;
+#[cfg(not(target_os = "none"))]
 pub mod json;
 mod lock;
+#[cfg(not(target_os = "none"))]
 pub mod markdown;
 pub mod registry;
 // M27 §1.8 + R4 B5: tests/* exercise the fluent-translator pipeline that

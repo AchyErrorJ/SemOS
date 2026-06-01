@@ -2019,6 +2019,7 @@ dependencies = [
  "rustc_macros",
  "rustc_serialize",
  "rustc_span",
+ "semos-std",
  "serde",
  "serde_json",
  "termize",
@@ -2063,6 +2064,7 @@ dependencies = [
  "rustc_data_structures",
  "rustc_hir",
  "rustc_span",
+ "semos-std",
  "serde",
  "serde_json",
 ]

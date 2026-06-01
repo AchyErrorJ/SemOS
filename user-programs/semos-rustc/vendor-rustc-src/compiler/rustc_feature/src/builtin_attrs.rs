@@ -1,6 +1,10 @@
 //! Built-in attributes and `cfg` flag gating.
 
 // M27 R4: std::sync::LazyLock supplied by semos_std (commit c9f0b2d).
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use semos_std::sync::LazyLock;
 
 use AttributeDuplicates::*;

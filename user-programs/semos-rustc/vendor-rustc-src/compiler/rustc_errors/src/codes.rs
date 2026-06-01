@@ -4,6 +4,7 @@
 //! - A static table `DIAGNOSTICS` pairing every error code constant with its
 //!   long description text.
 
+use alloc::string::ToString;
 use core::fmt;
 
 rustc_index::newtype_index! {

@@ -4,6 +4,10 @@
 //! There are also some rather random cases (like const initializer
 //! expressions) that are mostly just leftovers.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use core::fmt::{self, Write};
 use core::hash::Hash;
 
@@ -13,7 +17,7 @@ use rustc_hashes::Hash64;
 use rustc_index::IndexVec;
 use rustc_macros::{BlobDecodable, Decodable, Encodable};
 use rustc_span::{Symbol, kw, sym};
-use tracing::{debug, instrument};
+use tracing::debug;
 
 pub use crate::def_id::DefPathHash;
 use crate::def_id::{CRATE_DEF_INDEX, CrateNum, DefIndex, LOCAL_CRATE, LocalDefId, StableCrateId};
@@ -55,7 +59,14 @@ impl DefPathTable {
 
         // Check for hash collisions of DefPathHashes. These should be
         // exceedingly rare.
-        if let Some(existing) = self.def_path_hash_to_index.insert(&local_hash, &index) {
+        // Stage F8: odht::HashTableOwned takes refs; BTreeMap takes
+        // owned values. Hash64 and DefIndex are Copy so dereferencing
+        // is fine on both targets.
+        #[cfg(not(target_os = "none"))]
+        let prev = self.def_path_hash_to_index.insert(&local_hash, &index);
+        #[cfg(target_os = "none")]
+        let prev = self.def_path_hash_to_index.insert(local_hash, index);
+        if let Some(existing) = prev {
             let def_path1 = DefPath::make(LOCAL_CRATE, existing, |idx| self.def_key(idx));
             let def_path2 = DefPath::make(LOCAL_CRATE, index, |idx| self.def_key(idx));
 
@@ -81,7 +92,7 @@ impl DefPathTable {
         self.index_to_key[index]
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret)]  // tracing attr off
     #[inline(always)]
     pub fn def_path_hash(&self, index: DefIndex) -> DefPathHash {
         let hash = self.def_path_hashes[index];
@@ -433,7 +444,9 @@ impl Definitions {
         self.table
             .def_path_hash_to_index
             .get(&hash.local_hash())
-            .map(|local_def_index| LocalDefId { local_def_index })
+            // Stage F8: odht returns owned DefIndex via Copy; BTreeMap
+            // returns `&DefIndex`. Copy-deref normalizes both paths.
+            .map(|local_def_index| LocalDefId { local_def_index: *local_def_index })
     }
 
     pub fn def_path_hash_to_def_index_map(&self) -> &DefPathHashMap {

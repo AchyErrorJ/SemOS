@@ -1,9 +1,16 @@
+// Stage F8: odht (open-addressing hash table) is host-only — pulls
+// stable_deref_trait/log via incompatible features. The SemOS-target
+// rustc never emits / loads the rmeta-side def-path hash map (no
+// incremental cache per §1.3), so we replace it with a simple
+// alloc::collections::BTreeMap<Hash64, DefIndex> stub here.
+
 use rustc_hashes::Hash64;
 use rustc_span::def_id::DefIndex;
 
 #[derive(Clone, Default)]
 pub struct Config;
 
+#[cfg(not(target_os = "none"))]
 impl odht::Config for Config {
     // This hash-map is single-crate, so we only need to key by the local hash.
     type Key = Hash64;
@@ -35,4 +42,7 @@ impl odht::Config for Config {
     }
 }
 
+#[cfg(not(target_os = "none"))]
 pub type DefPathHashMap = odht::HashTableOwned<Config>;
+#[cfg(target_os = "none")]
+pub type DefPathHashMap = alloc::collections::BTreeMap<Hash64, DefIndex>;

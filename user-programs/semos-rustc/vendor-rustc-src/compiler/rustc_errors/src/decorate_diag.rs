@@ -1,4 +1,7 @@
 /// This module provides types and traits for buffering lints until later in compilation.
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use rustc_ast::node_id::NodeId;
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_error_messages::MultiSpan;
