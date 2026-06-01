@@ -2021,3 +2021,45 @@ followups (alloc prelude additions are mechanical) from the last
 external leaks. Possibly 1-2 more iterations to settled.
 
 Cumulative this session: ~28 commits, ~7.9M tokens.
+
+### Stage E iter 12 (commit `6c8bd98`) — **EXTERNAL WALL CLEARED**
+
+Seven fixes — six patched-crate body + one fork edition fix:
+
+1. **rustc_arena**: `#![feature(maybe_uninit_slice)]` for
+   `slice::assume_init_drop` at line 84.
+2. **rustc_parse_format**: `use alloc::borrow::ToOwned;` (16
+   `.to_owned()` calls on `&str` literals failed).
+3. **rustc_fluent_macro/lib.rs**: dropped `feature(track_path)` +
+   `feature(proc_macro_tracked_path)` + `feature(proc_macro_diagnostic)`
+   — §1.8 stub doesn't need any of them.
+4. **rustc_macros** (current_version.rs + symbols.rs): replaced
+   `proc_macro::tracked::env_var` with `std::env::var` (proc-macros
+   run host-side; tracked variant uses unstable APIs).
+5. **rustc_target**: host-gated `schemars` + `serde_path_to_error`
+   (JSON schema + diagnostic-path serialization, host-only debug).
+6. **rustc_index/src/slice.rs**: `use alloc::borrow::ToOwned;` for
+   `impl ToOwned for IndexSlice`.
+7. **scoped-tls vendor fork**: added `edition = "2021"` so
+   `pub use semos_std::*` resolves without explicit `extern crate`.
+
+**STAGE E EXTERNAL WALL OFFICIALLY CLEARED.** Every external dep
+now resolves cleanly. The complete external-clear list cumulatively:
+
+| Cleared via | Crates |
+|-------------|--------|
+| [patch.crates-io] forks | tracing-core, scoped-tls, either, indexmap |
+| Host-gates | annotate-snippets, anstream, anstyle, anstyle-parse, ar_archive_writer, blake3, ctrlc, crc32fast (via object/write feature), datafrog (via polonius), elsa, ena (2 places), find-msvc-tools, fluent-bundle, fluent-syntax, getopts, gsgdt, intl-memoizer, jiff, jobserver, libloading, log (via ena), measureme, memmap2, odht, parking_lot, parking_lot_core, pathdiff, polonius-engine, pulldown-cmark, punycode, rustc-stable-hash, schemars, serde_path_to_error, shlex, stacker, tempfile, termize, thorin-dwp, tracing-subscriber, tracing-tree, unic-langid, wasm-encoder |
+| df=false sweeps | bstr, indexmap (also forked), itertools, memchr, rand, regex, rustc-hash, scoped-tls (also forked), serde + serde_json (8 crates), smallvec, stable_deref_trait (via elsa), thin-vec (18 crates), tracing, unicode-normalization |
+| §1.8 cleanup | fluent-bundle/syntax/annotate-snippets/unic-langid/icu_list/icu_locale/rustc_baked_icu_data/tracing all dropped from rustc_error_messages + rustc_fluent_macro |
+| Patched-crate followups | rustc_arena, rustc_fluent_macro stub, rustc_fs_util, rustc_graphviz, rustc_hashes, rustc_index, rustc_log, rustc_macros, rustc_parse_format, rustc_proc_macro stub, rustc_thread_pool |
+
+**One remaining failure: rustc_data_structures (135 errors)** — all
+patched-crate body issues (missing imports + feature gates similar
+to iter 12's rustc_index / rustc_parse_format / rustc_arena fixes,
+just at scale). This is Stage F territory: real port-quality work
+on the 48 patched crates rather than external-dep wrestling.
+
+Cumulative this session: ~30 commits, ~8.2M tokens. Stage E
+externally complete. The pattern is fully proven across the entire
+external dep graph.
