@@ -1,3 +1,4 @@
+use alloc::borrow::ToOwned;
 use core::fmt;
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut, RangeBounds};

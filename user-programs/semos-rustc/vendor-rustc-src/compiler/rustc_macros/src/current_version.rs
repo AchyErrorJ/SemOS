@@ -22,10 +22,10 @@ struct RustcVersion {
 
 impl RustcVersion {
     fn parse_cfg_release(env_var: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        #[cfg(not(bootstrap))]
-        let value = proc_macro::tracked::env_var(env_var)?;
-        #[cfg(bootstrap)]
-        let value = proc_macro::tracked_env::var(env_var)?;
+        // Phase 5b Stage E iter 12: proc_macro::tracked::env_var is an
+        // unstable API not on our pinned toolchain. Use std::env::var
+        // directly — proc-macros run host-side so std works fine.
+        let value = std::env::var(env_var)?;
 
         Self::parse_str(&value)
             .ok_or_else(|| format!("failed to parse rustc version: {:?}", value).into())

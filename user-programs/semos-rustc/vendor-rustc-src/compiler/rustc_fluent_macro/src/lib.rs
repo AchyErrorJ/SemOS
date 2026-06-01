@@ -1,8 +1,9 @@
 // tidy-alphabetical-start
 #![allow(rustc::default_hash_types)]
-#![cfg_attr(bootstrap, feature(track_path))]
-#![cfg_attr(not(bootstrap), feature(proc_macro_tracked_path))]
-#![feature(proc_macro_diagnostic)]
+// Phase 5b Stage E iter 12: dropped `feature(track_path)` /
+// `feature(proc_macro_tracked_path)` / `feature(proc_macro_diagnostic)`
+// — the §1.8 stub doesn't use any of these (no .ftl file reading, no
+// proc-macro diagnostics; just emits an empty token stream).
 // tidy-alphabetical-end
 
 use proc_macro::TokenStream;

@@ -14,11 +14,16 @@ rustc_fs_util = { path = "../rustc_fs_util" }
 rustc_macros = { path = "../rustc_macros" }
 rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
-schemars = "1.0.4"
 serde = { version = "1.0.219", default-features = false, features = ["alloc"] }
 serde_derive = "1.0.219"
 serde_json = { version = "1.0.59", default-features = false, features = ["alloc"] }
-serde_path_to_error = "0.1.17"
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+# Phase 5b Stage E iter 12: schemars (JSON schema generator) + serde_path_to_error
+# need std. rustc_target uses them for the --target-json-schema /
+# diagnostic-path serialization paths — host-only debugging tools.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+schemars = "1.0.4"
+serde_path_to_error = "0.1.17"
 

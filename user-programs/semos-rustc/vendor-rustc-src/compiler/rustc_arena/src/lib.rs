@@ -16,6 +16,8 @@
 #![feature(core_intrinsics)]
 #![feature(decl_macro)]
 #![feature(dropck_eyepatch)]
+// Phase 5b Stage E iter 12: needed for slice::assume_init_drop at line 84.
+#![feature(maybe_uninit_slice)]
 #![feature(never_type)]
 #![feature(rustc_attrs)]
 #![feature(unwrap_infallible)]
