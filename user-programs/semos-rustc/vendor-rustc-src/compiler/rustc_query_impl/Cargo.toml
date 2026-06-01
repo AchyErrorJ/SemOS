@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-measureme = "12.0.1"
 rustc_data_structures = { path = "../rustc_data_structures" }
 rustc_hashes = { path = "../rustc_hashes" }
 rustc_hir = { path = "../rustc_hir" }
@@ -16,3 +15,9 @@ rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+# Phase 5b Stage E iter 7: measureme is the rustc self-profiler. Pulls
+# parking_lot → parking_lot_core (60 errors no_std-incompatible).
+# Self-profiling is dev-tool / debug; host-only.
+[target.'cfg(not(target_os = "none"))'.dependencies]
+measureme = "12.0.1"

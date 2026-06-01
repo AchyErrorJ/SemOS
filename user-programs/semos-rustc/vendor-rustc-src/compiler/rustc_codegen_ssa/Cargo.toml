@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
-ar_archive_writer = "0.5"
 bitflags = "2.4.1"
 bstr = "1.11.3"
 find-msvc-tools = "0.1.2"
@@ -53,6 +52,10 @@ tracing = { version = "0.1", default-features = false }
 # remaining back/* (write,lto,metadata) sites that touch these crates
 # already cfg-split their usages.
 [target.'cfg(not(target_os = "none"))'.dependencies]
+# ar_archive_writer pulls object 0.37 → crc32fast (21 errors).
+# Archive-writing is linker-related; F1+G1 §1.7-gated all back/link*
+# modules. Host-only.
+ar_archive_writer = "0.5"
 tempfile = "3.2"
 thorin-dwp = "0.9"
 wasm-encoder = "0.219"
@@ -65,7 +68,11 @@ libc = "0.2.50"
 [dependencies.object]
 version = "0.37.0"
 default-features = false
-features = ["read_core", "elf", "macho", "pe", "xcoff", "unaligned", "archive", "write", "wasm"]
+# Phase 5b Stage E iter 7: dropped "write" feature (was pulling crc32fast
+# 21 errors). cg_clif handles ET_EXEC emission directly per §1.7; the
+# rustc_codegen_ssa write-side is gated host-only via the back/* §1.7
+# cfg-out F1+G1 landed.
+features = ["read_core", "elf", "macho", "pe", "xcoff", "unaligned", "archive", "wasm"]
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61.0"
