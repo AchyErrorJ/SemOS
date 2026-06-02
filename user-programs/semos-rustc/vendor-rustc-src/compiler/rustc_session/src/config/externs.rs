@@ -1,6 +1,11 @@
 //! This module contains code to help parse and manipulate `--extern` arguments.
 
-use std::path::PathBuf;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use semos_std::path::PathBuf;
 
 use rustc_errors::{Diag, FatalAbort};
 

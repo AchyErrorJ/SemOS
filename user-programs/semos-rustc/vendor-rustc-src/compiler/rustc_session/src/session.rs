@@ -1,9 +1,14 @@
-use std::any::Any;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::{env, io};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::any::Any;
+use semos_std::path::PathBuf;
+use core::str::FromStr;
+use alloc::sync::Arc;
+use core::sync::atomic::AtomicBool;
+use semos_std::{env, io};
 
 use rand::{RngCore, rng};
 use rustc_data_structures::base_n::{CASE_INSENSITIVE, ToBaseN};
@@ -261,7 +266,7 @@ impl Session {
             || self.opts.unstable_opts.unpretty.is_some()
             || self.prof.is_args_recording_enabled()
             || self.opts.output_types.contains_key(&OutputType::Mir)
-            || std::env::var_os("RUSTC_LOG").is_some()
+            || semos_std::env::var_os("RUSTC_LOG").is_some()
         {
             return;
         }
@@ -546,7 +551,7 @@ impl Session {
     pub fn lint_groups_iter(&self) -> Box<dyn Iterator<Item = LintGroup> + '_> {
         match self.lint_store {
             Some(ref lint_store) => lint_store.lint_groups_iter(),
-            None => Box::new(std::iter::empty()),
+            None => Box::new(core::iter::empty()),
         }
     }
 }
@@ -901,7 +906,7 @@ fn default_emitter(
     let track_diagnostics = sopts.unstable_opts.track_diagnostics;
     let terminal_url = match sopts.unstable_opts.terminal_urls {
         TerminalUrl::Auto => {
-            match (std::env::var("COLORTERM").as_deref(), std::env::var("TERM").as_deref()) {
+            match (semos_std::env::var("COLORTERM").as_deref(), semos_std::env::var("TERM").as_deref()) {
                 (Ok("truecolor"), Ok("xterm-256color"))
                     if sopts.unstable_features.is_nightly_build() =>
                 {
@@ -1011,7 +1016,7 @@ pub fn build_session(
 
     let self_profiler = if let SwitchWithOptPath::Enabled(ref d) = sopts.unstable_opts.self_profile
     {
-        let directory = if let Some(directory) = d { directory } else { std::path::Path::new(".") };
+        let directory = if let Some(directory) = d { directory } else { semos_std::path::Path::new(".") };
 
         let profiler = SelfProfiler::new(
             directory,

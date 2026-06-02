@@ -44,11 +44,40 @@ pub(crate) fn fluent_messages(input: TokenStream) -> TokenStream {
     // Read the .ftl file; on error emit only the empty stub.
     let contents = fs::read_to_string(&path).unwrap_or_default();
 
-    // Extract names. Fluent message names are at the start of a line,
-    // followed by ` = ` (with optional `.attribute = `). We only care
-    // about top-level names (no leading whitespace, no `.attribute`).
-    let mut names: Vec<String> = Vec::new();
+    // Extract names. Fluent format:
+    //   parent_name = main message
+    //       .attribute = subdiag message
+    //
+    // For each parent, emit:
+    //   pub const PARENT_NAME: DiagMessage = ...
+    //   pub mod PARENT_NAME_subdiag { pub const ATTRIBUTE: SubdiagMessage = ...; }
+    //
+    // The Diagnostic derive macro references both forms.
+    let mut parents: Vec<String> = Vec::new();
+    let mut subdiags: Vec<(String, Vec<String>)> = Vec::new(); // (parent, [attrs])
+    let mut current_parent: Option<String> = None;
     for line in contents.lines() {
+        // Indented `.attr = ...` lines.
+        let trimmed = line.trim_start();
+        if (line.starts_with(' ') || line.starts_with('\t')) && trimmed.starts_with('.') {
+            if let Some(eq_pos) = trimmed.find('=') {
+                let attr = trimmed[1..eq_pos].trim();
+                if !attr.is_empty()
+                    && attr.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && let Some(parent) = &current_parent
+                {
+                    // Add to last subdiag entry if it matches; else create.
+                    if let Some(last) = subdiags.last_mut() {
+                        if last.0 == *parent {
+                            last.1.push(attr.to_string());
+                            continue;
+                        }
+                    }
+                    subdiags.push((parent.clone(), vec![attr.to_string()]));
+                }
+            }
+            continue;
+        }
         if line.starts_with(' ') || line.starts_with('\t') {
             continue;
         }
@@ -59,22 +88,85 @@ pub(crate) fn fluent_messages(input: TokenStream) -> TokenStream {
                 continue;
             }
             if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                names.push(name.to_string());
+                parents.push(name.to_string());
+                current_parent = Some(name.to_string());
             }
         }
     }
-    names.sort();
-    names.dedup();
+    parents.sort();
+    parents.dedup();
 
-    // Emit `pub const NAME: DiagMessage = DiagMessage::FluentIdentifier(...)`
-    // for each name. `DiagMessage` and `Cow` come from rustc_error_messages,
-    // which downstream callers re-export under `crate::fluent_generated`.
     let mut consts = String::new();
-    for name in &names {
+    for name in &parents {
         consts.push_str(&format!(
             "    pub const {name}: rustc_error_messages::DiagMessage = \
              rustc_error_messages::DiagMessage::FluentIdentifier(\
              ::alloc::borrow::Cow::Borrowed(\"{name}\"), None);\n"
+        ));
+    }
+    // Emit subdiag modules for EVERY parent. The Diagnostic derive
+    // references `fluent_generated::<parent>_subdiag::<attr>` for any
+    // `#[label]`/`#[help]`/`#[note]`/etc. field attribute regardless of
+    // whether the .ftl defines that attr — we have to provide the
+    // module shape unconditionally with a comprehensive attr set.
+    let common_attrs: &[&str] = &[
+        "label", "help", "note", "suggestion", "warn", "note_1", "note_2",
+        "see_issue", "first_note", "second_note", "suggestion_short",
+        "suggestion_verbose", "suggestion_remove", "suggestion_add",
+        "remove_note", "add_note", "verbose_help", "long_help",
+    ];
+    let mut subdiag_mods = String::new();
+    for parent in &parents {
+        let mut all_attrs: Vec<String> = common_attrs.iter().map(|s| s.to_string()).collect();
+        for (p, attrs) in &subdiags {
+            if p == parent {
+                for a in attrs {
+                    if !all_attrs.contains(a) {
+                        all_attrs.push(a.clone());
+                    }
+                }
+            }
+        }
+        all_attrs.sort();
+        all_attrs.dedup();
+        let mut attr_lines = String::new();
+        for attr in &all_attrs {
+            attr_lines.push_str(&format!(
+                "        pub const {attr}: rustc_error_messages::SubdiagMessage = \
+                 rustc_error_messages::SubdiagMessage::FluentAttr(\
+                 ::alloc::borrow::Cow::Borrowed(\"{attr}\"));\n"
+            ));
+        }
+        subdiag_mods.push_str(&format!(
+            "    #[allow(non_camel_case_types, non_snake_case, dead_code)]\n    pub mod {parent}_subdiag {{\n{attr_lines}    }}\n"
+        ));
+    }
+
+    // Also emit a top-level `_subdiag` module. The Diagnostic derive
+    // emits literal paths like `crate::fluent_generated::_subdiag::label`
+    // — the `_subdiag` segment isn't substituted with the parent slug,
+    // it's a literal placeholder module name in the generated code.
+    let mut top_subdiag = String::new();
+    let mut top_attrs: Vec<String> = common_attrs.iter().map(|s| s.to_string()).collect();
+    for (_, attrs) in &subdiags {
+        for a in attrs {
+            if !top_attrs.contains(a) {
+                top_attrs.push(a.clone());
+            }
+        }
+    }
+    for extra in &["note_once", "help_once"] {
+        if !top_attrs.contains(&(*extra).to_string()) {
+            top_attrs.push((*extra).to_string());
+        }
+    }
+    top_attrs.sort();
+    top_attrs.dedup();
+    for attr in &top_attrs {
+        top_subdiag.push_str(&format!(
+            "            pub const {attr}: rustc_error_messages::SubdiagMessage = \
+             rustc_error_messages::SubdiagMessage::FluentAttr(\
+             ::alloc::borrow::Cow::Borrowed(\"{attr}\"));\n"
         ));
     }
 
@@ -83,7 +175,10 @@ pub(crate) fn fluent_messages(input: TokenStream) -> TokenStream {
         pub static DEFAULT_LOCALE_RESOURCE: &str = "";
         pub mod fluent_generated {{
             // M27 §1.8 — name-only stubs parsed from messages.ftl.
-{consts}
+{consts}{subdiag_mods}
+            #[allow(non_camel_case_types, non_snake_case, dead_code)]
+            pub mod _subdiag {{
+{top_subdiag}            }}
         }}
         "#
     );

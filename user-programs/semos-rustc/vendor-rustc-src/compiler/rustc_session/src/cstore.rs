@@ -2,8 +2,13 @@
 //! are *mostly* used as a part of that interface, but these should
 //! probably get a better home if someone can find one.
 
-use std::any::Any;
-use std::path::PathBuf;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::any::Any;
+use semos_std::path::PathBuf;
 
 use rustc_abi::ExternAbi;
 use rustc_data_structures::sync::{self, AppendOnlyIndexVec, FreezeLock};
@@ -190,7 +195,7 @@ pub enum ExternCrateSource {
 /// that it's *not* tracked for dependency information throughout compilation
 /// (it'd break incremental compilation) and should only be called pre-HIR (e.g.
 /// during resolve)
-pub trait CrateStore: std::fmt::Debug {
+pub trait CrateStore: core::fmt::Debug {
     fn as_any(&self) -> &dyn Any;
     fn untracked_as_any(&mut self) -> &mut dyn Any;
 

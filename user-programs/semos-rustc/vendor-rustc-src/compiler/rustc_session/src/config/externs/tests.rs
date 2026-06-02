@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use semos_std::path::PathBuf;
 
 use super::split_extern_opt;
 use crate::EarlyDiagCtxt;

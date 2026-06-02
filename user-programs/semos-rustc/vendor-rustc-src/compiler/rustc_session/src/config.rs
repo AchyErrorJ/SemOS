@@ -1,16 +1,22 @@
 //! Contains infrastructure for configuring the compiler, including parsing
 //! command-line options.
 
-use std::collections::btree_map::{
+use alloc::boxed::Box;
+#[cfg(target_os = "none")] use crate::getopts;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use alloc::collections::btree_map::{
     Iter as BTreeMapIter, Keys as BTreeMapKeysIter, Values as BTreeMapValuesIter,
 };
-use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
-use std::hash::Hash;
-use std::path::{Path, PathBuf};
-use std::str::{self, FromStr};
-use std::sync::LazyLock;
-use std::{cmp, fmt, fs, iter};
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::ffi::OsStr;
+use core::hash::Hash;
+use semos_std::path::{Path, PathBuf};
+use core::str::{self, FromStr};
+use semos_std::sync::LazyLock;
+use core::{cmp, fmt, fs, iter};
 
 use externs::{ExternOpt, split_extern_opt};
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
@@ -1083,10 +1089,10 @@ impl OutFileName {
     }
 
     pub fn is_tty(&self) -> bool {
-        use std::io::IsTerminal;
+        use semos_std::io::IsTerminal;
         match *self {
             OutFileName::Real(_) => false,
-            OutFileName::Stdout => std::io::stdout().is_terminal(),
+            OutFileName::Stdout => semos_std::io::stdout().is_terminal(),
         }
     }
 
@@ -1391,7 +1397,7 @@ impl Default for Options {
         // currently uses this `Default` implementation, so we have no choice but
         // to create a default working directory.
         let working_dir = {
-            let working_dir = std::env::current_dir().unwrap();
+            let working_dir = semos_std::env::current_dir().unwrap();
             let file_mapping = file_path_mapping(Vec::new(), RemapPathScopeComponents::empty());
             file_mapping.to_real_filename(&RealFileName::empty(), &working_dir)
         };
@@ -2332,7 +2338,7 @@ pub fn parse_externs(
 
         let entry = externs.entry(name.to_owned());
 
-        use std::collections::btree_map::Entry;
+        use alloc::collections::btree_map::Entry;
 
         let entry = if let Some(path) = path {
             // --extern prelude_name=some_file.rlib
@@ -2432,7 +2438,7 @@ fn parse_remap_path_prefix(
         })
         .collect();
     match &unstable_opts.remap_cwd_prefix {
-        Some(to) => match std::env::current_dir() {
+        Some(to) => match semos_std::env::current_dir() {
             Ok(cwd) => mapping.push((cwd, to.clone())),
             Err(_) => (),
         },
@@ -2591,7 +2597,7 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
         }
     }
 
-    if let Ok(graphviz_font) = std::env::var("RUSTC_GRAPHVIZ_FONT") {
+    if let Ok(graphviz_font) = semos_std::env::var("RUSTC_GRAPHVIZ_FONT") {
         // FIXME: this is only mutation of UnstableOptions here, move into
         // UnstableOptions::build?
         unstable_opts.graphviz_font = graphviz_font;
@@ -2723,7 +2729,7 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
             // We could try to use `fs::canonicalize` instead, but that might
             // produce unnecessarily verbose path.
             if metadata.file_type().is_symlink() {
-                if let Ok(symlink_dest) = std::fs::read_link(&candidate) {
+                if let Ok(symlink_dest) = semos_std::fs::read_link(&candidate) {
                     candidate = symlink_dest;
                 }
             }
@@ -2766,7 +2772,7 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
     // Ideally we would use `SourceMap::working_dir` instead, but we don't have access to it
     // so we manually create the potentially-remapped working directory
     let working_dir = {
-        let working_dir = std::env::current_dir().unwrap_or_else(|e| {
+        let working_dir = semos_std::env::current_dir().unwrap_or_else(|e| {
             early_dcx.early_fatal(format!("Current directory is invalid: {e}"));
         });
 
@@ -2984,7 +2990,7 @@ impl fmt::Display for CrateType {
 }
 
 impl IntoDiagArg for CrateType {
-    fn into_diag_arg(self, _: &mut Option<std::path::PathBuf>) -> DiagArgValue {
+    fn into_diag_arg(self, _: &mut Option<semos_std::path::PathBuf>) -> DiagArgValue {
         self.to_string().into_diag_arg(&mut None)
     }
 }
@@ -3089,10 +3095,10 @@ pub enum WasiExecModel {
 /// we have an opt-in scheme here, so one is hopefully forced to think about
 /// how the hash should be calculated when adding a new command-line argument.
 pub(crate) mod dep_tracking {
-    use std::collections::BTreeMap;
-    use std::hash::Hash;
-    use std::num::NonZero;
-    use std::path::PathBuf;
+    use alloc::collections::BTreeMap;
+    use core::hash::Hash;
+    use core::num::NonZero;
+    use semos_std::path::PathBuf;
 
     use rustc_abi::Align;
     use rustc_data_structures::fx::FxIndexMap;

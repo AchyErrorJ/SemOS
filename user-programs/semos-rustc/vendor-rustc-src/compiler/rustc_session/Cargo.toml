@@ -31,6 +31,10 @@ tracing = { version = "0.1", default-features = false }
 getopts = "0.2"
 termize = "0.2"
 
+# Stage F9: many config/option modules now route through semos_std.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+
 [target.'cfg(unix)'.dependencies]
 # tidy-alphabetical-start
 libc = "0.2"

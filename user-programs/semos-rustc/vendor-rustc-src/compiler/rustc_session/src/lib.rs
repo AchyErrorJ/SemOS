@@ -1,3 +1,6 @@
+// M27 Stage F9: no_std + alloc.
+#![no_std]
+
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![feature(default_field_values)]
@@ -8,6 +11,9 @@
 // with macro_rules, it is necessary to use recursive mechanic ("Incremental TT Munchers").
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
 
 pub mod errors;
 
@@ -23,6 +29,35 @@ pub mod cstore;
 pub mod filesearch;
 mod macros;
 mod options;
+
+// Stage F9: getopts is host-only (CLI option parsing). SemOS-target
+// rustc doesn't read argv via getopts, so we stub the surface used.
+#[cfg(target_os = "none")]
+mod getopts {
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    pub struct Matches {
+        pub free: Vec<String>,
+    }
+    impl Matches {
+        pub fn opt_present(&self, _name: &str) -> bool { false }
+        pub fn opt_str(&self, _name: &str) -> Option<String> { None }
+        pub fn opt_strs(&self, _name: &str) -> Vec<String> { Vec::new() }
+        pub fn opt_count(&self, _name: &str) -> usize { 0 }
+        pub fn opt_default(&self, _name: &str, def: &str) -> Option<String> {
+            Some(String::from(def))
+        }
+    }
+    pub struct Options;
+    impl Options {
+        pub fn new() -> Self { Self }
+        pub fn optopt(&mut self, _: &str, _: &str, _: &str, _: &str) -> &mut Self { self }
+        pub fn optmulti(&mut self, _: &str, _: &str, _: &str, _: &str) -> &mut Self { self }
+        pub fn optflag(&mut self, _: &str, _: &str, _: &str) -> &mut Self { self }
+        pub fn optflagmulti(&mut self, _: &str, _: &str, _: &str) -> &mut Self { self }
+    }
+}
+
 pub mod search_paths;
 
 mod session;

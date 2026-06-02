@@ -1,5 +1,10 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use semos_std::path::{Path, PathBuf};
+use alloc::sync::Arc;
 
 use rustc_macros::{Decodable, Encodable, HashStable_Generic};
 use rustc_target::spec::TargetTuple;
@@ -130,7 +135,7 @@ impl SearchPath {
 
     pub fn new(kind: PathKind, dir: PathBuf) -> Self {
         // Get the files within the directory.
-        let mut files = match std::fs::read_dir(&dir) {
+        let mut files = match semos_std::fs::read_dir(&dir) {
             Ok(files) => files
                 .filter_map(|e| {
                     e.ok().and_then(|e| {

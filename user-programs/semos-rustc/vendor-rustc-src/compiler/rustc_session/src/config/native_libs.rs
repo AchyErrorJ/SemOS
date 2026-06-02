@@ -4,6 +4,12 @@
 //! (There is also a similar but separate syntax for `#[link]` attributes,
 //! which have their own parser in `rustc_metadata`.)
 
+use alloc::boxed::Box;
+#[cfg(target_os = "none")] use crate::getopts;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_feature::UnstableFeatures;
 use rustc_hir::attrs::NativeLibKind;
 

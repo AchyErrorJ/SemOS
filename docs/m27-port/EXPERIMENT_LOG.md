@@ -2364,3 +2364,51 @@ next_trait_solver, abi, target, hir, feature, hir_pretty, errors).
 Workspace check now blocks on **rustc_session (2415 errors)** + tail.
 Session has the biggest cargo dep graph below it — F9 will be a slog.
 
+
+────────────────────────────────────────────────────────────────────
+## Stage F9: rustc_session — PARTIAL (2415 → 122 errors, still active)
+
+The largest patched crate yet by error count. Same playbook +
+significant net-new work:
+
+- `#![no_std]` + `#[macro_use] extern crate alloc;` in lib.rs
+- Bulk alloc preludes injected into 14 source files
+- semos-std target dep added
+- Bulk `std::*` → `core::*` / `alloc::*` / `semos_std::*` sweep
+  across 15 source files
+- `use core::{env, fs}` / `use core::{env, io}` broken-imports
+  manually fixed to `semos_std::{...}`
+- **Local `getopts` stub module** (lib.rs) — getopts is host-only;
+  SemOS doesn't parse CLI args via it. Stub provides Matches +
+  Options + opt_present/opt_str/opt_strs/opt_count/opt_default
+  and all the optopt/optmulti/optflag/optflagmulti chain methods.
+- `#[cfg(target_os = "none")] use crate::getopts;` injected into
+  each consuming file to bring local stub into scope
+- **rustc_fluent_macro upgrade #2**: now emits
+  - `pub const <parent>: DiagMessage` for every top-level message
+  - `pub mod <parent>_subdiag` with common subdiag attrs (label,
+    help, note, suggestion, warn, note_1/2, see_issue, first_note,
+    second_note, suggestion_short/verbose/remove/add, etc.)
+  - `pub mod _subdiag` as a top-level catch-all module — the
+    Diagnostic derive macro emits literal `crate::fluent_generated::
+    _subdiag::label` paths (the `_subdiag` segment is NOT
+    substituted with the parent slug downstream, contrary to first
+    intuition; it's a literal placeholder module name)
+  - Parses `.attribute = ` indented lines as subdiag attrs
+
+Error trajectory so far: **2415 → 385 → 198 → 187 → 172 → 167 →
+166 → 132 → 131 → 122**
+
+Remaining ~122 errors are mostly:
+- 24 type annotations needed (sed-broken syntax or trait inference)
+- ~15 host-only rustc_errors::emitter::* and ::json and
+  ::annotate_snippet_emitter_writer use sites that need cfg-gates
+- ~11 println!/print! macro use sites (host-only via std prelude)
+- ~6 `core::ffi::OsStr` / `core::fs` / `BufWriter in io` — paths
+  that don't exist (need semos_std variants or cfg-gates)
+- ~5 trait-bound issues (DepTrackingHash for String, etc.)
+- 1 `getopts` reimport conflict in lib.rs (needs `pub use ... as`)
+
+Stage F9 to be continued in a follow-up. Crates closed cumulatively
+this session: 14 (rustc_session still pending).
+

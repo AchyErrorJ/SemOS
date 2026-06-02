@@ -1,5 +1,10 @@
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use semos_std::path::PathBuf;
+use semos_std::sync::OnceLock;
 
 use rustc_data_structures::profiling::VerboseTimingGuard;
 use rustc_fs_util::try_canonicalize;
@@ -67,7 +72,7 @@ pub fn extra_compiler_flags() -> Option<(Vec<String>, bool)> {
 
     const ICE_REPORT_COMPILER_FLAGS_STRIP_VALUE: &[&str] = &["incremental"];
 
-    let mut args = std::env::args_os().map(|arg| arg.to_string_lossy().to_string());
+    let mut args = semos_std::env::args_os().map(|arg| arg.to_string_lossy().to_string());
 
     let mut result = Vec::new();
     let mut excluded_cargo_defaults = false;
@@ -115,5 +120,5 @@ pub fn was_invoked_from_cargo() -> bool {
     //
     // Note that it is common in Makefiles to define the `CARGO` env even
     // though we may not have been called by Cargo, so we avoid using it.
-    *FROM_CARGO.get_or_init(|| std::env::var_os("CARGO_CRATE_NAME").is_some())
+    *FROM_CARGO.get_or_init(|| semos_std::env::var_os("CARGO_CRATE_NAME").is_some())
 }

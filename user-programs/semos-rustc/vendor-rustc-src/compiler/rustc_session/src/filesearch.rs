@@ -1,7 +1,12 @@
 //! A module for searching for libraries
 
-use std::path::{Path, PathBuf};
-use std::{env, fs};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use semos_std::path::{Path, PathBuf};
+use semos_std::{env, fs};
 
 use rustc_fs_util::try_canonicalize;
 use rustc_target::spec::Target;
@@ -23,7 +28,7 @@ impl FileSearch {
         self.cli_search_paths
             .iter()
             .filter(move |sp| sp.kind.matches(kind))
-            .chain(std::iter::once(&self.tlib_path))
+            .chain(core::iter::once(&self.tlib_path))
     }
 
     pub fn new(cli_search_paths: &[SearchPath], tlib_path: &SearchPath, target: &Target) -> Self {
@@ -59,7 +64,7 @@ pub fn make_target_bin_path(sysroot: &Path, target_triple: &str) -> PathBuf {
 
 #[cfg(unix)]
 fn current_dll_path() -> Result<PathBuf, String> {
-    use std::sync::OnceLock;
+    use semos_std::sync::OnceLock;
 
     // This is somewhat expensive relative to other work when compiling `fn main() {}` as `dladdr`
     // needs to iterate over the symbol table of librustc_driver.so until it finds a match.
@@ -73,7 +78,7 @@ fn current_dll_path() -> Result<PathBuf, String> {
             #[cfg(not(target_os = "aix"))]
             unsafe {
                 let addr = current_dll_path as fn() -> Result<PathBuf, String> as *mut _;
-                let mut info = std::mem::zeroed();
+                let mut info = core::mem::zeroed();
                 if libc::dladdr(addr, &mut info) == 0 {
                     return Err("dladdr failed".into());
                 }
@@ -98,7 +103,7 @@ fn current_dll_path() -> Result<PathBuf, String> {
                 // * The environment pointer.
                 // The function descriptor is in the data section.
                 let addr = current_dll_path as u64;
-                let mut buffer = vec![std::mem::zeroed::<libc::ld_info>(); 64];
+                let mut buffer = vec![core::mem::zeroed::<libc::ld_info>(); 64];
                 loop {
                     if libc::loadquery(
                         libc::L_GETINFO,
@@ -108,10 +113,10 @@ fn current_dll_path() -> Result<PathBuf, String> {
                     {
                         break;
                     } else {
-                        if std::io::Error::last_os_error().raw_os_error().unwrap() != libc::ENOMEM {
+                        if semos_std::io::Error::last_os_error().raw_os_error().unwrap() != libc::ENOMEM {
                             return Err("loadquery failed".into());
                         }
-                        buffer.resize(buffer.len() * 2, std::mem::zeroed::<libc::ld_info>());
+                        buffer.resize(buffer.len() * 2, core::mem::zeroed::<libc::ld_info>());
                     }
                 }
                 let mut current = buffer.as_mut_ptr() as *mut libc::ld_info;
@@ -138,7 +143,7 @@ fn current_dll_path() -> Result<PathBuf, String> {
 #[cfg(windows)]
 fn current_dll_path() -> Result<PathBuf, String> {
     use std::ffi::OsString;
-    use std::io;
+    use semos_std::io;
     use std::os::windows::prelude::*;
 
     use windows::Win32::Foundation::HMODULE;
@@ -152,7 +157,7 @@ fn current_dll_path() -> Result<PathBuf, String> {
         GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
             PCWSTR(
-                current_dll_path as fn() -> Result<std::path::PathBuf, std::string::String>
+                current_dll_path as fn() -> Result<semos_std::path::PathBuf, core::string::String>
                     as *mut u16,
             ),
             &mut module,

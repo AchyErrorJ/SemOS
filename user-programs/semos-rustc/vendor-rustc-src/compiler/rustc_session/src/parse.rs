@@ -1,8 +1,13 @@
 //! Contains `ParseSess` which holds state living beyond what one `Parser` might.
 //! It also serves as an input to the parser itself.
 
-use std::str;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::str;
+use alloc::sync::Arc;
 
 use rustc_ast::attr::AttrIdGenerator;
 use rustc_ast::node_id::NodeId;

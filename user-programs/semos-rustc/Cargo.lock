@@ -2826,6 +2826,7 @@ dependencies = [
  "rustc_serialize",
  "rustc_span",
  "rustc_target",
+ "semos-std",
  "termize",
  "tracing",
  "windows",

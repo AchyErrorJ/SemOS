@@ -1,4 +1,9 @@
-use std::cmp;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::cmp;
 
 use rustc_abi::{Align, Size};
 use rustc_data_structures::fx::FxHashSet;
@@ -27,8 +32,8 @@ pub enum FieldKind {
     CoroutineLocal,
 }
 
-impl std::fmt::Display for FieldKind {
-    fn fmt(&self, w: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for FieldKind {
+    fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             FieldKind::AdtField => write!(w, "field"),
             FieldKind::Upvar => write!(w, "upvar"),

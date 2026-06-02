@@ -1,7 +1,13 @@
 //! Code for dealing with `--print` requests.
 
-use std::fmt;
-use std::sync::LazyLock;
+use alloc::boxed::Box;
+#[cfg(target_os = "none")] use crate::getopts;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::fmt;
+use semos_std::sync::LazyLock;
 
 use rustc_data_structures::fx::FxHashSet;
 

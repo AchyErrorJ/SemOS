@@ -1,4 +1,9 @@
-use std::num::{NonZero, ParseIntError};
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::num::{NonZero, ParseIntError};
 
 use rustc_ast::token;
 use rustc_ast::util::literal::LitError;
@@ -100,13 +105,13 @@ pub(crate) struct LinkerPluginToWindowsNotSupported;
 #[derive(Diagnostic)]
 #[diag(session_profile_use_file_does_not_exist)]
 pub(crate) struct ProfileUseFileDoesNotExist<'a> {
-    pub(crate) path: &'a std::path::Path,
+    pub(crate) path: &'a semos_std::path::Path,
 }
 
 #[derive(Diagnostic)]
 #[diag(session_profile_sample_use_file_does_not_exist)]
 pub(crate) struct ProfileSampleUseFileDoesNotExist<'a> {
-    pub(crate) path: &'a std::path::Path,
+    pub(crate) path: &'a semos_std::path::Path,
 }
 
 #[derive(Diagnostic)]
@@ -221,13 +226,13 @@ pub(crate) struct SplitDebugInfoUnstablePlatform {
 #[derive(Diagnostic)]
 #[diag(session_file_is_not_writeable)]
 pub(crate) struct FileIsNotWriteable<'a> {
-    pub(crate) file: &'a std::path::Path,
+    pub(crate) file: &'a semos_std::path::Path,
 }
 
 #[derive(Diagnostic)]
 #[diag(session_file_write_fail)]
 pub(crate) struct FileWriteFail<'a> {
-    pub(crate) path: &'a std::path::Path,
+    pub(crate) path: &'a semos_std::path::Path,
     pub(crate) err: String,
 }
 

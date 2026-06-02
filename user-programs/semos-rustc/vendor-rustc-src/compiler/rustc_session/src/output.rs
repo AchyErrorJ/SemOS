@@ -1,6 +1,11 @@
 //! Related to out filenames of compilation (e.g. binaries).
 
-use std::path::Path;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use semos_std::path::Path;
 
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol, sym};

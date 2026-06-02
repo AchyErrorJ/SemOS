@@ -1,7 +1,13 @@
-use std::collections::BTreeMap;
-use std::num::{IntErrorKind, NonZero};
-use std::path::PathBuf;
-use std::str;
+use alloc::boxed::Box;
+#[cfg(target_os = "none")] use crate::getopts;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use alloc::collections::BTreeMap;
+use core::num::{IntErrorKind, NonZero};
+use semos_std::path::PathBuf;
+use core::str;
 
 use rustc_abi::Align;
 use rustc_data_structures::fx::FxIndexMap;
@@ -885,7 +891,7 @@ mod desc {
 }
 
 pub mod parse {
-    use std::str::FromStr;
+    use core::str::FromStr;
 
     pub(crate) use super::*;
     pub(crate) const MAX_THREADS_CAP: usize = 256;
@@ -2528,7 +2534,7 @@ options! {
         `=Enable`
         Currently the only option available"),
     on_broken_pipe: OnBrokenPipe = (OnBrokenPipe::Default, parse_on_broken_pipe, [TRACKED],
-        "behavior of std::io::ErrorKind::BrokenPipe (SIGPIPE)"),
+        "behavior of semos_std::io::ErrorKind::BrokenPipe (SIGPIPE)"),
     osx_rpath_install_name: bool = (false, parse_bool, [TRACKED],
         "pass `-install_name @rpath/...` to the macOS linker (default: no)"),
     packed_bundled_libs: bool = (false, parse_bool, [TRACKED],
@@ -2625,7 +2631,7 @@ written to standard error output)"),
         "run the self profiler and output the raw event data"),
     self_profile_counter: String = ("wall-time".to_string(), parse_string, [UNTRACKED],
         "counter used by the self profiler (default: `wall-time`), one of:
-        `wall-time` (monotonic clock, i.e. `std::time::Instant`)
+        `wall-time` (monotonic clock, i.e. `semos_std::time::Instant`)
         `instructions:u` (retired instructions, userspace-only)
         `instructions-minus-irqs:u` (subtracting hardware interrupt counts for extra accuracy)"
     ),

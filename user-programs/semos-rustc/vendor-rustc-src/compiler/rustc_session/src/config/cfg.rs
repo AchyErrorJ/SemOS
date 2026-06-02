@@ -20,8 +20,8 @@
 //!  - Add the cfg in [`disallow_cfgs`] to disallow users from setting it via `--cfg`
 //!  - Add the feature gating in `compiler/rustc_feature/src/builtin_attrs.rs`
 
-use std::hash::Hash;
-use std::iter;
+use core::hash::Hash;
+use core::iter;
 
 use rustc_abi::Align;
 use rustc_ast::ast;
