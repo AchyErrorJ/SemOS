@@ -90,9 +90,23 @@ pub fn set(key: &[u8], val: &[u8]) -> Result<(), ()> {
     if r == 0 { Ok(()) } else { Err(()) }
 }
 
-/// Read the current working directory into `buf`. Returns the number
-/// of bytes written, or None on error.
-pub fn current_dir(buf: &mut [u8]) -> Option<usize> {
+/// `std::env::current_dir()` — no-arg variant returning an owned
+/// PathBuf, matching std. Internally allocates a 4 KiB scratch buffer.
+pub fn current_dir() -> crate::io::Result<crate::path::PathBuf> {
+    let mut buf = [0u8; 4096];
+    match current_dir_buf(&mut buf) {
+        Some(n) => {
+            let s = core_alloc::str::from_utf8(&buf[..n])
+                .map_err(|_| crate::io::Error::other())?;
+            Ok(crate::path::PathBuf::from(s))
+        }
+        None => Err(crate::io::Error::other()),
+    }
+}
+
+/// Lower-level buffer variant retained for the kernel-side callers
+/// that don't want to allocate a fresh PathBuf each call.
+pub fn current_dir_buf(buf: &mut [u8]) -> Option<usize> {
     let n = unsafe {
         syscall2(SYS_GET_CWD, buf.as_mut_ptr() as u64, buf.len() as u64)
     };
@@ -174,9 +188,10 @@ pub fn vars_os() -> core::iter::Empty<(crate::ffi::OsString, crate::ffi::OsStrin
     core::iter::empty()
 }
 
-/// `std::env::current_dir`-shaped: returns the CWD as an owned String.
+/// CWD as an owned String. Existing callers used this helper before
+/// `current_dir()` itself returned an owned type.
 pub fn current_dir_string() -> Option<String> {
     let mut buf = [0u8; 512];
-    let n = current_dir(&mut buf)?;
+    let n = current_dir_buf(&mut buf)?;
     Some(String::from_utf8_lossy(&buf[..n]).to_string())
 }

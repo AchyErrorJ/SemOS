@@ -53,6 +53,12 @@ impl Path {
         }
     }
 
+    /// Stage F9: `std::path::Path::ends_with` — checks if `child` is
+    /// a suffix of self's components. Trivial textual implementation.
+    pub fn ends_with<P: AsRef<Path>>(&self, child: P) -> bool {
+        self.inner.ends_with(child.as_ref().as_str())
+    }
+
     /// Final component, or `None` if path ends in `/` or is empty.
     pub fn file_name(&self) -> Option<&str> {
         let s = self.inner.trim_end_matches(SEP);
@@ -498,6 +504,33 @@ impl PathBuf {
     pub fn metadata(&self) -> crate::io::Result<crate::fs::StatX> {
         self.as_path().metadata()
     }
+
+    /// Stage F9: `std::path::PathBuf::set_file_name` — replaces the
+    /// last component.
+    pub fn set_file_name<S: AsRef<str>>(&mut self, name: S) {
+        // Drop trailing component (after last '/'), then push new name.
+        if let Some(idx) = self.inner.rfind(SEP) {
+            self.inner.truncate(idx + 1);
+            self.inner.push_str(name.as_ref());
+        } else {
+            self.inner.clear();
+            self.inner.push_str(name.as_ref());
+        }
+    }
+
+    /// Stage F9: `std::path::PathBuf::with_extension` — clone the
+    /// PathBuf and replace/append the extension on the last component.
+    pub fn with_extension<S: AsRef<str>>(&self, ext: S) -> PathBuf {
+        let mut new = self.clone();
+        new.set_extension(ext);
+        new
+    }
+
+    /// Stage F9: `std::path::PathBuf::symlink_metadata` — SemOS has
+    /// no symlinks; behaves identically to `metadata()`.
+    pub fn symlink_metadata(&self) -> crate::io::Result<crate::fs::StatX> {
+        self.metadata()
+    }
 }
 
 // Allow `Cow<Path>` to work by implementing ToOwned. std does the same
@@ -506,6 +539,20 @@ impl PathBuf {
 impl core::borrow::Borrow<Path> for PathBuf {
     fn borrow(&self) -> &Path {
         self.as_path()
+    }
+}
+
+// Stage F9: `Arc<Path>: From<&Path>` — std has this as a specific impl
+// (the alloc blanket `Arc<T>: From<&T>` requires Clone, but Path is
+// `?Sized`). Build the Arc by transmuting an `Arc<str>` view.
+impl From<&Path> for core_alloc::sync::Arc<Path> {
+    fn from(p: &Path) -> Self {
+        let arc_str: core_alloc::sync::Arc<str> = core_alloc::sync::Arc::from(p.as_str());
+        let raw = core_alloc::sync::Arc::into_raw(arc_str);
+        // SAFETY: Path is `#[repr(transparent)]` over `str`, so a fat
+        // pointer with `str` metadata is valid as a fat pointer with
+        // `Path` metadata.
+        unsafe { core_alloc::sync::Arc::from_raw(raw as *const Path) }
     }
 }
 

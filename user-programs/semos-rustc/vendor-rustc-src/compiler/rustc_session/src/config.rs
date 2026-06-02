@@ -12,12 +12,13 @@ use alloc::collections::btree_map::{
     Iter as BTreeMapIter, Keys as BTreeMapKeysIter, Values as BTreeMapValuesIter,
 };
 use alloc::collections::{BTreeMap, BTreeSet};
-use core::ffi::OsStr;
+use semos_std::ffi::OsStr;
 use core::hash::Hash;
 use semos_std::path::{Path, PathBuf};
 use core::str::{self, FromStr};
 use semos_std::sync::LazyLock;
-use core::{cmp, fmt, fs, iter};
+use core::{cmp, fmt, iter};
+use semos_std::fs;
 
 use externs::{ExternOpt, split_extern_opt};
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
@@ -1023,7 +1024,7 @@ impl Input {
         if let Input::File(ifile) = self {
             // If for some reason getting the file stem as a UTF-8 string fails,
             // then fallback to a fixed name.
-            if let Some(name) = ifile.file_stem().and_then(OsStr::to_str) {
+            if let Some(name) = ifile.file_stem() {
                 return name;
             }
         }
@@ -1078,7 +1079,7 @@ impl OutFileName {
     pub fn filestem(&self) -> Option<&OsStr> {
         match *self {
             OutFileName::Real(ref path) => path.file_stem(),
-            OutFileName::Stdout => Some(OsStr::new("stdout")),
+            OutFileName::Stdout => Some(semos_std::ffi::osstr_new("stdout")),
         }
     }
 
@@ -1128,7 +1129,8 @@ impl OutFileName {
         match self {
             OutFileName::Stdout => print!("{content}"),
             OutFileName::Real(path) => {
-                if let Err(e) = fs::write(path, content) {
+                // Stage F9: semos_std::fs::write requires bytes.
+                if let Err(e) = fs::write(path.as_path().as_str(), content.as_bytes()) {
                     sess.dcx().emit_fatal(FileWriteFail { path, err: e.to_string() });
                 }
             }
@@ -1159,7 +1161,10 @@ pub const MAX_FILENAME_LENGTH: usize = 143; // ecryptfs limits filenames to 143 
 /// This is a workaround for long crate names generating overly long filenames.
 fn maybe_strip_file_name(mut path: PathBuf) -> PathBuf {
     if path.file_name().map_or(0, |name| name.len()) > MAX_FILENAME_LENGTH {
-        let filename = path.file_name().unwrap().to_string_lossy();
+        // Stage F9: semos_std::path::Path::file_name returns `Option<&str>`
+        // (not `Option<&OsStr>` like std), so the result is already a UTF-8
+        // string slice — no `to_string_lossy` indirection needed.
+        let filename = path.file_name().unwrap();
         let hash_len = 64 / 4; // Hash64 is 64 bits encoded in hex
         let hyphen_len = 1; // the '-' we insert between hash and suffix
 
@@ -2529,7 +2534,9 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
         early_dcx.early_warn(format!("number of threads was capped at {}", parse::MAX_THREADS_CAP));
     }
 
-    let incremental = cg.incremental.as_ref().map(PathBuf::from);
+    // Stage F9: `PathBuf::from(&String)` doesn't auto-deref to &str
+    // on SemOS where PathBuf is the custom one. Use `.as_str()`.
+    let incremental = cg.incremental.as_ref().map(|s| PathBuf::from(s.as_str()));
 
     let assert_incr_state = parse_assert_incr_state(early_dcx, &unstable_opts.assert_incr_state);
 
@@ -2729,7 +2736,14 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
             // Replace the symlink bootstrap creates, with its destination.
             // We could try to use `fs::canonicalize` instead, but that might
             // produce unnecessarily verbose path.
-            if metadata.file_type().is_symlink() {
+            // Stage F9: semos_std::fs::StatX has no `file_type()`
+            // helper today and SemOS has no symlinks anyway, so the
+            // branch is a no-op on target.
+            #[cfg(not(target_os = "none"))]
+            let is_symlink = metadata.file_type().is_symlink();
+            #[cfg(target_os = "none")]
+            let is_symlink = false;
+            if is_symlink {
                 if let Ok(symlink_dest) = semos_std::fs::read_link(&candidate) {
                     candidate = symlink_dest;
                 }
@@ -2752,18 +2766,21 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
     // times, and the directory contains a lot of files, this can take a lot of time.
     // So we remove -L paths that were passed multiple times, and keep only the first occurrence.
     // We still have to keep the original order of the -L arguments.
+    // Stage F9: hoist the Vec outside the block to satisfy the
+    // borrow checker — the inner block's `seen_search_paths` borrows
+    // from `search_path_matches` which can't be dropped at block-end.
+    let search_path_matches: Vec<String> = matches.opt_strs("L");
     let search_paths: Vec<SearchPath> = {
         let mut seen_search_paths = FxHashSet::default();
-        let search_path_matches: Vec<String> = matches.opt_strs("L");
         search_path_matches
             .iter()
-            .filter(|p| seen_search_paths.insert(*p))
+            .filter(|p| seen_search_paths.insert(p.as_str()))
             .map(|path| {
                 SearchPath::from_cli_opt(
                     sysroot.path(),
                     &target_triple,
                     early_dcx,
-                    &path,
+                    path.as_str(),
                     unstable_opts.unstable_options,
                 )
             })
@@ -2909,6 +2926,7 @@ pub mod nightly_options {
 
     use super::{OptionStability, RustcOptGroup};
     use crate::EarlyDiagCtxt;
+    #[cfg(target_os = "none")] use crate::getopts;
 
     pub fn is_unstable_enabled(matches: &getopts::Matches) -> bool {
         match_is_nightly_build(matches)
@@ -3097,6 +3115,8 @@ pub enum WasiExecModel {
 /// how the hash should be calculated when adding a new command-line argument.
 pub(crate) mod dep_tracking {
     use alloc::collections::BTreeMap;
+    use alloc::string::String;
+    use alloc::vec::Vec;
     use core::hash::Hash;
     use core::num::NonZero;
     use semos_std::path::PathBuf;

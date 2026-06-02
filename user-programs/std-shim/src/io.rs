@@ -233,6 +233,34 @@ pub fn stderr() -> Stderr {
     Stderr
 }
 
+/// `std::io::IsTerminal`. On SemOS the kernel framebuffer console
+/// IS the terminal — return `true` for Stdout/Stderr/Stdin handles.
+/// Plain file descriptors / Vec buffers report `false`.
+pub trait IsTerminal {
+    fn is_terminal(&self) -> bool;
+}
+impl IsTerminal for Stdout { fn is_terminal(&self) -> bool { true } }
+impl IsTerminal for Stderr { fn is_terminal(&self) -> bool { true } }
+
+/// `std::io::BufWriter` — minimal stub. On SemOS we don't buffer
+/// I/O; writes go straight through `SYS_WRITE`. The `BufWriter`
+/// type exists so rustc call sites that wrap stderr in
+/// `BufWriter::new(io::stderr())` compile and behave identically
+/// (modulo perf).
+pub struct BufWriter<W: Write> { inner: W }
+impl<W: Write> BufWriter<W> {
+    pub fn new(inner: W) -> Self { Self { inner } }
+    pub fn into_inner(self) -> core::result::Result<W, BufWriter<W>> { Ok(self.inner) }
+    pub fn get_ref(&self) -> &W { &self.inner }
+    pub fn get_mut(&mut self) -> &mut W { &mut self.inner }
+}
+impl<W: Write> Write for BufWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> { self.inner.write(buf) }
+}
+impl<W: Write> core::fmt::Write for BufWriter<W> where W: core::fmt::Write {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result { self.inner.write_str(s) }
+}
+
 /// `impl io::Write for Vec<u8>` — std has this; many rustc + cg_clif
 /// callers `write!(buf, ...)` against a Vec buffer. (G1 of Phase 4
 /// flagged as the canonical pattern.)

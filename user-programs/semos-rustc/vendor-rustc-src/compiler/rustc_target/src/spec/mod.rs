@@ -3312,6 +3312,18 @@ impl Target {
     ///
     /// The error string could come from any of the APIs called, including filesystem access and
     /// JSON decoding.
+    /// Stage F9: SemOS-side stub — defers to `expect_builtin` since
+    /// SemOS doesn't have a `RUST_TARGET_PATH` env var or filesystem
+    /// path search. Returns warnings = empty.
+    #[cfg(target_os = "none")]
+    pub fn search(
+        target_tuple: &TargetTuple,
+        _sysroot: &Path,
+        _unstable_options: bool,
+    ) -> Result<(Target, TargetWarnings), String> {
+        Ok((Self::expect_builtin(target_tuple), TargetWarnings::empty()))
+    }
+
     /// Stage F7: host-only — depends on `std::env` + `std::fs`.
     #[cfg(not(target_os = "none"))]
     pub fn search(
@@ -3576,6 +3588,13 @@ impl TargetTuple {
     /// Creates a target tuple from the passed target tuple string.
     pub fn from_tuple(tuple: &str) -> Self {
         TargetTuple::TargetTuple(tuple.into())
+    }
+
+    /// Stage F9: SemOS-side stub — no filesystem path-based target
+    /// loading; returns Err(()) so callers fall back to the default.
+    #[cfg(target_os = "none")]
+    pub fn from_path(_path: &Path) -> Result<Self, ()> {
+        Err(())
     }
 
     /// Creates a target tuple from the passed target path.

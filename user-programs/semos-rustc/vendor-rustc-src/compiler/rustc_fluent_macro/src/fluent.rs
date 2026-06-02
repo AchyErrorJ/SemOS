@@ -93,6 +93,29 @@ pub(crate) fn fluent_messages(input: TokenStream) -> TokenStream {
             }
         }
     }
+    // Stage F9 ext: rustc Diagnostic derive lets authors reference a
+    // sibling sub-message via `#[note(<crate_prefix>_<attr>)]` even
+    // when the attr is defined nested under another message. We
+    // flatten by emitting top-level consts `<crate_prefix>_<attr>`
+    // for each attr seen, using the FIRST underscore-separated token
+    // of any parent as the crate prefix.
+    let crate_prefix: Option<String> = parents
+        .first()
+        .and_then(|p| p.split('_').next().map(|s| s.to_string()));
+    if let Some(prefix) = &crate_prefix {
+        let mut flat: Vec<String> = Vec::new();
+        for (_, attrs) in &subdiags {
+            for a in attrs {
+                let combined = format!("{prefix}_{a}");
+                if !parents.contains(&combined) && !flat.contains(&combined) {
+                    flat.push(combined);
+                }
+            }
+        }
+        for f in flat {
+            parents.push(f);
+        }
+    }
     parents.sort();
     parents.dedup();
 

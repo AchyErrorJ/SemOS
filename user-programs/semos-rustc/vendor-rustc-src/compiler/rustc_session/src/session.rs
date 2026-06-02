@@ -10,7 +10,12 @@ use alloc::sync::Arc;
 use core::sync::atomic::AtomicBool;
 use semos_std::{env, io};
 
-use rand::{RngCore, rng};
+// Stage F9: `rand::rng` was made private in rand 0.9; use the
+// public alternative `rand::rngs::OsRng` (`OsRng.next_u32()`) on host
+// and a deterministic counter on SemOS (no /dev/urandom syscall yet).
+use rand::RngCore;
+#[cfg(not(target_os = "none"))]
+use rand::rngs::OsRng;
 use rustc_data_structures::base_n::{CASE_INSENSITIVE, ToBaseN};
 use rustc_data_structures::flock;
 use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
@@ -527,7 +532,13 @@ impl Session {
         } else if self.opts.unstable_opts.ui_testing {
             default_column_width
         } else {
-            termize::dimensions().map_or(default_column_width, |(w, _)| w)
+            {
+                // Stage F9: termize queries terminal size (host-only).
+                #[cfg(not(target_os = "none"))]
+                { termize::dimensions().map_or(default_column_width, |(w, _)| w) }
+                #[cfg(target_os = "none")]
+                { default_column_width }
+            }
         }
     }
 
@@ -1070,7 +1081,20 @@ pub fn build_session(
     let invocation_temp = sopts
         .incremental
         .as_ref()
-        .map(|_| rng().next_u32().to_base_fixed_len(CASE_INSENSITIVE).to_string());
+        // Stage F9: random unique-id source. Host uses OsRng; SemOS
+        // doesn't have a getrandom syscall yet so we fall back to a
+        // simple monotonic counter from an atomic.
+        .map(|_| {
+            #[cfg(not(target_os = "none"))]
+            let n = OsRng.next_u32();
+            #[cfg(target_os = "none")]
+            let n: u32 = {
+                use core::sync::atomic::{AtomicU32, Ordering};
+                static CTR: AtomicU32 = AtomicU32::new(0x9E37_79B9);
+                CTR.fetch_add(0x9E37_79B9, Ordering::Relaxed)
+            };
+            n.to_base_fixed_len(CASE_INSENSITIVE).to_string()
+        });
 
     let timings = TimingSectionHandler::new(sopts.json_timings);
 

@@ -22,10 +22,20 @@ pub type OsStr = str;
 /// `OsString::from(...)` shape rustc uses.
 pub trait OsStrExt {
     fn to_os_string(&self) -> OsString;
+    /// `std::ffi::OsStr::to_str` — UTF-8-only on SemOS, always Some.
+    fn to_str_compat(&self) -> Option<&str>;
 }
 
 impl OsStrExt for str {
     fn to_os_string(&self) -> OsString {
         OsString::from(self)
     }
+    fn to_str_compat(&self) -> Option<&str> {
+        Some(self)
+    }
+}
+
+/// `std::ffi::OsStr::new` shim — same as `&str` directly.
+pub fn osstr_new<S: AsRef<str> + ?Sized>(s: &S) -> &OsStr {
+    s.as_ref()
 }

@@ -166,6 +166,25 @@ pub fn read_link<P: AsRef<crate::path::Path>>(path: P) -> io::Result<crate::path
     Ok(crate::path::PathBuf::from(path.as_ref().as_str()))
 }
 
+/// `std::fs::read_dir` stub. SemOS lacks a Phase-14 directory
+/// iteration syscall; returns an empty iterator. The rustc front-end's
+/// sysroot probing never runs on the SemOS target in the v1 cut.
+pub fn read_dir<P: AsRef<crate::path::Path>>(_path: P) -> io::Result<ReadDir> {
+    Ok(ReadDir { _priv: () })
+}
+
+pub struct ReadDir { _priv: () }
+impl Iterator for ReadDir {
+    type Item = io::Result<DirEntry>;
+    fn next(&mut self) -> Option<Self::Item> { None }
+}
+
+pub struct DirEntry { _priv: () }
+impl DirEntry {
+    pub fn path(&self) -> crate::path::PathBuf { crate::path::PathBuf::from("") }
+    pub fn file_name(&self) -> crate::ffi::OsString { String::new() }
+}
+
 /// Read an entire file into a byte vector.
 pub fn read(path: &str) -> io::Result<Vec<u8>> {
     let mut f = File::open(path)?;

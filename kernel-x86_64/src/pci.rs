@@ -152,15 +152,33 @@ pub fn class_triple(loc: Location) -> (u8, u8, u8) {
 
 /// Find the first device on bus 0 matching a (class, subclass, prog_if) triple.
 /// Used for class-coded devices whose vendor/device IDs vary (e.g. NVMe =
-/// 0x01/0x08/0x02). Scans function 0 of each slot.
+/// 0x01/0x08/0x02). Now walks all 8 functions of multifunction slots —
+/// required for real-hardware Intel PCH chipsets where the SATA AHCI
+/// controller is at `0:1F.2` (function 2), not function 0. QEMU's
+/// ich9-ahci sits at function 0 so the old function-0-only scan
+/// happened to work in emulation but failed on real boards.
 pub fn find_by_class(class: u8, subclass: u8, prog_if: u8) -> Option<Location> {
     for slot in 0..32u8 {
-        let loc = Location { bus: 0, slot, func: 0 };
-        if loc.vendor_id() == 0xFFFF {
+        let loc0 = Location { bus: 0, slot, func: 0 };
+        if loc0.vendor_id() == 0xFFFF {
             continue;
         }
-        if class_triple(loc) == (class, subclass, prog_if) {
-            return Some(loc);
+        if class_triple(loc0) == (class, subclass, prog_if) {
+            return Some(loc0);
+        }
+        // PCI header-type byte (offset 0x0E): bit 7 set = multifunction.
+        let header_type = (read_u32(0, slot, 0, 0x0C) >> 16) as u8;
+        if header_type & 0x80 == 0 {
+            continue;
+        }
+        for func in 1..8u8 {
+            let loc = Location { bus: 0, slot, func };
+            if loc.vendor_id() == 0xFFFF {
+                continue;
+            }
+            if class_triple(loc) == (class, subclass, prog_if) {
+                return Some(loc);
+            }
         }
     }
     None
@@ -183,20 +201,38 @@ pub fn mmio_bar64(loc: Location) -> Option<u64> {
     Some(base)
 }
 
-/// Print a one-line summary of every device on bus 0. Useful for boot-time
-/// diagnostics.
+/// Print a one-line summary of every device on bus 0, including
+/// multifunction sub-functions. Useful for boot-time diagnostics.
 pub fn print_bus_0() {
     let mut count = 0;
     for slot in 0..32u8 {
-        let loc = Location { bus: 0, slot, func: 0 };
-        let v = loc.vendor_id();
+        let loc0 = Location { bus: 0, slot, func: 0 };
+        let v = loc0.vendor_id();
         if v == 0xFFFF {
             continue;
         }
-        let d = loc.device_id();
-        crate::println!("    PCI 00:{:02X}.0  vendor=0x{:04X} device=0x{:04X}",
-            slot, v, d);
+        let d = loc0.device_id();
+        let (c, sc, pi) = class_triple(loc0);
+        crate::println!("    PCI 00:{:02X}.0  ven=0x{:04X} dev=0x{:04X} class={:02X}/{:02X}/{:02X}",
+            slot, v, d, c, sc, pi);
         count += 1;
+        // Walk other functions of multifunction devices (e.g. PCH at 0:1F).
+        let header_type = (read_u32(0, slot, 0, 0x0C) >> 16) as u8;
+        if header_type & 0x80 == 0 {
+            continue;
+        }
+        for func in 1..8u8 {
+            let loc = Location { bus: 0, slot, func };
+            let v = loc.vendor_id();
+            if v == 0xFFFF {
+                continue;
+            }
+            let d = loc.device_id();
+            let (c, sc, pi) = class_triple(loc);
+            crate::println!("    PCI 00:{:02X}.{}  ven=0x{:04X} dev=0x{:04X} class={:02X}/{:02X}/{:02X}",
+                slot, func, v, d, c, sc, pi);
+            count += 1;
+        }
     }
     crate::println!("    {} PCI devices on bus 0", count);
 }

@@ -1120,7 +1120,13 @@ pub mod parse {
     pub(crate) fn parse_threads(slot: &mut usize, v: Option<&str>) -> bool {
         let ret = match v.and_then(|s| s.parse().ok()) {
             Some(0) => {
-                *slot = std::thread::available_parallelism().map_or(1, NonZero::<usize>::get);
+                // Stage F9: `std::thread::available_parallelism` is
+                // host-only; SemOS is single-threaded per §1.4 so
+                // always report 1.
+                #[cfg(not(target_os = "none"))]
+                { *slot = std::thread::available_parallelism().map_or(1, NonZero::<usize>::get); }
+                #[cfg(target_os = "none")]
+                { *slot = 1; }
                 true
             }
             Some(i) => {

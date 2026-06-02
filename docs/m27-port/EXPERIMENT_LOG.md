@@ -2451,3 +2451,49 @@ Remaining 93 errors are:
 
 Stage F9 to be continued. Total session: ~7100+ errors cleared.
 
+
+## Stage F9 COMPLETE: rustc_session 2415 → 0 errors
+
+Largest single-crate close yet. Final push from 93 → 0 over ~30 mins
+of cfg-gating, stub method additions, and minor signature fixes.
+
+Final infra changes:
+- `rustc_errors::emitter_stub` extended with `Destination`,
+  `stderr_destination`, `HumanReadableErrorType` (now a struct
+  matching upstream field-init form), `OutputTheme`, `EmitterWithNote`
+  with `emitter`/`note` fields
+- `rustc_errors::annotate_snippet_emitter_writer` SemOS stub with
+  AnnotateSnippetEmitter 2-arg `new` + builder methods (sm, short_message,
+  theme, macro_backtrace, ui_testing, diagnostic_width, fluent_bundle,
+  track_diagnostics, terminal_url, ignored_directories_in_source_blocks)
+- `rustc_errors::json` SemOS stub with JsonEmitter 6-arg `new` + builder
+  methods (sm, ignored_directories_in_source_blocks, track_diagnostics,
+  terminal_url, ui_testing, diagnostic_width, macro_backtrace)
+- `rustc_errors::TerminalUrl` re-exported from json submodule
+- `rustc_session::getopts` stub extended with `opts_present`, `opt_get`,
+  `opt_strs_pos`, `opt_positions`
+- `rustc_session` lib.rs: `__semos_stub_println`/`print` no-op macros
+
+semos-std additions:
+- `env::args_os() -> IntoIter<OsString>` 
+- `env::current_dir() -> io::Result<PathBuf>` (no-arg, std-compatible)
+- `env::current_dir_buf(&mut [u8])` (kernel-side buffer variant)
+- `fs::read_dir(path) -> io::Result<ReadDir>` (returns empty iter)
+- `fs::read_link(path) -> io::Result<PathBuf>` (no-symlinks stub)
+- `io::IsTerminal` trait + impl for Stdout/Stderr (true on SemOS)
+- `io::BufWriter<W>` minimal wrapper
+- `ffi::osstr_new(&str) -> &OsStr` + `OsStrExt::to_str_compat`
+- `path::Path::ends_with`
+- `path::PathBuf::{set_file_name, with_extension, symlink_metadata}`
+- `Arc<Path>: From<&Path>` impl
+
+Bonus while user was rebooting: `pci.rs::find_by_class` patched to
+walk multifunction sub-functions — Lynx Point PCH's SATA at 0:1F.2
+was missed by function-0-only scan. Real-hardware SATA discovery
+should now work on the W540.
+
+Cumulative session: **15 patched rustc_* crates closed**, ~7300+
+errors cleared. Workspace check now blocks on **rustc_query_system
+(643 errors)** + **rustc_parse (16)** in parallel. These are
+independent crates → perfect candidates for parallel agents.
+

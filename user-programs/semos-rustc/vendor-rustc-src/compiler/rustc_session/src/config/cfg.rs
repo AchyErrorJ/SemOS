@@ -20,6 +20,7 @@
 //!  - Add the cfg in [`disallow_cfgs`] to disallow users from setting it via `--cfg`
 //!  - Add the feature gating in `compiler/rustc_feature/src/builtin_attrs.rs`
 
+use alloc::string::ToString;
 use core::hash::Hash;
 use core::iter;
 
@@ -441,7 +442,7 @@ impl CheckCfg {
                     Some(values_target_os),
                     Some(values_target_pointer_width),
                     Some(values_target_vendor),
-                ] = self.expecteds.get_disjoint_mut(VALUES)
+                ] = self.expecteds.get_many_mut(VALUES)
                 else {
                     panic!("unable to get all the check-cfg values buckets");
                 };

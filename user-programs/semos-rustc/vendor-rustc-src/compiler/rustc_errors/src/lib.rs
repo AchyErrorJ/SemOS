@@ -169,9 +169,9 @@ pub mod emitter_stub {
     pub struct Destination;
     pub fn stderr_destination(_color: ColorConfig) -> Destination { Destination }
 
-    pub struct EmitterWithNote;
-    impl EmitterWithNote {
-        pub fn new() -> Self { Self }
+    pub struct EmitterWithNote {
+        pub emitter: alloc::boxed::Box<dyn Emitter + DynSend>,
+        pub note: alloc::string::String,
     }
     impl Emitter for EmitterWithNote {
         fn translator(&self) -> &Translator {
@@ -218,16 +218,20 @@ pub mod annotate_snippet_emitter_writer;
 #[cfg(target_os = "none")]
 pub mod annotate_snippet_emitter_writer {
     use crate::translation::Translator;
+    use rustc_span::source_map::SourceMap;
     pub struct AnnotateSnippetEmitter;
     impl AnnotateSnippetEmitter {
-        pub fn new(
-            _dst: alloc::boxed::Box<dyn semos_std::io::Write + Send>,
-            _fallback_bundle: crate::LazyFallbackBundle,
-            _short_message: bool,
-            _macro_backtrace: bool,
-            _ui_testing: bool,
-            _translator: Translator,
-        ) -> Self { Self }
+        pub fn new<D>(_dst: D, _translator: Translator) -> Self { Self }
+        pub fn sm(self, _sm: Option<alloc::sync::Arc<SourceMap>>) -> Self { self }
+        pub fn short_message(self, _b: bool) -> Self { self }
+        pub fn theme(self, _t: crate::emitter_stub::OutputTheme) -> Self { self }
+        pub fn macro_backtrace(self, _b: bool) -> Self { self }
+        pub fn ui_testing(self, _b: bool) -> Self { self }
+        pub fn diagnostic_width(self, _w: Option<usize>) -> Self { self }
+        pub fn fluent_bundle(self, _b: Option<alloc::sync::Arc<crate::FluentBundle>>) -> Self { self }
+        pub fn track_diagnostics(self, _b: bool) -> Self { self }
+        pub fn terminal_url(self, _url: crate::TerminalUrl) -> Self { self }
+        pub fn ignored_directories_in_source_blocks(self, _dirs: alloc::vec::Vec<alloc::string::String>) -> Self { self }
     }
     impl super::emitter_stub::Emitter for AnnotateSnippetEmitter {
         fn translator(&self) -> &Translator {
@@ -253,6 +257,23 @@ pub mod json;
 pub mod json {
     use crate::translation::Translator;
     pub struct JsonEmitter;
+    impl JsonEmitter {
+        pub fn new<D, SM>(
+            _dst: D,
+            _source_map: SM,
+            _translator: Translator,
+            _pretty: bool,
+            _json_rendered: crate::emitter_stub::HumanReadableErrorType,
+            _color_config: crate::emitter_stub::ColorConfig,
+        ) -> Self { Self }
+        pub fn sm(self, _sm: Option<alloc::sync::Arc<rustc_span::source_map::SourceMap>>) -> Self { self }
+        pub fn ignored_directories_in_source_blocks(self, _dirs: alloc::vec::Vec<alloc::string::String>) -> Self { self }
+        pub fn track_diagnostics(self, _b: bool) -> Self { self }
+        pub fn terminal_url(self, _url: crate::TerminalUrl) -> Self { self }
+        pub fn ui_testing(self, _b: bool) -> Self { self }
+        pub fn diagnostic_width(self, _w: Option<usize>) -> Self { self }
+        pub fn macro_backtrace(self, _b: bool) -> Self { self }
+    }
     impl super::emitter_stub::Emitter for JsonEmitter {
         fn translator(&self) -> &Translator {
             panic!("JsonEmitter::translator unavailable on SemOS")

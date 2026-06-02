@@ -139,11 +139,16 @@ impl SearchPath {
             Ok(files) => files
                 .filter_map(|e| {
                     e.ok().and_then(|e| {
-                        e.file_name().to_str().map(|s| {
+                        // Stage F9: semos_std::ffi::OsString == String, so
+                        // `to_str()` is just `Some(&self)`. Use as_str().
+                        let fname = e.file_name();
+                        let s: &str = fname.as_str();
+                        Some({
                             let file_name_str: Arc<str> = s.into();
+                            let p: PathBuf = e.path();
                             (
                                 Arc::clone(&file_name_str),
-                                SearchPathFile { path: e.path().into(), file_name_str },
+                                SearchPathFile { path: Arc::<Path>::from(p.as_path()), file_name_str },
                             )
                         })
                     })

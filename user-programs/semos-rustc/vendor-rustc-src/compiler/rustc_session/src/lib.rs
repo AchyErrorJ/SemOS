@@ -55,11 +55,13 @@ mod getopts {
     }
     impl Matches {
         pub fn opt_present(&self, _name: &str) -> bool { false }
+        pub fn opts_present(&self, _names: &[String]) -> bool { false }
         pub fn opt_str(&self, _name: &str) -> Option<String> { None }
         pub fn opt_strs(&self, _name: &str) -> Vec<String> { Vec::new() }
         pub fn opt_strs_pos(&self, _name: &str) -> Vec<(usize, String)> { Vec::new() }
         pub fn opt_count(&self, _name: &str) -> usize { 0 }
         pub fn opt_positions(&self, _name: &str) -> Vec<usize> { Vec::new() }
+        pub fn opt_get<T: core::str::FromStr>(&self, _name: &str) -> core::result::Result<Option<T>, T::Err> { Ok(None) }
         pub fn opt_default(&self, _name: &str, def: &str) -> Option<String> {
             Some(String::from(def))
         }
@@ -81,7 +83,11 @@ pub use session::*;
 
 pub mod output;
 
-pub use getopts;
+// Stage F9: on host getopts is an extern crate; on SemOS it's our
+// local stub module. Re-export only on host since the local stub
+// is private to this crate.
+#[cfg(not(target_os = "none"))]
+pub use ::getopts;
 
 rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
 
