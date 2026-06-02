@@ -39,6 +39,14 @@ pub fn args() -> Vec<String> {
     }
 }
 
+/// `std::env::args_os` — yields each arg as `OsString`. On SemOS
+/// `OsString` is a `String` alias (Phase 14 UTF-8-only filesystem),
+/// so this is just `args()` re-typed as an iterator.
+pub fn args_os() -> core_alloc::vec::IntoIter<crate::ffi::OsString> {
+    let v: Vec<crate::ffi::OsString> = args().into_iter().collect();
+    v.into_iter()
+}
+
 /// Read a NUL-terminated C string into an owned String (UTF-8 lossy).
 unsafe fn cstr_to_string(ptr: *const u8) -> String {
     let mut len = 0usize;

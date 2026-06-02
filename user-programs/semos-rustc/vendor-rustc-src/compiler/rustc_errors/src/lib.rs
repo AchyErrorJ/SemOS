@@ -120,7 +120,8 @@ pub use emitter::ColorConfig;
 #[cfg(not(target_os = "none"))]
 use emitter::{DynEmitter, Emitter};
 #[cfg(target_os = "none")]
-mod emitter_stub {
+pub mod emitter_stub {
+    use alloc::boxed::Box;
     use alloc::vec::Vec;
     use crate::translation::Translator;
     use crate::registry::Registry;
@@ -128,8 +129,22 @@ mod emitter_stub {
     use crate::{DiagInner, DynSend};
     use semos_std::path::Path;
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum ColorConfig { Auto, Always, Never }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum TimingEvent { Start, End }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum OutputTheme { Ascii, Unicode }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct HumanReadableErrorType { pub short: bool, pub unicode: bool }
+    impl HumanReadableErrorType {
+        pub fn new_emitter(self, _dst: Destination, _bundle: crate::LazyFallbackBundle, _translator: Translator) -> SilentEmitter {
+            SilentEmitter { translator: _translator }
+        }
+    }
 
     pub trait Emitter {
         fn emit_diagnostic(&mut self, _diag: DiagInner, _registry: &Registry) {}
@@ -148,13 +163,30 @@ mod emitter_stub {
     impl Emitter for SilentEmitter {
         fn translator(&self) -> &Translator { &self.translator }
     }
+
+    // Stub destination + alternate emitters used by rustc_session call
+    // sites. None of these run on SemOS — `panic-abort` per §1.9.
+    pub struct Destination;
+    pub fn stderr_destination(_color: ColorConfig) -> Destination { Destination }
+
+    pub struct EmitterWithNote;
+    impl EmitterWithNote {
+        pub fn new() -> Self { Self }
+    }
+    impl Emitter for EmitterWithNote {
+        fn translator(&self) -> &Translator {
+            // SAFETY: never actually called on SemOS — §1.9 abort path.
+            panic!("EmitterWithNote::translator not available on SemOS")
+        }
+    }
 }
 #[cfg(target_os = "none")]
 use emitter_stub::{DynEmitter, Emitter, TimingEvent};
 #[cfg(target_os = "none")]
 pub use emitter_stub::{ColorConfig};
-#[cfg(target_os = "none")]
-use emitter_stub as emitter;
+// `pub use emitter_stub as emitter;` below replaces the host `pub mod
+// emitter;` on SemOS — handles both `use emitter::*;` (this crate's
+// internal) and external `rustc_errors::emitter::*` paths.
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_data_structures::sync::{DynSend, Lock};
@@ -179,9 +211,30 @@ use crate::registry::Registry;
 use crate::timings::TimingRecord;
 
 // Stage F8: annotate_snippet_emitter_writer builds on host-only
-// `annotate-snippets`. SemOS has no terminal emitter path.
+// `annotate-snippets`. SemOS has no terminal emitter path. On SemOS
+// expose a minimal stub module with the type rustc_session needs.
 #[cfg(not(target_os = "none"))]
 pub mod annotate_snippet_emitter_writer;
+#[cfg(target_os = "none")]
+pub mod annotate_snippet_emitter_writer {
+    use crate::translation::Translator;
+    pub struct AnnotateSnippetEmitter;
+    impl AnnotateSnippetEmitter {
+        pub fn new(
+            _dst: alloc::boxed::Box<dyn semos_std::io::Write + Send>,
+            _fallback_bundle: crate::LazyFallbackBundle,
+            _short_message: bool,
+            _macro_backtrace: bool,
+            _ui_testing: bool,
+            _translator: Translator,
+        ) -> Self { Self }
+    }
+    impl super::emitter_stub::Emitter for AnnotateSnippetEmitter {
+        fn translator(&self) -> &Translator {
+            panic!("AnnotateSnippetEmitter::translator unavailable on SemOS")
+        }
+    }
+}
 pub mod codes;
 mod decorate_diag;
 mod diagnostic;
@@ -191,9 +244,21 @@ mod diagnostic_impls;
 // entirely — errors panic-abort per §1.9 instead of being rendered.
 #[cfg(not(target_os = "none"))]
 pub mod emitter;
+#[cfg(target_os = "none")]
+pub use emitter_stub as emitter;
 pub mod error;
 #[cfg(not(target_os = "none"))]
 pub mod json;
+#[cfg(target_os = "none")]
+pub mod json {
+    use crate::translation::Translator;
+    pub struct JsonEmitter;
+    impl super::emitter_stub::Emitter for JsonEmitter {
+        fn translator(&self) -> &Translator {
+            panic!("JsonEmitter::translator unavailable on SemOS")
+        }
+    }
+}
 mod lock;
 #[cfg(not(target_os = "none"))]
 pub mod markdown;

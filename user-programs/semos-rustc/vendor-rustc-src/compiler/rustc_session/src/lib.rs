@@ -30,6 +30,20 @@ pub mod filesearch;
 mod macros;
 mod options;
 
+// Stage F9: println!/print! are std-prelude macros, unavailable on
+// no_std. SemOS stubs are no-ops since CLI help / `--print` output
+// doesn't run on the target.
+#[cfg(target_os = "none")]
+#[macro_export]
+macro_rules! __semos_stub_println { ($($arg:tt)*) => { () }; }
+#[cfg(target_os = "none")]
+#[macro_export]
+macro_rules! __semos_stub_print { ($($arg:tt)*) => { () }; }
+#[cfg(target_os = "none")]
+pub(crate) use __semos_stub_println as println;
+#[cfg(target_os = "none")]
+pub(crate) use __semos_stub_print as print;
+
 // Stage F9: getopts is host-only (CLI option parsing). SemOS-target
 // rustc doesn't read argv via getopts, so we stub the surface used.
 #[cfg(target_os = "none")]
@@ -43,7 +57,9 @@ mod getopts {
         pub fn opt_present(&self, _name: &str) -> bool { false }
         pub fn opt_str(&self, _name: &str) -> Option<String> { None }
         pub fn opt_strs(&self, _name: &str) -> Vec<String> { Vec::new() }
+        pub fn opt_strs_pos(&self, _name: &str) -> Vec<(usize, String)> { Vec::new() }
         pub fn opt_count(&self, _name: &str) -> usize { 0 }
+        pub fn opt_positions(&self, _name: &str) -> Vec<usize> { Vec::new() }
         pub fn opt_default(&self, _name: &str, def: &str) -> Option<String> {
             Some(String::from(def))
         }

@@ -159,6 +159,13 @@ impl Drop for File {
 // Free functions
 // ---------------------------------------------------------------------
 
+/// `std::fs::read_link` stub. SemOS has no symlinks (Phase 14 FS is
+/// flat), so the function always returns the input path back. Returns
+/// `crate::path::PathBuf` to match `std::fs::read_link`'s signature.
+pub fn read_link<P: AsRef<crate::path::Path>>(path: P) -> io::Result<crate::path::PathBuf> {
+    Ok(crate::path::PathBuf::from(path.as_ref().as_str()))
+}
+
 /// Read an entire file into a byte vector.
 pub fn read(path: &str) -> io::Result<Vec<u8>> {
     let mut f = File::open(path)?;

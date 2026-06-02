@@ -2412,3 +2412,42 @@ Remaining ~122 errors are mostly:
 Stage F9 to be continued in a follow-up. Crates closed cumulatively
 this session: 14 (rustc_session still pending).
 
+
+## Stage F9 continued: rustc_session 122 → 93 errors
+
+Further work on rustc_session via expanded rustc_errors emitter stubs:
+- `pub mod emitter_stub` with `HumanReadableErrorType` (now a struct
+  with `short`/`unicode` fields matching upstream's struct form),
+  `OutputTheme` enum, `Destination`, `stderr_destination`,
+  `EmitterWithNote` stub, and `HumanReadableErrorType::new_emitter`
+  method
+- `pub mod annotate_snippet_emitter_writer` stub on SemOS with
+  6-arg `AnnotateSnippetEmitter::new`
+- `pub mod json` stub on SemOS with `JsonEmitter` type
+- `pub use emitter_stub as emitter` so external
+  `rustc_errors::emitter::*` paths resolve uniformly
+
+Un-cfg-gated the imports in rustc_session config/parse/session.rs
+once the stubs exist.
+
+Also added to semos_std:
+- `env::args_os() -> IntoIter<OsString>`
+- `fs::read_link<P: AsRef<Path>>(path) -> io::Result<PathBuf>`
+  (no-op stub — SemOS has no symlinks)
+
+And to rustc_session lib.rs:
+- `__semos_stub_println` / `__semos_stub_print` macros + crate-local
+  re-export injected into code_stats.rs / config.rs
+- getopts stub extended with `opt_strs_pos` / `opt_positions`
+
+Remaining 93 errors are:
+- 23 type annotations needed (likely cascade from missing methods)
+- 8 AnnotateSnippetEmitter::new arg-count mismatches (callers pass
+  different signatures across files)
+- 8 getopts/error_messages module unresolved (sites I missed)
+- 5 trait bounds (DepTrackingHash for String, etc.)
+- 5 type annotations (_, _)
+- misc
+
+Stage F9 to be continued. Total session: ~7100+ errors cleared.
+

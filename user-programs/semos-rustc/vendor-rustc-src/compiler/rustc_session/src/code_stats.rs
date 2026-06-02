@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+#[cfg(target_os = "none")] use crate::{println, print};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::borrow::ToOwned;

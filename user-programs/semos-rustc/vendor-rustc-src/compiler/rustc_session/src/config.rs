@@ -2,6 +2,7 @@
 //! command-line options.
 
 use alloc::boxed::Box;
+#[cfg(target_os = "none")] use crate::{println, print};
 #[cfg(target_os = "none")] use crate::getopts;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
