@@ -5,6 +5,16 @@
 #![feature(min_specialization)]
 // tidy-alphabetical-end
 
+// M27 Phase 5b Stage F10: no_std on SemOS target. Host build still uses
+// std for parking_lot etc.; the SemOS target is fully no_std + alloc.
+#![cfg_attr(target_os = "none", no_std)]
+
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
 pub mod cache;
 pub mod dep_graph;
 mod error;

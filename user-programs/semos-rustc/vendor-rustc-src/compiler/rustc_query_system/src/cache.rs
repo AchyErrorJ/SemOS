@@ -1,6 +1,6 @@
 //! Cache for candidate selection.
 
-use std::hash::Hash;
+use core::hash::Hash;
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::sync::Lock;

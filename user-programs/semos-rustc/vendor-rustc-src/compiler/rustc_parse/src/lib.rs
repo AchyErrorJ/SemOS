@@ -15,7 +15,7 @@
 #[macro_use]
 extern crate alloc;
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 #[cfg(not(target_os = "none"))]

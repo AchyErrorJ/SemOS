@@ -17,6 +17,35 @@ pub mod mem_encoder;
 
 pub const MAGIC_END_BYTES: &[u8] = b"rust-end-file";
 
+// Stage F10: stub FileEncoder + FileEncodeResult on BOTH targets so
+// rustc_query_system / rustc_incremental call sites that reference
+// these types in struct fields and function signatures still type-
+// check. The actual incremental cache writer is dead per §1.3; these
+// stubs return Err/no-op if any method is invoked at runtime.
+pub struct FileEncoder;
+pub type FileEncodeResult = core::result::Result<usize, alloc::boxed::Box<dyn core::fmt::Debug + Send + Sync>>;
+impl FileEncoder {
+    pub fn finish(&mut self) -> FileEncodeResult { Ok(0) }
+    pub fn position(&self) -> usize { 0 }
+    pub fn flush(&mut self) {}
+    pub fn emit_raw_bytes(&mut self, _bytes: &[u8]) {}
+}
+
+impl crate::Encoder for FileEncoder {
+    fn emit_usize(&mut self, _v: usize) {}
+    fn emit_u128(&mut self, _v: u128) {}
+    fn emit_u64(&mut self, _v: u64) {}
+    fn emit_u32(&mut self, _v: u32) {}
+    fn emit_u16(&mut self, _v: u16) {}
+    fn emit_u8(&mut self, _v: u8) {}
+    fn emit_isize(&mut self, _v: isize) {}
+    fn emit_i128(&mut self, _v: i128) {}
+    fn emit_i64(&mut self, _v: i64) {}
+    fn emit_i32(&mut self, _v: i32) {}
+    fn emit_i16(&mut self, _v: i16) {}
+    fn emit_raw_bytes(&mut self, _bytes: &[u8]) {}
+}
+
 // M27 §1.3: incremental compilation dropped — `FileEncoder` cfg'd out.
 // `FileEncoder` was the on-disk buffered writer used by both the rmeta path and
 // the incremental cache writer. semos-rustc's metadata path uses `MemEncoder`
@@ -440,17 +469,12 @@ impl IntEncodedWithFixedSize {
     pub const ENCODED_SIZE: usize = 8;
 }
 
-// M27 §1.3: `impl Encodable<FileEncoder> for IntEncodedWithFixedSize` cfg'd out
-// (FileEncoder gone). MemEncoder's IntEncodedWithFixedSize impl lives in mem_encoder.rs.
-#[cfg(any())]
-impl Encodable<FileEncoder> for IntEncodedWithFixedSize {
+// Stage F10: re-enable the FileEncoder Encodable impl using the
+// stub (no-op write). rustc_query_system needs this for IncrementalDep
+// graph node count encoding (dead path on SemOS but type-checked).
+impl crate::Encodable<FileEncoder> for IntEncodedWithFixedSize {
     #[inline]
-    fn encode(&self, e: &mut FileEncoder) {
-        let start_pos = e.position();
-        e.write_array(self.0.to_le_bytes());
-        let end_pos = e.position();
-        debug_assert_eq!((end_pos - start_pos), IntEncodedWithFixedSize::ENCODED_SIZE);
-    }
+    fn encode(&self, _e: &mut FileEncoder) {}
 }
 
 impl<'a> Decodable<MemDecoder<'a>> for IntEncodedWithFixedSize {

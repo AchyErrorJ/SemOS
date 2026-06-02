@@ -2497,3 +2497,60 @@ errors cleared. Workspace check now blocks on **rustc_query_system
 (643 errors)** + **rustc_parse (16)** in parallel. These are
 independent crates → perfect candidates for parallel agents.
 
+
+## Stage F10: rustc_parse + rustc_query_system
+
+**rustc_parse: 16 → 0 errors** — quick close.
+- Cargo.toml: semos-std + rustc_error_messages target deps
+- alloc preludes added to 6 files
+- ToString import in lib.rs
+- 1 #[instrument] in parser/expr.rs commented
+- Removed duplicate awk-inserted ToString imports
+
+**rustc_query_system: 643 → 0 errors.**
+- #![no_std] + extern crate alloc + alloc preludes in 12 files
+- Bulk std::* → core/alloc/semos_std sweep
+- 5 #[instrument] attrs stripped, instrument removed from imports
+- Cargo.toml: semos-std + rustc_error_messages target deps
+- eprintln! stub macros in graph.rs + serialized.rs (no-op on SemOS)
+- panic::catch_unwind / resume_unwind cfg-gated to host
+- INSIDE_VERIFY_PANIC: thread_local!→AtomicBool on SemOS
+- Condvar wait at job.rs:237: cfg-gated (cycle detection is host-only)
+- finish_encoding in serialized.rs:722: cfg-split with stub on SemOS
+  (avoids NonNull<u8>: !DynSend bound on broadcast closure)
+- query_map.get(&self) → query_map.get(self) (hashbrown Equivalent fix)
+- rustc_serialize: FileEncoder + FileEncodeResult stub + Encoder/
+  Encodable impls (no-op) for BOTH targets — fixes downstream
+  rustc_query_system / rustc_incremental call sites that reference
+  these types in struct fields and function signatures
+
+**Major rustc_fluent_macro upgrade in F10**:
+- Subdiag attrs that collide with Rust keywords (e.g. `.type =`) now
+  emit `pub const r#type:` instead of `pub const type:`. Fixes
+  rustc_parse's `messages.ftl` having `.type = inherent impl ...`.
+
+**semos-std additions**:
+- `core::fmt::Debug` impls for `Mutex<T>` and `Condvar` (rustc derives
+  Debug on structs containing these types)
+
+**Kernel-side bonuses in this stage:**
+- **xhci.rs::discover** — vendor-agnostic class-triple match
+  (0x0C/0x03/0x30), works on both qemu-xhci and real Intel PCH xHCI
+  (Lynx Point 8086:8C31)
+- **xhci.rs::MAX_SCRATCHPAD_BUFS** 8 → 32 — real Intel xHCI asks for
+  16, QEMU asks for 0; 32 gives headroom (128 KiB static reservation)
+- **Build with `--features interactive`** — drops user into live
+  sem-sh shell after demos instead of halting. This was the
+  "no shell after demos" the user reported.
+
+Workspace state: **17 patched rustc_* crates closed cumulatively**
+(data_structures, span, serialize, ast, ast_pretty, error_messages,
+type_ir, next_trait_solver, abi, target, hir, feature, hir_pretty,
+errors, session, parse, query_system). ~7900+ errors cleared.
+
+Real-hardware milestones this session:
+- First bare-metal SemOS boot on W540 (UEFI + Secure Boot off)
+- AHCI controller discovery (PCI multifunction scan fix)
+- USB xHCI controller discovery (class-triple matching + scratchpad
+  buffer count bump)
+- All 60 demos run on real hardware

@@ -1,5 +1,7 @@
 //! Utilities for rendering escape sequence errors as diagnostics.
 
+use alloc::borrow::ToOwned;
+
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::iter::once;

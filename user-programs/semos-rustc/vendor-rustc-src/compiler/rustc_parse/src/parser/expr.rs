@@ -1,5 +1,7 @@
 // ignore-tidy-filelength
 
+use alloc::borrow::ToOwned;
+
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -1279,7 +1281,7 @@ impl<'a> Parser<'a> {
 
     /// If we encounter a parser state that looks like the user has written a `struct` literal with
     /// parentheses instead of braces, recover the parser state and provide suggestions.
-    #[instrument(skip(self, seq, snapshot), level = "trace")]
+    // #[instrument(skip(self, seq, snapshot), level = "trace")]
     fn maybe_recover_struct_lit_bad_delims(
         &mut self,
         lo: Span,

@@ -1,7 +1,12 @@
 //! Query configuration and description traits.
 
-use std::fmt::Debug;
-use std::hash::Hash;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::fmt::Debug;
+use core::hash::Hash;
 
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_span::ErrorGuaranteed;

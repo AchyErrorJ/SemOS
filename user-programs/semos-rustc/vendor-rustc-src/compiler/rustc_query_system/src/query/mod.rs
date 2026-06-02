@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_data_structures::jobserver::Proxy;
 use rustc_errors::DiagInner;
 use rustc_hashes::Hash64;

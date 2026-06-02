@@ -1,5 +1,7 @@
 // ignore-tidy-filelength
 
+use alloc::borrow::ToOwned;
+
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};

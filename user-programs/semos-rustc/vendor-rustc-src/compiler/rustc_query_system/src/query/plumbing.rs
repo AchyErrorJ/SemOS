@@ -2,10 +2,15 @@
 //! generate the actual methods on tcx which find and execute the provider,
 //! manage the caches, and so forth.
 
-use std::cell::Cell;
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::mem;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::cell::Cell;
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::mem;
 
 use hashbrown::HashTable;
 use hashbrown::hash_table::Entry;
@@ -16,7 +21,7 @@ use rustc_data_structures::sync::LockGuard;
 use rustc_data_structures::{outline, sync};
 use rustc_errors::{Diag, FatalError, StashKey};
 use rustc_span::{DUMMY_SP, Span};
-use tracing::instrument;
+// instrument off
 
 use super::QueryConfig;
 use crate::HandleCycleError;
@@ -589,7 +594,7 @@ where
     // First we try to load the result from the on-disk cache.
     // Some things are never cached on disk.
     if let Some(result) = query.try_load_from_disk(qcx, key, prev_dep_node_index, dep_node_index) {
-        if std::intrinsics::unlikely(qcx.dep_context().sess().opts.unstable_opts.query_dep_graph) {
+        if core::intrinsics::unlikely(qcx.dep_context().sess().opts.unstable_opts.query_dep_graph) {
             dep_graph_data.mark_debug_loaded_from_disk(*dep_node)
         }
 
@@ -602,7 +607,7 @@ where
         // currently afford to verify every hash. This subset should still
         // give us some coverage of potential bugs though.
         let try_verify = prev_fingerprint.split().1.as_u64().is_multiple_of(32);
-        if std::intrinsics::unlikely(
+        if core::intrinsics::unlikely(
             try_verify || qcx.dep_context().sess().opts.unstable_opts.incremental_verify_ich,
         ) {
             incremental_verify_ich(
@@ -664,7 +669,7 @@ where
 }
 
 #[inline]
-#[instrument(skip(tcx, dep_graph_data, result, hash_result, format_value), level = "debug")]
+// #[instrument(skip(tcx, dep_graph_data, result, hash_result, format_value), level = "debug")]
 pub(crate) fn incremental_verify_ich<Tcx, V>(
     tcx: Tcx,
     dep_graph_data: &DepGraphData<Tcx::Deps>,
@@ -720,11 +725,21 @@ fn incremental_verify_ich_failed<Tcx>(
     // of processing this one. To avoid a double-panic (which kills the process
     // before we can print out the query static), we print out a terse
     // but 'safe' message if we detect a reentrant call to this method.
-    thread_local! {
+    // Stage F10: thread_local! is std-only. Use a plain `static`
+    // with AtomicBool on SemOS (single-threaded per §1.4 so no
+    // contention; this path is cold anyway).
+    #[cfg(not(target_os = "none"))]
+    std::thread_local! {
         static INSIDE_VERIFY_PANIC: Cell<bool> = const { Cell::new(false) };
     };
+    #[cfg(target_os = "none")]
+    static INSIDE_VERIFY_PANIC: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
 
+    #[cfg(not(target_os = "none"))]
     let old_in_panic = INSIDE_VERIFY_PANIC.replace(true);
+    #[cfg(target_os = "none")]
+    let old_in_panic = INSIDE_VERIFY_PANIC.swap(true, core::sync::atomic::Ordering::Relaxed);
 
     if old_in_panic {
         tcx.sess().dcx().emit_err(crate::error::Reentrant);
@@ -743,7 +758,10 @@ fn incremental_verify_ich_failed<Tcx>(
         panic!("Found unstable fingerprints for {dep_node:?}: {}", result());
     }
 
+    #[cfg(not(target_os = "none"))]
     INSIDE_VERIFY_PANIC.set(old_in_panic);
+    #[cfg(target_os = "none")]
+    INSIDE_VERIFY_PANIC.store(old_in_panic, core::sync::atomic::Ordering::Relaxed);
 }
 
 /// Ensure that either this query has all green inputs or been executed.

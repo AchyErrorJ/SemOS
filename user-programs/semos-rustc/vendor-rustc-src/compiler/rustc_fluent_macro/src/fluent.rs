@@ -154,8 +154,12 @@ pub(crate) fn fluent_messages(input: TokenStream) -> TokenStream {
         all_attrs.dedup();
         let mut attr_lines = String::new();
         for attr in &all_attrs {
+            // Stage F10: use `r#<name>` so Rust keywords like
+            // `type`/`fn`/`mut`/`ref` (which appear as fluent attr
+            // names, e.g. `.type = ...`) parse as identifiers.
             attr_lines.push_str(&format!(
-                "        pub const {attr}: rustc_error_messages::SubdiagMessage = \
+                "        #[allow(non_upper_case_globals)] pub const r#{attr}: \
+                 rustc_error_messages::SubdiagMessage = \
                  rustc_error_messages::SubdiagMessage::FluentAttr(\
                  ::alloc::borrow::Cow::Borrowed(\"{attr}\"));\n"
             ));
@@ -186,8 +190,10 @@ pub(crate) fn fluent_messages(input: TokenStream) -> TokenStream {
     top_attrs.sort();
     top_attrs.dedup();
     for attr in &top_attrs {
+        // Same `r#` keyword-escape as for per-parent subdiag attrs.
         top_subdiag.push_str(&format!(
-            "            pub const {attr}: rustc_error_messages::SubdiagMessage = \
+            "            #[allow(non_upper_case_globals)] pub const r#{attr}: \
+             rustc_error_messages::SubdiagMessage = \
              rustc_error_messages::SubdiagMessage::FluentAttr(\
              ::alloc::borrow::Cow::Borrowed(\"{attr}\"));\n"
         ));

@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_errors::codes::*;
 use rustc_hir::limit::Limit;
 use rustc_macros::{Diagnostic, Subdiagnostic};

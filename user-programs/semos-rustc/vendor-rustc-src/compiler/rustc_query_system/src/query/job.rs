@@ -1,10 +1,16 @@
-use std::hash::Hash;
-use std::io::Write;
-use std::iter;
-use std::num::NonZero;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
 
-use parking_lot::{Condvar, Mutex};
+use core::hash::Hash;
+use semos_std::io::Write;
+use core::iter;
+use core::num::NonZero;
+use alloc::sync::Arc;
+
+#[cfg(not(target_os = "none"))] use parking_lot::{Condvar, Mutex};
+#[cfg(target_os = "none")] use semos_std::sync::{Condvar, Mutex};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_errors::{Diag, DiagCtxtHandle};
 use rustc_hir::def::DefKind;
@@ -143,7 +149,9 @@ impl QueryJobId {
     #[inline(never)]
     pub fn find_dep_kind_root(&self, query_map: QueryMap) -> (QueryJobInfo, usize) {
         let mut depth = 1;
-        let info = query_map.get(&self).unwrap();
+        // Stage F10: hashbrown wants `Equivalent`-style lookup, which
+        // means passing `&QueryJobId`, not `&&QueryJobId`.
+        let info = query_map.get(self).unwrap();
         let dep_kind = info.query.dep_kind;
         let mut current_id = info.job.parent;
         let mut last_layout = (info.clone(), depth);
@@ -225,11 +233,20 @@ impl QueryLatch {
             // If this detects a deadlock and the deadlock handler wants to resume this thread
             // we have to be in the `wait` call. This is ensured by the deadlock handler
             // getting the self.info lock.
+            // Stage F10: condvar wait is parking_lot's API on host;
+            // semos_std::sync::Condvar consumes/returns the guard
+            // (std-style). On SemOS the cycle-detection path doesn't
+            // run (single-threaded per §1.4), so we just drop the
+            // guard immediately.
             rustc_thread_pool::mark_blocked();
             let proxy = qcx.jobserver_proxy();
             proxy.release_thread();
+            #[cfg(not(target_os = "none"))]
             waiter.condvar.wait(&mut info);
+            #[cfg(target_os = "none")]
+            { let _ = waiter; drop(info); return; }
             // Release the lock before we potentially block in `acquire_thread`
+            #[cfg(not(target_os = "none"))]
             drop(info);
             proxy.acquire_thread();
         }
@@ -589,7 +606,7 @@ pub fn print_query_stack<Qcx: QueryContext>(
     mut current_query: Option<QueryJobId>,
     dcx: DiagCtxtHandle<'_>,
     limit_frames: Option<usize>,
-    mut file: Option<std::fs::File>,
+    mut file: Option<semos_std::fs::File>,
 ) -> usize {
     // Be careful relying on global state here: this code is called from
     // a panic hook, which means that the global `DiagCtxt` may be in a weird

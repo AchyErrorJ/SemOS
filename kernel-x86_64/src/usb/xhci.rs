@@ -155,7 +155,11 @@ static mut DCBAA: Dcbaa = Dcbaa([0; MAX_SLOTS + 1]);
 /// and caused a #GP fault in user-program code around DEMO 8. If a
 /// controller legitimately needs more, `init()` aborts with a clear
 /// log line — bump this constant rather than silently truncating.
-const MAX_SCRATCHPAD_BUFS: usize = 8;
+// Real Intel PCH xHCI (W540 Lynx Point, P1 Sunrise Point, etc.)
+// asks for 16 scratchpad buffers. QEMU's qemu-xhci asks for 0.
+// 32 gives headroom for any future hardware without much memory cost
+// (32 * 4 KiB = 128 KiB total).
+const MAX_SCRATCHPAD_BUFS: usize = 32;
 #[repr(C, align(4096))]
 struct ScratchpadArray([u64; MAX_SCRATCHPAD_BUFS]);
 #[repr(C, align(4096))]
@@ -322,10 +326,15 @@ unsafe fn write_u64(addr: u64, val: u64) {
 // PCI discovery + MMIO mapping
 // ============================================================================
 
-/// Discover the qemu-xhci controller on PCI bus 0 and read its BAR0 + BAR1
-/// to form a 64-bit MMIO base. Returns None if not found.
+/// Discover any xHCI controller on PCI bus 0 (vendor-agnostic).
+/// Matches by PCI class triple `(0x0C, 0x03, 0x30)` = USB Controller /
+/// USB / xHCI — works for both QEMU's `qemu-xhci` (1B36:000D) and
+/// real-hardware Intel PCH xHCI (e.g. Lynx Point 8086:8C31, Sunrise
+/// Point 8086:A12F, etc.). Falls back to the QEMU vendor/device
+/// match if class search returns nothing, for forward compatibility.
 pub fn discover() -> Option<(pci::Location, u64)> {
-    let loc = pci::find_first(QEMU_XHCI_VENDOR, QEMU_XHCI_DEVICE)?;
+    let loc = pci::find_by_class(0x0C, 0x03, 0x30)
+        .or_else(|| pci::find_first(QEMU_XHCI_VENDOR, QEMU_XHCI_DEVICE))?;
     let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, pci::regs::BAR0);
     let bar1 = pci::read_u32(loc.bus, loc.slot, loc.func, pci::regs::BAR1);
 

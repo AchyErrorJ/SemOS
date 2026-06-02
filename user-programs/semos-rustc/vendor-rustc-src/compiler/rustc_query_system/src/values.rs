@@ -14,7 +14,7 @@ impl<Tcx: DepContext, T> Value<Tcx> for T {
         // non-trivial to define it earlier.
         panic!(
             "<{} as Value>::from_cycle_error called without errors: {:#?}",
-            std::any::type_name::<T>(),
+            core::any::type_name::<T>(),
             cycle_error.cycle,
         );
     }

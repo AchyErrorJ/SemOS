@@ -34,3 +34,8 @@ features = ["default-hasher"] # for may_dangle
 # rustc_data_structures sync shim under cfg(target_os = "none").
 [target.'cfg(not(target_os = "none"))'.dependencies]
 parking_lot = "0.12"
+
+# Stage F10: caches.rs / job.rs need semos_std::{io, sync::OnceLock}.
+[target.'cfg(target_os = "none")'.dependencies]
+rustc_error_messages = { path = "../rustc_error_messages" }
+semos-std = { path = "../../../../std-shim" }

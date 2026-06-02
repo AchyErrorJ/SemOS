@@ -30,6 +30,12 @@ unicode-normalization = { version = "0.1.25", default-features = false }
 unicode-width = "0.2.2"
 # tidy-alphabetical-end
 
+# Stage F10: lib.rs/errors.rs need semos_std on the SemOS target, and
+# the fluent macro now emits `rustc_error_messages::*` references.
+[target.'cfg(target_os = "none")'.dependencies]
+rustc_error_messages = { path = "../rustc_error_messages" }
+semos-std = { path = "../../../../std-shim" }
+
 [dev-dependencies]
 # tidy-alphabetical-start
 # tidy-alphabetical-end

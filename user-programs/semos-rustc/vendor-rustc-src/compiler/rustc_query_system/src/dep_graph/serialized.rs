@@ -39,12 +39,19 @@
 //! own these indices helps avoid races when they are conditionally used when marking nodes green.
 //! It also reduces congestion on the shared index count.
 
-use std::cell::RefCell;
-use std::cmp::max;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::{iter, mem, u64};
+#[cfg(target_os = "none")]
+macro_rules! eprintln { ($($arg:tt)*) => { () }; }
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::cell::RefCell;
+use core::cmp::max;
+use core::marker::PhantomData;
+use alloc::sync::Arc;
+use core::sync::atomic::Ordering;
+use core::{iter, mem, u64};
 
 use rustc_data_structures::fingerprint::{Fingerprint, PackedFingerprint};
 use rustc_data_structures::fx::FxHashMap;
@@ -57,7 +64,7 @@ use rustc_serialize::opaque::mem_encoder::MemEncoder;
 use rustc_serialize::opaque::{FileEncodeResult, FileEncoder, IntEncodedWithFixedSize, MemDecoder};
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use rustc_session::Session;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::graph::{CurrentDepGraph, DepNodeColorMap};
 use super::query::DepGraphQuery;
@@ -191,7 +198,7 @@ fn mask(bits: usize) -> usize {
 }
 
 impl SerializedDepGraph {
-    #[instrument(level = "debug", skip(d))]
+    // #[instrument(level = "debug", skip(d))]
     pub fn decode<D: Deps>(d: &mut MemDecoder<'_>) -> Arc<SerializedDepGraph> {
         // The last 16 bytes are the node count and edge count.
         debug!("position: {:?}", d.position());
@@ -712,6 +719,15 @@ impl<D: Deps> EncoderState<D> {
         );
     }
 
+    // Stage F10: on SemOS, the incremental cache writer is dead per
+    // §1.3 — return immediately. Avoids the DynSend/DynSync bounds
+    // on `broadcast(|_| ...)` that the closure's NonNull<u8> capture
+    // can't satisfy on a single-thread target.
+    #[cfg(target_os = "none")]
+    fn finish(&self, _profiler: &SelfProfilerRef, _current: &CurrentDepGraph<D>) -> FileEncodeResult {
+        Ok(0)
+    }
+    #[cfg(not(target_os = "none"))]
     fn finish(&self, profiler: &SelfProfilerRef, current: &CurrentDepGraph<D>) -> FileEncodeResult {
         // Prevent more indices from being allocated.
         self.next_node_index.store(u32::MAX as u64 + 1, Ordering::SeqCst);

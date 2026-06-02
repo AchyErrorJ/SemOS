@@ -1,8 +1,15 @@
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(target_os = "none")]
+macro_rules! eprintln { ($($arg:tt)*) => { () }; }
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::marker::PhantomData;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use rustc_data_structures::fingerprint::{Fingerprint, PackedFingerprint};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
@@ -17,9 +24,9 @@ use rustc_index::IndexVec;
 use rustc_macros::{Decodable, Encodable};
 use rustc_serialize::opaque::{FileEncodeResult, FileEncoder};
 use rustc_session::Session;
-use tracing::{debug, instrument};
+use tracing::{debug};
 #[cfg(debug_assertions)]
-use {super::debug::EdgeFilter, std::env};
+use super::debug::EdgeFilter; #[cfg(not(target_os = "none"))] use std::env; #[cfg(target_os = "none")] use semos_std::env;
 
 use super::query::DepGraphQuery;
 use super::serialized::{GraphEncoder, SerializedDepGraph, SerializedDepNodeIndex};
@@ -620,7 +627,7 @@ impl<D: Deps> DepGraph<D> {
 }
 
 impl<D: Deps> DepGraphData<D> {
-    fn assert_dep_node_not_yet_allocated_in_current_session<S: std::fmt::Display>(
+    fn assert_dep_node_not_yet_allocated_in_current_session<S: core::fmt::Display>(
         &self,
         dep_node: &DepNode,
         msg: impl FnOnce() -> S,
@@ -683,7 +690,7 @@ impl<D: Deps> DepGraphData<D> {
             Fingerprint::ZERO,
             // We want the side effect node to always be red so it will be forced and emit the
             // diagnostic.
-            std::iter::once(DepNodeIndex::FOREVER_RED_NODE).collect(),
+            core::iter::once(DepNodeIndex::FOREVER_RED_NODE).collect(),
         );
         let side_effect = QuerySideEffect::Diagnostic(diagnostic.clone());
         qcx.store_side_effect(dep_node_index, side_effect);
@@ -718,7 +725,7 @@ impl<D: Deps> DepGraphData<D> {
                     hash: PackedFingerprint::from(Fingerprint::ZERO),
                 },
                 Fingerprint::ZERO,
-                std::iter::once(DepNodeIndex::FOREVER_RED_NODE).collect(),
+                core::iter::once(DepNodeIndex::FOREVER_RED_NODE).collect(),
                 true,
             );
             // This will just overwrite the same value for concurrent calls.
@@ -882,7 +889,7 @@ impl<D: Deps> DepGraphData<D> {
         }
     }
 
-    #[instrument(skip(self, qcx, parent_dep_node_index, frame), level = "debug")]
+    // #[instrument(skip(self, qcx, parent_dep_node_index, frame), level = "debug")]
     fn try_mark_parent_green<Qcx: QueryContext<Deps = D>>(
         &self,
         qcx: Qcx,
@@ -972,7 +979,7 @@ impl<D: Deps> DepGraphData<D> {
     }
 
     /// Try to mark a dep-node which existed in the previous compilation session as green.
-    #[instrument(skip(self, qcx, prev_dep_node_index, frame), level = "debug")]
+    // #[instrument(skip(self, qcx, prev_dep_node_index, frame), level = "debug")]
     fn try_mark_previous_green<Qcx: QueryContext<Deps = D>>(
         &self,
         qcx: Qcx,
@@ -1024,7 +1031,7 @@ impl<D: Deps> DepGraph<D> {
         matches!(self.node_color(dep_node), DepNodeColor::Green(_))
     }
 
-    pub fn assert_dep_node_not_yet_allocated_in_current_session<S: std::fmt::Display>(
+    pub fn assert_dep_node_not_yet_allocated_in_current_session<S: core::fmt::Display>(
         &self,
         dep_node: &DepNode,
         msg: impl FnOnce() -> S,

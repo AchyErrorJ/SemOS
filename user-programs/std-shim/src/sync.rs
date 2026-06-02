@@ -68,6 +68,12 @@ pub struct Mutex<T> {
 unsafe impl<T: Send> Send for Mutex<T> {}
 unsafe impl<T: Send> Sync for Mutex<T> {}
 
+impl<T> core::fmt::Debug for Mutex<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("Mutex { .. }")
+    }
+}
+
 impl<T> Mutex<T> {
     pub const fn new(value: T) -> Self {
         Self {
@@ -404,6 +410,11 @@ impl<T> Deref for LazyLock<T> {
 /// `std::sync::Condvar`-shaped condition variable. Pair with a Mutex.
 pub struct Condvar {
     seq: AtomicU32,
+}
+impl core::fmt::Debug for Condvar {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("Condvar { .. }")
+    }
 }
 
 impl Condvar {

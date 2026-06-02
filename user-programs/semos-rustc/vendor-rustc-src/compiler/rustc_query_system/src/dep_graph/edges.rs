@@ -1,5 +1,5 @@
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
 
 use smallvec::SmallVec;
 

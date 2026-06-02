@@ -55,8 +55,13 @@
 //!
 //! [dependency graph]: https://rustc-dev-guide.rust-lang.org/query.html
 
-use std::fmt;
-use std::hash::Hash;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::fmt;
+use core::hash::Hash;
 
 use rustc_data_structures::AtomicRef;
 use rustc_data_structures::fingerprint::{Fingerprint, PackedFingerprint};

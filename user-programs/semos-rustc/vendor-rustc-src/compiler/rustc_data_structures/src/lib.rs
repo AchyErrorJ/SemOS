@@ -61,6 +61,8 @@ extern crate std;
 // from core (stable since 1.82 via assert_matches feature gate).
 #[cfg(not(target_os = "none"))]
 pub use std::assert_matches::{assert_matches, debug_assert_matches};
+// `core::assert_matches::*` exposes both macros behind
+// `feature(assert_matches)`.
 #[cfg(target_os = "none")]
 pub use core::assert_matches::{assert_matches, debug_assert_matches};
 

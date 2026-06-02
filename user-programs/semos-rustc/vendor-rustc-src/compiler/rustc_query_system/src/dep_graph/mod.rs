@@ -5,7 +5,12 @@ mod graph;
 mod query;
 mod serialized;
 
-use std::panic;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::panic;
 
 pub use dep_node::{DepKind, DepKindStruct, DepNode, DepNodeParams, WorkProductId};
 pub(crate) use graph::DepGraphData;
@@ -15,7 +20,7 @@ use rustc_data_structures::profiling::SelfProfilerRef;
 use rustc_data_structures::sync::DynSync;
 use rustc_session::Session;
 pub use serialized::{SerializedDepGraph, SerializedDepNodeIndex};
-use tracing::instrument;
+// instrument off
 
 use self::graph::{MarkFrame, print_markframe_trace};
 use crate::ich::StableHashingContext;
@@ -58,7 +63,7 @@ pub trait DepContext: Copy {
     /// fails to be forced, e.g. when the query key cannot be reconstructed from the
     /// dep-node or when the query kind outright does not support it.
     #[inline]
-    #[instrument(skip(self, frame), level = "debug")]
+    // #[instrument(skip(self, frame), level = "debug")]
     fn try_force_from_dep_node(
         self,
         dep_node: DepNode,
@@ -67,14 +72,26 @@ pub trait DepContext: Copy {
     ) -> bool {
         let cb = self.dep_kind_info(dep_node.kind);
         if let Some(f) = cb.force_from_dep_node {
-            match panic::catch_unwind(panic::AssertUnwindSafe(|| f(self, dep_node, prev_index))) {
-                Err(value) => {
-                    if !value.is::<rustc_errors::FatalErrorMarker>() {
-                        print_markframe_trace(self.dep_graph(), frame);
+            // Stage F10: panic::catch_unwind is host-only (no panic
+            // unwinding on SemOS — panic=abort per §1.9). Just call
+            // through; if it panics the whole process aborts.
+            #[cfg(not(target_os = "none"))]
+            {
+                match panic::catch_unwind(panic::AssertUnwindSafe(|| f(self, dep_node, prev_index))) {
+                    Err(value) => {
+                        let v: &Box<dyn core::any::Any + Send> = &value;
+                        if !v.is::<rustc_errors::FatalErrorMarker>() {
+                            print_markframe_trace(self.dep_graph(), frame);
+                        }
+                        panic::resume_unwind(value)
                     }
-                    panic::resume_unwind(value)
+                    Ok(query_has_been_forced) => query_has_been_forced,
                 }
-                Ok(query_has_been_forced) => query_has_been_forced,
+            }
+            #[cfg(target_os = "none")]
+            {
+                let _ = frame;
+                f(self, dep_node, prev_index)
             }
         } else {
             false

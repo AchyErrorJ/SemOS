@@ -1,6 +1,11 @@
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::sync::OnceLock;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
+use core::fmt::Debug;
+use core::hash::Hash;
+use semos_std::sync::OnceLock;
 
 use rustc_data_structures::sharded::ShardedHashMap;
 pub use rustc_data_structures::vec_cache::VecCache;
