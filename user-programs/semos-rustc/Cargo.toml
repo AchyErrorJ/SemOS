@@ -125,3 +125,9 @@ regalloc2 = { path = "vendor-externals/regalloc2" }
 # default-on std → leaks to memchr / indexmap chain.
 regex = { path = "vendor-externals/regex" }
 aho-corasick = { path = "vendor-externals/aho-corasick" }
+# Stage G iter 4: cranelift-module 0.122.0 pulled by cranelift-object;
+# default = ["std"] dragged std into anyhow. gimli 0.31.1 pulled by
+# rustc_codegen_llvm (unpatched, default-on); default = ["read-all", "write"]
+# where read-all depends on std.
+cranelift-module = { path = "vendor-externals/cranelift-module" }
+gimli = { path = "vendor-externals/gimli" }
