@@ -10,7 +10,31 @@
 > 5. This file — scroll to the bottom for the latest tally and the
 >    Phase 3 transition checklist.
 >
-> **State at session end (2026-05-31, PHASE 4 CLOSED + Phase 5 scaffolded):**
+> **State at session end (2026-06-04, Phase 5b Stage F CLOSED, Stage G STARTED):**
+> - Stage F (all internal patched rustc_* crates on x86_64-unknown-none)
+>   CLOSED. 37 patched compiler crates all `cargo check -p X --target
+>   x86_64-unknown-none` clean. Commits b515a55 (F1) through 535c525 (F10)
+>   + the Stage F11/F12 closer commits visible in `git log` (not yet
+>   carved into separate sections of this log).
+> - **Stage G STARTED (this session)** — Cranelift port begins.
+>   `rustc_codegen_cranelift` un-excluded from workspace, 5 cranelift
+>   sub-crates vendored (bitset, entity, control, bforest, codegen-shared),
+>   1 patched (cranelift-control fuzz default dropped). cg_clif Cargo.toml
+>   rewritten: dylib → rlib + 0.127.0 → 0.122.0 + cranelift-native +
+>   cranelift-jit + libloading dropped. 9 cranelift sub-crates still need
+>   vendoring (codegen + frontend + module + object + assembler-x64 +
+>   assembler-x64-meta + codegen-meta + isle + srcgen). See "Stage G iter 1"
+>   section at the bottom of this file + CRANELIFT_VENDOR_NOTES.md.
+> - **NEXT**: Stage G iter 2 — vendor the 9 remaining cranelift crates
+>   (cp -r them from compiler/vendor/cranelift-*-0.122.0/), patch their
+>   default-features lists where they pull std, run baseline cargo check
+>   and triage errors. ~2-3 iterations expected to first clean cg_clif
+>   compile, then Phase 5d wires rustc_driver_impl → semos_rustc::main
+>   for DEMO 80.
+
+---
+
+> **State at older end (2026-05-31, PHASE 4 CLOSED + Phase 5 scaffolded):**
 > - Phase 1 (recon) ✅ — 4 agents, ~723k tokens
 > - Phase 2a (foundation) ✅ — 16 crates, ~38k LOC, ~1.3M tokens
 > - Phase 2b (cycle-breakers) ✅ — 4 crates + A1 sync followup, ~26k LOC, ~560k tokens
@@ -2554,3 +2578,128 @@ Real-hardware milestones this session:
 - USB xHCI controller discovery (class-triple matching + scratchpad
   buffer count bump)
 - All 60 demos run on real hardware
+
+---
+
+## Stage G iter 1 — Cranelift port begins (2026-06-04)
+
+**Goal:** get `cargo check -p rustc_codegen_cranelift --target
+x86_64-unknown-none` building cleanly. cg_clif is the codegen backend
+the semos-rustc binary statically links to emit ELF for SYS_SPAWN.
+Previously excluded from the workspace because its cranelift-* deps
+weren't vendored and the default Cargo.toml shape pulls std-only deps
+that can't be turned off from a consumer.
+
+### What landed this iteration
+
+1. **rustc_codegen_cranelift un-excluded** from
+   `user-programs/semos-rustc/Cargo.toml`. The workspace's
+   `vendor-rustc-src/compiler/*` glob now picks it up. Required an
+   empty `[workspace]` header in cg_clif's own Cargo.toml so it
+   doesn't try to be its own workspace root.
+
+2. **cg_clif Cargo.toml rewritten**:
+   - `crate-type` dylib → rlib (static link into semos-rustc, not
+     `-Z codegen-backend` loaded — that's a host-only mechanism).
+   - cranelift-* versions 0.127.0 → 0.122.0 to match what M26
+     already vendored at `compiler/vendor/cranelift-*-0.122.0/`.
+     Saves us from chasing 0.127.0 fresh.
+   - cranelift-codegen features: drop `std` and `timing`. With
+     `std` off, codegen uses the hashbrown HashMap path; `timing`
+     uses `std::time::Instant` so must go.
+   - cranelift-native dropped entirely — runtime CPU detection via
+     libc; SemOS target is statically x86_64.
+   - cranelift-jit dropped entirely — needs mmap + executable
+     pages; SemOS path is AOT via cranelift-object → ELF → SYS_SPAWN.
+   - libloading dropped (host-only).
+   - object: drop `std` feature, drop `coff`/`macho`/`pe` (SemOS
+     emits ELF only).
+
+3. **3 cranelift leaf crates vendored** to
+   `user-programs/semos-rustc/vendor-externals/`:
+   - **cranelift-bitset** (0.122.0): no patches, already `#![no_std]`
+     upstream in lib.rs.
+   - **cranelift-entity** (0.122.0): no patches, already no_std-clean
+     (depends only on cranelift-bitset, no `default = ["std"]`).
+   - **cranelift-control** (0.122.0): **THE blocker patch**.
+     `default = ["fuzz"]` → `default = []`. The `fuzz` feature pulls
+     `arbitrary v1.4.x` whose `src/lib.rs:51` does
+     `impl std::error::Error for MaxRecursionReached`
+     UNCONDITIONALLY — incompatible with core alone. With fuzz off,
+     ControlPlane = ZST via `zero_sized.rs`, which is the right
+     behavior on SemOS anyway. The exact patch
+     `feedback_cranelift_nostd_blocker.md` predicted.
+
+4. **iter 1b**: 2 more crates vendored (no patches needed):
+   - **cranelift-bforest** (0.122.0): `#![no_std]` upstream;
+     depends on cranelift-entity.
+   - **cranelift-codegen-shared** (0.122.0): pure const-table crate,
+     no `extern crate std`.
+
+5. **`[patch.crates-io]`** in workspace root extended with all 5
+   vendored cranelift sub-crates so cg_clif resolves them locally
+   instead of crates.io.
+
+6. **CRANELIFT_VENDOR_NOTES.md** written cataloging next-iter
+   work: 9 remaining sub-crates (codegen, frontend, module, object,
+   assembler-x64 + meta, codegen-meta, isle, srcgen) + the build
+   deps (regalloc2, wasmtime-internal-math, bumpalo, rustc-hash) +
+   the forecast of which Cargo.toml `default = ["std"]` lines need
+   flipping.
+
+### Sandbox limitation this session
+
+This agent is running with **`cp -r` denied** (also `Copy-Item
+-Recurse`, `xcopy`, `robocopy`, `tar`, `rsync` — all rejected; only
+single-file `cp` works). Cargo itself is also denied. That means:
+
+- No actual `cargo check` verification this iteration. Error
+  counts are forecast, not measured.
+- The 5 small leaf crates were copyable file-by-file but cranelift-
+  codegen (205 files / 38 dirs) is beyond what's reasonable to
+  per-file-copy.
+
+### What the next agent needs to do
+
+1. Copy the remaining 9 cranelift sub-crates from
+   `compiler/vendor/cranelift-*-0.122.0/` to
+   `user-programs/semos-rustc/vendor-externals/cranelift-*/`
+   (one `cp -r` each, or run the script in CRANELIFT_VENDOR_NOTES.md).
+2. Run baseline `cargo check -p rustc_codegen_cranelift --target
+   x86_64-unknown-none 2>&1 | tee .claude-cg.log`. Expect ~hundreds
+   of errors. Capture top categories.
+3. Patch cranelift-codegen + cranelift-frontend + cranelift-module
+   + cranelift-object Cargo.tomls to drop `default = ["std"]`. Add
+   their paths to `[patch.crates-io]` in semos-rustc/Cargo.toml.
+4. Iterate per the RECIPE.md no_std-conversion pattern — most of
+   the cranelift crates are already `#![no_std]`-aware upstream
+   (declared in their `categories = ["no-std"]` Cargo.toml metadata),
+   so the work is "flip default features" not "rewrite the source".
+
+### Forecast: 2-3 more iterations to first clean cargo check
+
+- iter 2: vendor the 9 remaining cranelift crates + first cargo
+  check + categorize errors.
+- iter 3: patch the inevitable `default = ["std"]` leaks +
+  regalloc2 + wasmtime-internal-math + iterate to first 0-error
+  cranelift-{codegen,frontend,module,object} compile.
+- iter 4 (maybe): rustc_codegen_cranelift itself + the rustc-side
+  surface (cg_clif uses rustc_log::tracing which our Phase 4 port
+  cfg-stripped — wire it back through semos_std::tracing-shim).
+
+After cg_clif compiles, Phase 5d wires `rustc_driver_impl` →
+`semos_rustc::main`. Then DEMO 80 (`semos-rustc /etc/hello-world.rs`
+→ emit `/tmp/hello-world` ELF → SYS_SPAWN → "Hello, SemOS!").
+
+### Commits this iteration
+
+- `9868663` — iter 1: cg_clif un-excluded + 3 leaves (bitset, entity,
+  control) + cranelift-control fuzz-feature drop + cg_clif Cargo.toml
+  rewrite.
+- `efaff3c` — iter 1b: 2 more leaves (bforest, codegen-shared) +
+  CRANELIFT_VENDOR_NOTES.md.
+
+Cumulative through G iter 1b: **5 cranelift sub-crates vendored,
+1 patched, 0 verified-compiling** (cargo unavailable this session).
+Open: 9 remaining cranelift crates + downstream Cargo.toml audits.
+
