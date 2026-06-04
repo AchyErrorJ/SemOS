@@ -553,6 +553,19 @@ extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFra
     }
     TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
+    // Polling fallback for the PS/2 keyboard: real hardware (W540 etc.)
+    // routes legacy IRQ 1 through an IOAPIC pin that isn't pin 1 (ACPI
+    // MADT Interrupt Source Override entries we don't yet parse). The
+    // i8042 keyboard works fine — controller responds, scan is enabled
+    // — but its interrupt never reaches the right CPU vector. Poll the
+    // i8042 status port at every timer tick (62 Hz); the helper drains
+    // up to 8 bytes per call, discarding trackpoint bytes (AUX-tagged)
+    // and dispatching keyboard scancodes.
+    let _ = crate::keyboard::poll_one_scancode();
+    crate::keyboard::report_poll_stats(
+        TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed),
+    );
+
     // Send EOI before context switch — APIC if active, else legacy PIC.
     if crate::apic::is_active() {
         crate::apic::eoi();
@@ -574,7 +587,17 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     // Delegate to the keyboard driver
     crate::keyboard::handle_scancode(scancode);
 
-    send_eoi(1);
+    // EOI — must match the deliverer. On real hardware the IRQ is
+    // routed via IOAPIC -> LAPIC (PIC is masked), so the LAPIC ISR bit
+    // for vector 33 needs an LAPIC EOI to clear. Without this the LAPIC
+    // refuses any further keyboard IRQs (one-shot dead keyboard, the
+    // exact symptom seen on the W540). On QEMU's i8259 path apic
+    // wasn't active and PIC EOI is correct.
+    if crate::apic::is_active() {
+        crate::apic::eoi();
+    } else {
+        send_eoi(1);
+    }
 }
 
 /// Get the current timer tick count.

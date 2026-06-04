@@ -24,6 +24,8 @@ pub mod device;
 pub mod hid;
 pub mod hid_report;
 pub mod cdc_ecm;
+pub mod cdc_ecm_net;
+pub mod hub;
 pub mod mass_storage;
 pub mod xhci;
 

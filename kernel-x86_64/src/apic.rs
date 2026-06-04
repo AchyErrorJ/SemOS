@@ -181,6 +181,15 @@ pub fn init() -> bool {
     true
 }
 
+/// Returns the BSP's Local APIC ID, or None if the APIC isn't ready.
+/// Used by `ioapic` to program redirection table destinations.
+pub fn local_apic_id() -> Option<u32> {
+    if unsafe { APIC_VIRT_BASE } == 0 {
+        return None;
+    }
+    Some(read_reg(REG_ID) >> 24)
+}
+
 /// End-Of-Interrupt — must be called from every interrupt handler that
 /// fired through the APIC.
 #[inline]

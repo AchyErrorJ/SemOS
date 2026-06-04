@@ -96,6 +96,54 @@ mod usbsts {
 /// HCCPARAMS1 bit accessors.
 mod hccparams1 {
     pub const CSZ_BIT: u32 = 1 << 2; // 1 = 64-byte context size
+    /// xHCI Extended Capabilities Pointer is in bits 31:16, expressed
+    /// in **dword** units relative to MMIO base. Zero = no xECP list.
+    pub const XECP_SHIFT: u32 = 16;
+    pub const XECP_MASK: u32 = 0xFFFF;
+}
+
+/// xHCI Extended Capability IDs (spec §7).
+mod xecp {
+    pub const ID_USB_LEGACY_SUPPORT: u32 = 0x01;
+    #[allow(dead_code)]
+    pub const ID_SUPPORTED_PROTOCOL: u32 = 0x02;
+    // USBLEGSUP layout (dword at xECP base):
+    //   bit 0     = Cap ID (=0x01)
+    //   bits 15:8 = Next Capability Pointer (dwords)
+    //   bit 16    = HC BIOS Owned Semaphore
+    //   bit 24    = HC OS  Owned Semaphore
+    pub const LEGSUP_BIOS_OWNED: u32 = 1 << 16;
+    pub const LEGSUP_OS_OWNED: u32 = 1 << 24;
+    // USBLEGCTLSTS at LEGSUP+4: clear all SMI-on-* enables to disarm SMIs
+    // and write-1-to-clear the corresponding event status bits.
+    pub const LEGCTLSTS_OFFSET: u32 = 4;
+    /// SMI Enable bits to clear (bits 0, 4, 13, 14, 15, 16).
+    pub const LEGCTLSTS_SMI_ENABLES: u32 =
+        (1 << 0) | (1 << 4) | (1 << 13) | (1 << 14) | (1 << 15) | (1 << 16);
+    /// SMI Event bits (bits 29, 30, 31) — RW1C. Bits 17..20 are RsvdP.
+    pub const LEGCTLSTS_SMI_EVENTS: u32 = (1 << 29) | (1 << 30) | (1 << 31);
+}
+
+/// Intel PCH-specific PCI config-space offsets for routing USB 2/3 ports
+/// between the EHCI companion and the xHCI controller. Applies to Lynx
+/// Point, Wildcat Point, Sunrise Point, Cannon Point, ... and any other
+/// Intel chipset whose vendor ID is 0x8086.
+///
+/// **XUSB2PR (USB 2 Port Routing)**: each set bit routes that USB 2 port
+/// to xHCI. Default 0 routes to EHCI. We set this to XUSB2PRM (a sibling
+/// register) which holds the mask of ports that *can* be routed.
+///
+/// **USB3PSSEN (USB 3 SuperSpeed Enable)**: each set bit enables xHCI
+/// SuperSpeed on that port. Default 0 disables SS. We set this to USB3PRM.
+///
+/// On the W540's Lynx Point PCH this is the **single most important
+/// init step**: without it the internal keyboard (a USB 2 device behind
+/// the PCH's hub) is wired to EHCI, and xHCI sees CCS=0 on every port.
+mod intel_pch {
+    pub const USB3PRM: u8 = 0xDC;   // 32-bit RO mask of ports that CAN be SS-enabled
+    pub const USB3PSSEN: u8 = 0xD8;  // 32-bit RW: 1 = route that USB3 port to xHCI SS
+    pub const XUSB2PRM: u8 = 0xD4;   // 32-bit RO mask of ports that CAN be routed to xHCI
+    pub const XUSB2PR: u8 = 0xD0;    // 32-bit RW: 1 = route that USB2 port to xHCI
 }
 
 /// PORTSC bits.
@@ -103,17 +151,35 @@ mod portsc {
     pub const CCS: u32 = 1 << 0;   // Current Connect Status
     pub const PED: u32 = 1 << 1;   // Port Enabled/Disabled
     pub const PR: u32 = 1 << 4;    // Port Reset
+    #[allow(dead_code)]
     pub const PLS_MASK: u32 = 0xF << 5;  // Port Link State
+    #[allow(dead_code)]
+    pub const PLS_SHIFT: u32 = 5;
     pub const PP: u32 = 1 << 9;    // Port Power
     pub const SPEED_SHIFT: u32 = 10; // bits 13:10
     pub const SPEED_MASK: u32 = 0xF << 10;
     pub const CSC: u32 = 1 << 17;  // Connect Status Change (RW1C)
     pub const PEC: u32 = 1 << 18;  // Port Enable Change (RW1C)
+    #[allow(dead_code)]
+    pub const OCC: u32 = 1 << 19;  // Over-current Change (RW1C)
+    #[allow(dead_code)]
+    pub const WRC: u32 = 1 << 20;  // Warm Reset Change (RW1C, USB 3)
     pub const PRC: u32 = 1 << 21;  // Port Reset Change (RW1C)
-    /// Mask of all change bits (RW1C). When writing PORTSC, preserving the
-    /// connect/enable status bits requires we clear these out of our read
-    /// so we don't accidentally clear them. Spec §5.4.8.
-    pub const RW1C_MASK: u32 = (1 << 17) | (1 << 18) | (1 << 20) | (1 << 21) | (1 << 22);
+    #[allow(dead_code)]
+    pub const PLC: u32 = 1 << 22;  // Port Link State Change (RW1C)
+    /// Port Link State write-strobe (bit 16). When set together with a new
+    /// PLS field (bits 8:5) the controller commits the link state change.
+    #[allow(dead_code)]
+    pub const LWS: u32 = 1 << 16;
+    /// Warm Port Reset (bit 31, USB 3 only). xHCI spec §5.4.8 — for
+    /// SuperSpeed ports, PR (bit 4) is insufficient; WPR re-trains the
+    /// SS link and lets the port reach U0 / PED=1.
+    pub const WPR: u32 = 1 << 31;
+    /// Mask of all change bits (RW1C) — bits 17..22 inclusive. Spec §5.4.8.
+    /// When writing PORTSC, mask these out of the read-modify-write so we
+    /// don't accidentally clear pending change notifications.
+    pub const RW1C_MASK: u32 =
+        (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20) | (1 << 21) | (1 << 22);
 }
 
 /// Runtime register offsets relative to MMIO + RTSOFF.
@@ -176,18 +242,28 @@ static mut EVENT_RING: EventRingSegment = EventRingSegment::new();
 struct Erst([ErstEntry; 1]);
 static mut ERST: Erst = Erst([ErstEntry::zero()]);
 
-/// Device context for slot 1 (the device we enumerate). Sized for CSZ=1.
+/// Per-slot device context. Sized for CSZ=1. Index 0 is unused (xHCI slot
+/// IDs are 1-based); we size to MAX_SLOTS + 1 so slot_id can be used as
+/// a direct index. Phase 15 M50 follow-up: cascaded hub enumeration needs
+/// independent device contexts for the hub itself (slot 1) and each child
+/// device behind it (slot 2..).
 #[repr(C, align(4096))]
 struct PerSlotDeviceCtx(DeviceContext);
-static mut DEVICE_CTX_SLOT1: PerSlotDeviceCtx = PerSlotDeviceCtx(DeviceContext::zero());
+static mut DEVICE_CTXS: [PerSlotDeviceCtx; MAX_SLOTS + 1] = [const {
+    PerSlotDeviceCtx(DeviceContext::zero())
+}; MAX_SLOTS + 1];
 
-/// Input context used to issue Address Device / Configure Endpoint for slot 1.
+/// Per-slot input context (issued for Address Device / Configure Endpoint).
 #[repr(C, align(4096))]
 struct PerSlotInputCtx(InputContext);
-static mut INPUT_CTX_SLOT1: PerSlotInputCtx = PerSlotInputCtx(InputContext::zero());
+static mut INPUT_CTXS: [PerSlotInputCtx; MAX_SLOTS + 1] = [const {
+    PerSlotInputCtx(InputContext::zero())
+}; MAX_SLOTS + 1];
 
-/// Transfer ring for EP0 (Control) on the enumerated device.
-static mut EP0_TRANSFER_RING: CommandRing = CommandRing::new();
+/// Per-slot EP0 control transfer ring.
+static mut EP0_TRANSFER_RINGS: [CommandRing; MAX_SLOTS + 1] = [const {
+    CommandRing::new()
+}; MAX_SLOTS + 1];
 /// Transfer ring for the HID Interrupt-IN endpoint on the enumerated device.
 static mut HID_TRANSFER_RING: CommandRing = CommandRing::new();
 
@@ -259,7 +335,9 @@ static mut INFO: Option<XhciInfo> = None;
 static mut DEVICE: Option<EnumeratedDevice> = None;
 static mut CMD_PROD: Producer = Producer::new();
 static mut EVT_CONS: Consumer = Consumer::new();
-static mut EP0_PROD: Producer = Producer::new();
+static mut EP0_PRODS: [Producer; MAX_SLOTS + 1] = [const {
+    Producer::new()
+}; MAX_SLOTS + 1];
 static mut HID_PROD: Producer = Producer::new();
 static mut BULK_IN_PROD: Producer = Producer::new();
 static mut BULK_OUT_PROD: Producer = Producer::new();
@@ -286,8 +364,39 @@ pub struct MscDevice {
     pub capacity_bs: u32,     // logical block size
 }
 static mut MSC: Option<MscDevice> = None;
-/// Resolved physical address of the EP0 transfer ring.
-static mut EP0_RING_PHYS: u64 = 0;
+
+/// CDC-ECM (Phase 15 M50): tethered phone or USB-Ethernet dongle.
+/// Populated by `try_enumerate_cdc_ecm` after a successful SET_CONFIGURATION
+/// + ConfigureEndpoint for the bulk IN/OUT pair.
+#[derive(Default, Clone, Copy, Debug)]
+pub struct CdcEcmDevice {
+    pub slot_id: u8,
+    pub control_iface: u8,
+    pub data_iface: u8,
+    pub data_alt: u8,
+    pub in_ep_addr: u8,
+    pub out_ep_addr: u8,
+    pub in_dci: u8,
+    pub out_dci: u8,
+    pub in_mps: u16,
+    pub out_mps: u16,
+    pub config_value: u8,
+    pub mac: [u8; 6],
+    pub mtu: u16,
+}
+static mut CDC_ECM: Option<CdcEcmDevice> = None;
+
+// CDC-ECM TX/RX scratch buffers. Sized for a standard 1514-byte Ethernet
+// frame (14 B header + 1500 B payload) + a few bytes of slack. Aligned
+// to a page so xHCI doesn't see a buffer that straddles a page boundary
+// (the controller's TRB has a 64 KiB max transfer but our MaxPacketSize
+// determines per-packet framing).
+#[repr(C, align(4096))]
+struct EcmFrameBuf([u8; 2048]);
+static mut ECM_TX_BUF: EcmFrameBuf = EcmFrameBuf([0; 2048]);
+static mut ECM_RX_BUF: EcmFrameBuf = EcmFrameBuf([0; 2048]);
+/// Resolved physical addresses of each per-slot EP0 transfer ring.
+static mut EP0_RING_PHYSES: [u64; MAX_SLOTS + 1] = [0u64; MAX_SLOTS + 1];
 /// Resolved physical address of the command ring.
 static mut CMD_RING_PHYS: u64 = 0;
 /// Resolved physical address of the event ring segment.
@@ -358,6 +467,114 @@ fn enable_pci(loc: pci::Location) {
     loc.enable_io_and_bus_master();
 }
 
+/// Walk the xHCI Extended Capabilities list and, if a USB Legacy Support
+/// capability (ID=1) exists, transfer ownership from BIOS to OS.
+///
+/// On Intel PCH and most physical hardware the BIOS owns the controller
+/// at boot and traps PORTSC accesses via SMI; until we set the OS-owned
+/// semaphore and wait for BIOS-owned to clear, port writes don't take
+/// effect and an HCRST may immediately reset the controller back into
+/// BIOS-owned mode.
+///
+/// Also disables all SMI sources in USBLEGCTLSTS (offset +4) so subsequent
+/// xHCI events never trap into BIOS. Returns true if the handoff completed
+/// (or no LEGSUP cap was present, which is the normal case on QEMU and
+/// AMD chipsets).
+fn bios_handoff(mmio: u64, hccparams1: u32) -> bool {
+    // xECP is in HCCPARAMS1 bits 31:16, expressed in **dword** units.
+    let mut off_dw =
+        ((hccparams1 >> hccparams1::XECP_SHIFT) & hccparams1::XECP_MASK) as u64;
+    if off_dw == 0 {
+        return true; // No extended caps list (QEMU/AMD)
+    }
+    let mut cap_addr = mmio + off_dw * 4;
+    // Walk up to 64 caps as a sanity bound — real lists are at most a handful.
+    for _ in 0..64 {
+        let cap = unsafe { read_u32(cap_addr) };
+        let id = cap & 0xFF;
+        let next = (cap >> 8) & 0xFF; // next pointer, in dword units, RELATIVE
+        if id == xecp::ID_USB_LEGACY_SUPPORT {
+            // Found USBLEGSUP. Set OS Owned, then wait for BIOS Owned to clear.
+            unsafe {
+                let v = read_u32(cap_addr);
+                write_u32(cap_addr, v | xecp::LEGSUP_OS_OWNED);
+            }
+            let mut spins: u32 = 0;
+            loop {
+                let v = unsafe { read_u32(cap_addr) };
+                let bios_owned = v & xecp::LEGSUP_BIOS_OWNED != 0;
+                let os_owned = v & xecp::LEGSUP_OS_OWNED != 0;
+                if !bios_owned && os_owned {
+                    break;
+                }
+                spins += 1;
+                if spins > 1_000_000 {
+                    // Some BIOSes never give up the semaphore. Force-clear
+                    // the BIOS-owned bit ourselves — Linux's xhci-pci.c does
+                    // the same thing as a last-resort workaround.
+                    unsafe {
+                        let v = read_u32(cap_addr);
+                        write_u32(cap_addr, (v & !xecp::LEGSUP_BIOS_OWNED)
+                            | xecp::LEGSUP_OS_OWNED);
+                    }
+                    println!("[xhci] BIOS handoff timeout — forced semaphore");
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+            // Disarm SMIs and W1C all latched event bits in USBLEGCTLSTS (+4).
+            unsafe {
+                let ctlsts_addr = cap_addr + xecp::LEGCTLSTS_OFFSET as u64;
+                let v = read_u32(ctlsts_addr);
+                let masked = v & !xecp::LEGCTLSTS_SMI_ENABLES;
+                write_u32(ctlsts_addr, masked | xecp::LEGCTLSTS_SMI_EVENTS);
+            }
+            println!("[xhci] BIOS->OS handoff complete (xECP @ +0x{:X})", off_dw * 4);
+            return true;
+        }
+        if next == 0 {
+            break;
+        }
+        off_dw += next as u64;
+        cap_addr = mmio + off_dw * 4;
+    }
+    true
+}
+
+/// Intel PCH-specific: route USB 2 / USB 3 root-hub ports from the EHCI
+/// companion controller (or "disabled") to xHCI.
+///
+/// Without this, on Intel chipsets prior to Skylake and on most
+/// "dual-role" PCHs (Lynx Point, Wildcat Point, even some Sunrise Point
+/// SKUs), the USB 2 ports are wired to the EHCI controller at 00:1D.0
+/// and xHCI sees CCS=0 on every port — exactly the "bus detected but
+/// nothing enumerated" symptom on the W540.
+///
+/// We read XUSB2PRM / USB3PRM (the read-only "can be routed" masks) and
+/// write the same value into XUSB2PR / USB3PSSEN to route every port
+/// that's *capable* of being on xHCI to xHCI. This is the same approach
+/// Linux's `xhci-pci.c::xhci_pci_quirks()` uses.
+///
+/// No-op on non-Intel vendors (so QEMU and AMD machines aren't affected).
+fn intel_pch_port_routing(loc: pci::Location) {
+    let vendor = pci::read_u16(loc.bus, loc.slot, loc.func, pci::regs::VENDOR_ID);
+    if vendor != 0x8086 {
+        return; // Not an Intel chipset; nothing to do.
+    }
+    let usb3prm = pci::read_u32(loc.bus, loc.slot, loc.func, intel_pch::USB3PRM);
+    let xusb2prm = pci::read_u32(loc.bus, loc.slot, loc.func, intel_pch::XUSB2PRM);
+    if usb3prm != 0 {
+        pci::write_u32(loc.bus, loc.slot, loc.func, intel_pch::USB3PSSEN, usb3prm);
+    }
+    if xusb2prm != 0 {
+        pci::write_u32(loc.bus, loc.slot, loc.func, intel_pch::XUSB2PR, xusb2prm);
+    }
+    println!(
+        "[xhci] Intel PCH routing: USB3PSSEN<-0x{:08X}  XUSB2PR<-0x{:08X}",
+        usb3prm, xusb2prm
+    );
+}
+
 // ============================================================================
 // Bring-up sequence
 // ============================================================================
@@ -383,6 +600,12 @@ pub fn init() -> bool {
 
     enable_pci(loc);
 
+    // Intel PCH-specific: route USB 2 / USB 3 ports from EHCI to xHCI. No-op
+    // on non-Intel vendors. **Must run before** we read PORTSC — otherwise
+    // the controller sees no devices because the ports are still owned by
+    // the EHCI companion. (Lynx Point W540 + early Sunrise Point.)
+    intel_pch_port_routing(loc);
+
     // The bootloader identity-maps physical memory at PHYS_MEM_OFFSET, so
     // MMIO accesses go through the phys_to_virt window. xHCI BAR
     // addresses live in low MMIO (typically below 4 GiB), well within the
@@ -394,6 +617,11 @@ pub fn init() -> bool {
     let hcsparams1 = unsafe { read_u32(mmio + cap_reg::HCSPARAMS1 as u64) };
     let hcsparams2 = unsafe { read_u32(mmio + cap_reg::HCSPARAMS2 as u64) };
     let hccparams1 = unsafe { read_u32(mmio + cap_reg::HCCPARAMS1 as u64) };
+
+    // ---- BIOS -> OS ownership handoff (USBLEGSUP). Must come before any
+    // op-reg writes, since a BIOS-owned controller traps PORTSC via SMI
+    // and may reset itself when we touch USBCMD. No-op if no xECP list. ----
+    bios_handoff(mmio, hccparams1);
     let dboff = unsafe { read_u32(mmio + cap_reg::DBOFF as u64) } & !0x3;
     let rtsoff = unsafe { read_u32(mmio + cap_reg::RTSOFF as u64) } & !0x1F;
     let max_slots = (hcsparams1 & 0xFF) as u8;
@@ -672,8 +900,44 @@ fn ring_doorbell(db_base: u64, slot_id: u8, target: u8) {
 /// physically connected), reset it, then enumerate the device behind it.
 /// We stop after the first successful device (single-device limit; see
 /// module docs). Returns the number of devices found.
+///
+/// **Two-pass design**: First pass asserts PP=1 on every port and waits a
+/// short power-stable interval (some controllers boot with PP=0). Second
+/// pass checks CCS, resets, and enumerates. This matters on Intel PCH and
+/// most real hardware; QEMU's qemu-xhci powers ports on automatically so
+/// the first pass is a no-op there.
 pub fn enumerate_ports() -> usize {
     let info = unsafe { match INFO { Some(i) => i, None => return 0 } };
+
+    // Pass 1: assert Port Power on every root-hub port.
+    for port in 1..=info.max_ports {
+        let portsc_addr = info.op_base + op_reg::PORTSC_BASE as u64
+            + ((port as u64 - 1) * 0x10);
+        let portsc = unsafe { read_u32(portsc_addr) };
+        if portsc & portsc::PP == 0 {
+            let preserve = portsc & !portsc::RW1C_MASK;
+            unsafe { write_u32(portsc_addr, preserve | portsc::PP); }
+        }
+    }
+    // Power-stable settling time. xHCI spec doesn't mandate a value, but
+    // 20 ms is the USB 2.0 default for hub PWRON2PWRGOOD. We approximate
+    // by polling PORTSC PP across all ports — once they all read PP=1 we
+    // can move on, with an upper bound that's effectively a few ms on
+    // QEMU and ~20 ms on real hardware.
+    for _ in 0..10_000_000u64 {
+        let mut all_powered = true;
+        for port in 1..=info.max_ports {
+            let portsc_addr = info.op_base + op_reg::PORTSC_BASE as u64
+                + ((port as u64 - 1) * 0x10);
+            let s = unsafe { read_u32(portsc_addr) };
+            if s & portsc::PP == 0 {
+                all_powered = false;
+                break;
+            }
+        }
+        if all_powered { break; }
+        core::hint::spin_loop();
+    }
 
     let mut connected = 0;
     let mut enumerated = 0;
@@ -688,50 +952,137 @@ pub fn enumerate_ports() -> usize {
         connected += 1;
         println!("[xhci] port {}: connected (PORTSC=0x{:08X})", port, portsc);
 
-        // Reset the port. USB 3 ports auto-train so PED gets set without a
-        // host-initiated reset; USB 2 needs an explicit PR. Setting PR is
-        // safe on both. After PR is written, wait for PRC=1.
-        // When writing PORTSC, mask off RW1C change bits to avoid clearing them.
-        let preserve = portsc & !portsc::RW1C_MASK;
-        unsafe { write_u32(portsc_addr, preserve | portsc::PR); }
+        // Clear any latched change bits so we can spot the new PRC cleanly.
+        // (RW1C — writing the read value W1Cs them all in one shot.)
+        let change_clear = (portsc & !portsc::RW1C_MASK)
+            | (portsc & portsc::RW1C_MASK);
+        unsafe { write_u32(portsc_addr, change_clear); }
 
-        let mut prc_seen = false;
-        for _ in 0..2_000_000 {
-            let s = unsafe { read_u32(portsc_addr) };
-            if s & portsc::PRC != 0 {
-                prc_seen = true;
-                // Clear PRC by writing 1 to it.
-                unsafe { write_u32(portsc_addr, (s & !portsc::RW1C_MASK) | portsc::PRC); }
-                break;
+        // Reset the port. USB 2 ports latch PRC=1 + PED=1 simultaneously
+        // when PR completes. USB 3 ports are different: PR may report
+        // PRC=1 but PED stays 0 until the SS link reaches U0; the proper
+        // primitive on SS is WPR (Warm Port Reset, bit 31). Strategy:
+        // first try PR; after PRC fires, poll PED with its own window;
+        // if PED still 0, retry with WPR. Logs PLS for diagnostics.
+        let initial = unsafe { read_u32(portsc_addr) };
+        let already_enabled = initial & portsc::PED != 0;
+        if !already_enabled {
+            let preserve = initial & !portsc::RW1C_MASK;
+            unsafe { write_u32(portsc_addr, preserve | portsc::PR); }
+
+            let mut prc_seen = false;
+            for _ in 0..2_000_000 {
+                let s = unsafe { read_u32(portsc_addr) };
+                if s & (portsc::PRC | portsc::WRC) != 0 {
+                    prc_seen = true;
+                    unsafe {
+                        write_u32(portsc_addr,
+                            (s & !portsc::RW1C_MASK) | portsc::PRC | portsc::WRC);
+                    }
+                    break;
+                }
+                core::hint::spin_loop();
             }
-            core::hint::spin_loop();
-        }
-        if !prc_seen {
-            println!("[xhci] port {} reset never completed", port);
-            continue;
+            if !prc_seen {
+                let s = unsafe { read_u32(portsc_addr) };
+                println!("[xhci] port {} reset never completed (PORTSC=0x{:08X} PLS={})",
+                    port, s, (s & portsc::PLS_MASK) >> portsc::PLS_SHIFT);
+                continue;
+            }
+
+            // After PRC fires, USB 3 ports still need additional time for
+            // the SS link to reach U0 before PED is asserted. Poll a
+            // second window before declaring the port dead.
+            for _ in 0..5_000_000 {
+                let s = unsafe { read_u32(portsc_addr) };
+                if s & portsc::PED != 0 { break; }
+                core::hint::spin_loop();
+            }
+
+            // If PR didn't bring up PED, retry with Warm Port Reset (SS only).
+            let after_pr = unsafe { read_u32(portsc_addr) };
+            if after_pr & portsc::PED == 0 {
+                println!("[xhci] port {} PR didn't enable (PORTSC=0x{:08X} PLS={} speed={}) — trying WPR",
+                    port, after_pr,
+                    (after_pr & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
+                    (after_pr & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT);
+                let preserve = after_pr & !portsc::RW1C_MASK;
+                unsafe { write_u32(portsc_addr, preserve | portsc::WPR); }
+                for _ in 0..5_000_000 {
+                    let s = unsafe { read_u32(portsc_addr) };
+                    if s & portsc::WRC != 0 {
+                        unsafe {
+                            write_u32(portsc_addr,
+                                (s & !portsc::RW1C_MASK) | portsc::WRC | portsc::PRC);
+                        }
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+                for _ in 0..5_000_000 {
+                    let s = unsafe { read_u32(portsc_addr) };
+                    if s & portsc::PED != 0 { break; }
+                    core::hint::spin_loop();
+                }
+            }
         }
         let portsc_after = unsafe { read_u32(portsc_addr) };
         if portsc_after & portsc::PED == 0 {
-            println!("[xhci] port {} not enabled after reset (PORTSC=0x{:08X})", port, portsc_after);
+            println!("[xhci] port {} not enabled after reset (PORTSC=0x{:08X} PLS={} speed={})",
+                port, portsc_after,
+                (portsc_after & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
+                (portsc_after & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT);
             continue;
         }
         let speed = ((portsc_after & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT) as u8;
+        println!("[xhci] port {} enabled (PORTSC=0x{:08X} speed={})", port, portsc_after, speed);
 
         // Enumerate this device. If it succeeds, remember it and stop.
-        if enumerate_device(port, speed) {
+        if enumerate_device(Topology::root(port), speed) {
             enumerated += 1;
             break;
         }
     }
 
+    if connected == 0 {
+        println!("[xhci] no connected devices on any of {} root-hub ports", info.max_ports);
+    }
     println!("  [DEMO 18] PASS: enumerated {} USB device(s)", enumerated);
-    let _ = connected;
     enumerated
 }
 
-/// Enumerate a single attached device on `port`:
+/// USB topology coordinates needed by xHCI's input-context slot fields.
+/// For a device direct on the root hub, `route_string = 0`,
+/// `parent_hub_slot = 0`, `parent_port = 0`. For a device behind a
+/// downstream hub, `route_string` encodes the path (4 bits per tier) and
+/// `parent_hub_slot`/`parent_port` give the TT info for LS/FS children
+/// of HS hubs (USB 2.0 spec § 11.17).
+#[derive(Copy, Clone, Debug)]
+pub struct Topology {
+    pub root_hub_port: u8,
+    pub route_string: u32,
+    pub parent_hub_slot: u8,
+    pub parent_port: u8,
+}
+
+impl Topology {
+    /// Direct child of the root hub on port `port` — the legacy single-
+    /// device case that all existing call sites have used.
+    pub const fn root(port: u8) -> Self {
+        Self {
+            root_hub_port: port,
+            route_string: 0,
+            parent_hub_slot: 0,
+            parent_port: 0,
+        }
+    }
+}
+
+/// Enumerate a single attached device. `topology` describes where the
+/// device sits in the USB tree (root-hub-direct vs behind a hub); see
+/// `Topology` for the field semantics.
 ///  - EnableSlot
-///  - Build Input Context (slot + EP0)
+///  - Build Input Context (slot + EP0, with optional route string + TT)
 ///  - AddressDevice
 ///  - Read first 8 bytes of device descriptor (to learn EP0 max packet)
 ///  - If max packet differs, EvaluateContext / re-set EP0 (skipped for boot
@@ -739,7 +1090,9 @@ pub fn enumerate_ports() -> usize {
 ///  - Read full 18-byte device descriptor
 ///  - Read configuration descriptor, parse interface + endpoint
 ///  - If HID boot keyboard, set up the Interrupt-IN transfer ring
-fn enumerate_device(port: u8, speed: u8) -> bool {
+fn enumerate_device(topology: Topology, speed: u8) -> bool {
+    // Backwards-compatible alias used by the rest of this function.
+    let port = topology.root_hub_port;
     let info = unsafe { match INFO { Some(i) => i, None => return false } };
 
     // ---- EnableSlot ----
@@ -754,22 +1107,28 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
         return false;
     }
 
+    if (slot_id as usize) > MAX_SLOTS {
+        println!("[xhci] EnableSlot returned slot_id={} > MAX_SLOTS={}", slot_id, MAX_SLOTS);
+        return false;
+    }
+    let si = slot_id as usize;
+
     // ---- Plug per-slot device context into DCBAA ----
-    let dev_ctx_phys = match phys_of(unsafe { &raw const DEVICE_CTX_SLOT1 } as u64) {
+    let dev_ctx_phys = match phys_of(unsafe { &raw const DEVICE_CTXS[si] } as u64) {
         Some(p) => p,
         None => { println!("[xhci] dev ctx phys translation failed"); return false; }
     };
-    unsafe { DCBAA.0[slot_id as usize] = dev_ctx_phys; }
+    unsafe { DCBAA.0[si] = dev_ctx_phys; }
 
-    // ---- Build the EP0 transfer ring ----
-    let ep0_ring_phys = match phys_of(unsafe { &raw const EP0_TRANSFER_RING } as u64) {
+    // ---- Build the per-slot EP0 transfer ring ----
+    let ep0_ring_phys = match phys_of(unsafe { &raw const EP0_TRANSFER_RINGS[si] } as u64) {
         Some(p) => p,
         None => { println!("[xhci] EP0 ring phys translation failed"); return false; }
     };
     unsafe {
-        init_command_ring(&raw mut EP0_TRANSFER_RING, ep0_ring_phys);
-        EP0_PROD = Producer::new();
-        EP0_RING_PHYS = ep0_ring_phys;
+        init_command_ring(&raw mut EP0_TRANSFER_RINGS[si], ep0_ring_phys);
+        EP0_PRODS[si] = Producer::new();
+        EP0_RING_PHYSES[si] = ep0_ring_phys;
     }
 
     // ---- Build the Input Context ----
@@ -780,20 +1139,29 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
     // spec mandates 64 so no follow-up is needed.
     let mps0: u16 = match speed { 1 => 8, 2 => 8, 3 => 64, 4 => 512, _ => 8 };
     unsafe {
-        let ic = &mut INPUT_CTX_SLOT1.0;
+        let ic = &mut INPUT_CTXS[si].0;
         // Zero it.
         ic.reset();
         // Input Control Context: A0 (slot) + A1 (EP0) added.
         ic.input_ctrl_mut().add_flags = (1 << 0) | (1 << 1);
-        // Slot context: 1 context entry (EP0 only), root hub port, speed.
+        // Slot context: 1 context entry (EP0 only), root hub port, speed,
+        // plus route string + TT info if behind a downstream hub.
         let slot = ic.slot_mut();
         slot.set_context_entries(1);
         slot.set_root_hub_port(port);
         slot.set_speed(speed as u32);
+        if topology.route_string != 0 {
+            slot.set_route_string(topology.route_string);
+        }
+        if topology.parent_hub_slot != 0 {
+            // LS/FS device behind an HS hub needs TT info.
+            slot.set_parent_hub_slot_id(topology.parent_hub_slot);
+            slot.set_parent_port_number(topology.parent_port);
+        }
         // EP0 endpoint context (idx 0 = DCI 1).
         ic.ep_mut(0).init_control_ep(mps0, ep0_ring_phys, true);
     }
-    let input_phys = match phys_of(unsafe { &raw const INPUT_CTX_SLOT1 } as u64) {
+    let input_phys = match phys_of(unsafe { &raw const INPUT_CTXS[si] } as u64) {
         Some(p) => p,
         None => { println!("[xhci] input ctx phys translation failed"); return false; }
     };
@@ -817,7 +1185,7 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
         return false;
     }
 
-    let usb_addr = unsafe { DEVICE_CTX_SLOT1.0.slot_read().usb_device_address() };
+    let usb_addr = unsafe { DEVICE_CTXS[si].0.slot_read().usb_device_address() };
     println!("[xhci] device addressed: slot={} usb_addr={} speed={} mps0={}",
         slot_id, usb_addr, speed, mps0);
 
@@ -834,6 +1202,51 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
     println!("[xhci] device descriptor: vendor=0x{:04X} product=0x{:04X} class=0x{:02X} mps0={}",
         id_vendor, id_product,
         dev_desc.b_device_class, dev_desc.b_max_packet_size0);
+    // Phase 15 M50 — surface USB-hub-class devices explicitly. The Lenovo
+    // ThinkPad Pro Dock 40A1 (and most multi-port docks) presents itself as
+    // a USB hub here. Hubs are currently out of scope; we log so the user
+    // knows the dock was seen but downstream devices won't be enumerated
+    // until cascaded-hub support lands (see usb/mod.rs header for the
+    // deferred-task list).
+    if dev_desc.b_device_class == 0x09 {
+        println!(
+            "[xhci] HUB detected (vendor=0x{:04X} product=0x{:04X}) — running hub class bring-up",
+            id_vendor, id_product
+        );
+        if id_vendor == 0x17EF {
+            println!("[xhci] Lenovo USB hub (matches Pro Dock 40A1 / ThinkPad dock family)");
+        }
+        // Mark this slot as a hub on the slot context, so the xHC routes
+        // SETUP packets to children with the right TT bookkeeping. (We
+        // could also issue an Evaluate Context here; instead we set this
+        // on the input context BEFORE the hub's downstream enum so the
+        // xHC sees it during child AddressDevice route resolution.)
+        unsafe {
+            INPUT_CTXS[si].0.slot_mut().set_is_hub(true);
+        }
+        // Stash a generic record for the hub itself BEFORE cascading, so
+        // any child-enum overwrite of DEVICE (e.g. a keyboard plugged
+        // into the hub) wins — the keyboard is what the rest of the boot
+        // actually wants to interact with.
+        unsafe {
+            DEVICE = Some(EnumeratedDevice {
+                slot_id, usb_address: usb_addr, port, speed,
+                vendor: id_vendor, product: id_product,
+                max_packet_ep0: mps0,
+                is_keyboard: false,
+                kbd_ep_in: 0, kbd_ep_packet_size: 0, kbd_ep_interval: 0,
+                config_value: 0,
+                interface_number: 0,
+            });
+        }
+        let connected_children = crate::usb::hub::bring_up_hub(slot_id, port);
+        if connected_children > 0 {
+            println!("[xhci] hub enumerated {} downstream device(s)",
+                connected_children);
+        }
+        // Return true: hub itself is fully addressed.
+        return true;
+    }
     println!("  [DEMO 18] PASS: keyboard descriptor parsed (vendor=0x{:04X} product=0x{:04X})",
         id_vendor, id_product);
 
@@ -868,10 +1281,9 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
     let (kbd, iface_num, cfg_val) = match find_boot_keyboard(blob, cfg_desc.b_configuration_value) {
         Some(x) => x,
         None => {
-            println!("[xhci] no HID boot keyboard — trying Mass Storage path");
+            println!("[xhci] no HID boot keyboard — trying CDC-ECM, then Mass Storage");
             // Stash a generic device record first so the DEMOs see vendor/product
-            // even if the MSC enumeration also doesn't match (e.g. it's actually
-            // some other class entirely).
+            // even if all class enumerations miss.
             unsafe {
                 DEVICE = Some(EnumeratedDevice {
                     slot_id, usb_address: usb_addr, port, speed,
@@ -882,6 +1294,13 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
                     config_value: cfg_desc.b_configuration_value,
                     interface_number: 0,
                 });
+            }
+            // Phase 15 M50: CDC-ECM first (USB-Ethernet adapter / tethered iPhone).
+            // Most tethering phones present CDC-ECM at the Communications class
+            // interface; falling through to MSC matches the older flow.
+            if try_enumerate_cdc_ecm(slot_id, port, speed, blob,
+                                      cfg_desc.b_configuration_value) {
+                return true;
             }
             // Try the Mass Storage path. Returns true if it found + configured
             // an MSC device; false if no MSC interface was in the descriptor.
@@ -932,7 +1351,7 @@ fn enumerate_device(port: u8, speed: u8) -> bool {
         HID_PROD = Producer::new();
         HID_RING_PHYS = hid_ring_phys;
 
-        let ic = &mut INPUT_CTX_SLOT1.0;
+        let ic = &mut INPUT_CTXS[si].0;
         // Reuse the input context. Add-flag for slot (A0) and the HID EP (Adci).
         // We also need to bump context entries to dci.
         ic.reset();
@@ -1073,7 +1492,7 @@ fn find_boot_keyboard(blob: &[u8], cfg_value: u8) -> Option<(EndpointDescriptor,
 // We post all three at once, ring the doorbell with target=1 (EP0 DCI),
 // and wait for a Transfer Event matching the Status TRB.
 
-fn control_in(
+pub(crate) fn control_in(
     slot_id: u8, request_type: u8, request: u8,
     value: u16, index: u16, length: u16,
     out_kvirt: *mut u8, copy_len: usize,
@@ -1120,18 +1539,19 @@ fn control_in_phys(
     let status_control = ((trb_type::STATUS_STAGE as u32) << 10)
         | (1u32 << 5)  /* IOC = Interrupt On Completion */;
 
+    let si = slot_id as usize;
     let status_trb_phys = unsafe {
-        let idx_setup = EP0_PROD.enqueue;
+        let idx_setup = EP0_PRODS[si].enqueue;
         // Setup
-        enqueue_command(&raw mut EP0_TRANSFER_RING, &mut EP0_PROD,
+        enqueue_command(&raw mut EP0_TRANSFER_RINGS[si], &mut EP0_PRODS[si],
             setup_param, setup_status, setup_control);
         // Data
-        enqueue_command(&raw mut EP0_TRANSFER_RING, &mut EP0_PROD,
+        enqueue_command(&raw mut EP0_TRANSFER_RINGS[si], &mut EP0_PRODS[si],
             out_phys, data_status, data_control);
         // Status — remember its physical address so we can match its Transfer Event.
-        let status_idx = EP0_PROD.enqueue;
-        let phys = EP0_RING_PHYS + (status_idx as u64) * 16;
-        enqueue_command(&raw mut EP0_TRANSFER_RING, &mut EP0_PROD,
+        let status_idx = EP0_PRODS[si].enqueue;
+        let phys = EP0_RING_PHYSES[si] + (status_idx as u64) * 16;
+        enqueue_command(&raw mut EP0_TRANSFER_RINGS[si], &mut EP0_PRODS[si],
             0, status_status, status_control);
         let _ = idx_setup;
         phys
@@ -1165,7 +1585,7 @@ fn control_in_phys(
     false
 }
 
-fn control_out(
+pub(crate) fn control_out(
     slot_id: u8, request_type: u8, request: u8,
     value: u16, index: u16, length: u16,
 ) -> bool {
@@ -1188,12 +1608,13 @@ fn control_out(
         | (1u32 << 16) /* DIR=IN for status when no data */
         | (1u32 << 5);
 
+    let si = slot_id as usize;
     let _status_trb_phys = unsafe {
-        enqueue_command(&raw mut EP0_TRANSFER_RING, &mut EP0_PROD,
+        enqueue_command(&raw mut EP0_TRANSFER_RINGS[si], &mut EP0_PRODS[si],
             setup_param, setup_status, setup_control);
-        let status_idx = EP0_PROD.enqueue;
-        let phys = EP0_RING_PHYS + (status_idx as u64) * 16;
-        enqueue_command(&raw mut EP0_TRANSFER_RING, &mut EP0_PROD,
+        let status_idx = EP0_PRODS[si].enqueue;
+        let phys = EP0_RING_PHYSES[si] + (status_idx as u64) * 16;
+        enqueue_command(&raw mut EP0_TRANSFER_RINGS[si], &mut EP0_PRODS[si],
             0, status_status, status_control);
         phys
     };
@@ -1339,6 +1760,82 @@ pub fn bulk_in_xfer(slot_id: u8, dci: u8, phys: u64, len: u32) -> Option<u32> {
 }
 
 // ============================================================================
+// CDC-ECM Ethernet framing (Phase 15 M50 — runtime TX/RX)
+// ============================================================================
+//
+// CDC-ECM § 3.3.2: each Ethernet frame is one or more USB bulk packets.
+// A frame is terminated by a short packet (any packet smaller than the
+// bulk endpoint's wMaxPacketSize), which means an exact-multiple-of-MPS
+// frame requires a trailing zero-length packet (ZLP). We don't bother
+// with ZLP-on-out for v1 since standard Ethernet frame sizes (60-1514 B)
+// are almost never exact multiples of 64 (FS) / 512 (HS).
+
+/// Send one Ethernet frame on the CDC-ECM bulk OUT endpoint. Returns
+/// `true` on success. `frame` includes the full Ethernet header
+/// starting at the destination MAC. Bounded by the scratch buffer
+/// (2 KiB) which is comfortably above the 1514-byte standard MTU.
+pub fn cdc_ecm_send_frame(frame: &[u8]) -> bool {
+    let ecm = match unsafe { CDC_ECM } {
+        Some(e) => e,
+        None => return false,
+    };
+    if frame.is_empty() || frame.len() > unsafe { ECM_TX_BUF.0.len() } {
+        return false;
+    }
+    unsafe {
+        ECM_TX_BUF.0[..frame.len()].copy_from_slice(frame);
+    }
+    let tx_phys = match phys_of(unsafe { &raw const ECM_TX_BUF } as u64) {
+        Some(p) => p,
+        None => { println!("[ecm-tx] phys translation failed"); return false; }
+    };
+    bulk_out_xfer(ecm.slot_id, ecm.out_dci, tx_phys, frame.len() as u32).is_some()
+}
+
+/// Receive one Ethernet frame on the CDC-ECM bulk IN endpoint into
+/// `out`. Returns the number of bytes received (0 = no frame, frame
+/// dropped if it doesn't fit in `out`). The xHCI bulk transfer
+/// completes on the first short packet, so per-frame framing falls
+/// out for free.
+///
+/// Non-blocking-ish: `bulk_in_xfer` busy-waits on a Transfer Event,
+/// but the controller posts that event as soon as the device sends
+/// a short packet OR fills the requested length. If the device has
+/// nothing to say it eventually times out at ~200M spin iterations
+/// (~1s) and returns None — caller treats that as "no frame."
+pub fn cdc_ecm_recv_frame(out: &mut [u8]) -> usize {
+    let ecm = match unsafe { CDC_ECM } {
+        Some(e) => e,
+        None => return 0,
+    };
+    let rx_phys = match phys_of(unsafe { &raw const ECM_RX_BUF } as u64) {
+        Some(p) => p,
+        None => return 0,
+    };
+    // Ask for up to one full Ethernet frame; controller will short-
+    // packet earlier if the device's frame is smaller. xHCI Transfer
+    // Event reports residual bytes via the EWE field.
+    let want = unsafe { ECM_RX_BUF.0.len() } as u32;
+    let residual = bulk_in_xfer(ecm.slot_id, ecm.in_dci, rx_phys, want);
+    let received = match residual {
+        Some(r) => (want as i64 - r as i64).max(0) as usize,
+        None => return 0,
+    };
+    if received == 0 || received > out.len() {
+        return 0;
+    }
+    out[..received].copy_from_slice(unsafe { &ECM_RX_BUF.0[..received] });
+    received
+}
+
+/// Is there an inbound frame ready on the CDC-ECM bulk IN endpoint?
+/// xHCI doesn't expose "buffer non-empty" cheaply — the device pushes
+/// frames into a transfer ring at its own cadence and we discover them
+/// by polling. For v1 we always return `true` and let `cdc_ecm_recv_frame`
+/// either return data or 0; smoltcp's polling loop tolerates this.
+pub fn cdc_ecm_has_data() -> bool { unsafe { CDC_ECM.is_some() } }
+
+// ============================================================================
 // Configuration descriptor walk for USB Mass Storage SCSI BBB
 // ============================================================================
 
@@ -1398,6 +1895,167 @@ fn find_msc_endpoints(blob: &[u8], cfg_val: u8) -> Option<(u8, u8, u8, u16, u8)>
     }
 }
 
+// ============================================================================
+// CDC-ECM enumeration (Phase 15 M50 — USB tethering)
+// ============================================================================
+
+/// Try to enumerate a CDC-ECM (USB-Ethernet / tethered phone) function on
+/// the just-addressed device. Returns true if the device is CDC-ECM and we
+/// configured it successfully; false otherwise (caller falls through to
+/// the next class probe). Stashes the result in the `CDC_ECM` static so
+/// `cdc_ecm_device()` / future smoltcp glue can find it.
+///
+/// Protocol shape (same as MSC for the bulk path):
+///   1. `cdc_ecm::parse_config(blob)` — find control + data interfaces,
+///      bulk IN/OUT addrs, MTU, iMACAddress.
+///   2. SET_CONFIGURATION.
+///   3. SET_INTERFACE on the Data interface to its `data_alt` (usually alt
+///      1) — alt 0 has zero endpoints on the spec-conforming devices, alt 1
+///      activates the bulk pair.
+///   4. configure_bulk_endpoints (publishes phys addrs into BULK_*_RING_PHYS).
+///   5. GET_DESCRIPTOR(STRING, iMAC) → parse 12 ASCII hex digits → 6-byte MAC.
+///   6. SET_ETHERNET_PACKET_FILTER (class-specific OUT) — promiscuous-ish
+///      default (DIRECTED + BROADCAST + MULTICAST) so we see the frames the
+///      phone DHCPs us.
+fn try_enumerate_cdc_ecm(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    blob: &[u8],
+    cfg_val: u8,
+) -> bool {
+    use crate::usb::cdc_ecm;
+
+    let ecm = cdc_ecm::parse_config(blob);
+    if !ecm.found || ecm.bulk.in_addr == 0 || ecm.bulk.out_addr == 0 {
+        // Verbose no-match: useful when the user plugs a dock or dongle and
+        // the kernel doesn't bring it up — without this, the failure is
+        // completely silent. CDC-NCM, RNDIS, and Realtek-proprietary RTL8153
+        // all miss the ECM parser, so logging the reason narrows the gap.
+        println!("[xhci-ecm] no CDC-ECM match: found={} ctl-iface={} data-iface={} bulk IN=0x{:02X} OUT=0x{:02X}",
+            ecm.found, ecm.control_iface, ecm.data_iface,
+            ecm.bulk.in_addr, ecm.bulk.out_addr);
+        return false;
+    }
+
+    if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, cfg_val as u16, 0, 0) {
+        println!("[xhci-ecm] SET_CONFIGURATION failed");
+        return false;
+    }
+
+    // SET_INTERFACE(data_iface, data_alt) — Standard Interface request,
+    // bmRequestType = 0x01 (host→device, standard, recipient=interface).
+    if ecm.data_alt != 0 {
+        if !control_out(slot_id, 0x01, request::SET_INTERFACE,
+                        ecm.data_alt as u16, ecm.data_iface as u16, 0) {
+            println!("[xhci-ecm] SET_INTERFACE(alt={}) on iface {} failed",
+                ecm.data_alt, ecm.data_iface);
+            // Some phones expose only alt 0 with endpoints; continue anyway.
+        }
+    }
+
+    let (in_dci, out_dci) = match configure_bulk_endpoints(
+        slot_id, port, speed,
+        ecm.bulk.in_addr, ecm.bulk.out_addr,
+        ecm.bulk.in_mps.max(ecm.bulk.out_mps),
+    ) {
+        Some(d) => d,
+        None => {
+            println!("[xhci-ecm] configure_bulk_endpoints failed");
+            return false;
+        }
+    };
+
+    // Read the MAC string descriptor (CDC-ECM § 5.4: 12 ASCII hex digits).
+    let mut mac = [0u8; 6];
+    if ecm.i_mac != 0 {
+        // GET_DESCRIPTOR(STRING, iMAC) with language ID 0x0409 (US English).
+        let buf_phys = match phys_of(unsafe { &raw const DMA_BUF } as u64) {
+            Some(p) => p,
+            None => { println!("[xhci-ecm] DMA buf phys failed"); return false; }
+        };
+        unsafe { DMA_BUF.0[..2 + 24].fill(0); }
+        if !control_in_phys(slot_id, 0x80, request::GET_DESCRIPTOR,
+                            ((desc_type::STRING as u16) << 8) | ecm.i_mac as u16,
+                            0x0409, (2 + 24) as u16, buf_phys, 2 + 24) {
+            println!("[xhci-ecm] GET_DESCRIPTOR(STRING, iMAC) failed");
+        } else {
+            let s = unsafe { &DMA_BUF.0[..2 + 24] };
+            if let Some(parsed) = cdc_ecm::parse_mac_string(s) {
+                mac = parsed;
+            }
+        }
+    }
+
+    // CDC class request SET_ETHERNET_PACKET_FILTER (0x43). bmRequestType =
+    // 0x21 (host→device, class, recipient=interface). wValue = filter bits.
+    // 0x0E = DIRECTED|BROADCAST|MULTICAST (enough for DHCP + unicast).
+    let _ = control_out(slot_id, 0x21, 0x43, 0x000E,
+                        ecm.control_iface as u16, 0);
+
+    println!(
+        "[xhci-ecm] CDC-ECM up: slot={} ctl-iface={} data-iface={} alt={} \
+        IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} MTU={} MAC={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        slot_id, ecm.control_iface, ecm.data_iface, ecm.data_alt,
+        ecm.bulk.in_addr, ecm.bulk.out_addr,
+        ecm.bulk.in_mps, ecm.bulk.out_mps, ecm.mtu,
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+    );
+
+    unsafe {
+        CDC_ECM = Some(CdcEcmDevice {
+            slot_id,
+            control_iface: ecm.control_iface,
+            data_iface: ecm.data_iface,
+            data_alt: ecm.data_alt,
+            in_ep_addr: ecm.bulk.in_addr,
+            out_ep_addr: ecm.bulk.out_addr,
+            in_dci,
+            out_dci,
+            in_mps: ecm.bulk.in_mps,
+            out_mps: ecm.bulk.out_mps,
+            config_value: cfg_val,
+            mac,
+            mtu: ecm.mtu,
+        });
+    }
+    true
+}
+
+/// Public accessor — `net_interface_register` (Phase 15 M50) reads this
+/// to learn the MAC + DCIs for the smoltcp Device adapter.
+/// Enumerate a child device discovered behind a downstream hub port. The
+/// hub's `bring_up_hub` calls this once per port reporting Connection after
+/// reset. Builds the same Address Device / class-dispatch pipeline as the
+/// root-hub direct path, but with route string + parent-hub TT fields set
+/// on the slot context so the xHC can route control transfers correctly.
+///
+/// `parent_hub_slot` is the xHCI slot ID of the hub. `port_on_hub` is the
+/// 1-indexed downstream port. `root_hub_port` is the root-hub port that
+/// the whole branch hangs off (resolved by walking up the topology tree).
+/// `speed` is the speed reported by the hub for this child after reset.
+pub fn enumerate_child_of_hub(
+    parent_hub_slot: u8,
+    port_on_hub: u8,
+    root_hub_port: u8,
+    speed: u8,
+) -> bool {
+    let topology = Topology {
+        root_hub_port,
+        // Single-tier child: route string is just the downstream port
+        // number. Cascaded hubs (hub-behind-hub) need (port << 4*depth)
+        // OR'd in — out of scope for this slice.
+        route_string: port_on_hub as u32,
+        parent_hub_slot,
+        parent_port: port_on_hub,
+    };
+    enumerate_device(topology, speed)
+}
+
+pub fn cdc_ecm_device() -> Option<CdcEcmDevice> {
+    unsafe { CDC_ECM }
+}
+
 /// Configure the device's two bulk endpoints (IN + OUT) via the
 /// ConfigureEndpoint command. Allocates fresh transfer rings for each and
 /// publishes their phys addresses into the BULK_*_RING_PHYS statics so
@@ -1428,7 +2086,7 @@ fn configure_bulk_endpoints(
         BULK_IN_RING_PHYS = in_phys;
         BULK_OUT_RING_PHYS = out_phys;
 
-        let ic = &mut INPUT_CTX_SLOT1.0;
+        let ic = &mut INPUT_CTXS[slot_id as usize].0;
         ic.reset();
         // Add slot (A0) + both bulk endpoints (Ain_dci, Aout_dci).
         ic.input_ctrl_mut().add_flags =
@@ -1441,7 +2099,7 @@ fn configure_bulk_endpoints(
         ic.ep_mut((out_dci - 1) as usize).init_bulk_out_ep(mps, out_phys, true);
     }
 
-    let input_phys = phys_of(unsafe { &raw const INPUT_CTX_SLOT1 } as u64)?;
+    let input_phys = phys_of(unsafe { &raw const INPUT_CTXS[slot_id as usize] } as u64)?;
 
     let idx = unsafe { CMD_PROD.enqueue };
     let cmd_phys = cmd_trb_phys_at(idx);

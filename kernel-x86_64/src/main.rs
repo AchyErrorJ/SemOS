@@ -62,6 +62,7 @@ mod wireless;
 mod panic_dump;
 pub mod paging;
 pub mod apic;
+pub mod ioapic;
 pub mod framebuffer;
 pub mod font;
 pub mod gfx2d;
@@ -186,9 +187,21 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     println!("[*] Initializing Local APIC...");
     if apic::init() {
         println!("[OK] APIC timer active (PIC masked)");
+        // After LAPIC is up, route legacy device IRQs through the
+        // IOAPIC. Without this, real hardware (W540 PS/2 keyboard on
+        // IRQ 1) never delivers — the PIC is masked. QEMU's
+        // emulated devices used to bypass this via the i8259 path.
+        ioapic::init();
     } else {
         println!("[!] No APIC — staying on legacy PIC + PIT");
     }
+    println!();
+
+    // Initialize the PS/2 controller (i8042). ThinkPad BIOS leaves
+    // scanning disabled after its keyboard POST self-test; without
+    // an OS-side 0xF4 the IRQ wires up but the keyboard never sends.
+    println!("[*] Initializing PS/2 keyboard...");
+    keyboard::init();
     println!();
 
     println!("[*] Scanning PCI bus 0...");
@@ -280,6 +293,24 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // Fixed by bumping TASK_STACK_SIZE to 64 KiB (Phase 9 M3).
     println!("[*] Probing xHCI USB controller...");
     let _usb_ok = usb::init_and_enumerate();
+    // Phase 15 M50: if an enumerated USB device is CDC-ECM (tethered phone
+    // or USB-Ethernet dongle), register it with the driver registry so the
+    // smoltcp glue below can bring up an IP stack on top.
+    if usb::cdc_ecm_net::register_with_kernel_core() {
+        let mac = usb::xhci::cdc_ecm_device().map(|d| d.mac).unwrap_or([0; 6]);
+        println!("[cdc-ecm] registered with driver registry as 'cdc-ecm0' MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        // Bring up smoltcp on the CDC-ECM interface. Same pattern as
+        // virtio-net0 above. If virtio-net0 was already registered as
+        // the active interface, this is additive; net::init takes the
+        // *first* registered device on its first call.
+        if let Some(nd) = kernel_core::drivers::registry::get_net("cdc-ecm0") {
+            if kernel_core::net::init(nd) {
+                kernel_core::net::poll();
+                println!("[cdc-ecm] smoltcp interface initialized on cdc-ecm0");
+            }
+        }
+    }
     println!();
 
     // Initialize kernel-core subsystems
@@ -610,8 +641,26 @@ fn init_loader_task() {
     // the calls below read the same as before. (Older demos are still local.)
     use crate::demos::*;
 
+    // Hot-key ESC short-circuit: press Escape during the demo run to
+    // jump straight to the shell. SKIP_DEMOS is set by the keyboard
+    // polling path the moment scancode 0x01 arrives.
+    //
+    // (Inline `if SKIP_DEMOS { break 'demos; }` at each check point
+    // because Rust 2024's macro-hygiene scoping doesn't propagate
+    // outer labels into macro_rules! expansions cleanly.)
+
+    'demos: {
+    if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
+        println!("  [ESC pressed — skipping demos.]");
+        break 'demos;
+    }
+
     // Run kernel-side demos FIRST (demos 2 & 3 — the SemanticObject path).
     sem_demo_kernel();
+    if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
+        println!("  [ESC pressed — skipping demos.]");
+        break 'demos;
+    }
 
     // DEMO 0: real Rust user binary (hello-rs.elf, built from
     // user-programs/hello/). Proves the toolchain works end-to-end —
@@ -1209,6 +1258,21 @@ fn init_loader_task() {
     println!("  SemOS DEMO 73: Ring-3 semos-cc emits ELF on SemOS → SYS_SPAWN");
     println!("================================================================");
     ring3_semos_cc_d2_demo();
+
+    if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
+        println!("  [ESC pressed — skipping demos.]");
+        break 'demos;
+    }
+
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 81: USB CDC-ECM enumeration (Phase 15 M50)");
+    println!("================================================================");
+    demo_81_cdc_ecm();
+
+    // End of the 'demos: { ... } labeled block. Any `break 'demos` from
+    // the ESC short-circuit jumps here, falling through to the shell.
+    } // 'demos
 
     // Final marker before idling. On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
@@ -4758,6 +4822,40 @@ fn ring3_semos_cc_d2_demo() {
     }
 
     kernel_core::process::set_kernel_task_id(saved_kernel_task);
+}
+
+/// DEMO 81: Phase 15 M50 — USB CDC-ECM enumeration smoke test.
+///
+/// Reports whether `usb::init_and_enumerate()` (called much earlier in
+/// boot) detected a CDC-ECM USB-Ethernet class device. On QEMU this
+/// requires `-device usb-net,netdev=phone` or similar; on bare metal
+/// it lights up when a tethered phone or USB-Ethernet dongle is
+/// plugged into the W540's USB 3 ports.
+///
+/// PASS: `usb::xhci::cdc_ecm_device()` returns Some + the kernel-core
+/// driver registry has a `cdc-ecm0` entry. FAIL is non-fatal — we
+/// just log "no CDC-ECM device present" and move on. The shell can
+/// still see virtio-net0 (in QEMU) or fall through to the M51 QR
+/// pairing path (planned).
+fn demo_81_cdc_ecm() {
+    match usb::xhci::cdc_ecm_device() {
+        Some(d) => {
+            println!(
+                "  [DEMO 81] PASS: CDC-ECM up: slot={} cfg=set if-alt=data MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                d.slot_id, d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5]
+            );
+            if kernel_core::drivers::registry::get_net("cdc-ecm0").is_some() {
+                println!("  [DEMO 81] PASS: cdc-ecm0 registered in driver registry");
+            } else {
+                println!("  [DEMO 81] WARN: cdc-ecm0 missing from driver registry");
+            }
+            println!("  [DEMO 81] => Phase 15 M50 substrate live; smoltcp glue next");
+        }
+        None => {
+            println!("  [DEMO 81] SKIP: no CDC-ECM device present");
+            println!("           (plug a tethered phone or USB-Ethernet dongle to exercise)");
+        }
+    }
 }
 
 /// DEMO 70: Ring 3 sync-demo — live functional smoke for the new

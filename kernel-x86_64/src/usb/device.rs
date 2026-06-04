@@ -87,6 +87,40 @@ impl SlotContext {
     pub fn slot_state(&self) -> u32 {
         (self.dw3 >> 27) & 0x1F
     }
+    /// Set the Route String (dw0 bits 19:0). Each tier uses 4 bits =
+    /// downstream port number on the parent hub. Tier 0 = root hub direct,
+    /// so route_string = 0; tier 1 = (child_port_on_hub), tier 2 =
+    /// (child_port << 4) | port_of_parent_hub_in_root, etc. Spec § 6.2.2.
+    #[inline]
+    pub fn set_route_string(&mut self, route: u32) {
+        self.dw0 = (self.dw0 & 0xFFF0_0000) | (route & 0x000F_FFFF);
+    }
+    /// Mark this slot as a hub (dw0 bit 26). Used when enumerating an
+    /// internal hub so future cascaded enum can resolve children through
+    /// it. Spec § 6.2.2 Table 6-7.
+    #[inline]
+    pub fn set_is_hub(&mut self, is_hub: bool) {
+        if is_hub {
+            self.dw0 |= 1u32 << 26;
+        } else {
+            self.dw0 &= !(1u32 << 26);
+        }
+    }
+    /// Set the TT (Transaction Translator) Hub Slot ID (dw2 bits 7:0).
+    /// Required when a low-/full-speed device is behind a high-speed hub:
+    /// this names the parent hub's slot so the xHC can route split
+    /// transactions through its TT. Spec § 6.2.2 Table 6-7.
+    #[inline]
+    pub fn set_parent_hub_slot_id(&mut self, slot_id: u8) {
+        self.dw2 = (self.dw2 & 0xFFFF_FF00) | (slot_id as u32);
+    }
+    /// Set the TT Port Number (dw2 bits 15:8) — which downstream port of
+    /// the parent hub this device sits on. Same caveat as above: only
+    /// meaningful for LS/FS devices behind an HS hub.
+    #[inline]
+    pub fn set_parent_port_number(&mut self, port: u8) {
+        self.dw2 = (self.dw2 & 0xFFFF_00FF) | ((port as u32) << 8);
+    }
 }
 
 /// EndpointContext is exactly 32 bytes (CSZ=0 layout). See module
@@ -388,6 +422,10 @@ pub mod request {
     pub const SET_ADDRESS: u8 = 5;
     pub const GET_DESCRIPTOR: u8 = 6;
     pub const SET_CONFIGURATION: u8 = 9;
+    /// Switch the active alternate-setting on an interface. Used by
+    /// CDC-ECM to activate the Data interface's bulk endpoints
+    /// (typically `alt 0 = idle, no endpoints; alt 1 = active bulk pair`).
+    pub const SET_INTERFACE: u8 = 11;
     // HID class requests (bmRequestType=0x21 to set, 0xA1 to get on interface)
     pub const HID_SET_PROTOCOL: u8 = 0x0B;
     pub const HID_GET_REPORT: u8 = 0x01;

@@ -450,6 +450,7 @@ fn input_push_locked(b: u8) {
             s.cursor = 0;
             s.hist_nav = s.hist_count; // reset to fresh-line slot
             crate::serial::Serial::put_char('\n');
+            crate::framebuffer::write_str("\n");
         }
         0x08 | 0x7F => {
             if s.cursor > 0 {
@@ -458,12 +459,20 @@ fn input_push_locked(b: u8) {
                 crate::serial::Serial::put_char('\u{8}');
                 crate::serial::Serial::put_char(' ');
                 crate::serial::Serial::put_char('\u{8}');
+                crate::framebuffer::write_str("\u{8} \u{8}");
             }
         }
         0x20..=0x7E | b'\t' => {
             if s.pend_n < PEND_MAX {
                 s.insert(b);
                 crate::serial::Serial::put_char(b as char);
+                // Also echo to the framebuffer console — real hardware
+                // typically has no serial cable, so without this the
+                // user types and sees nothing on screen until Enter.
+                let one = [b];
+                if let Ok(slice) = core::str::from_utf8(&one) {
+                    crate::framebuffer::write_str(slice);
+                }
             }
         }
         _ => {}
