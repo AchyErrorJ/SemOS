@@ -577,11 +577,40 @@ fn intel_pch_port_routing(loc: pci::Location) {
     if xusb2prm != 0 {
         pci::write_u32(loc.bus, loc.slot, loc.func, intel_pch::XUSB2PR, xusb2prm);
     }
+    // Read back what actually got set — BIOS can lock these via SMM and
+    // silently refuse our writes. Cache for usbinfo.
+    let usb3pssen_now = pci::read_u32(loc.bus, loc.slot, loc.func, intel_pch::USB3PSSEN);
+    let xusb2pr_now = pci::read_u32(loc.bus, loc.slot, loc.func, intel_pch::XUSB2PR);
+    unsafe {
+        PCH_ROUTING = Some(PchRouting {
+            pci_loc: loc,
+            usb3prm,
+            xusb2prm,
+            usb3pssen: usb3pssen_now,
+            xusb2pr: xusb2pr_now,
+        });
+    }
     println!(
-        "[xhci] Intel PCH routing: USB3PSSEN<-0x{:08X}  XUSB2PR<-0x{:08X}",
-        usb3prm, xusb2prm
+        "[xhci] Intel PCH routing: USB3PSSEN<-0x{:08X} (now=0x{:08X})  XUSB2PR<-0x{:08X} (now=0x{:08X})",
+        usb3prm, usb3pssen_now, xusb2prm, xusb2pr_now
     );
 }
+
+/// Snapshot of Intel PCH USB port routing read-back, cached so `usbinfo`
+/// can dump the values without re-scanning PCI.
+#[derive(Copy, Clone)]
+struct PchRouting {
+    pci_loc: pci::Location,
+    /// Mask of USB-3 ports the controller advertises as route-capable.
+    usb3prm: u32,
+    /// Mask of USB-2 ports the controller advertises as route-capable.
+    xusb2prm: u32,
+    /// What USB3PSSEN actually reads after our write (vs what we wrote).
+    usb3pssen: u32,
+    /// What XUSB2PR actually reads after our write.
+    xusb2pr: u32,
+}
+static mut PCH_ROUTING: Option<PchRouting> = None;
 
 // ============================================================================
 // Bring-up sequence
@@ -2166,6 +2195,39 @@ pub fn print_usbinfo() -> u64 {
         info.mmio_base, info.max_slots, info.max_ports,
         if info.csz1 { 1 } else { 0 }
     );
+
+    // Intel PCH USB port routing (W540 = Lynx Point). XUSB2PRM is the
+    // read-only mask of USB-2 ports that CAN be routed to xHCI; XUSB2PR
+    // is what's currently routed. If they differ, BIOS locked the
+    // register via SMM and our write didn't stick — that's a routing
+    // failure that explains "everything stuck at PLS=Polling".
+    match unsafe { PCH_ROUTING } {
+        Some(r) => {
+            println!("usbinfo: Intel PCH @ PCI 00:{:02X}.{}", r.pci_loc.slot, r.pci_loc.func);
+            println!("  XUSB2PRM (USB-2 ports route-capable): 0x{:08X}", r.xusb2prm);
+            println!("  XUSB2PR  (USB-2 ports route-active):  0x{:08X}", r.xusb2pr);
+            if r.xusb2pr != r.xusb2prm {
+                println!("  ** XUSB2PR != XUSB2PRM — BIOS may be blocking our write (USB-2 ports still on EHCI)");
+            }
+            println!("  USB3PRM  (USB-3 ports SS-capable):    0x{:08X}", r.usb3prm);
+            println!("  USB3PSSEN(USB-3 ports SS-active):     0x{:08X}", r.usb3pssen);
+            if r.usb3pssen != r.usb3prm {
+                println!("  ** USB3PSSEN != USB3PRM — SuperSpeed routing didn't fully apply");
+            }
+            // Re-attempt the write right now, in case BIOS only locks
+            // pre-boot and unlocks after. Cheap; harmless if it fails.
+            if r.xusb2prm != 0 && r.xusb2pr != r.xusb2prm {
+                pci::write_u32(r.pci_loc.bus, r.pci_loc.slot, r.pci_loc.func,
+                    intel_pch::XUSB2PR, r.xusb2prm);
+                let after = pci::read_u32(r.pci_loc.bus, r.pci_loc.slot, r.pci_loc.func,
+                    intel_pch::XUSB2PR);
+                println!("  retry XUSB2PR<-0x{:08X}  read-back=0x{:08X} {}",
+                    r.xusb2prm, after,
+                    if after == r.xusb2prm { "(STUCK — try replugging device)" } else { "(STILL BLOCKED by BIOS)" });
+            }
+        }
+        None => println!("usbinfo: no PCH routing cache (non-Intel xHCI or init never ran)"),
+    }
 
     let mut ccs_count = 0u32;
     let mut ped_count = 0u32;
