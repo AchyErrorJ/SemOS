@@ -1270,6 +1270,17 @@ fn init_loader_task() {
     println!("================================================================");
     demo_81_cdc_ecm();
 
+    if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
+        println!("  [ESC pressed — skipping demos.]");
+        break 'demos;
+    }
+
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 82: iPhone tether — USB MUX iface (session 1)");
+    println!("================================================================");
+    demo_82_iphone();
+
     // End of the 'demos: { ... } labeled block. Any `break 'demos` from
     // the ESC short-circuit jumps here, falling through to the shell.
     } // 'demos
@@ -4853,7 +4864,37 @@ fn demo_81_cdc_ecm() {
         }
         None => {
             println!("  [DEMO 81] SKIP: no CDC-ECM device present");
-            println!("           (plug a tethered phone or USB-Ethernet dongle to exercise)");
+            println!("           (plug a CDC-ECM USB-Ethernet dongle to exercise)");
+        }
+    }
+}
+
+/// DEMO 82: iPhone tether session 1 — surfaces whether the USB MUX
+/// interface was enumerated. Without lockdownd pairing (session 3) the
+/// bulk OUT of our stub Hello packet will NAK or stall; that's
+/// expected. The test we want here is purely:
+///   * Did xHCI recognize Apple Vendor 0x05AC?
+///   * Did the descriptor walk find a class 0xFF/0xFE/0x02 interface?
+///   * Did ConfigureEndpoint succeed?
+///
+/// Plug an iPhone via USB to the W540 (Personal Hotspot can stay OFF for
+/// this DEMO — we just need the USB MUX interface, which is always
+/// exposed). Expected serial: `[iphone] USB MUX interface candidate:
+/// iface=N IN 0x... OUT 0x... MPS in/out X/Y` followed by `[iphone]
+/// cached: slot=... DCIs in/out X/Y`.
+fn demo_82_iphone() {
+    match usb::iphone::iphone_device() {
+        Some(d) => {
+            println!(
+                "  [DEMO 82] PASS: USB MUX up: slot={} iface={} IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} DCIs in/out {}/{}",
+                d.slot_id, d.mux_iface, d.mux_in_ep, d.mux_out_ep,
+                d.mux_in_mps, d.mux_out_mps, d.mux_in_dci, d.mux_out_dci
+            );
+            println!("  [DEMO 82] => session 1 substrate live; usbmuxd plist (session 2) + lockdownd (session 3) + ipheth (sessions 4-5) still TODO");
+        }
+        None => {
+            println!("  [DEMO 82] SKIP: no iPhone detected (or iPhone enum failed)");
+            println!("           (plug a paired/unpaired iPhone via USB to exercise)");
         }
     }
 }

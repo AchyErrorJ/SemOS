@@ -395,6 +395,14 @@ static mut CDC_ECM: Option<CdcEcmDevice> = None;
 struct EcmFrameBuf([u8; 2048]);
 static mut ECM_TX_BUF: EcmFrameBuf = EcmFrameBuf([0; 2048]);
 static mut ECM_RX_BUF: EcmFrameBuf = EcmFrameBuf([0; 2048]);
+// iPhone tether session 1: dedicated TX/RX scratch buffers for the
+// usbmuxd channel. Page-aligned so phys-translation works cleanly.
+// 2 KiB matches typical usbmuxd messages (Hello/GetValue/pair record);
+// service-level messages can be longer but those are sessions 3+.
+#[repr(C, align(4096))]
+struct IphoneFrameBuf([u8; 2048]);
+static mut IPHONE_TX_BUF: IphoneFrameBuf = IphoneFrameBuf([0; 2048]);
+static mut IPHONE_RX_BUF: IphoneFrameBuf = IphoneFrameBuf([0; 2048]);
 /// Resolved physical addresses of each per-slot EP0 transfer ring.
 static mut EP0_RING_PHYSES: [u64; MAX_SLOTS + 1] = [0u64; MAX_SLOTS + 1];
 /// Resolved physical address of the command ring.
@@ -1295,9 +1303,24 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
                     interface_number: 0,
                 });
             }
-            // Phase 15 M50: CDC-ECM first (USB-Ethernet adapter / tethered iPhone).
-            // Most tethering phones present CDC-ECM at the Communications class
-            // interface; falling through to MSC matches the older flow.
+            // iPhone tether session 1: if vendor is Apple, try the USB MUX
+            // interface first. iPhones don't actually use CDC-ECM for
+            // tethering — they use Apple's proprietary `ipheth` interface
+            // sitting BEHIND usbmuxd + lockdownd pairing. Session 1 only
+            // gets the MUX interface enumerated; sessions 2-5 build out
+            // the rest of the stack.
+            if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
+                if try_enumerate_iphone(slot_id, port, speed, blob,
+                                         cfg_desc.b_configuration_value) {
+                    return true;
+                }
+                // Fall through to CDC-ECM / MSC if iPhone enum fails — some
+                // Apple devices (iPods in storage mode) match the MSC path.
+            }
+            // Phase 15 M50: CDC-ECM (USB-Ethernet adapter or CDC-ECM dongle).
+            // The original "tethered iPhone" comment was wrong — iPhones use
+            // ipheth, not CDC-ECM. CDC-ECM still wins for ~$10 USB-Ethernet
+            // adapters and some Android phones in their "CDC-ECM tether" mode.
             if try_enumerate_cdc_ecm(slot_id, port, speed, blob,
                                       cfg_desc.b_configuration_value) {
                 return true;
@@ -1917,6 +1940,81 @@ fn find_msc_endpoints(blob: &[u8], cfg_val: u8) -> Option<(u8, u8, u8, u16, u8)>
 ///   6. SET_ETHERNET_PACKET_FILTER (class-specific OUT) — promiscuous-ish
 ///      default (DIRECTED + BROADCAST + MULTICAST) so we see the frames the
 ///      phone DHCPs us.
+/// iPhone tether session 1: walk the iPhone's config descriptor for the
+/// USB MUX interface (class 0xFF/0xFE/0x02), SET_CONFIGURATION, set the
+/// bulk endpoints, and stash the per-iPhone state. The actual usbmuxd
+/// Hello + lockdownd pair are subsequent sessions; this only proves the
+/// xHCI-level path is live.
+fn try_enumerate_iphone(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    blob: &[u8],
+    cfg_val: u8,
+) -> bool {
+    use crate::usb::iphone;
+
+    let (iface, _alt, in_addr, in_mps, out_addr, out_mps) =
+        match iphone::find_mux_interface(blob) {
+            Some(t) => t,
+            None => {
+                println!("[iphone] no USB MUX interface (class 0xFF/0xFE/0x02) in config descriptor");
+                return false;
+            }
+        };
+    println!(
+        "[iphone] USB MUX interface candidate: iface={} IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{}",
+        iface, in_addr, out_addr, in_mps, out_mps
+    );
+
+    if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, cfg_val as u16, 0, 0) {
+        println!("[iphone] SET_CONFIGURATION failed");
+        return false;
+    }
+
+    let (in_dci, out_dci) = match configure_bulk_endpoints(
+        slot_id, port, speed,
+        in_addr, out_addr, in_mps.max(out_mps),
+    ) {
+        Some(d) => d,
+        None => {
+            println!("[iphone] configure_bulk_endpoints failed");
+            return false;
+        }
+    };
+
+    iphone::stash(iphone::IphoneDevice {
+        slot_id,
+        mux_iface: iface,
+        mux_in_ep: in_addr,
+        mux_out_ep: out_addr,
+        mux_in_dci: in_dci,
+        mux_out_dci: out_dci,
+        mux_in_mps: in_mps,
+        mux_out_mps: out_mps,
+        config_value: cfg_val,
+        next_tag: 0,
+    });
+
+    // Session 1 stub: build a header-only Hello packet and bulk-send it.
+    // Without a plist body the iPhone will reject or NAK; that's
+    // expected. Session 2 builds the real Hello with an XML plist.
+    let mut hello = [0u8; 32];
+    let n = iphone::build_session1_hello(&mut hello);
+    println!("[iphone] session-1 stub: built {}-byte Hello header (no plist body, expect NAK)", n);
+    unsafe { IPHONE_TX_BUF.0[..n].copy_from_slice(&hello[..n]); }
+    let tx_phys = match phys_of(unsafe { &raw const IPHONE_TX_BUF } as u64) {
+        Some(p) => p,
+        None => { println!("[iphone] IPHONE_TX_BUF phys translation failed"); return true; }
+    };
+    if bulk_out_xfer(slot_id, out_dci, tx_phys, n as u32).is_some() {
+        println!("[iphone] bulk OUT of stub Hello succeeded — MUX channel is live");
+    } else {
+        println!("[iphone] bulk OUT of stub Hello did not complete (NAK/STALL likely — expected pre-pairing)");
+    }
+    true
+}
+
 fn try_enumerate_cdc_ecm(
     slot_id: u8,
     port: u8,
