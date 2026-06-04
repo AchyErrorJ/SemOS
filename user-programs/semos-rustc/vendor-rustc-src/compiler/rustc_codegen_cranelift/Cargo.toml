@@ -1,50 +1,59 @@
+# M27 Phase 5c Stage G iter 1: cg_clif Cargo.toml patched for SemOS:
+#
+# - crate-type dylib → rlib: cg_clif statically links into the
+#   semos-rustc binary, NOT loaded via `-Z codegen-backend`.
+# - versions 0.127.0 → 0.122.0: matches what M26 Session B vendored at
+#   compiler/vendor/cranelift-*-0.122.0/ — copied into
+#   user-programs/semos-rustc/vendor-externals/cranelift-* (subset:
+#   bitset, entity, control so far; rest pending).
+# - cranelift-codegen features: drop `std` (use the hashbrown no_std
+#   path inside cranelift-codegen) and drop `timing` (uses
+#   std::time::Instant). Keep `unwind` (gimli no_std-friendly) and
+#   `all-native-arch` (x86 + arm64 + s390x + riscv64).
+# - cranelift-native dropped: runtime CPU detection via libc; SemOS
+#   target is statically x86_64, no detection needed.
+# - cranelift-jit dropped: needs libc mmap + executable pages; SemOS
+#   AOT-only via cranelift-object → ELF → SYS_SPAWN.
+# - object: drop `std` feature; keep read_core/write/archive/elf.
+# - libloading dropped: host-only dynamic-loading; SemOS is static.
+# - empty [workspace] header so semos-rustc parent workspace claims
+#   this crate via its `vendor-rustc-src/compiler/*` glob.
+
+[workspace]
+
 [package]
 name = "rustc_codegen_cranelift"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["dylib"]
+crate-type = ["rlib"]
 
 [dependencies]
 # These have to be in sync with each other
-cranelift-codegen = { version = "0.127.0", default-features = false, features = ["std", "timing", "unwind", "all-native-arch"] }
-cranelift-frontend = { version = "0.127.0" }
-cranelift-module = { version = "0.127.0" }
-cranelift-native = { version = "0.127.0" }
-cranelift-jit = { version = "0.127.0", optional = true }
-cranelift-object = { version = "0.127.0" }
-target-lexicon = "0.13"
-gimli = { version = "0.32", default-features = false, features = ["write"] }
-object = { version = "0.37.3", default-features = false, features = ["std", "read_core", "write", "archive", "coff", "elf", "macho", "pe"] }
+cranelift-codegen = { version = "0.122.0", default-features = false, features = ["unwind", "all-native-arch"] }
+cranelift-frontend = { version = "0.122.0", default-features = false }
+cranelift-module = { version = "0.122.0", default-features = false }
+cranelift-object = { version = "0.122.0", default-features = false }
+target-lexicon = { version = "0.13", default-features = false }
+gimli = { version = "0.31", default-features = false, features = ["write"] }
+object = { version = "0.36", default-features = false, features = ["read_core", "write", "archive", "elf"] }
 
 indexmap = { version = "2.0.0", default-features = false }
-libloading = { version = "0.9.0", optional = true }
-smallvec = "1.8.1"
+smallvec = { version = "1.8.1", default-features = false }
 
-[patch.crates-io]
-# Uncomment to use an unreleased version of cranelift
-#cranelift-codegen = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
-#cranelift-frontend = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
-#cranelift-module = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
-#cranelift-native = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
-#cranelift-jit = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
-#cranelift-object = { git = "https://github.com/bytecodealliance/wasmtime.git", branch = "release-40.0.0" }
-
-# Uncomment to use local checkout of cranelift
-#cranelift-codegen = { path = "../wasmtime/cranelift/codegen" }
-#cranelift-frontend = { path = "../wasmtime/cranelift/frontend" }
-#cranelift-module = { path = "../wasmtime/cranelift/module" }
-#cranelift-native = { path = "../wasmtime/cranelift/native" }
-#cranelift-jit = { path = "../wasmtime/cranelift/jit" }
-#cranelift-object = { path = "../wasmtime/cranelift/object" }
-
-#gimli = { path = "../" }
+# Phase 5c Stage G iter 1: [patch.crates-io] inherited from parent
+# workspace at user-programs/semos-rustc/Cargo.toml. Per cargo: only the
+# workspace-root Cargo.toml's [patch.crates-io] is honored, so the
+# overrides for cranelift-bitset / cranelift-entity / cranelift-control
+# live there, not here.
 
 [features]
-# Enable features not ready to be enabled when compiling as part of rustc
-unstable-features = ["jit", "inline_asm_sym"]
-jit = ["cranelift-jit", "libloading"]
+# Cranelift JIT path NOT supported on SemOS (requires libc mmap +
+# executable pages). All compilation goes through cranelift-object →
+# ELF → SYS_SPAWN. `unstable-features` retained as a no-op for the
+# rustc test harness which references it.
+unstable-features = []
 inline_asm_sym = []
 unwinding = [] # Not yet included in unstable-features for performance reasons
 

@@ -21,21 +21,20 @@ members = [
     "vendor-rustc-src/compiler/*",
 ]
 # rustc_codegen_llvm + rustc_codegen_gcc + rustc_llvm + rustc_baked_icu_data
-# + rustc_sanitizers + rustc_codegen_cranelift get excluded — per §1 we
-# dropped LLVM/GCC backends, the LLVM C++ bindings, ICU data baking,
-# sanitizer support, and we vendor Cranelift separately in semos-cc.
-# Also exclude rustc_windows_rc + rustc_public + rustc_public_bridge +
-# rustc_proc_macro + rustc_query_impl + rustc_query_system + rustc_traits
-# + rustc_transmute + rustc_ty_utils + rustc_next_trait_solver +
-# rustc_sanitizers + rustc_symbol_mangling + rustc_pattern_analysis +
-# rustc_interface + rustc_target + rustc_abi until we discover whether
-# they're transitively needed by rustc_driver_impl (some likely are; this
-# is the discovery wave).
+# + rustc_sanitizers get excluded — per §1 we dropped LLVM/GCC backends,
+# the LLVM C++ bindings, ICU data baking, sanitizer support.
+#
+# Phase 5c Stage G iter 1 (2026-06-04): rustc_codegen_cranelift
+# UN-EXCLUDED — picked back into the workspace so its build graph
+# (cranelift-codegen / -frontend / -module / -object plus their
+# transitives) is now visible to cargo. The Cranelift no_std port is
+# expected to span 2-5 iterations; the first iteration lands the
+# leaves (cranelift-bitset, -entity, -control) and patches cg_clif's
+# Cargo.toml to point at the vendored 0.122.0 copies.
 exclude = [
     "vendor-rustc-src/compiler/rustc",
     "vendor-rustc-src/compiler/rustc_codegen_llvm",
     "vendor-rustc-src/compiler/rustc_codegen_gcc",
-    "vendor-rustc-src/compiler/rustc_codegen_cranelift",
     "vendor-rustc-src/compiler/rustc_llvm",
     "vendor-rustc-src/compiler/rustc_baked_icu_data",
     "vendor-rustc-src/compiler/rustc_sanitizers",
@@ -84,3 +83,16 @@ scoped-tls = { path = "vendor-externals/scoped-tls" }
 # Forks change default = [].
 either = { path = "vendor-externals/either" }
 indexmap = { path = "vendor-externals/indexmap" }
+# Phase 5c Stage G iter 1: Cranelift 0.122.0 vendored from
+# compiler/vendor/ (the M26 Session B copy). Three leaves landed this
+# iteration: cranelift-bitset is already no_std-clean upstream;
+# cranelift-entity is also no_std-clean; cranelift-control's
+# default-features list patched to drop the `fuzz` default (upstream's
+# `default = ["fuzz"]` pulls `arbitrary v1.4.x` which `impl
+# std::error::Error` unconditionally — incompatible with `core`).
+# Remaining cranelift-* crates (codegen + frontend + module + object
+# + bforest + codegen-shared + assembler-x64 + isle + meta + srcgen +
+# native) get added in subsequent Stage G iterations.
+cranelift-bitset = { path = "vendor-externals/cranelift-bitset" }
+cranelift-entity = { path = "vendor-externals/cranelift-entity" }
+cranelift-control = { path = "vendor-externals/cranelift-control" }
