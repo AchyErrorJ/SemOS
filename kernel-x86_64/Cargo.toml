@@ -11,10 +11,10 @@ description = "Semantic OS Kernel - x86_64 version"
 [features]
 # `interactive`: after the demo suite, drop into the live sem-sh shell reading
 # the real keyboard instead of idling (the "shell IS the OS interface" landing).
-# OFF by default so headless CI boots run the 60 demos and exit clean. Build a
-# session you can drive with `cargo build --release --features interactive` and
-# run QEMU windowed (omit `-display none`). See README "Interactive mode".
-default = []
+# ON by default — every bare-metal boot now lands in the shell. For headless
+# CI runs that just want the demos and a clean exit, opt out with
+# `--no-default-features`.
+default = ["interactive"]
 interactive = []
 
 [dependencies]

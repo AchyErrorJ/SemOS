@@ -76,6 +76,13 @@ pub trait Platform: Send + Sync + 'static {
     /// clean exit, non-zero if it couldn't run. Default: unavailable.
     fn run_editor(&self, _path_ptr: u64, _path_len: u64) -> u64 { 0 }
 
+    /// SYS_USBINFO: print a multi-line summary of every USB port (PORTSC,
+    /// PLS, speed, CCS, PED) and every enumerated slot (vendor/product,
+    /// class, MUX/MSC/CDC-ECM/HUB state) directly to the current TTY.
+    /// Read at the shell prompt to debug enumeration problems without
+    /// trying to catch boot scroll. Returns 0. Default: unavailable.
+    fn run_usbinfo(&self) -> u64 { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`

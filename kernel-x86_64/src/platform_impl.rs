@@ -269,6 +269,10 @@ impl Platform for X86Platform {
         crate::editor::run(path)
     }
 
+    fn run_usbinfo(&self) -> u64 {
+        crate::usb::xhci::print_usbinfo()
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,

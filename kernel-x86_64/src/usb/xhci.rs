@@ -2150,6 +2150,103 @@ pub fn enumerate_child_of_hub(
     enumerate_device(topology, speed)
 }
 
+/// SYS_USBINFO — print every port + enumerated slot to the current TTY.
+/// Called from the `usbinfo` shell builtin. The user reads this at the
+/// shell prompt to debug enumeration without serial.
+pub fn print_usbinfo() -> u64 {
+    let info = match unsafe { INFO } {
+        Some(i) => i,
+        None => {
+            println!("usbinfo: xHCI not initialized");
+            return 0;
+        }
+    };
+    println!(
+        "usbinfo: xHCI MMIO=0x{:X} MaxSlots={} MaxPorts={} CSZ={}",
+        info.mmio_base, info.max_slots, info.max_ports,
+        if info.csz1 { 1 } else { 0 }
+    );
+
+    let mut ccs_count = 0u32;
+    let mut ped_count = 0u32;
+    for port in 1..=info.max_ports {
+        let portsc_addr = info.op_base
+            + op_reg::PORTSC_BASE as u64 + ((port as u64 - 1) * 0x10);
+        let portsc = unsafe { read_u32(portsc_addr) };
+        let ccs = (portsc & portsc::CCS) != 0;
+        let ped = (portsc & portsc::PED) != 0;
+        let pls = (portsc & portsc::PLS_MASK) >> portsc::PLS_SHIFT;
+        let speed = (portsc >> 10) & 0xF;
+        if !ccs && !ped { continue; } // skip dead ports
+        if ccs { ccs_count += 1; }
+        if ped { ped_count += 1; }
+        let speed_name = match speed {
+            1 => "FS(USB1.1)",
+            2 => "LS(USB1.0)",
+            3 => "HS(USB2.0)",
+            4 => "SS(USB3.0)",
+            5 => "SSP(USB3.1)",
+            _ => "?",
+        };
+        let pls_name = match pls {
+            0 => "U0",
+            1 => "U1",
+            2 => "U2",
+            3 => "U3",
+            4 => "Disabled",
+            5 => "RxDetect",
+            6 => "Inactive",
+            7 => "Polling",
+            8 => "Recovery",
+            9 => "HotReset",
+            10 => "Compliance",
+            11 => "Test",
+            _ => "?",
+        };
+        println!(
+            "  port {:2}: PORTSC=0x{:08X} CCS={} PED={} PLS={}({}) speed={}({})",
+            port, portsc, if ccs {1} else {0}, if ped {1} else {0},
+            pls, pls_name, speed, speed_name
+        );
+    }
+    println!("usbinfo: {} ports show CCS=1 (connected), {} ports show PED=1 (enabled+routed to xHCI)",
+        ccs_count, ped_count);
+
+    match unsafe { DEVICE } {
+        Some(d) => println!(
+            "usbinfo: enumerated device — slot={} addr={} port={} speed={} vendor=0x{:04X} product=0x{:04X} mps0={}",
+            d.slot_id, d.usb_address, d.port, d.speed,
+            d.vendor, d.product, d.max_packet_ep0
+        ),
+        None => println!("usbinfo: no DEVICE record (nothing enumerated through the dispatch)"),
+    }
+
+    match unsafe { CDC_ECM } {
+        Some(e) => println!(
+            "usbinfo: CDC-ECM — slot={} ctl-iface={} data-iface={} alt={} MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} MTU={}",
+            e.slot_id, e.control_iface, e.data_iface, e.data_alt,
+            e.mac[0], e.mac[1], e.mac[2], e.mac[3], e.mac[4], e.mac[5], e.mtu
+        ),
+        None => println!("usbinfo: no CDC-ECM state"),
+    }
+    match unsafe { MSC.as_ref() } {
+        Some(m) => println!(
+            "usbinfo: MSC — slot={} interface={} blocks={} block_size={}",
+            m.slot_id, m.iface_num, m.capacity_blocks, m.capacity_bs
+        ),
+        None => println!("usbinfo: no MSC state"),
+    }
+    match crate::usb::iphone::iphone_device() {
+        Some(i) => println!(
+            "usbinfo: iPhone MUX — slot={} iface={} IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} DCIs in/out {}/{}",
+            i.slot_id, i.mux_iface, i.mux_in_ep, i.mux_out_ep,
+            i.mux_in_mps, i.mux_out_mps, i.mux_in_dci, i.mux_out_dci
+        ),
+        None => println!("usbinfo: no iPhone state (vendor 0x05AC not seen, or MUX iface not in descriptor)"),
+    }
+    0
+}
+
 pub fn cdc_ecm_device() -> Option<CdcEcmDevice> {
     unsafe { CDC_ECM }
 }

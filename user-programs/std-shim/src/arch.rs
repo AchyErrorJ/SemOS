@@ -62,6 +62,7 @@ pub const SYS_PS:           u64 = 110; // (buf,len) -> task count; 24-byte recor
 pub const SYS_ASK:          u64 = 111; // (prompt,len,out,outlen) -> answer length
 pub const SYS_AGENT:        u64 = 112; // (flags) -> 0/err; runs the interactive agent TUI
 pub const SYS_EDIT:         u64 = 113; // (path_ptr, path_len) -> 0/err; runs the modal editor
+pub const SYS_USBINFO:      u64 = 114; // () -> 0; dumps every USB port + enum'd slot to the TTY
 
 /// SYS_TCP_READ/WRITE return this when the socket isn't ready yet (retry
 /// after yielding). Distinct from 0 (EOF) and u64::MAX (hard error).

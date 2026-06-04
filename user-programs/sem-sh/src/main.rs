@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_USBINFO,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -235,6 +235,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
+            | "usbinfo"
     )
 }
 
@@ -867,6 +868,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  agent               open the split-pane agent terminal");
             println!("  edit FILE           open the modal text editor (vi-style)");
             println!("  fetch URL           HTTP GET (http:// only)");
+            println!("  usbinfo             dump xHCI port state + enum'd USB devices");
             println!("  exit [CODE]         leave the shell");
             println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
             0
@@ -891,6 +893,14 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             }
             let p = argv[1].as_bytes();
             let rc = unsafe { syscall2(SYS_EDIT, p.as_ptr() as u64, p.len() as u64) };
+            rc as i32
+        }
+        "usbinfo" => {
+            // Dump every USB port (PORTSC/PLS/speed/CCS/PED) + every
+            // enumerated slot (vendor/product, class, iPhone/CDC-ECM/MSC
+            // state) to the TTY. Designed for bare-metal debug where
+            // there's no serial — read at the shell prompt.
+            let rc = unsafe { syscall1(SYS_USBINFO, 0) };
             rc as i32
         }
         _ => exec_external(&argv),
