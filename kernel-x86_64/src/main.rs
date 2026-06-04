@@ -81,6 +81,12 @@ use serial::Serial;
 pub static FULLSCREEN_APP_ACTIVE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Run the kernel demo suite at boot. Default: OFF — boot lands at the
+/// shell immediately. The `demos` shell builtin (SYS_DEMOS, when wired
+/// up) is the on-demand entry point.
+pub static DEMOS_ON_BOOT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 /// Bootloader configuration
 pub static BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
@@ -650,6 +656,12 @@ fn init_loader_task() {
     // outer labels into macro_rules! expansions cleanly.)
 
     'demos: {
+    // Boot lands directly at the shell — demos are now opt-in via the
+    // 'demos' shell builtin (SYS_DEMOS). The ESC-to-skip path becomes
+    // irrelevant because we never enter the suite on boot.
+    if !DEMOS_ON_BOOT.load(core::sync::atomic::Ordering::Relaxed) {
+        break 'demos;
+    }
     if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
         println!("  [ESC pressed — skipping demos.]");
         break 'demos;
