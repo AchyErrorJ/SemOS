@@ -96,3 +96,11 @@ indexmap = { path = "vendor-externals/indexmap" }
 cranelift-bitset = { path = "vendor-externals/cranelift-bitset" }
 cranelift-entity = { path = "vendor-externals/cranelift-entity" }
 cranelift-control = { path = "vendor-externals/cranelift-control" }
+# Stage G iter 1b: cranelift-bforest and cranelift-codegen-shared are
+# both no_std-clean upstream (bforest declares `#![no_std]` in lib.rs;
+# codegen-shared has no `extern crate std` and uses only const tables).
+# No patches needed beyond vendoring; the [patch.crates-io] entries
+# just point cargo at the local 0.122.0 copies (since cg_clif declares
+# 0.122.0 from the registry it would otherwise fetch).
+cranelift-bforest = { path = "vendor-externals/cranelift-bforest" }
+cranelift-codegen-shared = { path = "vendor-externals/cranelift-codegen-shared" }
