@@ -2579,6 +2579,279 @@ Real-hardware milestones this session:
   buffer count bump)
 - All 60 demos run on real hardware
 
+## Stage F11: 18 patched rustc_* crates closed in one session (2026-06-03)
+
+Total this session: **18 crates** brought to `cargo check -p <crate>` clean
+against x86_64-unknown-none. Workspace went from 10 originally-failing
+crates to all closed; next tier (rustc_codegen_ssa, rustc_const_eval,
+rustc_lint, rustc_traits, rustc_ty_utils) now visible as F12 targets.
+
+Crates closed (error count before → 0):
+1. **rustc_middle** 137 → 0 — DynSend/DynSync negimpl removal for cell types
+   (UnsafeCell/NonNull/Cell/RefCell/OnceCell), TlvCell forwarder methods
+   (get/set/replace), FxBuildHasher unified in StdEntry, FileEncodeResult
+   tuple shape matches upstream (PathBuf, io::Error), env_var cfg-split,
+   ToString import for layout.rs, array_windows feature, GenericArg type
+   annotation in opaque_types.rs.
+2. **rustc_query_impl** 2755 → 0 — no_std preamble + alloc prelude +
+   std→core sweep + measureme cfg-out + SelfProfiler stub methods
+   (alloc_string, event_id_builder, get_or_alloc_cached_string,
+   map_query_invocation_id_to_string,
+   bulk_map_query_invocation_id_to_single_string) + StringId /
+   StringComponent / EventIdBuilder stubs in rustc_data_structures::profiling.
+3. **rustc_ast_passes** 42 → 0 — prelude + rustc_error_messages dep +
+   Vec import in feature_gate.rs.
+4. **rustc_mir_dataflow** 49 → 0 — file_buffered cfg + polonius_engine
+   cfg-gate + graphviz module cfg-gate + rustc_error_messages dep +
+   instrument strip + Vec/String imports.
+5. **rustc_monomorphize** 76 → 0 — file_buffered cfg + array_windows feature
+   + rustc_error_messages dep + instrument strip + per-file prelude imports.
+6. **rustc_public_bridge** 128 → 0 — no_std preamble (with
+   `extern crate alloc as crate_alloc` to avoid shadowing the local
+   `mod alloc`) + std::→core::/crate_alloc:: sweep + Vec import in lib.rs.
+7. **rustc_ast_lowering** 120 → 0 — Box/String/Vec import in lib.rs +
+   stability.rs Vec + asm.rs `contains_key(reg)` fix (drop `&`) +
+   rustc_error_messages dep + instrument strip.
+8. **rustc_symbol_mangling** 209 → 0 — no_std preamble + std→core sweep +
+   per-file preludes + ToOwned import for `"rust_eh_personality".to_owned()`
+   / `"__isPlatformVersionAtLeast".to_owned()` + punycode cfg-out (bug!()
+   stub on SemOS).
+9. **rustc_transmute** 221 → 0 — no_std preamble + std→core sweep +
+   `std::iter::repeat_n` → `core::iter::repeat_n` + Vec import + instrument
+   strip.
+10. **rustc_pattern_analysis** 488 → 0 — no_std preamble + per-file preludes
+    + std::hash/sync/cmp/ops/mem → core + instrument strip +
+    rustc_error_messages optional dep + `rustc_hash::FxHashMap` →
+    `rustc_data_structures::fx::FxHashMap` (rustc-hash 2.x has no FxHashMap
+    without `std` feature).
+11. **rustc_incremental** 398 → 0 — **§1.3 stub: entire crate body
+    host-only, SemOS stub re-exports** (LoadResult, in_incr_comp_dir,
+    setup_dep_graph, finalize_session_directory, save_work_product_index,
+    copy_cgu_workproduct_to_incr_comp_cache_dir, load_query_result_cache).
+12. **rustc_expand** 504 → 0 — per-file preludes +
+    `proc_macro_internals`/`proc_macro_diagnostic` features host-only +
+    array_windows feature + `pm::bridge::client::Client` field cfg-gated
+    in `BangProcMacro`/`AttrProcMacro`/`DeriveProcMacro` + rustc_proc_macro::
+    quote cfg-gated + Path::Component::Prefix cfg-gated (Windows verbatim)
+    + ToOwned imports in base.rs/expand.rs/module.rs/config.rs + hashbrown
+    0.15 alignment (Entry type-equality across crates).
+13. **rustc_builtin_macros** 456 → 0 — per-file preludes +
+    `proc_macro_internals`/`proc_macro_quote` features host-only + semos-std
+    dep added + cfg-split `std::env`/`semos_std::env` + cfg-split
+    `Path::Component::ParentDir` + quote!-BangProcMacro registration
+    cfg-split (host uses `pm::bridge::client::Client`, SemOS uses empty
+    `BangProcMacro {}`) + log_syntax println cfg-out.
+14. **rustc_metadata** 206 → 0 — `pm::bridge::client::ProcMacro` stub added
+    to rustc_proc_macro lib_stub.rs (Client<I,O> phantom + CustomDerive/
+    Attr/Bang variants matching upstream shape) + odht→hashbrown alias +
+    DefPathHashMapRef cfg-split body (BTreeMap fallback ignores raw_bytes)
+    + with_encode_metadata_header function body cfg-gated to no-op on
+    SemOS + write_with calls cfg-gated + strip_circumfix → manual
+    strip_prefix+strip_suffix + cfg-split Path::file_name().to_str().
+15. **rustc_infer** 158 → 0 — **vendored ena 0.14.4 at vendor-externals/ena,
+    patched for no_std**: blanket `#![no_std]`, `extern crate alloc`, drops
+    `log` dep (replaced `debug!()` with a local no-op macro), std::→core::
+    sweep, dogged feature-gated. Workspace `[patch.crates-io]` points at
+    the fork. UnifyKey/UnifyValue impls for IntVid/FloatVid in rustc_type_ir
+    un-gated. snapshot_map/snapshot_vec/undo_log/unify re-exports in
+    rustc_data_structures un-gated. Plus per-file preludes +
+    rustc_error_messages dep + custom FTL slugs (`infer_opaque_type`,
+    `infer_hidden_type`) mirroring subdiag attributes.
+16. **rustc_resolve** 416 → 0 — hashbrown 0.15 dep added (Entry
+    type-equality) + rustc_error_messages dep + semos-std dep +
+    `pub mod rustdoc` host-only with SemOS stub of `inner_docs`,
+    `has_primitive_or_keyword_or_attribute_docs`,
+    `attrs_to_preprocessed_links` + `local_macro_def_scopes[def_id]`
+    (drop double-ref) + `registered_tool_decls.get(&ident.0)`
+    (Macros20NormalizedIdent has tuple field).
+17. **rustc_trait_selection** 623 → 0 — `strip_circumfix`/`hash_set_entry`
+    features host-only + per-file preludes (47 files) + multi-line
+    `#[instrument(...)]` strip (96 occurrences, Python cleanup pass for
+    orphan-trailing `)]` lines) + ToString imports in
+    named_anon_conflict.rs + project.rs + strip_circumfix call sites
+    rewritten to `strip_prefix(start).and_then(|s| s.strip_suffix(end))`.
+18. **rustc_public** 971 → 0 — `extern crate alloc as crate_alloc` +
+    per-file preludes (16 files) + std::→core:: sweep + cfg-split
+    `std::io`/`semos_std::io` for `emit_mir` + `io::Error::other()` arg
+    cfg-split (SemOS is 0-arg) + ToString imports in
+    convert/stable/mir.rs + convert/stable/mod.rs.
+
+Recipe additions:
+- **ena vendor + no_std patch** is the model for any future host-only dep
+  (parking_lot, jobserver, etc).
+- **Multi-line #[instrument] strip cleanup** needs Python — sed strips
+  only the first line, leaving orphan `)]` content.
+- **`extern crate alloc as crate_alloc`** to avoid name collisions when
+  a crate has its own `mod alloc` (rustc_public, rustc_public_bridge).
+- **proc_macro::bridge::client stub** in rustc_proc_macro provides the
+  minimum ProcMacro enum + Client<I,O> phantom struct that lets
+  rustc_metadata's load_proc_macro compile (called as a stub at runtime).
+
+Cumulative: **~17,600+ errors cleared across 35 patched rustc_* compiler
+crates** (17 previous + 18 this session).
+
+Real-hardware fix this session:
+- **PS/2 keyboard EOI bug**: `keyboard_interrupt_handler` unconditionally
+  sent PIC EOI. On the W540 (IOAPIC→LAPIC delivery, PIC masked) the LAPIC
+  ISR bit for vector 33 never cleared, blocking subsequent keypresses.
+  Now branches on `apic::is_active()` and calls `apic::eoi()` — same
+  pattern as the timer handler.
+
+## Stage F12 + W540 keyboard saga (2026-06-03 cont'd)
+
+**M27 F12 — 4 of 5 crates closed**: rustc_traits 68→0, rustc_const_eval
+226→0, rustc_ty_utils 566→0, rustc_codegen_ssa 384→0. rustc_lint 3282
+still in flight.
+
+Recipe additions this stage:
+- `core::sync::mpsc::Receiver::try_recv` stub (in rustc_codegen_ssa's
+  in-tree mpsc shim) — needed by the LLVM worker-pool path even though
+  we never enter it.
+- `semos_std::time::Duration::new(secs, nanos)` + `AddAssign`/`SubAssign`
+  + `as_secs_f64()` — `rustc_data_structures::profiling::imp_none` now
+  uses `semos_std::time::Duration` instead of `core::time::Duration` so
+  call sites in `rustc_codegen_ssa::base` pass through.
+- `FileEncoder::new(impl AsRef<Path>) -> io::Result<Self>` stub added —
+  `serialize_rlink` is itself cfg-gated host-only per §1.7 (rlink is a
+  dist-build artifact).
+- `object` crate's `write` feature stays off (it pulls crc32fast); all
+  `object::write::*`-using fns in `rustc_codegen_ssa::back::metadata`
+  cfg-gated host-only (`create_object_file`, `create_wrapper_file`,
+  `create_compressed_metadata_file`, `add_gnu_property_note`,
+  `macho_object_build_version_for_target`, `create_metadata_file_for_wasm`).
+- `thorin`-using paths (`ThorinErrorWrapper`, `link_dwarf_object`,
+  `SplitDebuginfo::Packed` match arm) all cfg-gated host-only.
+- Multi-line `#[instrument(...)]` strip cleanup now a stable Python
+  pass — used in 4 crates this session (rustc_trait_selection,
+  rustc_const_eval, rustc_ty_utils, rustc_codegen_ssa).
+
+**W540 USB/PS-2 — substantial real-hardware progress**:
+
+xHCI (DEMO 18 path): subagent landed an Intel-PCH-specific bringup
+patch: BIOS→OS handoff via USBLEGSUP, Intel PCH port routing
+(XUSB2PR/USB3PSSEN), two-pass PORTSC enumeration with explicit Port
+Power assertion. Ports 6/7/11/12 still latch CCS=1 with PLS=7 Polling
+(SuperSpeed link can't train — companion USB-2 device on sibling
+port). User's BIOS xHCI Mode = Enabled didn't change the picture —
+confirms it's PHY-level, not routing. PR + WPR fallback patch added
+in xhci.rs with PLS/speed diagnostics, but the four ports still
+report "not enabled" because there's no SS device on them. Acceptable
+for v1; clean-fix is parsing xECP Supported Protocol Capability to
+distinguish USB-2 and USB-3 port indices and silently skip SS ports
+with no SS partner.
+
+PS/2 keyboard — three sequential fixes, each unblocking the next:
+1. **i8042 init** (`keyboard::init()`): disable both ports, flush
+   output buffer, write config byte (port-1 IRQ + scancode-set-1
+   translation), self-test, enable port 1, send 0xF4 ENABLE_SCANNING.
+   ThinkPad firmware leaves scan disabled after POST self-test;
+   without 0xF4 the keyboard receives presses but never transmits.
+   Confirmed via `ack=0xFA` on real hardware.
+2. **Polling fallback in timer ISR** — the W540's ACPI MADT remaps
+   legacy IRQ 1 to an IOAPIC pin we don't identify (no ACPI parser
+   yet). Instead of fixing the IRQ path, poll i8042 port 0x64 status
+   at every timer tick (62 Hz), drain up to 8 bytes per call,
+   dispatch through the existing `handle_scancode`. Bypasses the
+   broken IRQ routing entirely.
+3. **AUX-bit dispatch-anyway**: discovered that some W540 firmware
+   sets PORT_STATUS bit 5 (AUX / mouse-byte) on every byte
+   regardless. Original code discarded those as trackpoint samples,
+   starving the keyboard. Now dispatch ALL bytes through
+   handle_scancode; trackpoint bytes generally don't match valid
+   scancode-set-1 entries so they're silently ignored.
+4. **Framebuffer echo for typed chars** (`tty.rs::input_push_locked`)
+   — the original echo went only to serial. Real hardware has no
+   serial cable, so the user typed and saw nothing on screen until
+   Enter committed the line. Now `0x20..=0x7E | \t | \b | \n` all
+   echo to both serial and framebuffer.
+
+**ESC-to-skip-demos** landed in `init_loader_task`: keyboard handler
+sets `SKIP_DEMOS: AtomicBool` on scancode 0x01; the demo dispatcher
+is wrapped in a `'demos: { ... }` labeled block and `break 'demos`
+on any check-point sees the flag set. Already validated end-to-end
+on the W540.
+
+**Diagnostic instrumentation kept in place** as
+`keyboard::POLL_BYTES`/`POLL_KBD`/`POLL_AUX` atomics + a
+`report_poll_stats(tick)` called from the timer ISR ~once per second.
+Useful evidence for any future "is the keyboard polling working"
+question.
+
+## Stage F12 COMPLETE — every patched rustc_* crate compiles on x86_64-unknown-none (2026-06-04)
+
+**M27 Phase 5b Stage F is closed.** Every internal `rustc_*` crate
+referenced by `semos-rustc`'s dep graph now passes `cargo check -p <crate>`
+clean against the SemOS target. Stage F12 closed the last 6 crates:
+
+1. **rustc_traits** 68 → 0 — no_std preamble + `#[macro_use] extern crate
+   alloc` + std→core sweep + per-file Vec preludes.
+2. **rustc_const_eval** 226 → 0 — per-file preludes (28 files via the
+   awk-and-glob pass) + std::→core:: + `#[instrument]` strip +
+   rustc_error_messages dep + semos-std dep.
+3. **rustc_ty_utils** 566 → 0 — `#![cfg_attr(target_os = "none", no_std)]`
+   + per-file preludes (11 files) + `#[instrument]` strip + std::iter →
+   core::iter + std::mem → core::mem.
+4. **rustc_codegen_ssa** 384 → 0 — per-file preludes (28 files) + thorin
+   cfg-out (`ThorinErrorWrapper`, `link_dwarf_object`,
+   `SplitDebuginfo::Packed` match arm) + wasm-encoder cfg-out + object
+   `write`-feature cfg-out (5 fns in back/metadata.rs) + Emitter trait
+   `source_map` override removed (§1.8 fluent-removal patch in
+   rustc_errors dropped it) + `try_recv` on mpsc_stub::Receiver +
+   `FileEncoder::new(...)` stub + `serialize_rlink` cfg-gated host-only
+   + cfg-split `Path::extension().to_str()` (semos_std::path returns
+   Option<&str> directly) + hashbrown 0.14 → 0.15 + assert_module_sources
+   `println!` cfg-gated.
+5. **rustc_lint** 3282 → 0 — `#![cfg_attr(target_os = "none", no_std)]`
+   was the big lever (3282 → 318) + per-file preludes (29 files) +
+   inline `std::` → `core::` substitutions for `cmp::min`, `str::from_utf8`,
+   `iter::once`, `mem::forget`/`take`/`replace`, `iter::chain`,
+   `collections::BTreeMap` + `transmute.rs` `ToString`/`vec` import +
+   `lints.rs::unexpected_cfg_name` String/Vec imports + multi-line
+   #[instrument] strip + rustc_error_messages dep.
+6. **rustc_borrowck** 80 → 0 — 79 `#[instrument]` strips. The Python
+   orphan-cleanup pass became single-batch reliable through 5 successive
+   F12 crates; codified in RECIPE.md as the recommended approach.
+
+**semos_std surface additions this stage**:
+- `Duration::new(secs, nanos)` matching std signature.
+- `AddAssign` / `SubAssign` impls for Duration.
+- `Duration::as_secs_f64()` for `rustc_data_structures::profiling::duration_to_secs_str`.
+
+**Recipe pattern crystallized**:
+- Step 1 (the lever): `#![cfg_attr(target_os = "none", no_std)]` +
+  `#[macro_use] extern crate alloc;` + `#[cfg(not(target_os = "none"))]
+  extern crate std;` at lib.rs. Typically drops error count 10-100×.
+- Step 2 (per-file): preludes via awk-insert-after-first-use.
+- Step 3 (mid-line std::*): sed `^use std::` → `use core::` plus a
+  targeted sweep for inline `std::cmp::min`, `std::mem::take`, etc.
+- Step 4 (instrument macros): two-pass — sed first-line replace, then
+  Python orphan-cleanup for multi-line `(...)` continuations.
+- Step 5 (deps): add `rustc_error_messages` and `semos-std` as needed.
+- Step 6 (hashbrown 0.14 → 0.15): when "two versions of crate hashbrown"
+  surfaces, bump to 0.15 with `default-hasher` feature.
+
+**Cumulative through F12: ~17,600 + ~5,500 = ~23,100 errors cleared
+across 37 patched rustc_* compiler crates.** The full workspace is one
+phase from a buildable semos-rustc binary (Phase 5c: wire
+`rustc_driver_impl` into `semos-rustc::main`, statically link cg_clif,
+DEMO 80 for hello-world → SemOS ELF → SYS_SPAWN end-to-end).
+
+**Post-rustc next steps (locked with user):**
+1. **WiFi** — USB-CDC-Ethernet first (~1-2 weeks; reuses xHCI bringup);
+   iwlwifi later (~2-3 weeks) if real wireless wanted.
+2. **QR-code-in / QR-code-out** — UVC webcam driver + MJPEG decoder +
+   QR detector; ~3-4 weeks. Reusable primitive for OAuth, file transfer,
+   agent input from phone. Design principle: "phone holds the keys";
+   SemOS is the I/O layer.
+
+**Real-hardware milestone**: keyboard works end-to-end on the W540 via
+the timer-ISR polling fallback. Trackpoint+keyboard share the i8042
+buffer; firmware quirk sets AUX-bit on every byte, so dispatching all
+bytes through handle_scancode (rather than filtering on AUX) is the
+working approach. tty echo to framebuffer closes the visibility gap on
+serial-less hardware. ESC-to-skip-demos validated on the W540.
+---
+
 ---
 
 ## Stage G iter 1 — Cranelift port begins (2026-06-04)

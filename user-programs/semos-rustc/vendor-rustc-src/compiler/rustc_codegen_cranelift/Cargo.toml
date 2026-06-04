@@ -19,7 +19,10 @@
 # - empty [workspace] header so semos-rustc parent workspace claims
 #   this crate via its `vendor-rustc-src/compiler/*` glob.
 
-[workspace]
+# [workspace] removed — sibling rustc_* crates in this tree have no
+# [workspace] block; cargo claims them via the parent workspace's
+# `vendor-rustc-src/compiler/*` glob. Having [workspace] here makes
+# cg_clif a competing root and breaks `cargo check`.
 
 [package]
 name = "rustc_codegen_cranelift"

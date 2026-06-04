@@ -83,6 +83,10 @@ scoped-tls = { path = "vendor-externals/scoped-tls" }
 # Forks change default = [].
 either = { path = "vendor-externals/either" }
 indexmap = { path = "vendor-externals/indexmap" }
+# Phase 5b Stage F (rustc_infer): ena (union-find / unification table) is
+# host-only upstream because it uses std::sync via the `log` crate. Our
+# fork no_std's it and replaces `debug!()` with a no-op macro.
+ena = { path = "vendor-externals/ena" }
 # Phase 5c Stage G iter 1: Cranelift 0.122.0 vendored from
 # compiler/vendor/ (the M26 Session B copy). Three leaves landed this
 # iteration: cranelift-bitset is already no_std-clean upstream;
@@ -104,3 +108,8 @@ cranelift-control = { path = "vendor-externals/cranelift-control" }
 # 0.122.0 from the registry it would otherwise fetch).
 cranelift-bforest = { path = "vendor-externals/cranelift-bforest" }
 cranelift-codegen-shared = { path = "vendor-externals/cranelift-codegen-shared" }
+# Stage G iter 2: rustc-hash 2.1.2 + memchr 2.8.1 both have `default = ["std"]`.
+# Cranelift-codegen (still pulled from registry) asks for them without
+# `default-features = false`, so we vendor and drop `std` from defaults.
+rustc-hash = { path = "vendor-externals/rustc-hash" }
+memchr = { path = "vendor-externals/memchr" }

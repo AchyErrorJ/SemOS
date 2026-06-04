@@ -100,12 +100,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
-
-[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -116,12 +110,6 @@ name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-
-[[package]]
-name = "bitflags"
-version = "1.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
@@ -238,42 +226,38 @@ dependencies = [
 
 [[package]]
 name = "cranelift-assembler-x64"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6abf69c884fde2d9d4cc232a585fb18f16af3ae04c634315c84ebe158ded92d"
+checksum = "0ae7b60ec3fd7162427d3b3801520a1908bef7c035b52983cd3ca11b8e7deb51"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
 
 [[package]]
 name = "cranelift-assembler-x64-meta"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "263d31fcdf83a10267e8c38b53bc8f7688dfbc331267fd8fdf5b22e0dc47a55b"
+checksum = "6511c200fed36452697b4b6b161eae57d917a2044e6333b1c1389ed63ccadeee"
 dependencies = [
  "cranelift-srcgen",
 ]
 
 [[package]]
 name = "cranelift-bforest"
-version = "0.127.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d459d5377c01c4472b71029caa2df41afaf47711676aa9b12d7414f15104637b"
+version = "0.122.0"
 dependencies = [
  "cranelift-entity",
 ]
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.127.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8283088d5823ba7856ab8d531b7c3654b24984748f9fd99dcf3210701fd1d065"
+version = "0.122.0"
 
 [[package]]
 name = "cranelift-codegen"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d3138316d8dd341d725d6ab1598750545c76ad32892837fde558edd68a01b43"
+checksum = "858fb3331e53492a95979378d6df5208dd1d0d315f19c052be8115f4efc888e0"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -284,7 +268,7 @@ dependencies = [
  "cranelift-control",
  "cranelift-entity",
  "cranelift-isle",
- "gimli 0.32.3",
+ "gimli",
  "hashbrown 0.15.5",
  "log",
  "regalloc2",
@@ -297,45 +281,35 @@ dependencies = [
 
 [[package]]
 name = "cranelift-codegen-meta"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "505cead19304a8dc8689e31b29038775c3f73f9d5ea7a5e33864437a1f46c6b6"
+checksum = "456715b9d5f12398f156d5081096e7b5d039f01b9ecc49790a011c8e43e65b5f"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
  "cranelift-srcgen",
- "heck",
 ]
 
 [[package]]
 name = "cranelift-codegen-shared"
-version = "0.127.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce62ba94f570644ce7de6ed05bd39ca28936665dec10a2a1f6f2c531d6add45c"
+version = "0.122.0"
 
 [[package]]
 name = "cranelift-control"
-version = "0.127.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db6cfe339689c3926412a7060ab00ef3b2b43d936b537e7a3f696121be9d0eaa"
-dependencies = [
- "arbitrary",
-]
+version = "0.122.0"
 
 [[package]]
 name = "cranelift-entity"
-version = "0.127.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "625518090e912bdfe3c41464bf97ae421f6044d4ca0f5c3267dcacdb352b033d"
+version = "0.122.0"
 dependencies = [
  "cranelift-bitset",
 ]
 
 [[package]]
 name = "cranelift-frontend"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17f652d40ddf3afb55be64d8979d312b52b384a8cebbcde1dd1c2e32ebcd4466"
+checksum = "781f9905f8139b8de22987b66b522b416fe63eb76d823f0b3a8c02c8fd9500c7"
 dependencies = [
  "cranelift-codegen",
  "log",
@@ -345,72 +319,41 @@ dependencies = [
 
 [[package]]
 name = "cranelift-isle"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f512767e83015f4baf6e732cabca93cea82907e3ab237f826ef64f7ece75eb6"
-
-[[package]]
-name = "cranelift-jit"
-version = "0.127.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbb2c8d10ec6c2ca58be2b9e376fd33d65917c240c1354a900292ecb65cbf353"
-dependencies = [
- "anyhow",
- "cranelift-codegen",
- "cranelift-control",
- "cranelift-entity",
- "cranelift-module",
- "cranelift-native",
- "libc",
- "log",
- "region",
- "target-lexicon",
- "wasmtime-internal-jit-icache-coherence",
- "windows-sys 0.61.2",
-]
+checksum = "a05337a2b02c3df00b4dd9a263a027a07b3dff49f61f7da3b5d195c21eaa633d"
 
 [[package]]
 name = "cranelift-module"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "020f80e7d0d077bf101561cf0d55beaf8cf75a6a9f8ed5febcdb34df4969b44d"
+checksum = "f9f7a4b804066f3e62d8fc943e25adc135acbb39288aa6c68e67021a9f6a0c58"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
  "cranelift-control",
-]
-
-[[package]]
-name = "cranelift-native"
-version = "0.127.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb1ca6e4dca568ff988d367e4707be2362cee9782265b0a501eaf467ffd550a8"
-dependencies = [
- "cranelift-codegen",
- "libc",
- "target-lexicon",
 ]
 
 [[package]]
 name = "cranelift-object"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f10aa7a69f8f1b1b1e1ba6027697e9205df4d069e00bdbbb87c4519519cf5f0"
+checksum = "0dc322ace52184f0ece213f4194f49762e7e854fafdf27b9bfd9fc738ba67708"
 dependencies = [
  "anyhow",
  "cranelift-codegen",
  "cranelift-control",
  "cranelift-module",
  "log",
- "object 0.37.3",
+ "object 0.36.7",
  "target-lexicon",
 ]
 
 [[package]]
 name = "cranelift-srcgen"
-version = "0.127.4"
+version = "0.122.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97400ad8fbd3a434092fc0b486fa7784150b53187941d818b1087f3ac0a547f0"
+checksum = "b530783809a55cb68d070e0de60cfbb3db0dc94c8850dd5725411422bedcf6bb"
 
 [[package]]
 name = "crc32fast"
@@ -522,7 +465,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "block2",
  "libc",
  "objc2",
@@ -567,11 +510,6 @@ dependencies = [
 [[package]]
 name = "ena"
 version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eabffdaee24bd1bf95c5ef7cec31260444317e72ea56c4c91750e8b7ee58d5f1"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "equivalent"
@@ -726,17 +664,6 @@ name = "gimli"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
-dependencies = [
- "fallible-iterator",
- "indexmap",
- "stable_deref_trait",
-]
-
-[[package]]
-name = "gimli"
-version = "0.32.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 dependencies = [
  "fallible-iterator",
  "indexmap",
@@ -1036,15 +963,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
-name = "mach2"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1080,8 +998,6 @@ dependencies = [
 [[package]]
 name = "memchr"
 version = "2.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 
 [[package]]
 name = "memmap2"
@@ -1108,7 +1024,7 @@ version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "cfg-if",
  "cfg_aliases",
  "libc",
@@ -1168,9 +1084,6 @@ version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
 dependencies = [
- "crc32fast",
- "hashbrown 0.15.5",
- "indexmap",
  "memchr",
  "wasmparser 0.236.1",
 ]
@@ -1320,7 +1233,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "679341d22c78c6c649893cbd6c3278dcbe9fc4faa62fea3a9296ae2b50c14625"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "memchr",
  "pulldown-cmark-escape",
  "unicase",
@@ -1419,7 +1332,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
 ]
 
 [[package]]
@@ -1444,9 +1357,9 @@ dependencies = [
 
 [[package]]
 name = "regalloc2"
-version = "0.13.5"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08effbc1fa53aaebff69521a5c05640523fab037b34a4a2c109506bc938246fa"
+checksum = "5216b1837de2149f8bc8e6d5f88a9326b63b8c836ed58ce4a0a29ec736a59734"
 dependencies = [
  "allocator-api2",
  "bumpalo",
@@ -1486,18 +1399,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
-name = "region"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6b6ebd13bc009aef9cd476c1310d49ac354d36e240cf1bd753290f3dc7199a7"
-dependencies = [
- "bitflags 1.3.2",
- "libc",
- "mach2",
- "windows-sys 0.52.0",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1512,8 +1413,6 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 [[package]]
 name = "rustc-hash"
 version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
 
 [[package]]
 name = "rustc-literal-escaper"
@@ -1546,7 +1445,7 @@ checksum = "781442f29170c5c93b7185ad559492601acdc71d5bb0706f5868094f45cfcd08"
 name = "rustc_abi"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "rand 0.9.4",
  "rand_xoshiro",
  "rustc_data_structures",
@@ -1565,7 +1464,7 @@ version = "0.2.3+llvm-462a31f5a5ab"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "486c2179b4796f65bfe2ee33679acf0927ac83ecf583ad6c91c3b4570911b9ad"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "smallvec",
 ]
 
@@ -1580,7 +1479,7 @@ dependencies = [
 name = "rustc_ast"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "memchr",
  "rustc-literal-escaper",
  "rustc_ast_ir",
@@ -1614,6 +1513,7 @@ dependencies = [
  "rustc_ast_pretty",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_feature",
  "rustc_fluent_macro",
@@ -1639,6 +1539,7 @@ dependencies = [
  "rustc_ast_pretty",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_feature",
  "rustc_fluent_macro",
@@ -1667,6 +1568,7 @@ dependencies = [
  "rustc_abi",
  "rustc_ast",
  "rustc_ast_pretty",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_feature",
  "rustc_fluent_macro",
@@ -1677,6 +1579,7 @@ dependencies = [
  "rustc_session",
  "rustc_span",
  "rustc_target",
+ "semos-std",
  "thin-vec",
 ]
 
@@ -1699,6 +1602,7 @@ dependencies = [
  "polonius-engine",
  "rustc_abi",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_graphviz",
@@ -1713,6 +1617,7 @@ dependencies = [
  "rustc_span",
  "rustc_trait_selection",
  "rustc_traits",
+ "semos-std",
  "smallvec",
  "tracing",
 ]
@@ -1725,6 +1630,7 @@ dependencies = [
  "rustc_ast_pretty",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_expand",
  "rustc_feature",
@@ -1740,6 +1646,7 @@ dependencies = [
  "rustc_session",
  "rustc_span",
  "rustc_target",
+ "semos-std",
  "smallvec",
  "thin-vec",
  "tracing",
@@ -1751,14 +1658,11 @@ version = "0.1.0"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
- "cranelift-jit",
  "cranelift-module",
- "cranelift-native",
  "cranelift-object",
- "gimli 0.32.3",
+ "gimli",
  "indexmap",
- "libloading 0.9.0",
- "object 0.37.3",
+ "object 0.36.7",
  "smallvec",
  "target-lexicon",
 ]
@@ -1778,8 +1682,8 @@ dependencies = [
 name = "rustc_codegen_llvm"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
- "gimli 0.31.1",
+ "bitflags",
+ "gimli",
  "itertools",
  "libc",
  "libloading 0.9.0",
@@ -1815,9 +1719,9 @@ name = "rustc_codegen_ssa"
 version = "0.0.0"
 dependencies = [
  "ar_archive_writer",
- "bitflags 2.11.1",
+ "bitflags",
  "bstr",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.5",
  "itertools",
  "libc",
  "object 0.37.3",
@@ -1828,6 +1732,7 @@ dependencies = [
  "rustc_ast",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_fs_util",
@@ -1866,6 +1771,7 @@ dependencies = [
  "rustc_apfloat",
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -1878,6 +1784,7 @@ dependencies = [
  "rustc_span",
  "rustc_target",
  "rustc_trait_selection",
+ "semos-std",
  "tracing",
 ]
 
@@ -1886,7 +1793,7 @@ name = "rustc_data_structures"
 version = "0.0.0"
 dependencies = [
  "arrayvec",
- "bitflags 2.11.1",
+ "bitflags",
  "either",
  "elsa",
  "ena",
@@ -2031,12 +1938,13 @@ dependencies = [
 name = "rustc_expand"
 version = "0.0.0"
 dependencies = [
- "hashbrown 0.14.5",
+ "hashbrown 0.15.5",
  "rustc_ast",
  "rustc_ast_passes",
  "rustc_ast_pretty",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_feature",
  "rustc_fluent_macro",
@@ -2103,7 +2011,7 @@ dependencies = [
 name = "rustc_hir"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "odht",
  "rustc_abi",
  "rustc_arena",
@@ -2209,6 +2117,7 @@ dependencies = [
  "rand 0.9.4",
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_fs_util",
@@ -2220,6 +2129,7 @@ dependencies = [
  "rustc_serialize",
  "rustc_session",
  "rustc_span",
+ "semos-std",
  "thin-vec",
  "tracing",
 ]
@@ -2248,6 +2158,7 @@ name = "rustc_infer"
 version = "0.0.0"
 dependencies = [
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2324,12 +2235,13 @@ dependencies = [
 name = "rustc_lint"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "rustc_abi",
  "rustc_ast",
  "rustc_ast_pretty",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_feature",
  "rustc_fluent_macro",
@@ -2396,7 +2308,8 @@ dependencies = [
 name = "rustc_metadata"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
+ "hashbrown 0.15.5",
  "libc",
  "libloading 0.8.9",
  "odht",
@@ -2404,6 +2317,7 @@ dependencies = [
  "rustc_ast",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_expand",
  "rustc_feature",
@@ -2429,9 +2343,10 @@ dependencies = [
 name = "rustc_middle"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "either",
  "gsgdt",
+ "hashbrown 0.15.5",
  "polonius-engine",
  "rustc_abi",
  "rustc_apfloat",
@@ -2497,6 +2412,7 @@ dependencies = [
  "rustc_abi",
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_graphviz",
@@ -2543,6 +2459,7 @@ version = "0.0.0"
 dependencies = [
  "rustc_abi",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2574,7 +2491,7 @@ dependencies = [
 name = "rustc_parse"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "rustc-literal-escaper",
  "rustc_ast",
  "rustc_ast_pretty",
@@ -2639,6 +2556,7 @@ dependencies = [
  "rustc_apfloat",
  "rustc_arena",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2659,6 +2577,7 @@ version = "0.0.0"
 dependencies = [
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2667,6 +2586,7 @@ dependencies = [
  "rustc_session",
  "rustc_span",
  "rustc_ty_utils",
+ "semos-std",
  "tracing",
 ]
 
@@ -2689,6 +2609,7 @@ dependencies = [
  "rustc_span",
  "rustc_target",
  "scoped-tls",
+ "semos-std",
  "serde",
  "serde_json",
  "tracing",
@@ -2721,6 +2642,7 @@ dependencies = [
  "rustc_query_system",
  "rustc_serialize",
  "rustc_span",
+ "semos-std",
  "tracing",
 ]
 
@@ -2754,6 +2676,7 @@ dependencies = [
 name = "rustc_resolve"
 version = "0.0.0"
 dependencies = [
+ "hashbrown 0.15.5",
  "indexmap",
  "itertools",
  "pulldown-cmark",
@@ -2762,6 +2685,7 @@ dependencies = [
  "rustc_ast_pretty",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_expand",
  "rustc_feature",
@@ -2774,6 +2698,7 @@ dependencies = [
  "rustc_query_system",
  "rustc_session",
  "rustc_span",
+ "semos-std",
  "smallvec",
  "thin-vec",
  "tracing",
@@ -2783,7 +2708,7 @@ dependencies = [
 name = "rustc_sanitizers"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "rustc_abi",
  "rustc_data_structures",
  "rustc_hir",
@@ -2841,7 +2766,7 @@ dependencies = [
 name = "rustc_span"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "blake3",
  "derive-where",
  "indexmap",
@@ -2882,7 +2807,7 @@ dependencies = [
 name = "rustc_target"
 version = "0.0.0"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "object 0.37.3",
  "rustc_abi",
  "rustc_data_structures",
@@ -2911,10 +2836,12 @@ dependencies = [
 name = "rustc_trait_selection"
 version = "0.0.0"
 dependencies = [
+ "hashbrown 0.15.5",
  "itertools",
  "rustc_abi",
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2926,6 +2853,7 @@ dependencies = [
  "rustc_session",
  "rustc_span",
  "rustc_transmute",
+ "semos-std",
  "smallvec",
  "thin-vec",
  "tracing",
@@ -2964,6 +2892,7 @@ dependencies = [
  "itertools",
  "rustc_abi",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hashes",
@@ -2984,7 +2913,7 @@ name = "rustc_type_ir"
 version = "0.0.0"
 dependencies = [
  "arrayvec",
- "bitflags 2.11.1",
+ "bitflags",
  "derive-where",
  "ena",
  "hashbrown 0.15.5",
@@ -3027,7 +2956,7 @@ version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -3329,7 +3258,7 @@ version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e9c1e705f82a260173f3eec93f2ff6d7807f23ad5a8cc2e7316a891733ea7a1"
 dependencies = [
- "gimli 0.31.1",
+ "gimli",
  "hashbrown 0.15.5",
  "object 0.36.7",
  "tracing",
@@ -3639,7 +3568,7 @@ version = "0.219.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5220ee4c6ffcc0cb9d7c47398052203bc902c8ef3985b0c8134118440c0b2921"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "indexmap",
 ]
 
@@ -3649,7 +3578,7 @@ version = "0.236.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9b1e81f3eb254cf7404a82cee6926a4a3ccc5aad80cc3d43608a070c67aa1d7"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
 ]
 
 [[package]]
@@ -3658,29 +3587,17 @@ version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b807c72e1bac69382b3a6fb3dbe8ea4c0ed87ff5629b8685ae6b9a611028fe"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
 ]
 
 [[package]]
-name = "wasmtime-internal-jit-icache-coherence"
-version = "40.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc57f590ba7ea967ea9e8c8560175c6926e5b15d11c29bbde3ad0013a29470eb"
-dependencies = [
- "anyhow",
- "cfg-if",
- "libc",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "wasmtime-internal-math"
-version = "40.0.4"
+version = "35.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07612904518d47b677e8db67ca47c16d8c8cefb0099020729f886776950cb58b"
+checksum = "7710d5c4ecdaa772927fd11e5dc30a9a62d1fc8fe933e11ad5576ad596ab6612"
 dependencies = [
  "libm",
 ]
@@ -3800,15 +3717,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
  "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
-dependencies = [
- "windows-targets",
 ]
 
 [[package]]
@@ -3934,7 +3842,7 @@ version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"
 dependencies = [
- "bitflags 2.11.1",
+ "bitflags",
 ]
 
 [[package]]
@@ -3975,7 +3883,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d66ea20e9553b30172b5e831994e35fbde2d165325bec84fc43dbf6f4eb9cb2"
 dependencies = [
  "anyhow",
- "bitflags 2.11.1",
+ "bitflags",
  "indexmap",
  "log",
  "serde",
