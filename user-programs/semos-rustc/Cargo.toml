@@ -113,3 +113,15 @@ cranelift-codegen-shared = { path = "vendor-externals/cranelift-codegen-shared" 
 # `default-features = false`, so we vendor and drop `std` from defaults.
 rustc-hash = { path = "vendor-externals/rustc-hash" }
 memchr = { path = "vendor-externals/memchr" }
+# Stage G iter 3: cranelift-object is the first non-leaf cranelift crate
+# we vendor. anyhow, crc32fast, regalloc2 are all default = ["std"] pullers
+# that cranelift-object / object / cranelift-codegen drag in unguarded.
+cranelift-object = { path = "vendor-externals/cranelift-object" }
+anyhow = { path = "vendor-externals/anyhow" }
+crc32fast = { path = "vendor-externals/crc32fast" }
+regalloc2 = { path = "vendor-externals/regalloc2" }
+# Stage G iter 3b: regex + aho-corasick are pulled by rustc_codegen_ssa
+# (which we keep in workspace for the eventual rustc_driver build); both
+# default-on std → leaks to memchr / indexmap chain.
+regex = { path = "vendor-externals/regex" }
+aho-corasick = { path = "vendor-externals/aho-corasick" }
