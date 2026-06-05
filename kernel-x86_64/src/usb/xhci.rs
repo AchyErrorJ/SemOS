@@ -1008,10 +1008,12 @@ pub fn enumerate_ports() -> usize {
             unsafe { write_u32(portsc_addr, preserve | portsc::PR); }
 
             let mut prc_seen = false;
-            // Bumped 2M → 20M (~50ms on a 2 GHz CPU) so USB-2 reset has time
-            // to complete its 10-20ms SE0 + recovery before we give up.
-            // The W540's iPhone-on-port-6 case timed out at the old window.
-            for _ in 0..20_000_000 {
+            // Wait up to ~48ms (3 scheduler ticks @ 62 Hz) for PRC/WRC to
+            // fire. USB-2 spec mandates ≥10ms SE0; we give 4× headroom.
+            // Tick-based instead of spin-count so we don't burn seconds
+            // per port — MMIO reads are slow on real hardware.
+            let prc_deadline = kernel_core::platform::ticks() + 3;
+            while kernel_core::platform::ticks() < prc_deadline {
                 let s = unsafe { read_u32(portsc_addr) };
                 if s & (portsc::PRC | portsc::WRC) != 0 {
                     prc_seen = true;
@@ -1033,9 +1035,9 @@ pub fn enumerate_ports() -> usize {
             // After PRC fires, USB 3 ports still need additional time for
             // the SS link to reach U0 before PED is asserted. Poll a
             // second window before declaring the port dead.
-            // Bumped 5M → 25M (~60ms) — USB-2 device chirp + recovery can take
-            // up to 20ms beyond the initial reset, plus SS link train.
-            for _ in 0..25_000_000 {
+            // Tick-based wait — up to ~48ms for PED to fire after PRC.
+            let ped_deadline = kernel_core::platform::ticks() + 3;
+            while kernel_core::platform::ticks() < ped_deadline {
                 let s = unsafe { read_u32(portsc_addr) };
                 if s & portsc::PED != 0 { break; }
                 core::hint::spin_loop();
@@ -1050,7 +1052,9 @@ pub fn enumerate_ports() -> usize {
                     (after_pr & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT);
                 let preserve = after_pr & !portsc::RW1C_MASK;
                 unsafe { write_u32(portsc_addr, preserve | portsc::WPR); }
-                for _ in 0..5_000_000 {
+                // Tick-based: ~48ms for WRC + ~48ms for PED.
+                let wrc_deadline = kernel_core::platform::ticks() + 3;
+                while kernel_core::platform::ticks() < wrc_deadline {
                     let s = unsafe { read_u32(portsc_addr) };
                     if s & portsc::WRC != 0 {
                         unsafe {
@@ -1061,7 +1065,8 @@ pub fn enumerate_ports() -> usize {
                     }
                     core::hint::spin_loop();
                 }
-                for _ in 0..5_000_000 {
+                let wpr_ped_deadline = kernel_core::platform::ticks() + 3;
+                while kernel_core::platform::ticks() < wpr_ped_deadline {
                     let s = unsafe { read_u32(portsc_addr) };
                     if s & portsc::PED != 0 { break; }
                     core::hint::spin_loop();
