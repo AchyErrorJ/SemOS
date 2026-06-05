@@ -270,10 +270,18 @@ impl Platform for X86Platform {
     }
 
     fn run_usbinfo(&self) -> u64 {
+        // PCI register reads are quick; no need to enable interrupts.
         crate::usb::xhci::print_usbinfo()
     }
 
     fn run_usbenum(&self) -> u64 {
+        // The port-reset wait loops use kernel_core::platform::ticks() to
+        // measure ~48ms wall time. Without interrupts enabled, the timer
+        // ISR never fires, ticks() stays constant, and the loops never
+        // exit. The syscall iretq restores the Ring-3 caller's flags on
+        // return, so this only enables interrupts for the duration of
+        // enumerate_ports.
+        x86_64::instructions::interrupts::enable();
         crate::usb::xhci::enumerate_ports() as u64
     }
 
