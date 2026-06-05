@@ -491,6 +491,12 @@ fn enable_pci(loc: pci::Location) {
 ///   5. Clear CONFIGFLAG to release ports to companion controllers.
 ///
 /// Called BEFORE the xHCI HCRST. xHCI's HCRST itself doesn't touch EHCI.
+///
+/// **Currently unused** on Lynx Point — even just clearing USBCMD.RS
+/// breaks USB-3 enumeration because xHCI and EHCI share clock/power
+/// state. Kept in tree for documentation + possible use on other
+/// chipsets (e.g., older Intel Series 5/6).
+#[allow(dead_code)]
 fn halt_ehci_controllers() {
     const EHCI_CLASS: u8 = 0x0C;
     const EHCI_SUBCLASS: u8 = 0x03;
@@ -711,12 +717,13 @@ pub fn init() -> bool {
 
     enable_pci(loc);
 
-    // Lynx Point W540 quirk: halt + reset the EHCI controllers FIRST so
-    // they're not fighting xHCI for the physical reset signaling on
-    // USB-2 ports. EHCI continues to exist at the chipset level but
-    // halted means it can't interfere. (No-op on QEMU/AMD where no
-    // EHCI controller exists.) See halt_ehci_controllers for the spec.
-    halt_ehci_controllers();
+    // NOTE: halt_ehci_controllers() removed from the call path on
+    // Lynx Point — even the minimal "clear EHCI USBCMD.RS" variant
+    // broke USB-3 enumeration. The chipset shares clock/power state
+    // between xHCI and EHCI so cleanly disabling one knocks the other
+    // offline. Function kept in tree (#[allow(dead_code)]) for
+    // reference; the right Lynx Point USB-2 takeover lives in
+    // XUSB2PR + intel_pch_port_routing which we still call below.
 
     // Intel PCH-specific: route USB 2 / USB 3 ports from EHCI to xHCI. No-op
     // on non-Intel vendors. **Must run before** we read PORTSC — otherwise
