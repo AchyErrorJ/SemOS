@@ -2239,6 +2239,56 @@ pub fn print_usbinfo() -> u64 {
         None => println!("usbinfo: no PCH routing cache (non-Intel xHCI or init never ran)"),
     }
 
+    // Walk xECP for Supported Protocol entries (ID=2). Each tells us
+    // which port range speaks USB-2 vs USB-3 — vital because Lynx Point
+    // numbers them interleaved. Without this we'd guess wrong about
+    // which port is a USB-2 companion of which USB-3 jack.
+    let mmio = crate::paging::phys_to_virt(info.mmio_base);
+    let hccparams1 = unsafe { read_u32(mmio + cap_reg::HCCPARAMS1 as u64) };
+    let mut off_dw = ((hccparams1 >> hccparams1::XECP_SHIFT) & hccparams1::XECP_MASK) as u64;
+    let mut usb2_port_range: (u8, u8) = (0, 0);
+    let mut usb3_port_range: (u8, u8) = (0, 0);
+    if off_dw != 0 {
+        let mut cap_addr = mmio + off_dw * 4;
+        for _ in 0..64 {
+            let cap = unsafe { read_u32(cap_addr) };
+            let id = cap & 0xFF;
+            let next = (cap >> 8) & 0xFF;
+            if id == 2 { // Supported Protocol Capability
+                let major = (cap >> 24) & 0xFF;
+                let dw2 = unsafe { read_u32(cap_addr + 8) };
+                let port_offset = (dw2 & 0xFF) as u8;
+                let port_count  = ((dw2 >> 8) & 0xFF) as u8;
+                let name_dw = unsafe { read_u32(cap_addr + 4) };
+                println!("  xECP SupportedProtocol: USB {}.x ports {}..{} (count={}, name=0x{:08X})",
+                    major, port_offset, port_offset + port_count - 1, port_count, name_dw);
+                if major == 2 { usb2_port_range = (port_offset, port_count); }
+                if major == 3 { usb3_port_range = (port_offset, port_count); }
+            }
+            if next == 0 { break; }
+            off_dw = next as u64;
+            cap_addr = cap_addr + off_dw * 4;
+        }
+    } else {
+        println!("  xECP: not present (QEMU/AMD or no caps); guessing port types");
+    }
+    // Helper to label a port number by USB version.
+    let port_class = |p: u8| -> &'static str {
+        if usb2_port_range.1 != 0
+            && p >= usb2_port_range.0
+            && p < usb2_port_range.0 + usb2_port_range.1
+        {
+            "USB-2"
+        } else if usb3_port_range.1 != 0
+            && p >= usb3_port_range.0
+            && p < usb3_port_range.0 + usb3_port_range.1
+        {
+            "USB-3"
+        } else {
+            "?"
+        }
+    };
+
     let mut ccs_count = 0u32;
     let mut ped_count = 0u32;
     for port in 1..=info.max_ports {
@@ -2249,9 +2299,14 @@ pub fn print_usbinfo() -> u64 {
         let ped = (portsc & portsc::PED) != 0;
         let pls = (portsc & portsc::PLS_MASK) >> portsc::PLS_SHIFT;
         let speed = (portsc >> 10) & 0xF;
-        if !ccs && !ped { continue; } // skip dead ports
+        // Show ALL ports including disconnected — user needs to see USB-2
+        // companion ports that are CCS=0 to debug iPhone enum.
         if ccs { ccs_count += 1; }
         if ped { ped_count += 1; }
+        let class = port_class(port);
+        // Skip only the truly empty USB-3 ports (RxDetect, no device) to
+        // keep the dump manageable. USB-2 ports always show even if empty.
+        if !ccs && !ped && class == "USB-3" && pls == 5 { continue; }
         let speed_name = match speed {
             1 => "FS(USB1.1)",
             2 => "LS(USB1.0)",
@@ -2276,8 +2331,8 @@ pub fn print_usbinfo() -> u64 {
             _ => "?",
         };
         println!(
-            "  port {:2}: PORTSC=0x{:08X} CCS={} PED={} PLS={}({}) speed={}({})",
-            port, portsc, if ccs {1} else {0}, if ped {1} else {0},
+            "  port {:2} [{}]: PORTSC=0x{:08X} CCS={} PED={} PLS={}({}) speed={}({})",
+            port, class, portsc, if ccs {1} else {0}, if ped {1} else {0},
             pls, pls_name, speed, speed_name
         );
     }
