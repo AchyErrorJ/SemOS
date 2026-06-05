@@ -1004,24 +1004,22 @@ pub fn enumerate_ports() -> usize {
         let initial = unsafe { read_u32(portsc_addr) };
         let already_enabled = initial & portsc::PED != 0;
         if !already_enabled {
-            // Intel Lynx Point quirk: USB-2 ports left in PLS=Polling (7) by
-            // BIOS/EHCI never accept PR. Force PLS=U0 with the LWS strobe
-            // BEFORE issuing PR. The xHC will then run the proper reset
-            // state machine. We always do this if PLS != 0 — harmless when
-            // PLS is already U0 since LWS+PLS=0 is a no-op.
-            let initial_pls = (initial & portsc::PLS_MASK) >> portsc::PLS_SHIFT;
-            if initial_pls != 0 {
-                let preserve_for_pls = initial & !portsc::RW1C_MASK & !portsc::PLS_MASK;
-                unsafe { write_u32(portsc_addr, preserve_for_pls | portsc::LWS); }
-                // Brief wait for the link state machine to react.
-                let pls_settle = kernel_core::platform::ticks() + 1;
-                while kernel_core::platform::ticks() < pls_settle {
-                    core::hint::spin_loop();
-                }
+            // Intel Lynx Point quirk: ports left in PLS=Polling/Disabled by
+            // BIOS/EHCI don't accept PR alone. Linux's xhci_hub_control's
+            // SET_PORT_FEAT(RESET) path writes PR + LWS + PLS=0 (U0) in a
+            // SINGLE PORTSC write so the link-state machine transitions in
+            // the same cycle as the reset request. PLS-mask cleared so we
+            // write U0; LWS commits the link change; PR starts the reset.
+            // Other bits preserved EXCEPT RW1C ones (which we'd accidentally
+            // clear) and PED (W1C — writing 1 would disable the port).
+            let preserve = initial
+                & !portsc::RW1C_MASK
+                & !portsc::PLS_MASK
+                & !portsc::PED
+                & !portsc::WPR;
+            unsafe {
+                write_u32(portsc_addr, preserve | portsc::PR | portsc::LWS);
             }
-            let after_pls = unsafe { read_u32(portsc_addr) };
-            let preserve = after_pls & !portsc::RW1C_MASK;
-            unsafe { write_u32(portsc_addr, preserve | portsc::PR); }
 
             let mut prc_seen = false;
             // Wait up to ~48ms (3 scheduler ticks @ 62 Hz) for PRC/WRC to
