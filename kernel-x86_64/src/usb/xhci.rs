@@ -497,9 +497,7 @@ fn halt_ehci_controllers() {
     const EHCI_PROG_IF: u8 = 0x20;
     const EHCI_USBCMD: u64 = 0x00;
     const EHCI_USBSTS: u64 = 0x04;
-    const EHCI_CONFIGFLAG: u64 = 0x40;
     const EHCI_USBCMD_RS: u32 = 1 << 0;
-    const EHCI_USBCMD_HCRESET: u32 = 1 << 1;
     const EHCI_USBSTS_HCH: u32 = 1 << 12;
     let mut count = 0u32;
     for slot in 0..32u8 {
@@ -524,31 +522,24 @@ fn halt_ehci_controllers() {
             // EHCI capability registers: first byte is CAPLENGTH.
             let caplen = unsafe { read_volatile(mmio as *const u8) } as u64;
             let op_base = mmio + caplen;
-            // Step 1: halt the run/stop bit.
+            // MINIMAL halt only: clear Run/Stop. Do NOT HCRESET (resets
+            // controller state including port migration we already did
+            // via XUSB2PR). Do NOT touch CONFIGFLAG (Lynx Point uses
+            // chipset routing not EHCI's CF — writing CF=0 had side
+            // effects that broke USB-3 enumeration on the W540 in the
+            // previous iter). Just stop EHCI from running so it can't
+            // initiate port reset cycles that fight xHCI.
             unsafe {
                 let cmd = read_u32(op_base + EHCI_USBCMD);
                 write_u32(op_base + EHCI_USBCMD, cmd & !EHCI_USBCMD_RS);
             }
-            // Step 2: wait for HCH (controller halted).
             for _ in 0..1_000_000 {
                 let s = unsafe { read_u32(op_base + EHCI_USBSTS) };
                 if s & EHCI_USBSTS_HCH != 0 { break; }
                 core::hint::spin_loop();
             }
-            // Step 3: full controller reset.
-            unsafe {
-                let cmd = read_u32(op_base + EHCI_USBCMD);
-                write_u32(op_base + EHCI_USBCMD, cmd | EHCI_USBCMD_HCRESET);
-            }
-            for _ in 0..1_000_000 {
-                let cmd = unsafe { read_u32(op_base + EHCI_USBCMD) };
-                if cmd & EHCI_USBCMD_HCRESET == 0 { break; }
-                core::hint::spin_loop();
-            }
-            // Step 4: clear CONFIGFLAG to release all ports (companion mode).
-            unsafe { write_u32(op_base + EHCI_CONFIGFLAG, 0); }
             println!(
-                "[ehci] {}:{:02X}.{} halted + reset (mmio=0x{:X} caplen={})",
+                "[ehci] {}:{:02X}.{} halted (mmio=0x{:X} caplen={})",
                 loc.bus, loc.slot, loc.func, mmio_phys, caplen
             );
         }
