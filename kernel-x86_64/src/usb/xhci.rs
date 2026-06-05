@@ -475,6 +475,89 @@ fn enable_pci(loc: pci::Location) {
     loc.enable_io_and_bus_master();
 }
 
+/// Halt every EHCI controller on bus 0 and reset it. On Intel Lynx Point
+/// (W540) the EHCI controllers at PCI 00:1A.0 and 00:1D.0 keep their
+/// USB-2 port state machines running even after XUSB2PR routes USB-2
+/// traffic to xHCI. If they're still running when xHCI tries to PR a
+/// USB-2 port, the port stays stuck (PED never asserts) because the two
+/// controllers are fighting for the physical reset signaling.
+///
+/// EHCI class triple is 0x0C / 0x03 / 0x20. We find each one, read its
+/// MMIO base from BAR0, then:
+///   1. Clear USBCMD.RS (bit 0) to halt the controller.
+///   2. Poll USBSTS.HCH (bit 12) for halt complete.
+///   3. Set USBCMD.HCRESET (bit 1) to fully reset.
+///   4. Poll HCRESET for self-clear.
+///   5. Clear CONFIGFLAG to release ports to companion controllers.
+///
+/// Called BEFORE the xHCI HCRST. xHCI's HCRST itself doesn't touch EHCI.
+fn halt_ehci_controllers() {
+    const EHCI_CLASS: u8 = 0x0C;
+    const EHCI_SUBCLASS: u8 = 0x03;
+    const EHCI_PROG_IF: u8 = 0x20;
+    const EHCI_USBCMD: u64 = 0x00;
+    const EHCI_USBSTS: u64 = 0x04;
+    const EHCI_CONFIGFLAG: u64 = 0x40;
+    const EHCI_USBCMD_RS: u32 = 1 << 0;
+    const EHCI_USBCMD_HCRESET: u32 = 1 << 1;
+    const EHCI_USBSTS_HCH: u32 = 1 << 12;
+    let mut count = 0u32;
+    for slot in 0..32u8 {
+        for func in 0..8u8 {
+            let loc = pci::Location { bus: 0, slot, func };
+            if loc.vendor_id() == 0xFFFF { continue; }
+            if pci::class_triple(loc) != (EHCI_CLASS, EHCI_SUBCLASS, EHCI_PROG_IF) {
+                continue;
+            }
+            count += 1;
+            // BAR0 = EHCI MMIO base (assume 32-bit BAR for simplicity;
+            // Lynx Point uses 32-bit BARs for EHCI).
+            let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
+            let mmio_phys = (bar0 & !0xF) as u64;
+            if mmio_phys == 0 {
+                println!("[ehci] {}:{:02X}.{} BAR0=0 — skipping", loc.bus, loc.slot, loc.func);
+                continue;
+            }
+            // Enable MMIO + bus-master so we can talk to the controller.
+            loc.enable_io_and_bus_master();
+            let mmio = paging::phys_to_virt(mmio_phys);
+            // EHCI capability registers: first byte is CAPLENGTH.
+            let caplen = unsafe { read_volatile(mmio as *const u8) } as u64;
+            let op_base = mmio + caplen;
+            // Step 1: halt the run/stop bit.
+            unsafe {
+                let cmd = read_u32(op_base + EHCI_USBCMD);
+                write_u32(op_base + EHCI_USBCMD, cmd & !EHCI_USBCMD_RS);
+            }
+            // Step 2: wait for HCH (controller halted).
+            for _ in 0..1_000_000 {
+                let s = unsafe { read_u32(op_base + EHCI_USBSTS) };
+                if s & EHCI_USBSTS_HCH != 0 { break; }
+                core::hint::spin_loop();
+            }
+            // Step 3: full controller reset.
+            unsafe {
+                let cmd = read_u32(op_base + EHCI_USBCMD);
+                write_u32(op_base + EHCI_USBCMD, cmd | EHCI_USBCMD_HCRESET);
+            }
+            for _ in 0..1_000_000 {
+                let cmd = unsafe { read_u32(op_base + EHCI_USBCMD) };
+                if cmd & EHCI_USBCMD_HCRESET == 0 { break; }
+                core::hint::spin_loop();
+            }
+            // Step 4: clear CONFIGFLAG to release all ports (companion mode).
+            unsafe { write_u32(op_base + EHCI_CONFIGFLAG, 0); }
+            println!(
+                "[ehci] {}:{:02X}.{} halted + reset (mmio=0x{:X} caplen={})",
+                loc.bus, loc.slot, loc.func, mmio_phys, caplen
+            );
+        }
+    }
+    if count == 0 {
+        println!("[ehci] no EHCI controllers found (QEMU/AMD or already disabled)");
+    }
+}
+
 /// Walk the xHCI Extended Capabilities list and, if a USB Legacy Support
 /// capability (ID=1) exists, transfer ownership from BIOS to OS.
 ///
@@ -636,6 +719,13 @@ pub fn init() -> bool {
         loc.slot, loc.func);
 
     enable_pci(loc);
+
+    // Lynx Point W540 quirk: halt + reset the EHCI controllers FIRST so
+    // they're not fighting xHCI for the physical reset signaling on
+    // USB-2 ports. EHCI continues to exist at the chipset level but
+    // halted means it can't interfere. (No-op on QEMU/AMD where no
+    // EHCI controller exists.) See halt_ehci_controllers for the spec.
+    halt_ehci_controllers();
 
     // Intel PCH-specific: route USB 2 / USB 3 ports from EHCI to xHCI. No-op
     // on non-Intel vendors. **Must run before** we read PORTSC — otherwise
