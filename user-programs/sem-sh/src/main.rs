@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_USBINFO,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_USBENUM, SYS_USBINFO,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -235,7 +235,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "usbinfo"
+            | "usbinfo" | "usbenum"
     )
 }
 
@@ -869,6 +869,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  edit FILE           open the modal text editor (vi-style)");
             println!("  fetch URL           HTTP GET (http:// only)");
             println!("  usbinfo             dump xHCI port state + enum'd USB devices");
+            println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
             println!("  exit [CODE]         leave the shell");
             println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
             0
@@ -902,6 +903,15 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // there's no serial — read at the shell prompt.
             let rc = unsafe { syscall1(SYS_USBINFO, 0) };
             rc as i32
+        }
+        "usbenum" => {
+            // Re-run xHCI port enumeration. Use after plugging in a USB
+            // device (the kernel only enumerates at boot, so post-boot
+            // plug-ins need this manual retry). Returns the number of
+            // devices that enumerated.
+            let n = unsafe { syscall1(SYS_USBENUM, 0) };
+            println!("usbenum: {} device(s) enumerated", n);
+            0
         }
         _ => exec_external(&argv),
     }

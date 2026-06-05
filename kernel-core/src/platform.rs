@@ -83,6 +83,14 @@ pub trait Platform: Send + Sync + 'static {
     /// trying to catch boot scroll. Returns 0. Default: unavailable.
     fn run_usbinfo(&self) -> u64 { 0 }
 
+    /// SYS_USBENUM: re-run xHCI port enumeration. The kernel boot path
+    /// only enumerates once during init, so devices plugged in AFTER
+    /// boot (the iPhone use case) are not detected. Calling this from
+    /// the shell after plug-in retries enumeration with the boot-path's
+    /// PR + WPR + descriptor read for every CCS=1 port. Returns the
+    /// number of devices that completed enumeration. Default: 0.
+    fn run_usbenum(&self) -> u64 { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`

@@ -273,6 +273,10 @@ impl Platform for X86Platform {
         crate::usb::xhci::print_usbinfo()
     }
 
+    fn run_usbenum(&self) -> u64 {
+        crate::usb::xhci::enumerate_ports() as u64
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,

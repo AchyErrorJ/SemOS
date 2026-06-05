@@ -1008,7 +1008,10 @@ pub fn enumerate_ports() -> usize {
             unsafe { write_u32(portsc_addr, preserve | portsc::PR); }
 
             let mut prc_seen = false;
-            for _ in 0..2_000_000 {
+            // Bumped 2M → 20M (~50ms on a 2 GHz CPU) so USB-2 reset has time
+            // to complete its 10-20ms SE0 + recovery before we give up.
+            // The W540's iPhone-on-port-6 case timed out at the old window.
+            for _ in 0..20_000_000 {
                 let s = unsafe { read_u32(portsc_addr) };
                 if s & (portsc::PRC | portsc::WRC) != 0 {
                     prc_seen = true;
@@ -1030,7 +1033,9 @@ pub fn enumerate_ports() -> usize {
             // After PRC fires, USB 3 ports still need additional time for
             // the SS link to reach U0 before PED is asserted. Poll a
             // second window before declaring the port dead.
-            for _ in 0..5_000_000 {
+            // Bumped 5M → 25M (~60ms) — USB-2 device chirp + recovery can take
+            // up to 20ms beyond the initial reset, plus SS link train.
+            for _ in 0..25_000_000 {
                 let s = unsafe { read_u32(portsc_addr) };
                 if s & portsc::PED != 0 { break; }
                 core::hint::spin_loop();
