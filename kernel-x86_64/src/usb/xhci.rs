@@ -598,6 +598,8 @@ pub fn ehci_dump() {
             let mmio = paging::phys_to_virt(mmio_phys);
             let caplen = unsafe { read_volatile(mmio as *const u8) } as u64;
             let hcsparams = unsafe { read_u32(mmio + EHCI_HCSPARAMS) };
+            let hccparams = unsafe { read_u32(mmio + 0x08) };
+            let eecp = ((hccparams >> 8) & 0xFF) as u8;
             let n_ports = (hcsparams & 0xF) as u8;
             let op_base = mmio + caplen;
             let usbcmd = unsafe { read_u32(op_base + EHCI_USBCMD) };
@@ -612,6 +614,19 @@ pub fn ehci_dump() {
                 usbsts,
                 if usbsts & EHCI_USBSTS_HCH != 0 { 1 } else { 0 }
             );
+            if eecp >= 0x40 {
+                let legsup = pci::read_u32(loc.bus, loc.slot, loc.func, eecp);
+                let legctlsts = pci::read_u32(loc.bus, loc.slot, loc.func, eecp + 4);
+                println!(
+                    "[ehci]   LEGSUP=0x{:08X} (BIOS={} OS={}) LEGCTLSTS=0x{:08X}",
+                    legsup,
+                    if legsup & (1 << 16) != 0 { 1 } else { 0 },
+                    if legsup & (1 << 24) != 0 { 1 } else { 0 },
+                    legctlsts
+                );
+            } else {
+                println!("[ehci]   no LEGSUP (EECP={})", eecp);
+            }
             for port in 1..=n_ports {
                 let portsc = unsafe { read_u32(op_base + EHCI_PORTSC_BASE + ((port - 1) as u64) * 4) };
                 println!(
