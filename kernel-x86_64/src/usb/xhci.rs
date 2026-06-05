@@ -555,6 +555,83 @@ fn halt_ehci_controllers() {
     }
 }
 
+/// Diagnostic: read every EHCI controller's state without touching it.
+/// Prints USBCMD, USBSTS, and each port's PORTSC so we can see whether
+/// EHCI is still fighting xHCI for the USB-2 PHYs.
+pub fn ehci_dump() {
+    const EHCI_CLASS: u8 = 0x0C;
+    const EHCI_SUBCLASS: u8 = 0x03;
+    const EHCI_PROG_IF: u8 = 0x20;
+    const EHCI_USBCMD: u64 = 0x00;
+    const EHCI_USBSTS: u64 = 0x04;
+    const EHCI_HCSPARAMS: u64 = 0x04; // in capability space
+    const EHCI_PORTSC_BASE: u64 = 0x44;
+    const EHCI_USBCMD_RS: u32 = 1 << 0;
+    const EHCI_USBCMD_HCRESET: u32 = 1 << 1;
+    const EHCI_USBSTS_HCH: u32 = 1 << 12;
+    const EHCI_PORTSC_CCS: u32 = 1 << 0;
+    const EHCI_PORTSC_PE: u32 = 1 << 2;
+    const EHCI_PORTSC_PR: u32 = 1 << 8;
+    const EHCI_PORTSC_PP: u32 = 1 << 12;
+    const EHCI_PORTSC_PO: u32 = 1 << 13;
+
+    let mut count = 0u32;
+    for slot in 0..32u8 {
+        for func in 0..8u8 {
+            let loc = pci::Location { bus: 0, slot, func };
+            if loc.vendor_id() == 0xFFFF {
+                continue;
+            }
+            if pci::class_triple(loc) != (EHCI_CLASS, EHCI_SUBCLASS, EHCI_PROG_IF) {
+                continue;
+            }
+            count += 1;
+            let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
+            let mmio_phys = (bar0 & !0xF) as u64;
+            if mmio_phys == 0 {
+                println!(
+                    "[ehci] {}:{:02X}.{} BAR0=0 — skipping",
+                    loc.bus, loc.slot, loc.func
+                );
+                continue;
+            }
+            let mmio = paging::phys_to_virt(mmio_phys);
+            let caplen = unsafe { read_volatile(mmio as *const u8) } as u64;
+            let hcsparams = unsafe { read_u32(mmio + EHCI_HCSPARAMS) };
+            let n_ports = (hcsparams & 0xF) as u8;
+            let op_base = mmio + caplen;
+            let usbcmd = unsafe { read_u32(op_base + EHCI_USBCMD) };
+            let usbsts = unsafe { read_u32(op_base + EHCI_USBSTS) };
+            println!(
+                "[ehci] {}:{:02X}.{} mmio=0x{:X} caplen={} n_ports={} USBCMD=0x{:08X} (RS={} HCRESET={}) USBSTS=0x{:08X} (HCH={})",
+                loc.bus, loc.slot, loc.func,
+                mmio_phys, caplen, n_ports,
+                usbcmd,
+                if usbcmd & EHCI_USBCMD_RS != 0 { 1 } else { 0 },
+                if usbcmd & EHCI_USBCMD_HCRESET != 0 { 1 } else { 0 },
+                usbsts,
+                if usbsts & EHCI_USBSTS_HCH != 0 { 1 } else { 0 }
+            );
+            for port in 1..=n_ports {
+                let portsc = unsafe { read_u32(op_base + EHCI_PORTSC_BASE + ((port - 1) as u64) * 4) };
+                println!(
+                    "[ehci]   port{}: PORTSC=0x{:08X} CCS={} PE={} PR={} PP={} PO={}",
+                    port,
+                    portsc,
+                    if portsc & EHCI_PORTSC_CCS != 0 { 1 } else { 0 },
+                    if portsc & EHCI_PORTSC_PE != 0 { 1 } else { 0 },
+                    if portsc & EHCI_PORTSC_PR != 0 { 1 } else { 0 },
+                    if portsc & EHCI_PORTSC_PP != 0 { 1 } else { 0 },
+                    if portsc & EHCI_PORTSC_PO != 0 { 1 } else { 0 }
+                );
+            }
+        }
+    }
+    if count == 0 {
+        println!("[ehci] no EHCI controllers found (QEMU/AMD or already disabled)");
+    }
+}
+
 /// Walk the xHCI Extended Capabilities list and, if a USB Legacy Support
 /// capability (ID=1) exists, transfer ownership from BIOS to OS.
 ///
@@ -2340,6 +2417,10 @@ pub fn print_usbinfo() -> u64 {
         }
         None => println!("usbinfo: no PCH routing cache (non-Intel xHCI or init never ran)"),
     }
+
+    // Dump EHCI state so we can see whether the companion controllers are
+    // still fighting xHCI for the USB-2 PHYs.
+    ehci_dump();
 
     // Walk xECP for Supported Protocol entries (ID=2). Each tells us
     // which port range speaks USB-2 vs USB-3 — vital because Lynx Point
