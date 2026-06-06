@@ -273,6 +273,7 @@ pub fn build_eapol_msg2(
 pub mod iwlwifi_pci;
 pub mod iwlwifi_csr;
 pub mod iwlwifi_queue;
+pub mod iwlwifi_fw;
 pub mod iwlwifi_device;
 pub mod iwlwifi_net;
 pub mod iwlwifi_sm;
