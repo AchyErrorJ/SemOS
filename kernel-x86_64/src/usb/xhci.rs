@@ -1247,77 +1247,77 @@ pub fn enumerate_ports() -> usize {
             // reset, and may confuse the USB-2 state machine on Lynx Point.
             // Preserve everything except RW1C bits (would clear latched
             // events), PED (writing 1 disables the port), and WPR.
-            let preserve = initial
-                & !portsc::RW1C_MASK
-                & !portsc::PED
-                & !portsc::WPR;
-            unsafe {
-                write_u32(portsc_addr, preserve | portsc::PR);
-            }
+            for attempt in 0..3 {
+                let mut prc_seen = false;
+                let pre = unsafe { read_u32(portsc_addr) };
+                let preserve = pre
+                    & !portsc::RW1C_MASK
+                    & !portsc::PED
+                    & !portsc::WPR;
+                unsafe { write_u32(portsc_addr, preserve | portsc::PR); }
 
-            let mut prc_seen = false;
-            // Wait up to ~48ms (3 scheduler ticks @ 62 Hz) for PRC/WRC to
-            // fire. USB-2 spec mandates ≥10ms SE0; we give 4× headroom.
-            // Tick-based instead of spin-count so we don't burn seconds
-            // per port — MMIO reads are slow on real hardware.
-            let prc_deadline = kernel_core::platform::ticks() + 3;
-            while kernel_core::platform::ticks() < prc_deadline {
-                let s = unsafe { read_u32(portsc_addr) };
-                if s & (portsc::PRC | portsc::WRC) != 0 {
-                    prc_seen = true;
-                    unsafe {
-                        write_u32(portsc_addr,
-                            (s & !portsc::RW1C_MASK) | portsc::PRC | portsc::WRC);
-                    }
-                    break;
-                }
-                core::hint::spin_loop();
-            }
-            if !prc_seen {
-                let s = unsafe { read_u32(portsc_addr) };
-                println!("[xhci] port {} reset never completed (PORTSC=0x{:08X} PLS={})",
-                    port, s, (s & portsc::PLS_MASK) >> portsc::PLS_SHIFT);
-                continue;
-            }
-
-            // After PRC fires, USB 3 ports still need additional time for
-            // the SS link to reach U0 before PED is asserted. Poll a
-            // second window before declaring the port dead.
-            // Tick-based wait — up to ~48ms for PED to fire after PRC.
-            let ped_deadline = kernel_core::platform::ticks() + 3;
-            while kernel_core::platform::ticks() < ped_deadline {
-                let s = unsafe { read_u32(portsc_addr) };
-                if s & portsc::PED != 0 { break; }
-                core::hint::spin_loop();
-            }
-
-            // If PR didn't bring up PED, retry with Warm Port Reset (SS only).
-            let after_pr = unsafe { read_u32(portsc_addr) };
-            if after_pr & portsc::PED == 0 {
-                println!("[xhci] port {} PR didn't enable (PORTSC=0x{:08X} PLS={} speed={}) — trying WPR",
-                    port, after_pr,
-                    (after_pr & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
-                    (after_pr & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT);
-                let preserve = after_pr & !portsc::RW1C_MASK;
-                unsafe { write_u32(portsc_addr, preserve | portsc::WPR); }
-                // Tick-based: ~48ms for WRC + ~48ms for PED.
-                let wrc_deadline = kernel_core::platform::ticks() + 3;
-                while kernel_core::platform::ticks() < wrc_deadline {
+                // Wait up to ~240ms (15 ticks @ 62 Hz) for PRC/WRC.
+                // USB-2 spec mandates ≥10ms SE0; some flash drives need
+                // >100ms to power-up their internal MCU after VBUS stabile.
+                let prc_deadline = kernel_core::platform::ticks() + 15;
+                while kernel_core::platform::ticks() < prc_deadline {
                     let s = unsafe { read_u32(portsc_addr) };
-                    if s & portsc::WRC != 0 {
+                    if s & (portsc::PRC | portsc::WRC) != 0 {
+                        prc_seen = true;
                         unsafe {
                             write_u32(portsc_addr,
-                                (s & !portsc::RW1C_MASK) | portsc::WRC | portsc::PRC);
+                                (s & !portsc::RW1C_MASK) | portsc::PRC | portsc::WRC);
                         }
                         break;
                     }
                     core::hint::spin_loop();
                 }
-                let wpr_ped_deadline = kernel_core::platform::ticks() + 3;
-                while kernel_core::platform::ticks() < wpr_ped_deadline {
+                if !prc_seen {
+                    let s = unsafe { read_u32(portsc_addr) };
+                    println!("[xhci] port {} attempt {} reset never completed (PORTSC=0x{:08X} PLS={})",
+                        port, attempt, s, (s & portsc::PLS_MASK) >> portsc::PLS_SHIFT);
+                    continue;
+                }
+
+                // After PRC fires, poll up to ~240ms for PED.
+                let ped_deadline = kernel_core::platform::ticks() + 15;
+                while kernel_core::platform::ticks() < ped_deadline {
                     let s = unsafe { read_u32(portsc_addr) };
                     if s & portsc::PED != 0 { break; }
                     core::hint::spin_loop();
+                }
+
+                let after = unsafe { read_u32(portsc_addr) };
+                if after & portsc::PED != 0 {
+                    break; // success
+                }
+                println!("[xhci] port {} attempt {} PR didn't enable (PORTSC=0x{:08X} PLS={} speed={})",
+                    port, attempt, after,
+                    (after & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
+                    (after & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT);
+                if attempt == 2 {
+                    // Last attempt failed — try WPR as a hail-mary (only
+                    // meaningful for USB-3, harmless for USB-2).
+                    let preserve = after & !portsc::RW1C_MASK;
+                    unsafe { write_u32(portsc_addr, preserve | portsc::WPR); }
+                    let wrc_deadline = kernel_core::platform::ticks() + 15;
+                    while kernel_core::platform::ticks() < wrc_deadline {
+                        let s = unsafe { read_u32(portsc_addr) };
+                        if s & portsc::WRC != 0 {
+                            unsafe {
+                                write_u32(portsc_addr,
+                                    (s & !portsc::RW1C_MASK) | portsc::WRC | portsc::PRC);
+                            }
+                            break;
+                        }
+                        core::hint::spin_loop();
+                    }
+                    let wpr_ped_deadline = kernel_core::platform::ticks() + 15;
+                    while kernel_core::platform::ticks() < wpr_ped_deadline {
+                        let s = unsafe { read_u32(portsc_addr) };
+                        if s & portsc::PED != 0 { break; }
+                        core::hint::spin_loop();
+                    }
                 }
             }
         }
