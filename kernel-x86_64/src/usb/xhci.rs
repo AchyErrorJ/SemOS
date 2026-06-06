@@ -647,6 +647,49 @@ pub fn ehci_dump() {
     }
 }
 
+/// Disarm BIOS SMI on EHCI by writing LEGCTLSTS=0. On Lynx Point,
+/// LEGCTLSTS=0xC0080000 means SMI on Ownership Change (bit 19), SMI
+/// on PCI Command (bit 30), and SMI on BAR (bit 31) are armed AND
+/// status bits are latched. Any USB-2 activity then traps BIOS, and
+/// the BIOS handler can interfere with xHCI port reset (which is
+/// likely why W540 USB-2 ports stay stuck PLS=Polling PED=0).
+///
+/// Writing all-zeros: clears all SMI ENABLE bits AND W1C's the status
+/// bits. Must run BEFORE the EHCI halt/reset sequence (to prevent any
+/// final SMI as we halt the controller). Safe across multiple
+/// controllers and idempotent.
+pub fn disarm_ehci_smi() {
+    const EHCI_CLASS: u8 = 0x0C;
+    const EHCI_SUBCLASS: u8 = 0x03;
+    const EHCI_PROG_IF: u8 = 0x20;
+    for slot in 0..32u8 {
+        for func in 0..8u8 {
+            let loc = pci::Location { bus: 0, slot, func };
+            if loc.vendor_id() == 0xFFFF { continue; }
+            if pci::class_triple(loc) != (EHCI_CLASS, EHCI_SUBCLASS, EHCI_PROG_IF) {
+                continue;
+            }
+            let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
+            let mmio_phys = (bar0 & !0xF) as u64;
+            if mmio_phys == 0 { continue; }
+            let mmio = paging::phys_to_virt(mmio_phys);
+            let hccparams = unsafe { read_u32(mmio + 0x08) };
+            let eecp = ((hccparams >> 8) & 0xFF) as u8;
+            if eecp < 0x40 { continue; } // No extended caps
+            // LEGSUP at eecp+0, LEGCTLSTS at eecp+4.
+            let before = pci::read_u32(loc.bus, loc.slot, loc.func, eecp + 4);
+            // Write 0 — clears SMI enables (bits 0-21) and W1C clears
+            // status bits in the upper half (bits 29-31).
+            pci::write_u32(loc.bus, loc.slot, loc.func, eecp + 4, 0);
+            let after = pci::read_u32(loc.bus, loc.slot, loc.func, eecp + 4);
+            println!(
+                "[ehci] {}:{:02X}.{} LEGCTLSTS disarmed: before=0x{:08X} after=0x{:08X}",
+                loc.bus, loc.slot, loc.func, before, after
+            );
+        }
+    }
+}
+
 /// Lynx Point shares the USB-2 PHY reference clock between xHCI and EHCI.
 /// When BIOS leaves EHCI halted (RS=0), the clock is gated and xHCI cannot
 /// detect device speed chirps during port reset — PRC fires but PED never
@@ -1009,6 +1052,12 @@ pub fn init() -> bool {
             core::hint::spin_loop();
         }
     }
+
+    // W540 USB-2 grind iter 2: disarm BIOS SMI on EHCI BEFORE touching it.
+    // LEGCTLSTS=0xC0080000 (per usbinfo dump) means SMI fires on PCI
+    // command writes and ownership changes; BIOS handler then interferes
+    // with our port reset. Writing LEGCTLSTS=0 clears all SMI enables.
+    disarm_ehci_smi();
 
     // Lynx Point shares the USB-2 PHY reference clock between xHCI and EHCI.
     // BIOS often leaves EHCI halted, which gates the PHY. Just setting RS=1
