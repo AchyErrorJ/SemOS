@@ -2700,6 +2700,64 @@ pub fn enumerate_child_of_hub(
 /// SYS_USBINFO — print every port + enumerated slot to the current TTY.
 /// Called from the `usbinfo` shell builtin. The user reads this at the
 /// shell prompt to debug enumeration without serial.
+/// W540 USB-2 grind iter 1: dump each EHCI controller's USBCMD/USBSTS
+/// + every PORTSC. If EHCI shows a port as CCS=1 after our XUSB2PR
+/// write, the chipset didn't actually migrate that port to xHCI even
+/// though the register reads back as routed. That'd explain why xHCI's
+/// PR write never completes — EHCI still owns the physical hardware.
+fn dump_ehci_diagnostics() {
+    const EHCI_CLASS: u8 = 0x0C;
+    const EHCI_SUBCLASS: u8 = 0x03;
+    const EHCI_PROG_IF: u8 = 0x20;
+    const EHCI_USBCMD: u64 = 0x00;
+    const EHCI_USBSTS: u64 = 0x04;
+    const EHCI_PORTSC0: u64 = 0x44; // first port; stride = 4 bytes
+    const EHCI_HCSPARAMS: u64 = 0x04; // in CAPABILITY regs at +4
+    let mut found = 0u32;
+    for slot in 0..32u8 {
+        for func in 0..8u8 {
+            let loc = pci::Location { bus: 0, slot, func };
+            if loc.vendor_id() == 0xFFFF { continue; }
+            if pci::class_triple(loc) != (EHCI_CLASS, EHCI_SUBCLASS, EHCI_PROG_IF) {
+                continue;
+            }
+            found += 1;
+            let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
+            let mmio_phys = (bar0 & !0xF) as u64;
+            if mmio_phys == 0 { continue; }
+            let mmio = paging::phys_to_virt(mmio_phys);
+            let caplen = unsafe { read_volatile(mmio as *const u8) } as u64;
+            let hcsparams = unsafe { read_u32(mmio + EHCI_HCSPARAMS) };
+            let n_ports = (hcsparams & 0xF) as u8;
+            let op_base = mmio + caplen;
+            let usbcmd = unsafe { read_u32(op_base + EHCI_USBCMD) };
+            let usbsts = unsafe { read_u32(op_base + EHCI_USBSTS) };
+            println!(
+                "usbinfo: EHCI @ PCI {}:{:02X}.{} mmio=0x{:X} N_PORTS={} USBCMD=0x{:08X} USBSTS=0x{:08X}",
+                loc.bus, loc.slot, loc.func, mmio_phys, n_ports, usbcmd, usbsts
+            );
+            for p in 0..n_ports {
+                let portsc = unsafe { read_u32(op_base + EHCI_PORTSC0 + (p as u64) * 4) };
+                let ccs = portsc & 1;
+                let ped = (portsc >> 2) & 1;
+                let po = (portsc >> 13) & 1; // Port Owner (companion → 1)
+                let pp = (portsc >> 12) & 1; // Port Power
+                let suspend = (portsc >> 7) & 1;
+                println!(
+                    "  EHCI port {:2}: PORTSC=0x{:08X} CCS={} PED={} Suspend={} PP={} PortOwner={} ({})",
+                    p + 1, portsc, ccs, ped, suspend, pp, po,
+                    if po == 1 { "released to companion (xHCI)" }
+                    else if ccs == 1 { "**EHCI STILL OWNS A CONNECTED DEVICE**" }
+                    else { "EHCI owns (empty)" }
+                );
+            }
+        }
+    }
+    if found == 0 {
+        println!("usbinfo: no EHCI controllers found (QEMU/AMD)");
+    }
+}
+
 pub fn print_usbinfo() -> u64 {
     let info = match unsafe { INFO } {
         Some(i) => i,
@@ -2708,6 +2766,11 @@ pub fn print_usbinfo() -> u64 {
             return 0;
         }
     };
+    // Walk PCI for every EHCI controller and dump its USBSTS + each
+    // PORTSC. Compare against xHCI's view: if EHCI shows any port with
+    // CCS=1, the chipset didn't fully migrate USB-2 to xHCI despite our
+    // XUSB2PR write, and that's why xHCI's USB-2 reset never completes.
+    dump_ehci_diagnostics();
     let mmio = crate::paging::phys_to_virt(info.mmio_base);
     let hciversion = unsafe { read_volatile((mmio + 2) as *const u16) };
     let usbsts_now = unsafe { read_u32(info.op_base + 0x04) };
