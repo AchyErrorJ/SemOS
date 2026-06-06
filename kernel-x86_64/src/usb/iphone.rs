@@ -93,6 +93,31 @@ pub struct IphoneDevice {
 
 static mut IPHONE: Option<IphoneDevice> = None;
 
+/// Diagnostic: print every interface descriptor in the config blob so
+/// we can see what an iPhone 16 Pro actually exposes.  Prints
+/// `iface=N alt=M class=XX subclass=YY protocol=ZZ endpoints=K`.
+pub fn dump_config_interfaces(blob: &[u8]) {
+    let mut i = 0usize;
+    while i + 2 <= blob.len() {
+        let len = blob[i] as usize;
+        if len < 2 || i + len > blob.len() { break; }
+        let dtype = blob[i + 1];
+        if dtype == 0x04 && len >= 9 {
+            let iface = blob[i + 2];
+            let alt = blob[i + 3];
+            let num_ep = blob[i + 4];
+            let class = blob[i + 5];
+            let subclass = blob[i + 6];
+            let protocol = blob[i + 7];
+            crate::println!(
+                "[iphone-diag] iface={} alt={} class=0x{:02X} subclass=0x{:02X} protocol=0x{:02X} endpoints={}",
+                iface, alt, class, subclass, protocol, num_ep
+            );
+        }
+        i += len;
+    }
+}
+
 /// Walk a config descriptor blob looking for the USB MUX interface.
 /// Returns Some((iface_num, alt, bulk_in_addr, bulk_in_mps,
 /// bulk_out_addr, bulk_out_mps)) on a match.

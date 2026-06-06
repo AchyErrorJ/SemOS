@@ -44,6 +44,10 @@ pub mod port_feature {
 
 /// USB 2.0 hub descriptor (§ 11.23.2.1 Table 11-13). Type byte = 0x29.
 pub const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
+/// USB 3.0 SuperSpeed hub descriptor (USB 3.2 spec § 10.15). Type
+/// byte = 0x2A. Layout is similar to the USB-2 hub descriptor — same
+/// first 6 bytes — so we can parse it into the same struct.
+pub const HUB_DESCRIPTOR_TYPE_SS: u16 = 0x2A;
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct HubDescriptor {
@@ -80,20 +84,25 @@ impl PortStatus {
 /// Issue GET_DESCRIPTOR(Hub) against `slot_id`. Returns Some(desc) on
 /// success. The hub descriptor is class-type, so bmRequestType is
 /// 0xA0 (device→host, class, recipient=device).
-pub fn read_hub_descriptor(slot_id: u8) -> Option<HubDescriptor> {
-    let mut buf = [0u8; 9];
+pub fn read_hub_descriptor(slot_id: u8, speed: u8) -> Option<HubDescriptor> {
+    let mut buf = [0u8; 12];
+    // SuperSpeed hubs (speed=4) use descriptor type 0x2A, USB-2 hubs use
+    // 0x29. Sending the wrong type causes the device to STALL the EP0
+    // setup stage — exactly the cc=6 we saw on the Pro Dock 40A1.
+    let dtype = if speed == 4 { HUB_DESCRIPTOR_TYPE_SS } else { HUB_DESCRIPTOR_TYPE };
     let ok = crate::usb::xhci::control_in(
         slot_id,
         0xA0,
         hub_request::GET_DESCRIPTOR,
-        HUB_DESCRIPTOR_TYPE << 8,
+        dtype << 8,
         0,
         buf.len() as u16,
         buf.as_mut_ptr(),
         buf.len(),
     );
     if !ok {
-        println!("[xhci-hub] slot={} GET_DESCRIPTOR(Hub) failed", slot_id);
+        println!("[xhci-hub] slot={} GET_DESCRIPTOR(Hub, type=0x{:02X}, speed={}) failed",
+            slot_id, dtype, speed);
         return None;
     }
     Some(HubDescriptor {
@@ -183,11 +192,15 @@ fn spin_for(cycles: u64) {
 /// `root_hub_port` is the root-hub port that this hub branch hangs off —
 /// child slot contexts need this even though they sit one tier below.
 ///
+/// `speed` is the speed at which the hub was enumerated. SuperSpeed hubs
+/// (speed=4) require descriptor type 0x2A instead of 0x29 — sending the
+/// wrong type yields STALL (cc=6).
+///
 /// Returns the number of downstream ports successfully enumerated.
-pub fn bring_up_hub(slot_id: u8, root_hub_port: u8) -> u8 {
+pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
     println!("[xhci-hub] slot={} bringing up hub", slot_id);
 
-    let desc = match read_hub_descriptor(slot_id) {
+    let desc = match read_hub_descriptor(slot_id, speed) {
         Some(d) => d,
         None => return 0,
     };

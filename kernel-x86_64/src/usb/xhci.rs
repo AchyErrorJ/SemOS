@@ -269,7 +269,7 @@ static mut HID_TRANSFER_RING: CommandRing = CommandRing::new();
 
 /// Generic DMA buffer for descriptor reads (max we need: the full
 /// Config + Iface + Endpoint + HID combined descriptor blob).
-const SETUP_BUF_SIZE: usize = 512;
+const SETUP_BUF_SIZE: usize = 8192;
 #[repr(C, align(64))]
 struct DmaBuf([u8; SETUP_BUF_SIZE]);
 static mut DMA_BUF: DmaBuf = DmaBuf([0; SETUP_BUF_SIZE]);
@@ -694,6 +694,67 @@ pub fn start_ehci_clocks() {
     }
 }
 
+/// Full EHCI reset + start sequence. Lynx Point gates the USB-2 PHY when
+/// EHCI is left in a half-initialized state by BIOS. Just setting RS=1
+/// (start_ehci_clocks) is not enough — the controller must be halted,
+/// HCRESET'd, and then started so the PHY state machine is fully ungated.
+/// Called while xHCI is also in HCRST, so both controllers come up clean.
+pub fn reset_and_start_ehci_full() {
+    const EHCI_CLASS: u8 = 0x0C;
+    const EHCI_SUBCLASS: u8 = 0x03;
+    const EHCI_PROG_IF: u8 = 0x20;
+    const EHCI_USBCMD: u64 = 0x00;
+    const EHCI_USBSTS: u64 = 0x04;
+    const EHCI_USBCMD_RS: u32 = 1 << 0;
+    const EHCI_USBCMD_HCRESET: u32 = 1 << 1;
+    const EHCI_USBSTS_HCH: u32 = 1 << 12;
+    for slot in 0..32u8 {
+        for func in 0..8u8 {
+            let loc = pci::Location { bus: 0, slot, func };
+            if loc.vendor_id() == 0xFFFF { continue; }
+            if pci::class_triple(loc) != (EHCI_CLASS, EHCI_SUBCLASS, EHCI_PROG_IF) {
+                continue;
+            }
+            let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
+            let mmio_phys = (bar0 & !0xF) as u64;
+            if mmio_phys == 0 { continue; }
+            let mmio = paging::phys_to_virt(mmio_phys);
+            let caplen = unsafe { read_volatile(mmio as *const u8) } as u64;
+            let op_base = mmio + caplen;
+
+            // Step 1: Halt if running.
+            let cmd0 = unsafe { read_u32(op_base + EHCI_USBCMD) };
+            if cmd0 & EHCI_USBCMD_RS != 0 {
+                unsafe { write_u32(op_base + EHCI_USBCMD, cmd0 & !EHCI_USBCMD_RS); }
+                for _ in 0..1_000_000 {
+                    let sts = unsafe { read_u32(op_base + EHCI_USBSTS) };
+                    if sts & EHCI_USBSTS_HCH != 0 { break; }
+                    core::hint::spin_loop();
+                }
+            }
+
+            // Step 2: HCRESET.
+            unsafe { write_u32(op_base + EHCI_USBCMD, EHCI_USBCMD_HCRESET); }
+            for _ in 0..1_000_000 {
+                let cmd = unsafe { read_u32(op_base + EHCI_USBCMD) };
+                if cmd & EHCI_USBCMD_HCRESET == 0 { break; }
+                core::hint::spin_loop();
+            }
+
+            // Step 3: Start (RS=1).
+            unsafe { write_u32(op_base + EHCI_USBCMD, EHCI_USBCMD_RS); }
+            for _ in 0..1_000_000 {
+                let sts = unsafe { read_u32(op_base + EHCI_USBSTS) };
+                if sts & EHCI_USBSTS_HCH == 0 { break; }
+                core::hint::spin_loop();
+            }
+
+            println!("[ehci] {}:{:02X}.{} full reset+start (halt->HCRESET->RS=1)",
+                loc.bus, loc.slot, loc.func);
+        }
+    }
+}
+
 /// Walk the xHCI Extended Capabilities list and, if a USB Legacy Support
 /// capability (ID=1) exists, transfer ownership from BIOS to OS.
 ///
@@ -870,19 +931,6 @@ pub fn init() -> bool {
     // the EHCI companion. (Lynx Point W540 + early Sunrise Point.)
     intel_pch_port_routing(loc);
 
-    // W540 diagnostic: USB2PHYCM bit 7 appears to gate the USB-2 PHY digital
-    // logic. When set, CCS detection still works (analog) but the port state
-    // machine cannot drive SE0 or detect speed chirps, so PRC fires and PED
-    // stays 0. Clear it before HCRST so the PHY is fully active.
-    if loc.vendor_id() == 0x8086 {
-        let usb2phycm = pci::read_u32(loc.bus, loc.slot, loc.func, 0xE0);
-        if usb2phycm & (1 << 7) != 0 {
-            pci::write_u32(loc.bus, loc.slot, loc.func, 0xE0, usb2phycm & !(1 << 7));
-            let after = pci::read_u32(loc.bus, loc.slot, loc.func, 0xE0);
-            println!("[xhci] USB2PHYCM 0x{:08X} -> 0x{:08X} (cleared bit 7)", usb2phycm, after);
-        }
-    }
-
     // The bootloader identity-maps physical memory at PHYS_MEM_OFFSET, so
     // MMIO accesses go through the phys_to_virt window. xHCI BAR
     // addresses live in low MMIO (typically below 4 GiB), well within the
@@ -961,6 +1009,13 @@ pub fn init() -> bool {
             core::hint::spin_loop();
         }
     }
+
+    // Lynx Point shares the USB-2 PHY reference clock between xHCI and EHCI.
+    // BIOS often leaves EHCI halted, which gates the PHY. Just setting RS=1
+    // (start_ehci_clocks) is not enough — the EHCI controller must go through
+    // a full HCRESET to bring the PHY out of its default gated state. We do
+    // this while xHCI is still in HCRST so both controllers come up clean.
+    reset_and_start_ehci_full();
 
     // ---- Configure number of device slots enabled ----
     // Use the controller's actual MaxSlots (from HCSPARAMS1), not our
@@ -1047,6 +1102,38 @@ pub fn init() -> bool {
         for _ in 0..1_000_000 {
             let sts = read_u32(op_base + op_reg::USBSTS as u64);
             if sts & usbsts::HCH == 0 { break; }
+            core::hint::spin_loop();
+        }
+    }
+
+    // Detect the controller's initial event-ring cycle state.  Some
+    // Intel PCHs (Lynx Point) use cycle=0 for the first event after
+    // HCRST, while QEMU uses cycle=1.  If our assumed ccs mismatches,
+    // poll_event() will never consume events, which can stall the
+    // port state machine on some steppings.
+    unsafe {
+        // Poll USBSTS.EINT for up to ~1s (62 ticks).  The controller
+        // generates Port Status Change Events for connected devices
+        // shortly after RS=1.
+        let eint_deadline = kernel_core::platform::ticks() + 62;
+        while kernel_core::platform::ticks() < eint_deadline {
+            let sts = read_u32(op_base + op_reg::USBSTS as u64);
+            if sts & usbsts::EINT != 0 {
+                // Clear EINT (RW1C).
+                write_u32(op_base + op_reg::USBSTS as u64, sts | usbsts::EINT);
+                // Peek the first TRB the controller wrote.
+                let ctrl = core::ptr::read_volatile(
+                    &raw const EVENT_RING.trbs[EVT_CONS.dequeue].control);
+                let hw_cycle = (ctrl & 1) != 0;
+                println!("[xhci] first event cycle={} (assumed ccs={})",
+                    if hw_cycle { 1 } else { 0 },
+                    if EVT_CONS.ccs { 1 } else { 0 });
+                if hw_cycle != EVT_CONS.ccs {
+                    EVT_CONS.ccs = hw_cycle;
+                    println!("[xhci] ccs corrected to match controller");
+                }
+                break;
+            }
             core::hint::spin_loop();
         }
     }
@@ -1215,10 +1302,10 @@ pub fn enumerate_ports() -> usize {
         core::hint::spin_loop();
     }
     // VBUS settle delay. USB 2.0 spec says PWRON2PWRGOOD ≥ 100 ms for
-    // hubs; root hub ports on Intel PCH are usually faster, but a fixed
-    // ~32 ms (2 ticks @ 62 Hz) costs nothing and eliminates a class of
-    // "device not ready when reset starts" failures on real hardware.
-    let power_settle = kernel_core::platform::ticks() + 2;
+    // hubs. iPhone 16 Pro (USB-C) has an internal PD controller that
+    // negotiates VBUS before asserting the USB 2.0 D+ pull-up; empirically
+    // it needs 200–400 ms. We wait ~500 ms (31 ticks @ 62 Hz) to be safe.
+    let power_settle = kernel_core::platform::ticks() + 31;
     while kernel_core::platform::ticks() < power_settle {
         core::hint::spin_loop();
     }
@@ -1227,6 +1314,16 @@ pub fn enumerate_ports() -> usize {
     // If EHCI is RS=0, xHCI can drive SE0 but cannot detect the device's
     // speed chirp, so PRC fires and PED stays 0. Start EHCI to ungate.
     start_ehci_clocks();
+
+    // Drain any stale events from the event ring before we start resetting.
+    // Some Intel controllers couple PORTSC updates to event acknowledgement;
+    // if the ring has un-consumed Port Status Change Events from boot,
+    // subsequent port state machine transitions may stall.
+    let mut drained = 0u32;
+    while poll_event().is_some() { drained += 1; }
+    if drained > 0 {
+        println!("[xhci] drained {} stale event(s) from event ring before reset", drained);
+    }
 
     let mut connected = 0;
     let mut enumerated = 0;
@@ -1240,12 +1337,6 @@ pub fn enumerate_ports() -> usize {
         }
         connected += 1;
         println!("[xhci] port {}: connected (PORTSC=0x{:08X})", port, portsc);
-
-        // Clear any latched change bits so we can spot the new PRC cleanly.
-        // (RW1C — writing the read value W1Cs them all in one shot.)
-        let change_clear = (portsc & !portsc::RW1C_MASK)
-            | (portsc & portsc::RW1C_MASK);
-        unsafe { write_u32(portsc_addr, change_clear); }
 
         // Reset the port. USB 2 ports latch PRC=1 + PED=1 simultaneously
         // when PR completes. USB 3 ports are different: PR may report
@@ -1264,6 +1355,10 @@ pub fn enumerate_ports() -> usize {
             // Preserve everything except RW1C bits (would clear latched
             // events), PED (writing 1 disables the port), and WPR.
             for attempt in 0..3 {
+                // Clear any stale change bits so we can spot the new PRC cleanly.
+                let s0 = unsafe { read_u32(portsc_addr) };
+                unsafe { write_u32(portsc_addr, (s0 & !portsc::RW1C_MASK) | portsc::PRC | portsc::WRC); }
+
                 let mut prc_seen = false;
                 let pre = unsafe { read_u32(portsc_addr) };
                 let preserve = pre
@@ -1280,10 +1375,9 @@ pub fn enumerate_ports() -> usize {
                     let s = unsafe { read_u32(portsc_addr) };
                     if s & (portsc::PRC | portsc::WRC) != 0 {
                         prc_seen = true;
-                        unsafe {
-                            write_u32(portsc_addr,
-                                (s & !portsc::RW1C_MASK) | portsc::PRC | portsc::WRC);
-                        }
+                        // DO NOT clear PRC here.  Some Intel PCHs (Panther/
+                        // Lynx Point) abort the PED transition if PRC is
+                        // cleared before software has polled PED=1.
                         break;
                     }
                     core::hint::spin_loop();
@@ -1305,8 +1399,14 @@ pub fn enumerate_ports() -> usize {
 
                 let after = unsafe { read_u32(portsc_addr) };
                 if after & portsc::PED != 0 {
+                    // Success — clear PRC/WRC now that the port is enabled.
+                    unsafe { write_u32(portsc_addr, (after & !portsc::RW1C_MASK) | portsc::PRC | portsc::WRC); }
                     break; // success
                 }
+
+                // Failed — clear PRC/WRC before the next attempt or before WPR.
+                unsafe { write_u32(portsc_addr, (after & !portsc::RW1C_MASK) | portsc::PRC | portsc::WRC); }
+
                 println!("[xhci] port {} attempt {} PR didn't enable (PORTSC=0x{:08X} PLS={} speed={})",
                     port, attempt, after,
                     (after & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
@@ -1320,10 +1420,7 @@ pub fn enumerate_ports() -> usize {
                     while kernel_core::platform::ticks() < wrc_deadline {
                         let s = unsafe { read_u32(portsc_addr) };
                         if s & portsc::WRC != 0 {
-                            unsafe {
-                                write_u32(portsc_addr,
-                                    (s & !portsc::RW1C_MASK) | portsc::WRC | portsc::PRC);
-                            }
+                            // Same quirk: don't clear WRC until PED is checked.
                             break;
                         }
                         core::hint::spin_loop();
@@ -1334,9 +1431,16 @@ pub fn enumerate_ports() -> usize {
                         if s & portsc::PED != 0 { break; }
                         core::hint::spin_loop();
                     }
+                    let after_wpr = unsafe { read_u32(portsc_addr) };
+                    if after_wpr & portsc::PED != 0 {
+                        unsafe { write_u32(portsc_addr, (after_wpr & !portsc::RW1C_MASK) | portsc::WRC | portsc::PRC); }
+                    }
                 }
             }
         }
+        // Drain any events generated by this port before moving on.
+        while poll_event().is_some() {}
+
         let portsc_after = unsafe { read_u32(portsc_addr) };
         if portsc_after & portsc::PED == 0 {
             println!("[xhci] port {} not enabled after reset (PORTSC=0x{:08X} PLS={} speed={})",
@@ -1348,10 +1452,61 @@ pub fn enumerate_ports() -> usize {
         let speed = ((portsc_after & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT) as u8;
         println!("[xhci] port {} enabled (PORTSC=0x{:08X} speed={})", port, portsc_after, speed);
 
-        // Enumerate this device. If it succeeds, remember it and stop.
+        // USB 3.0 devices (and some finicky USB 2.0 firmware) need a short
+        // settle time after PED=1 before they reliably respond to SET_ADDRESS.
+        // The iPhone 16 Pro on SuperSpeed has been observed to NAK the first
+        // AddressDevice command if we rush it.
+        let settle = kernel_core::platform::ticks() + 10;
+        while kernel_core::platform::ticks() < settle {
+            core::hint::spin_loop();
+        }
+
+        // Enumerate this device. Keep going — we want to see every root-hub
+        // device, not just the first.  (Earlier single-device limit was a
+        // leftover from the keyboard-only era.)
+        let mut first_enum_ok = false;
         if enumerate_device(Topology::root(port), speed) {
             enumerated += 1;
-            break;
+            first_enum_ok = true;
+        }
+
+        // For SuperSpeed devices that enabled after PR but then failed
+        // enumeration (iPhone 16 Pro is the known example), a warm reset
+        // often recovers the link.  PR does an in-band hot reset; WPR
+        // forces out-of-band LFPS retraining which some Apple SS PHYs need.
+        if speed == 4 && !first_enum_ok {
+            println!("[xhci] port {} SS enumeration failed, trying warm reset", port);
+            let s = unsafe { read_u32(portsc_addr) };
+            let preserve = s
+                & !portsc::RW1C_MASK
+                & !portsc::PED
+                & !portsc::WPR;
+            unsafe { write_u32(portsc_addr, preserve | portsc::WPR); }
+            let wrc_deadline = kernel_core::platform::ticks() + 15;
+            while kernel_core::platform::ticks() < wrc_deadline {
+                let s = unsafe { read_u32(portsc_addr) };
+                if s & portsc::WRC != 0 { break; }
+                core::hint::spin_loop();
+            }
+            let wpr_ped_deadline = kernel_core::platform::ticks() + 15;
+            while kernel_core::platform::ticks() < wpr_ped_deadline {
+                let s = unsafe { read_u32(portsc_addr) };
+                if s & portsc::PED != 0 { break; }
+                core::hint::spin_loop();
+            }
+            let after_wpr = unsafe { read_u32(portsc_addr) };
+            if after_wpr & portsc::PED != 0 {
+                println!("[xhci] port {} warm-reset enabled (PORTSC=0x{:08X})",
+                    port, after_wpr);
+                // Another settle delay before retry.
+                let settle2 = kernel_core::platform::ticks() + 10;
+                while kernel_core::platform::ticks() < settle2 {
+                    core::hint::spin_loop();
+                }
+                if enumerate_device(Topology::root(port), speed) {
+                    enumerated += 1;
+                }
+            }
         }
     }
 
@@ -1478,21 +1633,38 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     };
 
     // ---- AddressDevice ----
-    let idx = unsafe { CMD_PROD.enqueue };
-    let cmd_phys = cmd_trb_phys_at(idx);
-    let control = ((trb_type::ADDRESS_DEVICE_CMD as u32) << 10) | ((slot_id as u32) << 24);
-    unsafe {
-        enqueue_command(
-            &raw mut COMMAND_RING, &mut CMD_PROD,
-            input_phys,  // parameter = Input Context pointer
-            0,
-            control,
-        );
+    let mut address_ok = false;
+    for retry in 0..2 {
+        let idx = unsafe { CMD_PROD.enqueue };
+        let cmd_phys = cmd_trb_phys_at(idx);
+        let control = ((trb_type::ADDRESS_DEVICE_CMD as u32) << 10) | ((slot_id as u32) << 24);
+        unsafe {
+            enqueue_command(
+                &raw mut COMMAND_RING, &mut CMD_PROD,
+                input_phys,  // parameter = Input Context pointer
+                0,
+                control,
+            );
+        }
+        ring_doorbell(info.db_base, 0, 0);
+        let (cc, _) = wait_command_completion(cmd_phys);
+        if cc == cc::SUCCESS {
+            address_ok = true;
+            break;
+        }
+        println!("[xhci] AddressDevice attempt {} failed: cc={}", retry, cc);
+        // Only retry on USB Transaction Error (cc=4); other codes are fatal.
+        if cc != 4 || retry == 1 {
+            return false;
+        }
+        // Wait ~100ms before retry — some devices (iPhone 16 Pro SS) need
+        // extra time after link training before they accept SET_ADDRESS.
+        let retry_wait = kernel_core::platform::ticks() + 6;
+        while kernel_core::platform::ticks() < retry_wait {
+            core::hint::spin_loop();
+        }
     }
-    ring_doorbell(info.db_base, 0, 0);
-    let (cc, _) = wait_command_completion(cmd_phys);
-    if cc != cc::SUCCESS {
-        println!("[xhci] AddressDevice failed: cc={}", cc);
+    if !address_ok {
         return false;
     }
 
@@ -1513,6 +1685,18 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     println!("[xhci] device descriptor: vendor=0x{:04X} product=0x{:04X} class=0x{:02X} mps0={}",
         id_vendor, id_product,
         dev_desc.b_device_class, dev_desc.b_max_packet_size0);
+    if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
+        println!("[iphone] Apple device detected on slot={} port={} — about to read config descriptor", slot_id, port);
+    }
+
+    // ---- Read string descriptors (iManufacturer / iProduct / iSerialNumber).
+    // Windows does this before reading the config descriptor.  Some Apple
+    // devices stall on config-desc reads if the string descriptors haven't
+    // been fetched first — it's a known iOS quirk.
+    let _ = read_string_descriptor(slot_id, dev_desc.i_manufacturer, "iManufacturer");
+    let _ = read_string_descriptor(slot_id, dev_desc.i_product,     "iProduct");
+    let _ = read_string_descriptor(slot_id, dev_desc.i_serial_number, "iSerialNumber");
+
     // Phase 15 M50 — surface USB-hub-class devices explicitly. The Lenovo
     // ThinkPad Pro Dock 40A1 (and most multi-port docks) presents itself as
     // a USB hub here. Hubs are currently out of scope; we log so the user
@@ -1550,7 +1734,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
                 interface_number: 0,
             });
         }
-        let connected_children = crate::usb::hub::bring_up_hub(slot_id, port);
+        let connected_children = crate::usb::hub::bring_up_hub(slot_id, port, speed);
         if connected_children > 0 {
             println!("[xhci] hub enumerated {} downstream device(s)",
                 connected_children);
@@ -1566,29 +1750,38 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     if !control_in(slot_id, 0x80, request::GET_DESCRIPTOR,
                    (desc_type::CONFIGURATION as u16) << 8, 0, 9,
                    &mut cfg_desc as *mut _ as *mut u8, 9) {
-        println!("[xhci] GET_DESCRIPTOR(CONFIG short) failed");
+        if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
+            println!("[iphone] GET_DESCRIPTOR(CONFIG short) failed — iPhone not responding to USB; check 'Trust This Computer?' or USB Restricted Mode");
+        } else {
+            println!("[xhci] GET_DESCRIPTOR(CONFIG short) failed");
+        }
         return false;
     }
     let total_len = cfg_desc.w_total_length as usize;
+    let read_len = total_len.min(SETUP_BUF_SIZE);
     if total_len > SETUP_BUF_SIZE {
-        println!("[xhci] config descriptor too large ({}) — abort", total_len);
-        return false;
+        println!("[xhci] config descriptor larger than buffer ({} > {}), reading truncated {} bytes",
+            total_len, SETUP_BUF_SIZE, read_len);
     }
 
-    // ---- Read full configuration blob into DMA_BUF ----
+    // ---- Read configuration blob into DMA_BUF (clamped to buffer size) ----
     let blob_phys = match phys_of(unsafe { &raw const DMA_BUF } as u64) {
         Some(p) => p,
         None => { println!("[xhci] DMA_BUF phys translation failed"); return false; }
     };
     if !control_in_phys(slot_id, 0x80, request::GET_DESCRIPTOR,
                         (desc_type::CONFIGURATION as u16) << 8, 0,
-                        total_len as u16, blob_phys, total_len) {
-        println!("[xhci] GET_DESCRIPTOR(CONFIG full) failed");
+                        read_len as u16, blob_phys, read_len) {
+        if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
+            println!("[iphone] GET_DESCRIPTOR(CONFIG full) failed — iPhone STALL/NAK on config read; trust dialog may be pending or denied");
+        } else {
+            println!("[xhci] GET_DESCRIPTOR(CONFIG full) failed");
+        }
         return false;
     }
 
     // ---- Parse the descriptor chain looking for HID boot keyboard ----
-    let blob = unsafe { &DMA_BUF.0[..total_len] };
+    let blob = unsafe { &DMA_BUF.0[..read_len] };
     let (kbd, iface_num, cfg_val) = match find_boot_keyboard(blob, cfg_desc.b_configuration_value) {
         Some(x) => x,
         None => {
@@ -1909,6 +2102,54 @@ fn control_in_phys(
     }
     println!("[xhci] control_in timeout");
     false
+}
+
+/// Read a USB string descriptor (index `idx`) into `DMA_BUF` and print it.
+/// Returns `true` if the transfer succeeded (including short packet).
+/// `label` is used only for diagnostics.
+fn read_string_descriptor(slot_id: u8, idx: u8, label: &str) -> bool {
+    if idx == 0 {
+        return true; // no string available
+    }
+    let blob_phys = match phys_of(unsafe { &raw const DMA_BUF } as u64) {
+        Some(p) => p,
+        None => return false,
+    };
+    // String descriptors are UTF-16LE with a 2-byte header.
+    // 64 bytes is plenty for any realistic descriptor.
+    const MAX_STR: usize = 64;
+    unsafe { DMA_BUF.0[..MAX_STR].fill(0); }
+    if !control_in_phys(slot_id, 0x80, request::GET_DESCRIPTOR,
+                        ((desc_type::STRING as u16) << 8) | (idx as u16),
+                        0x0409, // US English language ID
+                        MAX_STR as u16, blob_phys, MAX_STR) {
+        println!("[xhci] string descriptor {} (index {}) failed", label, idx);
+        return false;
+    }
+    let s = unsafe { &DMA_BUF.0[..MAX_STR] };
+    let len = s[0] as usize;
+    if len >= 2 && s[1] == 0x03 {
+        // Valid string descriptor: decode UTF-16LE.
+        let mut ascii = [0u8; 32];
+        let mut a = 0usize;
+        let mut i = 2usize;
+        while i + 1 < len && a < ascii.len() {
+            let lo = s[i];
+            let hi = s[i + 1];
+            if hi == 0 && lo.is_ascii() {
+                ascii[a] = lo;
+                a += 1;
+            } else {
+                ascii[a] = b'?';
+                a += 1;
+            }
+            i += 2;
+        }
+        if let Ok(str) = core::str::from_utf8(&ascii[..a]) {
+            println!("[xhci] string {} (index {}): \"{}\"", label, idx, str);
+        }
+    }
+    true
 }
 
 pub(crate) fn control_out(
@@ -2257,6 +2498,7 @@ fn try_enumerate_iphone(
 ) -> bool {
     use crate::usb::iphone;
 
+    iphone::dump_config_interfaces(blob);
     let (iface, _alt, in_addr, in_mps, out_addr, out_mps) =
         match iphone::find_mux_interface(blob) {
             Some(t) => t,
