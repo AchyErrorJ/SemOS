@@ -293,6 +293,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
     }
 
+    // M11 iwlwifi — register NetDevice stub if PCI probe finds a NIC.
+    // On QEMU this silently returns false (no Intel wireless).  On metal
+    // it creates the device skeleton and registers "iwlwifi0" so smoltcp
+    // can use it once firmware + association land.
+    if wireless::iwlwifi_net::register_with_kernel_core() {
+        println!("[iwlwifi] registered with driver registry as 'iwlwifi0'");
+    }
+
     // USB init. Task #36 root cause: TASK_STACK_SIZE was 16 KiB,
     // adding USB pushed some kernel function's stack frame past
     // the cliff and overflowed into the previous slot's iret-RIP.

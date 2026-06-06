@@ -268,3 +268,8 @@ pub fn build_eapol_msg2(
     out[99..99 + key_data.len()].copy_from_slice(key_data);
     Some(total)
 }
+
+// M11 device bring-up stubs (PCI probe, firmware skeleton, NetDevice wiring).
+pub mod iwlwifi_pci;
+pub mod iwlwifi_device;
+pub mod iwlwifi_net;
