@@ -271,5 +271,6 @@ pub fn build_eapol_msg2(
 
 // M11 device bring-up stubs (PCI probe, firmware skeleton, NetDevice wiring).
 pub mod iwlwifi_pci;
+pub mod iwlwifi_csr;
 pub mod iwlwifi_device;
 pub mod iwlwifi_net;

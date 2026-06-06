@@ -1799,24 +1799,19 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
                     interface_number: 0,
                 });
             }
-            // iPhone tether session 1: if vendor is Apple, try the USB MUX
-            // interface first. iPhones don't actually use CDC-ECM for
-            // tethering — they use Apple's proprietary `ipheth` interface
-            // sitting BEHIND usbmuxd + lockdownd pairing. Session 1 only
-            // gets the MUX interface enumerated; sessions 2-5 build out
-            // the rest of the stack.
+            // Apple device: dump interfaces for diagnosis (no slot claim).
+            // The earlier try_enumerate_iphone path was off-roadmap. Per
+            // docs/ROADMAP_EXPANSION_PROPOSAL(JUNE26).md M50, iPhones
+            // tether via CDC-ECM (when Personal Hotspot is on), NOT via
+            // the usbmuxd USB MUX interface (which is for file sync).
+            // So: log what interfaces the iPhone presented so we can see
+            // whether CDC-ECM is actually there, then fall through to
+            // the standard CDC-ECM dispatch.
             if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
-                if try_enumerate_iphone(slot_id, port, speed, blob,
-                                         cfg_desc.b_configuration_value) {
-                    return true;
-                }
-                // Fall through to CDC-ECM / MSC if iPhone enum fails — some
-                // Apple devices (iPods in storage mode) match the MSC path.
+                crate::usb::iphone::dump_config_interfaces(blob);
             }
-            // Phase 15 M50: CDC-ECM (USB-Ethernet adapter or CDC-ECM dongle).
-            // The original "tethered iPhone" comment was wrong — iPhones use
-            // ipheth, not CDC-ECM. CDC-ECM still wins for ~$10 USB-Ethernet
-            // adapters and some Android phones in their "CDC-ECM tether" mode.
+            // Phase 15 M50: CDC-ECM is the standard tether protocol — both
+            // for iPhone (Personal Hotspot ON) and for USB-Ethernet dongles.
             if try_enumerate_cdc_ecm(slot_id, port, speed, blob,
                                       cfg_desc.b_configuration_value) {
                 return true;
@@ -2489,6 +2484,13 @@ fn find_msc_endpoints(blob: &[u8], cfg_val: u8) -> Option<(u8, u8, u8, u16, u8)>
 /// bulk endpoints, and stash the per-iPhone state. The actual usbmuxd
 /// Hello + lockdownd pair are subsequent sessions; this only proves the
 /// xHCI-level path is live.
+///
+/// **NOTE 2026-06-06:** No longer called from the dispatch. Per
+/// ROADMAP_EXPANSION_PROPOSAL(JUNE26).md M50, iPhone tethering uses
+/// CDC-ECM (when Personal Hotspot is on), not the USB MUX interface
+/// (which is for file sync). Function kept in tree for the future
+/// session-2+ Apple device manage/sync work, not for tethering.
+#[allow(dead_code)]
 fn try_enumerate_iphone(
     slot_id: u8,
     port: u8,

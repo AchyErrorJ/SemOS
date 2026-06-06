@@ -9,11 +9,14 @@
 
 use crate::println;
 use super::iwlwifi_pci::IwlPciInfo;
+use super::iwlwifi_csr::Csr;
 
 /// Opaque device handle.  Created by `probe()` on PCI match.
 pub struct IwlDevice {
     pub pci: IwlPciInfo,
     pub state: DeviceState,
+    /// MMIO accessor for BAR0 CSR registers.
+    pub csr: Csr,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -33,9 +36,32 @@ pub enum DeviceState {
 impl IwlDevice {
     /// Create a new device from PCI probe results.
     pub fn new(pci: IwlPciInfo) -> Self {
-        println!("[iwlwifi] device created for {} @ {:02X}:{:02X}.{}  BAR0=0x{:08X}",
-            pci.name, pci.loc.bus, pci.loc.slot, pci.loc.func, pci.bar0_phys);
-        Self { pci, state: DeviceState::Probed }
+        let bar0_virt = crate::paging::phys_to_virt(pci.bar0_phys);
+        let csr = Csr::new(bar0_virt);
+        println!("[iwlwifi] device created for {} @ {:02X}:{:02X}.{}  BAR0 phys=0x{:08X} virt=0x{:08X}",
+            pci.name, pci.loc.bus, pci.loc.slot, pci.loc.func, pci.bar0_phys, bar0_virt);
+        Self { pci, state: DeviceState::Probed, csr }
+    }
+
+    /// Diagnostic: read CSR_HW_REV and CSR_HW_RF_ID.  Prints chip revision
+    /// so metal bring-up logs can confirm the MMIO path works before any
+    /// firmware is loaded.
+    pub fn read_hw_rev(&self) {
+        let rev = self.csr.read32(super::iwlwifi_csr::CSR_HW_REV);
+        let rf_id = self.csr.read32(super::iwlwifi_csr::CSR_HW_RF_ID);
+        println!("[iwlwifi] HW_REV=0x{:08X} RF_ID=0x{:08X}", rev, rf_id);
+    }
+
+    /// Stub: assert SW reset via CSR_RESET, then wait for MAC clocks.
+    /// Real implementation will pulse the reset bit, poll GP_CNTRL for
+    /// MAC_CLOCK_READY, then clear the reset bit.
+    pub fn reset_device(&mut self) -> bool {
+        println!("[iwlwifi] reset_device: STUB");
+        // TODO(M11):
+        //   1. write32(CSR_RESET, SW_RESET_BIT)
+        //   2. poll32(CSR_GP_CNTRL, MAC_CLOCK_READY, true, 100_000)
+        //   3. write32(CSR_RESET, 0)
+        false
     }
 
     /// Stub: load firmware blob into NIC SRAM and kick the ucode.
