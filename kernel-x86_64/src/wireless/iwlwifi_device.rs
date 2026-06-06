@@ -10,6 +10,8 @@
 use crate::println;
 use super::iwlwifi_pci::IwlPciInfo;
 use super::iwlwifi_csr::Csr;
+use super::iwlwifi_sm::AssocStateMachine;
+use super::MacAddr;
 
 /// Opaque device handle.  Created by `probe()` on PCI match.
 pub struct IwlDevice {
@@ -17,6 +19,8 @@ pub struct IwlDevice {
     pub state: DeviceState,
     /// MMIO accessor for BAR0 CSR registers.
     pub csr: Csr,
+    /// WiFi association state machine (scan → auth → assoc → 4-way → DHCP).
+    pub sm: AssocStateMachine,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -40,7 +44,10 @@ impl IwlDevice {
         let csr = Csr::new(bar0_virt);
         println!("[iwlwifi] device created for {} @ {:02X}:{:02X}.{}  BAR0 phys=0x{:08X} virt=0x{:08X}",
             pci.name, pci.loc.bus, pci.loc.slot, pci.loc.func, pci.bar0_phys, bar0_virt);
-        Self { pci, state: DeviceState::Probed, csr }
+        // TODO(M11): read real STA MAC from EEPROM/NVM instead of placeholder.
+        let sta_mac: MacAddr = [0x00, 0x16, 0x3E, 0x00, 0x00, 0x01];
+        let sm = AssocStateMachine::new(sta_mac);
+        Self { pci, state: DeviceState::Probed, csr, sm }
     }
 
     /// Diagnostic: read CSR_HW_REV and CSR_HW_RF_ID.  Prints chip revision
@@ -91,23 +98,45 @@ impl IwlDevice {
         false
     }
 
-    /// Stub: build and send a Scan command via the HCMD ring.
-    pub fn cmd_scan(&mut self, _ssid: Option<&[u8]>) -> bool {
-        println!("[iwlwifi] cmd_scan: STUB");
-        // TODO(M11): build SCAN_REQ_CMD, post to command queue.
-        false
+    /// Start the association sequence: scan for SSID, then auth/assoc/4-way/DHCP.
+    /// Requires firmware loaded + PHY init done.
+    pub fn connect(&mut self, ssid: &[u8], psk: &[u8]) {
+        if !self.is_ready() {
+            println!("[iwlwifi] connect: device not ready (firmware/PHY not loaded)");
+            return;
+        }
+        let profile = super::iwlwifi_sm::NetworkProfile::from_ssid_psk(ssid, psk);
+        self.sm.start_scan(profile);
     }
 
-    /// Stub: build and send an Authentication command.
-    pub fn cmd_auth(&mut self, _bssid: &[u8; 6]) -> bool {
-        println!("[iwlwifi] cmd_auth: STUB");
-        false
-    }
-
-    /// Stub: build and send an Association command.
-    pub fn cmd_assoc(&mut self, _bssid: &[u8; 6], _ssid: &[u8]) -> bool {
-        println!("[iwlwifi] cmd_assoc: STUB");
-        false
+    /// Step the association state machine.  Call this periodically (e.g.
+    /// every 100 ms) or when an RX frame / event arrives.
+    pub fn step_assoc(&mut self, tx_buf: &mut [u8]) {
+        use super::iwlwifi_sm::State;
+        match self.sm.state {
+            State::Scanning => {
+                if let Some(frame) = self.sm.build_probe_req(tx_buf) {
+                    // TODO(M11): post frame to TX queue as mgmt frame.
+                    println!("[iwlwifi] TX Probe Request ({} bytes)", frame.len());
+                }
+            }
+            State::Authenticating => {
+                if let Some(frame) = self.sm.build_auth_req(tx_buf) {
+                    println!("[iwlwifi] TX Auth Request ({} bytes)", frame.len());
+                }
+            }
+            State::Associating => {
+                if let Some(frame) = self.sm.build_assoc_req(tx_buf) {
+                    println!("[iwlwifi] TX Assoc Request ({} bytes)", frame.len());
+                }
+            }
+            State::FourWayHandshake => {
+                if let Some(frame) = self.sm.build_eapol_msg2(tx_buf) {
+                    println!("[iwlwifi] TX EAPOL Msg2 ({} bytes)", frame.len());
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Stub: push an 802.11 data frame into the TX ring.
@@ -128,9 +157,10 @@ impl IwlDevice {
         self.state == DeviceState::PhyReady || self.state == DeviceState::Associated
     }
 
-    /// True if associated to an AP.
+    /// True if associated to an AP (checks both device state and SM state).
     pub fn is_associated(&self) -> bool {
         self.state == DeviceState::Associated
+            && self.sm.state == super::iwlwifi_sm::State::Associated
     }
 }
 
