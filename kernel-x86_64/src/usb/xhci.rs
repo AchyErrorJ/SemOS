@@ -1136,11 +1136,7 @@ pub fn enumerate_ports() -> usize {
             unsafe { write_u32(portsc_addr, preserve | portsc::PP); }
         }
     }
-    // Power-stable settling time. xHCI spec doesn't mandate a value, but
-    // 20 ms is the USB 2.0 default for hub PWRON2PWRGOOD. We approximate
-    // by polling PORTSC PP across all ports — once they all read PP=1 we
-    // can move on, with an upper bound that's effectively a few ms on
-    // QEMU and ~20 ms on real hardware.
+    // Wait until all ports report PP=1.
     for _ in 0..10_000_000u64 {
         let mut all_powered = true;
         for port in 1..=info.max_ports {
@@ -1153,6 +1149,14 @@ pub fn enumerate_ports() -> usize {
             }
         }
         if all_powered { break; }
+        core::hint::spin_loop();
+    }
+    // VBUS settle delay. USB 2.0 spec says PWRON2PWRGOOD ≥ 100 ms for
+    // hubs; root hub ports on Intel PCH are usually faster, but a fixed
+    // ~32 ms (2 ticks @ 62 Hz) costs nothing and eliminates a class of
+    // "device not ready when reset starts" failures on real hardware.
+    let power_settle = kernel_core::platform::ticks() + 2;
+    while kernel_core::platform::ticks() < power_settle {
         core::hint::spin_loop();
     }
 
@@ -1184,21 +1188,19 @@ pub fn enumerate_ports() -> usize {
         let initial = unsafe { read_u32(portsc_addr) };
         let already_enabled = initial & portsc::PED != 0;
         if !already_enabled {
-            // Intel Lynx Point quirk: ports left in PLS=Polling/Disabled by
-            // BIOS/EHCI don't accept PR alone. Linux's xhci_hub_control's
-            // SET_PORT_FEAT(RESET) path writes PR + LWS + PLS=0 (U0) in a
-            // SINGLE PORTSC write so the link-state machine transitions in
-            // the same cycle as the reset request. PLS-mask cleared so we
-            // write U0; LWS commits the link change; PR starts the reset.
-            // Other bits preserved EXCEPT RW1C ones (which we'd accidentally
-            // clear) and PED (W1C — writing 1 would disable the port).
+            // Write Port Reset (PR) only. The previous LWS+PLS=0 combined
+            // write was based on a misreading of Linux's xhci-hub.c; the
+            // vanilla RESET path only sets PR after neutralizing RW1C bits.
+            // LWS is for explicit link-state changes (resume/suspend), not
+            // reset, and may confuse the USB-2 state machine on Lynx Point.
+            // Preserve everything except RW1C bits (would clear latched
+            // events), PED (writing 1 disables the port), and WPR.
             let preserve = initial
                 & !portsc::RW1C_MASK
-                & !portsc::PLS_MASK
                 & !portsc::PED
                 & !portsc::WPR;
             unsafe {
-                write_u32(portsc_addr, preserve | portsc::PR | portsc::LWS);
+                write_u32(portsc_addr, preserve | portsc::PR);
             }
 
             let mut prc_seen = false;
@@ -2452,6 +2454,14 @@ pub fn print_usbinfo() -> u64 {
             let cap = unsafe { read_u32(cap_addr) };
             let id = cap & 0xFF;
             let next = (cap >> 8) & 0xFF;
+            if id == 1 { // USB Legacy Support Capability
+                let bios_owned = (cap & (1 << 16)) != 0;
+                let os_owned = (cap & (1 << 24)) != 0;
+                println!("  xECP USBLEGSUP: BIOS={} OS={} (addr=+0x{:X})",
+                    if bios_owned { 1 } else { 0 },
+                    if os_owned { 1 } else { 0 },
+                    cap_addr - mmio);
+            }
             if id == 2 { // Supported Protocol Capability
                 let major = (cap >> 24) & 0xFF;
                 let dw2 = unsafe { read_u32(cap_addr + 8) };
