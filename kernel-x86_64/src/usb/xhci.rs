@@ -1848,19 +1848,20 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
                     interface_number: 0,
                 });
             }
-            // Apple device: dump interfaces for diagnosis (no slot claim).
-            // The earlier try_enumerate_iphone path was off-roadmap. Per
-            // docs/ROADMAP_EXPANSION_PROPOSAL(JUNE26).md M50, iPhones
-            // tether via CDC-ECM (when Personal Hotspot is on), NOT via
-            // the usbmuxd USB MUX interface (which is for file sync).
-            // So: log what interfaces the iPhone presented so we can see
-            // whether CDC-ECM is actually there, then fall through to
-            // the standard CDC-ECM dispatch.
+            // iPhone via ipheth (class 0xFF/0xFD/0x01) — ported from
+            // Linux's drivers/net/usb/ipheth.c. iPhones don't use
+            // CDC-ECM for tethering; they use a proprietary vendor-
+            // specific protocol at alt setting 1.
             if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
-                crate::usb::iphone::dump_config_interfaces(blob);
+                if try_enumerate_ipheth(slot_id, port, speed, blob,
+                                         cfg_desc.b_configuration_value) {
+                    return true;
+                }
+                // Fall through to CDC-ECM if ipheth iface isn't there —
+                // older iOS or non-iPhone Apple devices.
             }
-            // Phase 15 M50: CDC-ECM is the standard tether protocol — both
-            // for iPhone (Personal Hotspot ON) and for USB-Ethernet dongles.
+            // Phase 15 M50: CDC-ECM is the standard tether protocol for
+            // USB-Ethernet dongles + some Android tethering modes.
             if try_enumerate_cdc_ecm(slot_id, port, speed, blob,
                                       cfg_desc.b_configuration_value) {
                 return true;
@@ -2539,8 +2540,17 @@ fn find_msc_endpoints(blob: &[u8], cfg_val: u8) -> Option<(u8, u8, u8, u16, u8)>
 /// CDC-ECM (when Personal Hotspot is on), not the USB MUX interface
 /// (which is for file sync). Function kept in tree for the future
 /// session-2+ Apple device manage/sync work, not for tethering.
-#[allow(dead_code)]
-fn try_enumerate_iphone(
+/// Enumerate an iPhone via the ipheth tethering protocol — ported from
+/// Linux's `drivers/net/usb/ipheth.c`. iPhones expose a vendor-specific
+/// interface (class 0xFF/0xFD/0x01) at alt setting 1 with bulk IN/OUT
+/// endpoints. We:
+///   1. Walk the config descriptor for the iface number at alt=1.
+///   2. SET_CONFIGURATION on the device.
+///   3. SET_INTERFACE on the ipheth iface to alt=1.
+///   4. ConfigureEndpoint for the bulk pair.
+///   5. GET_MACADDR control transfer (vendor request 0x00).
+///   6. Stash the per-iPhone state.
+fn try_enumerate_ipheth(
     slot_id: u8,
     port: u8,
     speed: u8,
@@ -2550,22 +2560,31 @@ fn try_enumerate_iphone(
     use crate::usb::iphone;
 
     iphone::dump_config_interfaces(blob);
-    let (iface, _alt, in_addr, in_mps, out_addr, out_mps) =
-        match iphone::find_mux_interface(blob) {
+    let (iface, in_addr, in_mps, out_addr, out_mps) =
+        match iphone::find_ipheth_interface(blob) {
             Some(t) => t,
             None => {
-                println!("[iphone] no USB MUX interface (class 0xFF/0xFE/0x02) in config descriptor");
+                println!("[ipheth] no ipheth interface (class 0xFF/0xFD/0x01 at alt 1) in descriptor — iPhone may need 'Trust This Computer' tap, or Personal Hotspot not enabled");
                 return false;
             }
         };
     println!(
-        "[iphone] USB MUX interface candidate: iface={} IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{}",
+        "[ipheth] interface found: iface={} (alt 1) IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{}",
         iface, in_addr, out_addr, in_mps, out_mps
     );
 
     if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, cfg_val as u16, 0, 0) {
-        println!("[iphone] SET_CONFIGURATION failed");
+        println!("[ipheth] SET_CONFIGURATION failed");
         return false;
+    }
+
+    // SET_INTERFACE on the ipheth iface to alt 1. bmRequestType = 0x01
+    // (host→device, standard, recipient=interface), bRequest = 11.
+    if !control_out(slot_id, 0x01, request::SET_INTERFACE,
+                    iphone::IPHETH_ALT as u16, iface as u16, 0) {
+        println!("[ipheth] SET_INTERFACE(iface={}, alt={}) failed", iface, iphone::IPHETH_ALT);
+        // Some firmwares still expose the bulk endpoints without the
+        // explicit SET_INTERFACE; continue and hope for the best.
     }
 
     let (in_dci, out_dci) = match configure_bulk_endpoints(
@@ -2574,39 +2593,59 @@ fn try_enumerate_iphone(
     ) {
         Some(d) => d,
         None => {
-            println!("[iphone] configure_bulk_endpoints failed");
+            println!("[ipheth] configure_bulk_endpoints failed");
             return false;
         }
     };
 
+    // GET_MACADDR — vendor request 0x00, bmRequestType=0xC0 (vendor,
+    // device→host, recipient=device), returns 6 bytes.
+    let mut mac = [0u8; 6];
+    let buf_phys = match phys_of(unsafe { &raw const DMA_BUF } as u64) {
+        Some(p) => p,
+        None => { println!("[ipheth] DMA_BUF phys translation failed"); return false; }
+    };
+    unsafe { DMA_BUF.0[..6].fill(0); }
+    if control_in_phys(slot_id, 0xC0, iphone::IPHETH_CMD_GET_MACADDR,
+                       0, 0, 6, buf_phys, 6) {
+        unsafe { mac.copy_from_slice(&DMA_BUF.0[..6]); }
+        println!(
+            "[ipheth] GET_MACADDR -> {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
+    } else {
+        println!("[ipheth] GET_MACADDR failed — iPhone may not be trusted yet (tap 'Trust This Computer' on the phone)");
+        // Continue anyway; carrier check might still work after trust.
+    }
+
     iphone::stash(iphone::IphoneDevice {
         slot_id,
-        mux_iface: iface,
-        mux_in_ep: in_addr,
-        mux_out_ep: out_addr,
-        mux_in_dci: in_dci,
-        mux_out_dci: out_dci,
-        mux_in_mps: in_mps,
-        mux_out_mps: out_mps,
+        ipheth_iface: iface,
+        ipheth_in_ep: in_addr,
+        ipheth_out_ep: out_addr,
+        ipheth_in_dci: in_dci,
+        ipheth_out_dci: out_dci,
+        ipheth_in_mps: in_mps,
+        ipheth_out_mps: out_mps,
         config_value: cfg_val,
-        next_tag: 0,
+        mac,
+        confirmed_pairing: false,
     });
 
-    // Session 1 stub: build a header-only Hello packet and bulk-send it.
-    // Without a plist body the iPhone will reject or NAK; that's
-    // expected. Session 2 builds the real Hello with an XML plist.
-    let mut hello = [0u8; 32];
-    let n = iphone::build_session1_hello(&mut hello);
-    println!("[iphone] session-1 stub: built {}-byte Hello header (no plist body, expect NAK)", n);
-    unsafe { IPHONE_TX_BUF.0[..n].copy_from_slice(&hello[..n]); }
-    let tx_phys = match phys_of(unsafe { &raw const IPHONE_TX_BUF } as u64) {
-        Some(p) => p,
-        None => { println!("[iphone] IPHONE_TX_BUF phys translation failed"); return true; }
-    };
-    if bulk_out_xfer(slot_id, out_dci, tx_phys, n as u32).is_some() {
-        println!("[iphone] bulk OUT of stub Hello succeeded — MUX channel is live");
+    // Carrier check — vendor request 0x45, bmRequestType=0xC0,
+    // value=0, index=2, returns 1-2 bytes. byte 0x04 = "carrier on".
+    unsafe { DMA_BUF.0[..2].fill(0); }
+    if control_in_phys(slot_id, 0xC0, iphone::IPHETH_CMD_CARRIER_CHECK,
+                       0x00, 0x02, 2, buf_phys, 2) {
+        let b = unsafe { DMA_BUF.0[0] };
+        let b1 = unsafe { DMA_BUF.0[1] };
+        if b == iphone::IPHETH_CARRIER_ON || b1 == iphone::IPHETH_CARRIER_ON {
+            println!("[ipheth] carrier ON — Personal Hotspot is active, ready to forward frames");
+        } else {
+            println!("[ipheth] carrier OFF (byte0=0x{:02X} byte1=0x{:02X}) — enable Personal Hotspot on the iPhone", b, b1);
+        }
     } else {
-        println!("[iphone] bulk OUT of stub Hello did not complete (NAK/STALL likely — expected pre-pairing)");
+        println!("[ipheth] carrier check control transfer failed (pre-pair)");
     }
     true
 }
@@ -3007,11 +3046,13 @@ pub fn print_usbinfo() -> u64 {
     }
     match crate::usb::iphone::iphone_device() {
         Some(i) => println!(
-            "usbinfo: iPhone MUX — slot={} iface={} IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} DCIs in/out {}/{}",
-            i.slot_id, i.mux_iface, i.mux_in_ep, i.mux_out_ep,
-            i.mux_in_mps, i.mux_out_mps, i.mux_in_dci, i.mux_out_dci
+            "usbinfo: iPhone ipheth — slot={} iface={} (alt 1) IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} DCIs in/out {}/{} MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} paired={}",
+            i.slot_id, i.ipheth_iface, i.ipheth_in_ep, i.ipheth_out_ep,
+            i.ipheth_in_mps, i.ipheth_out_mps, i.ipheth_in_dci, i.ipheth_out_dci,
+            i.mac[0], i.mac[1], i.mac[2], i.mac[3], i.mac[4], i.mac[5],
+            i.confirmed_pairing
         ),
-        None => println!("usbinfo: no iPhone state (vendor 0x05AC not seen, or MUX iface not in descriptor)"),
+        None => println!("usbinfo: no iPhone state (vendor 0x05AC not seen, or ipheth iface not in descriptor)"),
     }
     0
 }

@@ -4906,15 +4906,17 @@ fn demo_82_iphone() {
     match usb::iphone::iphone_device() {
         Some(d) => {
             println!(
-                "  [DEMO 82] PASS: USB MUX up: slot={} iface={} IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} DCIs in/out {}/{}",
-                d.slot_id, d.mux_iface, d.mux_in_ep, d.mux_out_ep,
-                d.mux_in_mps, d.mux_out_mps, d.mux_in_dci, d.mux_out_dci
+                "  [DEMO 82] PASS: iPhone ipheth up: slot={} iface={} IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} DCIs in/out {}/{} MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X} paired={}",
+                d.slot_id, d.ipheth_iface, d.ipheth_in_ep, d.ipheth_out_ep,
+                d.ipheth_in_mps, d.ipheth_out_mps, d.ipheth_in_dci, d.ipheth_out_dci,
+                d.mac[0], d.mac[1], d.mac[2], d.mac[3], d.mac[4], d.mac[5],
+                d.confirmed_pairing
             );
-            println!("  [DEMO 82] => session 1 substrate live; usbmuxd plist (session 2) + lockdownd (session 3) + ipheth (sessions 4-5) still TODO");
+            println!("  [DEMO 82] => ipheth substrate live; NetDevice adapter + smoltcp wiring next");
         }
         None => {
             println!("  [DEMO 82] SKIP: no iPhone detected (or iPhone enum failed)");
-            println!("           (plug a paired/unpaired iPhone via USB to exercise)");
+            println!("           (plug an unlocked + trusted iPhone via USB to exercise; Personal Hotspot ON for carrier)");
         }
     }
 }
