@@ -647,6 +647,53 @@ pub fn ehci_dump() {
     }
 }
 
+/// Lynx Point shares the USB-2 PHY reference clock between xHCI and EHCI.
+/// When BIOS leaves EHCI halted (RS=0), the clock is gated and xHCI cannot
+/// detect device speed chirps during port reset — PRC fires but PED never
+/// asserts. Starting EHCI (RS=1) ungates the clock without giving EHCI
+/// port ownership (XUSB2PR already routed ports to xHCI, and EHCI ports
+/// show CCS=0 / PO=1). Safe to call multiple times — idempotent.
+pub fn start_ehci_clocks() {
+    const EHCI_CLASS: u8 = 0x0C;
+    const EHCI_SUBCLASS: u8 = 0x03;
+    const EHCI_PROG_IF: u8 = 0x20;
+    const EHCI_USBCMD: u64 = 0x00;
+    const EHCI_USBSTS: u64 = 0x04;
+    const EHCI_USBCMD_RS: u32 = 1 << 0;
+    const EHCI_USBSTS_HCH: u32 = 1 << 12;
+    for slot in 0..32u8 {
+        for func in 0..8u8 {
+            let loc = pci::Location { bus: 0, slot, func };
+            if loc.vendor_id() == 0xFFFF {
+                continue;
+            }
+            if pci::class_triple(loc) != (EHCI_CLASS, EHCI_SUBCLASS, EHCI_PROG_IF) {
+                continue;
+            }
+            let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
+            let mmio_phys = (bar0 & !0xF) as u64;
+            if mmio_phys == 0 { continue; }
+            let mmio = paging::phys_to_virt(mmio_phys);
+            let caplen = unsafe { read_volatile(mmio as *const u8) } as u64;
+            let op_base = mmio + caplen;
+            let usbcmd = unsafe { read_u32(op_base + EHCI_USBCMD) };
+            if usbcmd & EHCI_USBCMD_RS != 0 {
+                continue; // already running
+            }
+            unsafe {
+                write_u32(op_base + EHCI_USBCMD, usbcmd | EHCI_USBCMD_RS);
+            }
+            for _ in 0..1_000_000 {
+                let sts = unsafe { read_u32(op_base + EHCI_USBSTS) };
+                if sts & EHCI_USBSTS_HCH == 0 { break; }
+                core::hint::spin_loop();
+            }
+            println!("[ehci] {}:{:02X}.{} started (RS=1) for shared PHY clock",
+                loc.bus, loc.slot, loc.func);
+        }
+    }
+}
+
 /// Walk the xHCI Extended Capabilities list and, if a USB Legacy Support
 /// capability (ID=1) exists, transfer ownership from BIOS to OS.
 ///
@@ -1159,6 +1206,11 @@ pub fn enumerate_ports() -> usize {
     while kernel_core::platform::ticks() < power_settle {
         core::hint::spin_loop();
     }
+
+    // Lynx Point gates the USB-2 PHY reference clock when EHCI is halted.
+    // If EHCI is RS=0, xHCI can drive SE0 but cannot detect the device's
+    // speed chirp, so PRC fires and PED stays 0. Start EHCI to ungate.
+    start_ehci_clocks();
 
     let mut connected = 0;
     let mut enumerated = 0;
