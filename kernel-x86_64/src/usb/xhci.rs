@@ -950,9 +950,12 @@ pub fn init() -> bool {
     }
 
     // ---- Configure number of device slots enabled ----
+    // Use the controller's actual MaxSlots (from HCSPARAMS1), not our
+    // compile-time MAX_SLOTS. Some Intel PCH implementations may gate
+    // port functionality on MaxSlotsEn matching the hardware capability.
     unsafe {
         let cfg = read_u32(op_base + op_reg::CONFIG as u64);
-        let new = (cfg & !0xFF) | (MAX_SLOTS as u32 & 0xFF);
+        let new = (cfg & !0xFF) | (max_slots as u32 & 0xFF);
         write_u32(op_base + op_reg::CONFIG as u64, new);
     }
 
@@ -2448,10 +2451,13 @@ pub fn print_usbinfo() -> u64 {
             return 0;
         }
     };
+    let mmio = crate::paging::phys_to_virt(info.mmio_base);
+    let hciversion = unsafe { read_volatile((mmio + 2) as *const u16) };
+    let usbsts_now = unsafe { read_u32(info.op_base + 0x04) };
     println!(
-        "usbinfo: xHCI MMIO=0x{:X} MaxSlots={} MaxPorts={} CSZ={}",
+        "usbinfo: xHCI MMIO=0x{:X} MaxSlots={} MaxPorts={} CSZ={} HCIVERSION=0x{:04X} USBSTS=0x{:08X}",
         info.mmio_base, info.max_slots, info.max_ports,
-        if info.csz1 { 1 } else { 0 }
+        if info.csz1 { 1 } else { 0 }, hciversion, usbsts_now
     );
 
     // Intel PCH USB port routing (W540 = Lynx Point). XUSB2PRM is the
@@ -2483,6 +2489,13 @@ pub fn print_usbinfo() -> u64 {
                     r.xusb2prm, after,
                     if after == r.xusb2prm { "(STUCK — try replugging device)" } else { "(STILL BLOCKED by BIOS)" });
             }
+            // Intel vendor-specific PHY registers (Lynx Point datasheet).
+            let usb2phycm = pci::read_u32(r.pci_loc.bus, r.pci_loc.slot, r.pci_loc.func, 0xE0);
+            let usb3phycm = pci::read_u32(r.pci_loc.bus, r.pci_loc.slot, r.pci_loc.func, 0xE4);
+            let usb2lpm   = pci::read_u32(r.pci_loc.bus, r.pci_loc.slot, r.pci_loc.func, 0xE8);
+            let usb3lpm   = pci::read_u32(r.pci_loc.bus, r.pci_loc.slot, r.pci_loc.func, 0xEC);
+            println!("  USB2PHYCM=0x{:08X} USB3PHYCM=0x{:08X} USB2LPM=0x{:08X} USB3LPM=0x{:08X}",
+                usb2phycm, usb3phycm, usb2lpm, usb3lpm);
         }
         None => println!("usbinfo: no PCH routing cache (non-Intel xHCI or init never ran)"),
     }
