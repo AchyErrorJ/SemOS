@@ -4,8 +4,11 @@
 //! polls so each keystroke (W / S / Up / Down / Esc) is a per-press event,
 //! not a cooked line.
 //!
-//! Two-player local: left paddle = W / S, right paddle = ↑ / ↓, Esc to quit.
-//! First to 7 wins; the loser's side flashes briefly, then we reset.
+//! Default mode is 1P-vs-CPU: you steer the left paddle with W/S (or
+//! Up/Down — both work), the right paddle is a speed-capped tracker that
+//! can still be beaten by a well-angled smash. Press T to flip into 2P
+//! local (left = W/S, right = Up/Down). Space pauses / restarts after a
+//! win, Esc quits. First to 7 wins.
 
 use crate::framebuffer as fb;
 use crate::{font, usb};
@@ -31,6 +34,7 @@ const HID_UP: u8 = 0x52;
 const HID_DOWN: u8 = 0x51;
 const HID_ESC: u8 = 0x29;
 const HID_SPACE: u8 = 0x2C;
+const HID_T: u8 = 0x17;
 
 #[derive(Default, Clone, Copy)]
 struct Paddle {
@@ -64,6 +68,9 @@ struct Game {
     flash: u32,
     /// PRNG state for serving direction. xorshift64.
     rng: u64,
+    /// If true, the right paddle is CPU-controlled (1P mode); if false,
+    /// it's the second human player (2P mode). Toggled with T.
+    ai_right: bool,
 }
 
 impl Game {
@@ -87,9 +94,39 @@ impl Game {
             paused: false,
             flash: 0,
             rng: 0xDEAD_BEEF_CAFE_F00D ^ kernel_core::platform::ticks().wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            ai_right: true,
         };
         g.serve(true);
         g
+    }
+
+    /// Decide which direction the AI paddle should move this tick.
+    ///
+    /// Strategy: when the ball is moving toward the AI, chase its centre Y
+    /// with a small dead-zone so the paddle doesn't jitter. When the ball
+    /// is moving away, drift back to centre so we're not stuck at one
+    /// edge if the player lobs a high-angle return next. The paddle's max
+    /// speed is capped slightly under the human's so a well-placed angled
+    /// hit can outrun it — keeps the game beatable.
+    fn ai_step(&self) -> i32 {
+        let paddle_centre = self.right.y + self.paddle_h / 2;
+        let target = if self.ball.vx > 0 {
+            // Ball heading toward us — track the ball.
+            self.ball.y + self.ball_size / 2
+        } else {
+            // Ball heading away — drift home.
+            self.h / 2
+        };
+        // Dead-zone scales with paddle size so it's not jittery on tall
+        // displays, not sluggish on short ones.
+        let deadzone = self.paddle_h / 8;
+        if target > paddle_centre + deadzone {
+            1
+        } else if target < paddle_centre - deadzone {
+            -1
+        } else {
+            0
+        }
     }
 
     fn rand(&mut self) -> u64 {
@@ -121,10 +158,13 @@ impl Game {
             }
             return;
         }
-        // Paddles move at a fixed speed in pixels per tick.
+        // Paddles move at a fixed speed in pixels per tick. The AI runs
+        // a hair slower than a human so a well-angled hit can beat it.
         let paddle_speed = (self.h / 60).max(4);
+        let ai_speed = (paddle_speed * 7) / 10;
         self.left.y = (self.left.y + l_dir * paddle_speed).clamp(0, self.h - self.paddle_h);
-        self.right.y = (self.right.y + r_dir * paddle_speed).clamp(0, self.h - self.paddle_h);
+        let r_speed = if self.ai_right { ai_speed } else { paddle_speed };
+        self.right.y = (self.right.y + r_dir * r_speed).clamp(0, self.h - self.paddle_h);
 
         // Advance ball in fixed-point.
         self.ball.x += self.ball.vx / 256;
@@ -245,14 +285,20 @@ impl Game {
         let _ = font::fb_draw_text(3 * w / 4 - 24, baseline_y, right_str, score_px, SCORE);
 
         // Status line at the bottom.
-        let status = if self.score_l >= WIN_SCORE {
-            "LEFT WINS  —  Space to restart, Esc to quit"
-        } else if self.score_r >= WIN_SCORE {
-            "RIGHT WINS  —  Space to restart, Esc to quit"
+        let won_l = self.score_l >= WIN_SCORE;
+        let won_r = self.score_r >= WIN_SCORE;
+        let status = if won_l {
+            if self.ai_right { "YOU WIN  —  Space to restart, Esc to quit" }
+            else { "LEFT WINS  —  Space to restart, Esc to quit" }
+        } else if won_r {
+            if self.ai_right { "CPU WINS  —  Space to restart, Esc to quit" }
+            else { "RIGHT WINS  —  Space to restart, Esc to quit" }
         } else if self.paused {
             "Paused — Space to resume, Esc to quit"
+        } else if self.ai_right {
+            "1P vs CPU   W/S or Up/Dn   T: 2P mode   Space: pause   Esc: quit"
         } else {
-            "Left: W/S   Right: Up/Dn   Space: pause   Esc: quit"
+            "2P local   Left: W/S   Right: Up/Dn   T: 1P mode   Space: pause   Esc: quit"
         };
         let _ = font::fb_draw_text(16, h - 12, status, 14.0, SCORE);
 
@@ -304,27 +350,46 @@ pub fn run() -> u64 {
         usb::xhci::poll_hid(|rep| {
             // Continuous motion from held keys.
             for &k in rep.keys.iter() {
-                match k {
-                    HID_W => l_dir -= 1,
-                    HID_S => l_dir += 1,
-                    HID_UP => r_dir -= 1,
-                    HID_DOWN => r_dir += 1,
-                    _ => {}
+                if game.ai_right {
+                    // 1P: any of W/S/Up/Down drives the left (human) paddle.
+                    match k {
+                        HID_W | HID_UP => l_dir -= 1,
+                        HID_S | HID_DOWN => l_dir += 1,
+                        _ => {}
+                    }
+                } else {
+                    // 2P: W/S = left, Up/Down = right.
+                    match k {
+                        HID_W => l_dir -= 1,
+                        HID_S => l_dir += 1,
+                        HID_UP => r_dir -= 1,
+                        HID_DOWN => r_dir += 1,
+                        _ => {}
+                    }
                 }
             }
-            // Edge-triggered: Esc to quit, Space to pause/restart.
+            // Edge-triggered: Esc quits, Space pauses / restarts, T toggles mode.
             for &k in rep.keys.iter() {
                 if k == 0 || prev.contains(&k) {
                     continue;
                 }
                 match k {
                     HID_ESC => game.quit = true,
+                    HID_T => {
+                        let new_ai = !game.ai_right;
+                        // Restart so scores match the chosen mode.
+                        let nw = game.w;
+                        let nh = game.h;
+                        game = Game::new(nw, nh);
+                        game.ai_right = new_ai;
+                    }
                     HID_SPACE => {
                         if game.score_l >= WIN_SCORE || game.score_r >= WIN_SCORE {
-                            // Restart from 0.
                             let nw = game.w;
                             let nh = game.h;
+                            let was_ai = game.ai_right;
                             game = Game::new(nw, nh);
+                            game.ai_right = was_ai;
                         } else {
                             game.paused = !game.paused;
                         }
@@ -334,6 +399,11 @@ pub fn run() -> u64 {
             }
             prev = rep.keys;
         });
+
+        // In 1P mode the right paddle is the CPU; in 2P, human Up/Down drives it.
+        if game.ai_right {
+            r_dir = game.ai_step();
+        }
 
         game.update(l_dir.clamp(-1, 1), r_dir.clamp(-1, 1));
         game.render();

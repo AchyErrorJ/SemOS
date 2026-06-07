@@ -870,7 +870,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  fetch URL           HTTP GET (http:// only)");
             println!("  usbinfo             dump xHCI port state + enum'd USB devices");
             println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
-            println!("  pong                fullscreen two-player pong (W/S vs Up/Down, Esc quits)");
+            println!("  pong                fullscreen pong — 1P vs CPU by default (T flips to 2P, Esc quits)");
             println!("  exit [CODE]         leave the shell");
             println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
             0
