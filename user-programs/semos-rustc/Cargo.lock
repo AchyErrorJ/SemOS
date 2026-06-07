@@ -1638,8 +1638,28 @@ dependencies = [
  "cranelift-module",
  "cranelift-object",
  "gimli",
+ "hashbrown 0.15.5",
  "indexmap",
  "object 0.36.7",
+ "rustc-hash 2.1.2",
+ "rustc_abi",
+ "rustc_ast",
+ "rustc_codegen_ssa",
+ "rustc_const_eval",
+ "rustc_data_structures",
+ "rustc_errors",
+ "rustc_fs_util",
+ "rustc_hir",
+ "rustc_incremental",
+ "rustc_index",
+ "rustc_log",
+ "rustc_metadata",
+ "rustc_middle",
+ "rustc_session",
+ "rustc_span",
+ "rustc_symbol_mangling",
+ "rustc_target",
+ "semos-std",
  "smallvec",
  "target-lexicon",
 ]
@@ -3000,9 +3020,12 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "semos-rustc"
 version = "0.0.1"
 dependencies = [
- "rustc_driver",
- "rustc_driver_impl",
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-module",
+ "cranelift-object",
  "semos-std",
+ "target-lexicon",
 ]
 
 [[package]]
