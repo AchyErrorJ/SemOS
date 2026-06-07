@@ -71,6 +71,15 @@ struct Game {
     /// If true, the right paddle is CPU-controlled (1P mode); if false,
     /// it's the second human player (2P mode). Toggled with T.
     ai_right: bool,
+    /// Diagnostic counters (last frame's snapshot) drawn on the HUD so
+    /// the user can verify input is reaching the loop.
+    dbg_l_dir: i32,
+    dbg_ps2_up: u8,
+    dbg_ps2_dn: u8,
+    dbg_held_w: bool,
+    dbg_held_s: bool,
+    dbg_hid_bytes: u32,
+    dbg_ps2_bytes: u32,
 }
 
 impl Game {
@@ -95,6 +104,13 @@ impl Game {
             flash: 0,
             rng: 0xDEAD_BEEF_CAFE_F00D ^ kernel_core::platform::ticks().wrapping_mul(0x9E37_79B9_7F4A_7C15),
             ai_right: true,
+            dbg_l_dir: 0,
+            dbg_ps2_up: 0,
+            dbg_ps2_dn: 0,
+            dbg_held_w: false,
+            dbg_held_s: false,
+            dbg_hid_bytes: 0,
+            dbg_ps2_bytes: 0,
         };
         g.serve(true);
         g
@@ -302,7 +318,22 @@ impl Game {
         } else {
             "2P local   Left: W/S   Right: Up/Dn   T: 1P mode   Space: pause   Esc: quit"
         };
-        let _ = font::fb_draw_text(16, h - 12, status, 14.0, SCORE);
+        let _ = font::fb_draw_text(16, h - 30, status, 14.0, SCORE);
+
+        // Diagnostic overlay — shows whether keystrokes are reaching the
+        // game loop. If `hid` ticks when you press W, USB HID is alive;
+        // if `ps2` ticks, PS/2 polling is alive; `ldir` should flip to
+        // -1/+1 as you press W/S; `up`/`dn` are PS/2 impulse counters.
+        let mut dbg: [u8; 80] = [b' '; 80];
+        let n = fmt_dbg(
+            &mut dbg,
+            self.dbg_l_dir, self.dbg_ps2_up, self.dbg_ps2_dn,
+            self.dbg_held_w, self.dbg_held_s,
+            self.dbg_hid_bytes, self.dbg_ps2_bytes,
+        );
+        if let Ok(s) = core::str::from_utf8(&dbg[..n]) {
+            let _ = font::fb_draw_text(16, h - 12, s, 12.0, SCORE);
+        }
 
         let _ = fb::fb_present();
     }
@@ -317,6 +348,45 @@ fn write_two_digit(buf: &mut [u8; 2], n: u32) {
         buf[0] = b' ';
         buf[1] = b'0' + n as u8;
     }
+}
+
+/// Write a small unsigned to `buf` starting at `pos`, returning new pos.
+fn write_u32(buf: &mut [u8], pos: usize, n: u32) -> usize {
+    let mut tmp = [0u8; 10];
+    let mut len = 0;
+    let mut n = n;
+    if n == 0 { tmp[0] = b'0'; len = 1; }
+    while n > 0 { tmp[len] = b'0' + (n % 10) as u8; len += 1; n /= 10; }
+    let mut p = pos;
+    while len > 0 { len -= 1; if p < buf.len() { buf[p] = tmp[len]; p += 1; } }
+    p
+}
+
+fn write_str_at(buf: &mut [u8], pos: usize, s: &str) -> usize {
+    let mut p = pos;
+    for &b in s.as_bytes() { if p < buf.len() { buf[p] = b; p += 1; } }
+    p
+}
+
+fn fmt_dbg(buf: &mut [u8; 80], l_dir: i32, ps2_up: u8, ps2_dn: u8,
+           held_w: bool, held_s: bool, hid_bytes: u32, ps2_bytes: u32) -> usize {
+    let mut p = 0;
+    p = write_str_at(buf, p, "ldir=");
+    if l_dir < 0 { p = write_str_at(buf, p, "-"); p = write_u32(buf, p, (-l_dir) as u32); }
+    else { p = write_u32(buf, p, l_dir as u32); }
+    p = write_str_at(buf, p, " up=");
+    p = write_u32(buf, p, ps2_up as u32);
+    p = write_str_at(buf, p, " dn=");
+    p = write_u32(buf, p, ps2_dn as u32);
+    p = write_str_at(buf, p, " W=");
+    p = write_u32(buf, p, held_w as u32);
+    p = write_str_at(buf, p, " S=");
+    p = write_u32(buf, p, held_s as u32);
+    p = write_str_at(buf, p, " hid=");
+    p = write_u32(buf, p, hid_bytes);
+    p = write_str_at(buf, p, " ps2=");
+    p = write_u32(buf, p, ps2_bytes);
+    p
 }
 
 /// Per-key "is this key currently held down?" tracking. Survives across
@@ -404,6 +474,7 @@ pub fn run() -> u64 {
 
         // 1. USB HID path: drain transfer events, diff against prev report.
         usb::xhci::poll_hid(|rep| {
+            game.dbg_hid_bytes = game.dbg_hid_bytes.wrapping_add(1);
             // Edge events for Esc / Space / T.
             for &k in rep.keys.iter() {
                 if k == 0 || prev_hid.contains(&k) { continue; }
@@ -418,6 +489,7 @@ pub fn run() -> u64 {
         // as ESC[A/B sequences so we won't see them here, but W/S/Esc/Space
         // arrive as plain ASCII.
         while let Some(b) = crate::keyboard::read_key() {
+            game.dbg_ps2_bytes = game.dbg_ps2_bytes.wrapping_add(1);
             match b {
                 // Each PS/2 byte buys ~4 frames of motion. PS/2 autorepeats
                 // at ~25 Hz vs our ~62 FPS frame rate, so a byte arrives
@@ -452,6 +524,13 @@ pub fn run() -> u64 {
         // Drain one tick of impulse credit per frame.
         ps2_up = ps2_up.saturating_sub(1);
         ps2_down = ps2_down.saturating_sub(1);
+
+        // Snapshot diagnostics for the on-screen overlay.
+        game.dbg_l_dir = l_dir;
+        game.dbg_ps2_up = ps2_up;
+        game.dbg_ps2_dn = ps2_down;
+        game.dbg_held_w = held.w;
+        game.dbg_held_s = held.s;
 
         game.update(l_dir.clamp(-1, 1), r_dir.clamp(-1, 1));
         game.render();
