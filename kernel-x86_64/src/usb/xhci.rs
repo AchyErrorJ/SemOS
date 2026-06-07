@@ -1969,6 +1969,12 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             return true;
         }
 
+        // ---- Check for CDC-NCM (modern iPhones, Android) ----
+        if try_enumerate_cdc_ncm(slot_id, port, speed, blob,
+                                  cfg_desc.b_configuration_value) {
+            return true;
+        }
+
         // ---- Check for Mass Storage ----
         if try_enumerate_mass_storage(slot_id, port, speed, blob,
                                        cfg_desc.b_configuration_value) {
@@ -2789,6 +2795,82 @@ fn try_enumerate_cdc_ecm(
             config_value: cfg_val,
             mac,
             mtu: ecm.mtu,
+        });
+    }
+    true
+}
+
+/// CDC-NCM enumeration — mirrors try_enumerate_cdc_ecm but for subclass 0x0D.
+fn try_enumerate_cdc_ncm(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    blob: &[u8],
+    cfg_val: u8,
+) -> bool {
+    use crate::usb::cdc_ncm;
+
+    let ncm = cdc_ncm::parse_config(blob);
+    if !ncm.found || ncm.bulk.in_addr == 0 || ncm.bulk.out_addr == 0 {
+        println!("[xhci-ncm] no CDC-NCM match: found={} ctl-iface={} data-iface={} bulk IN=0x{:02X} OUT=0x{:02X}",
+            ncm.found, ncm.control_iface, ncm.data_iface,
+            ncm.bulk.in_addr, ncm.bulk.out_addr);
+        return false;
+    }
+
+    if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, cfg_val as u16, 0, 0) {
+        println!("[xhci-ncm] SET_CONFIGURATION failed");
+        return false;
+    }
+
+    if ncm.data_alt != 0 {
+        if !control_out(slot_id, 0x01, request::SET_INTERFACE,
+                        ncm.data_alt as u16, ncm.data_iface as u16, 0) {
+            println!("[xhci-ncm] SET_INTERFACE(alt={}) on iface {} failed",
+                ncm.data_alt, ncm.data_iface);
+        }
+    }
+
+    let (in_dci, out_dci) = match configure_bulk_endpoints(
+        slot_id, port, speed,
+        ncm.bulk.in_addr, ncm.bulk.out_addr,
+        ncm.bulk.in_mps.max(ncm.bulk.out_mps),
+    ) {
+        Some(d) => d,
+        None => {
+            println!("[xhci-ncm] configure_bulk_endpoints failed");
+            return false;
+        }
+    };
+
+    // CDC-NCM does not expose a MAC via class-specific descriptor.
+    // Use a locally-administered MAC (02:00:00:00:00:01).
+    let mac = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
+
+    println!(
+        "[xhci-ncm] CDC-NCM up: slot={} ctl-iface={} data-iface={} alt={} \
+        IN 0x{:02X} OUT 0x{:02X} MPS in/out {}/{} MTU={} MAC={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        slot_id, ncm.control_iface, ncm.data_iface, ncm.data_alt,
+        ncm.bulk.in_addr, ncm.bulk.out_addr,
+        ncm.bulk.in_mps, ncm.bulk.out_mps, ncm.mtu,
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
+    );
+
+    unsafe {
+        CDC_ECM = Some(CdcEcmDevice {
+            slot_id,
+            control_iface: ncm.control_iface,
+            data_iface: ncm.data_iface,
+            data_alt: ncm.data_alt,
+            in_ep_addr: ncm.bulk.in_addr,
+            out_ep_addr: ncm.bulk.out_addr,
+            in_dci,
+            out_dci,
+            in_mps: ncm.bulk.in_mps,
+            out_mps: ncm.bulk.out_mps,
+            config_value: cfg_val,
+            mac,
+            mtu: ncm.mtu,
         });
     }
     true
