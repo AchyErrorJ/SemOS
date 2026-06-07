@@ -170,12 +170,29 @@ static mut DEVICE: Option<IwlDevice> = None;
 /// Probe PCI, create device if found, but do NOT load firmware yet.
 /// Safe to call on every boot; returns `true` if a device was found.
 pub fn init() -> bool {
+    println!("[wireless] PCI scan for iwlwifi cards...");
     let pci_info = match super::iwlwifi_pci::probe() {
         Some(p) => p,
-        None => return false,
+        None => {
+            println!("[wireless] no iwlwifi card found (vendor 0x8086 + known device ID); skipping");
+            return false;
+        }
     };
     unsafe {
         DEVICE = Some(IwlDevice::new(pci_info));
+        // Read HW_REV + RF_ID + HW_IF_CONFIG to confirm MMIO works.
+        // On metal these read non-zero values; if they all read 0xFFFFFFFF
+        // the BAR mapping is wrong (e.g., paging or PCI command register
+        // not properly set up).
+        if let Some(dev) = DEVICE.as_ref() {
+            dev.read_hw_rev();
+            let cfg = dev.csr.read32(super::iwlwifi_csr::CSR_HW_IF_CONFIG_REG);
+            let gpc = dev.csr.read32(super::iwlwifi_csr::CSR_GP_CNTRL);
+            println!("[iwlwifi] HW_IF_CONFIG=0x{:08X} GP_CNTRL=0x{:08X}", cfg, gpc);
+            if cfg == 0xFFFFFFFF && gpc == 0xFFFFFFFF {
+                println!("[iwlwifi] WARN: CSRs read all-ones — BAR mapping or PCI command may be wrong");
+            }
+        }
     }
     true
 }
