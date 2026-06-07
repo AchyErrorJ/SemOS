@@ -391,8 +391,26 @@ static STDIN: Mutex<LineState> = Mutex::new(LineState::new());
 /// `without_interrupts` guards against a keyboard IRQ deadlocking against a
 /// concurrent `drain` (both take the STDIN lock).
 pub fn input_push(b: u8) {
+    // Fullscreen apps that own the screen + read input via a side channel
+    // (pong → `keyboard::read_key` + `poll_hid`) set SUPPRESS_TTY_INPUT so
+    // typed bytes don't pollute the cooked-mode pend buffer or paint glyphs
+    // over the game frame. The agent does NOT set this — it still consumes
+    // cooked lines via `peek_line`/`drain`.
+    if SUPPRESS_TTY_INPUT.load(core::sync::atomic::Ordering::Relaxed) {
+        // Still mirror to the serial port so an attached host can see typing.
+        if matches!(b, 0x20..=0x7E) {
+            crate::serial::Serial::put_char(b as char);
+        }
+        return;
+    }
     x86_64::instructions::interrupts::without_interrupts(|| input_push_locked(b));
 }
+
+/// When set, `input_push` drops the byte (after a serial mirror) without
+/// touching the cooked pend buffer or the framebuffer console. Pong sets
+/// this so typed keystrokes don't paint over the game frame.
+pub static SUPPRESS_TTY_INPUT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 fn input_push_locked(b: u8) {
     let mut s = STDIN.lock();

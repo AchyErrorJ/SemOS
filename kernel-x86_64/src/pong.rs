@@ -376,6 +376,14 @@ pub fn run() -> u64 {
     }
 
     crate::FULLSCREEN_APP_ACTIVE.store(true, Ordering::Relaxed);
+    // Stop the TTY from echoing typed keys onto the framebuffer (or
+    // accumulating them in the cooked-mode pend buffer for the shell to
+    // see when we exit).
+    crate::tty::SUPPRESS_TTY_INPUT.store(true, Ordering::Relaxed);
+
+    // Drain any ASCII bytes already buffered by the PS/2 ISR before we set
+    // the suppress flag — typically the trailing newline from "pong\n".
+    while crate::keyboard::read_key().is_some() {}
 
     let mut game = Game::new(w as i32, h as i32);
     game.render();
@@ -450,6 +458,7 @@ pub fn run() -> u64 {
         let _ = dispatch(SYS_SLEEP, STEP_TICKS, 0, 0, 0);
     }
 
+    crate::tty::SUPPRESS_TTY_INPUT.store(false, Ordering::Relaxed);
     crate::FULLSCREEN_APP_ACTIVE.store(false, Ordering::Relaxed);
     fb::clear();
     let _ = fb::fb_present();
