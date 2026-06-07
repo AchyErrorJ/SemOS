@@ -1792,14 +1792,6 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         println!("[iphone] Apple device detected on slot={} port={} — about to read config descriptor", slot_id, port);
     }
 
-    // ---- Read string descriptors (iManufacturer / iProduct / iSerialNumber).
-    // Windows does this before reading the config descriptor.  Some Apple
-    // devices stall on config-desc reads if the string descriptors haven't
-    // been fetched first — it's a known iOS quirk.
-    let _ = read_string_descriptor(slot_id, dev_desc.i_manufacturer, "iManufacturer");
-    let _ = read_string_descriptor(slot_id, dev_desc.i_product,     "iProduct");
-    let _ = read_string_descriptor(slot_id, dev_desc.i_serial_number, "iSerialNumber");
-
     // Phase 15 M50 — surface USB-hub-class devices explicitly. The Lenovo
     // ThinkPad Pro Dock 40A1 (and most multi-port docks) presents itself as
     // a USB hub here. Hubs are currently out of scope; we log so the user
@@ -1882,6 +1874,14 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         }
         return false;
     }
+
+    // ---- Read string descriptors after config descriptor is known good.
+    // Linux does this order (config first, strings after). Apple devices
+    // in particular may stall EP0 on string reads; doing them after config
+    // means a stall can't break the critical config descriptor transfer.
+    let _ = read_string_descriptor(slot_id, dev_desc.i_manufacturer, "iManufacturer");
+    let _ = read_string_descriptor(slot_id, dev_desc.i_product,     "iProduct");
+    let _ = read_string_descriptor(slot_id, dev_desc.i_serial_number, "iSerialNumber");
 
     // ---- Parse the descriptor chain looking for HID boot keyboard ----
     let blob = unsafe { &DMA_BUF.0[..read_len] };
