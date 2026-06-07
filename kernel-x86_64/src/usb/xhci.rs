@@ -1890,6 +1890,12 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
 
         let blob = unsafe { &DMA_BUF.0[..read_len] };
 
+        // Diagnostic: print every interface in this config so we can see
+        // exactly what the device exposes — even interfaces we don't yet
+        // have a driver for.
+        println!("[xhci-diag] config[{}] interfaces:", cfg_idx);
+        crate::usb::iphone::dump_config_interfaces(blob);
+
         // ---- Check for HID boot keyboard (highest priority) ----
         if let Some((kbd, iface_num, cfg_val)) = find_boot_keyboard(blob, cfg_desc.b_configuration_value) {
             println!("[xhci] HID boot keyboard found in config[{}] value={}", cfg_idx, cfg_val);
