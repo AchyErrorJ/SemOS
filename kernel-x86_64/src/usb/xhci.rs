@@ -784,6 +784,13 @@ pub fn reset_and_start_ehci_full() {
                 core::hint::spin_loop();
             }
 
+            // Step 2b: Clear CONFIGFLAG so EHCI releases all ports to companion
+            // controllers (xHCI).  Without this, EHCI may keep internal ownership
+            // of USB-2 ports even though XUSB2PR routes them to xHCI, causing
+            // PLS=Polling PED=0 on every USB-2 port.
+            const EHCI_CONFIGFLAG: u64 = 0x40;
+            unsafe { write_u32(op_base + EHCI_CONFIGFLAG, 0); }
+
             // Step 3: Start (RS=1).
             unsafe { write_u32(op_base + EHCI_USBCMD, EHCI_USBCMD_RS); }
             for _ in 0..1_000_000 {
