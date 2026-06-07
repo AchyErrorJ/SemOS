@@ -141,11 +141,13 @@ impl Game {
     fn serve(&mut self, toward_right: bool) {
         self.ball.x = (self.w - self.ball_size) / 2;
         self.ball.y = (self.h - self.ball_size) / 2;
-        // Base speed ~ width / 200 pixels per tick → in fixed-point that's
-        // (w / 200) * 256 = w * 256 / 200.
-        let base = self.w * 256 / 200;
+        // Base speed ~ width / 110 pixels per tick → in fixed-point that's
+        // (w / 110) * 256 = w * 256 / 110. At 1920×1080, 62 FPS, that's
+        // ~17 px/tick → ~1080 px/s, so the ball crosses the screen in
+        // under two seconds.
+        let base = self.w * 256 / 110;
         let dir_x = if toward_right { 1 } else { -1 };
-        // Random vertical bias: ±(0..3/4 of base).
+        // Random vertical bias: ±(0..1/4 of base) so serves aren't too steep.
         let bias = ((self.rand() % (base as u64 / 2)) as i32) - (base / 4);
         self.ball.vx = base * dir_x;
         self.ball.vy = bias;
@@ -160,8 +162,8 @@ impl Game {
         }
         // Paddles move at a fixed speed in pixels per tick. The AI runs
         // a hair slower than a human so a well-angled hit can beat it.
-        let paddle_speed = (self.h / 60).max(4);
-        let ai_speed = (paddle_speed * 7) / 10;
+        let paddle_speed = (self.h / 36).max(8);
+        let ai_speed = (paddle_speed * 75) / 100;
         self.left.y = (self.left.y + l_dir * paddle_speed).clamp(0, self.h - self.paddle_h);
         let r_speed = if self.ai_right { ai_speed } else { paddle_speed };
         self.right.y = (self.right.y + r_dir * r_speed).clamp(0, self.h - self.paddle_h);
@@ -417,8 +419,12 @@ pub fn run() -> u64 {
         // arrive as plain ASCII.
         while let Some(b) = crate::keyboard::read_key() {
             match b {
-                b'w' | b'W' => ps2_up = ps2_up.saturating_add(2),
-                b's' | b'S' => ps2_down = ps2_down.saturating_add(2),
+                // Each PS/2 byte buys ~4 frames of motion. PS/2 autorepeats
+                // at ~25 Hz vs our ~62 FPS frame rate, so a byte arrives
+                // every ~2.5 frames — 4 frames of credit per byte keeps the
+                // paddle moving continuously while you hold the key.
+                b'w' | b'W' => ps2_up = ps2_up.saturating_add(4),
+                b's' | b'S' => ps2_down = ps2_down.saturating_add(4),
                 b'q' | b'Q' | 0x1B => game.quit = true,
                 b' ' => handle_edge(&mut game, HID_SPACE),
                 b't' | b'T' => handle_edge(&mut game, HID_T),

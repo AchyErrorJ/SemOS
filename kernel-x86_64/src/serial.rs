@@ -156,8 +156,13 @@ pub fn _print(args: fmt::Arguments) {
     // Disable interrupts while printing to avoid deadlock
     x86_64::instructions::interrupts::without_interrupts(|| {
         SERIAL.lock().write_fmt(args).unwrap();
-        // Mirror to framebuffer (no-op if not yet initialized).
-        crate::framebuffer::_print(args);
+        // Mirror to framebuffer (no-op if not yet initialized). Skip when
+        // a fullscreen kernel app (pong) owns the screen, otherwise
+        // periodic kernel logs (`[ps/2 poll] ...`, heartbeats, etc.)
+        // paint text over the game frame.
+        if !crate::tty::SUPPRESS_TTY_INPUT.load(core::sync::atomic::Ordering::Relaxed) {
+            crate::framebuffer::_print(args);
+        }
     });
 }
 
