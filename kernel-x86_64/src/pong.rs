@@ -317,9 +317,56 @@ fn write_two_digit(buf: &mut [u8; 2], n: u32) {
     }
 }
 
+/// Per-key "is this key currently held down?" tracking. Survives across
+/// frames because USB boot keyboards only emit a report on state change
+/// (and PS/2 only emits ASCII byte impulses) — so reading "the keys in
+/// this frame" misses everything in steady state.
+#[derive(Default, Clone, Copy)]
+struct Held {
+    w: bool,
+    s: bool,
+    up: bool,
+    down: bool,
+}
+
+impl Held {
+    /// Diff a new USB HID boot report against the previous one and update
+    /// our held flags. `prev` and `cur` are the 6-key rosters (HID Usage
+    /// IDs; 0 in a slot = empty).
+    fn apply_hid(&mut self, prev: &[u8; 6], cur: &[u8; 6]) {
+        // Newly pressed = in cur but not in prev. Newly released = vice versa.
+        for &k in cur.iter() {
+            if k == 0 || prev.contains(&k) { continue; }
+            match k {
+                HID_W => self.w = true,
+                HID_S => self.s = true,
+                HID_UP => self.up = true,
+                HID_DOWN => self.down = true,
+                _ => {}
+            }
+        }
+        for &k in prev.iter() {
+            if k == 0 || cur.contains(&k) { continue; }
+            match k {
+                HID_W => self.w = false,
+                HID_S => self.s = false,
+                HID_UP => self.up = false,
+                HID_DOWN => self.down = false,
+                _ => {}
+            }
+        }
+    }
+}
+
 /// SYS_PONG entry: run the game until the user hits Esc. Holds
 /// FULLSCREEN_APP_ACTIVE so the interactive shell's keyboard pump doesn't race
 /// ours, and clears the framebuffer on exit.
+///
+/// Input is dual-sourced so the game works on both USB HID (real hardware,
+/// QEMU `-device usb-kbd`) AND PS/2 (QEMU's default — i8042). USB HID drives
+/// proper held-key continuous motion via a diff against the previous report;
+/// PS/2 only exposes ASCII byte impulses (with autorepeat at ~25 Hz), so each
+/// PS/2 byte becomes one paddle-tick of motion.
 pub fn run() -> u64 {
     use core::sync::atomic::Ordering;
 
@@ -333,77 +380,64 @@ pub fn run() -> u64 {
     let mut game = Game::new(w as i32, h as i32);
     game.render();
 
-    // Held-key state: we want the paddle to move continuously while a key is
-    // down, so we track which player keys are currently in the boot-report's
-    // 6-key roster. Esc / Space are edge-triggered: we only fire on the
-    // transition from "not in last report" to "in this report".
-    let mut prev: [u8; 6] = [0; 6];
+    let mut prev_hid: [u8; 6] = [0; 6];
+    let mut held = Held::default();
+    // Tiny saturating counters for PS/2 impulse motion: each ASCII byte
+    // adds 2 ticks of motion in the chosen direction. Drained 1 tick/frame.
+    let mut ps2_up: u8 = 0;
+    let mut ps2_down: u8 = 0;
 
     loop {
         if game.quit {
             break;
         }
 
-        let mut l_dir = 0i32;
-        let mut r_dir = 0i32;
-
+        // 1. USB HID path: drain transfer events, diff against prev report.
         usb::xhci::poll_hid(|rep| {
-            // Continuous motion from held keys.
+            // Edge events for Esc / Space / T.
             for &k in rep.keys.iter() {
-                if game.ai_right {
-                    // 1P: any of W/S/Up/Down drives the left (human) paddle.
-                    match k {
-                        HID_W | HID_UP => l_dir -= 1,
-                        HID_S | HID_DOWN => l_dir += 1,
-                        _ => {}
-                    }
-                } else {
-                    // 2P: W/S = left, Up/Down = right.
-                    match k {
-                        HID_W => l_dir -= 1,
-                        HID_S => l_dir += 1,
-                        HID_UP => r_dir -= 1,
-                        HID_DOWN => r_dir += 1,
-                        _ => {}
-                    }
-                }
+                if k == 0 || prev_hid.contains(&k) { continue; }
+                handle_edge(&mut game, k);
             }
-            // Edge-triggered: Esc quits, Space pauses / restarts, T toggles mode.
-            for &k in rep.keys.iter() {
-                if k == 0 || prev.contains(&k) {
-                    continue;
-                }
-                match k {
-                    HID_ESC => game.quit = true,
-                    HID_T => {
-                        let new_ai = !game.ai_right;
-                        // Restart so scores match the chosen mode.
-                        let nw = game.w;
-                        let nh = game.h;
-                        game = Game::new(nw, nh);
-                        game.ai_right = new_ai;
-                    }
-                    HID_SPACE => {
-                        if game.score_l >= WIN_SCORE || game.score_r >= WIN_SCORE {
-                            let nw = game.w;
-                            let nh = game.h;
-                            let was_ai = game.ai_right;
-                            game = Game::new(nw, nh);
-                            game.ai_right = was_ai;
-                        } else {
-                            game.paused = !game.paused;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            prev = rep.keys;
+            // Then update held state from press/release diff.
+            held.apply_hid(&prev_hid, &rep.keys);
+            prev_hid = rep.keys;
         });
 
-        // In 1P mode the right paddle is the CPU; in 2P, human Up/Down drives it.
-        if game.ai_right {
-            r_dir = game.ai_step();
+        // 2. PS/2 ASCII path: each byte is an impulse. Arrow keys go into TTY
+        // as ESC[A/B sequences so we won't see them here, but W/S/Esc/Space
+        // arrive as plain ASCII.
+        while let Some(b) = crate::keyboard::read_key() {
+            match b {
+                b'w' | b'W' => ps2_up = ps2_up.saturating_add(2),
+                b's' | b'S' => ps2_down = ps2_down.saturating_add(2),
+                b'q' | b'Q' | 0x1B => game.quit = true,
+                b' ' => handle_edge(&mut game, HID_SPACE),
+                b't' | b'T' => handle_edge(&mut game, HID_T),
+                _ => {}
+            }
         }
+
+        // 3. Compose paddle direction from both sources.
+        let mut l_dir = 0i32;
+        let mut r_dir = 0i32;
+        if game.ai_right {
+            // 1P: W/S/Up/Down all drive the human (left) paddle.
+            if held.w || held.up || ps2_up > 0 { l_dir -= 1; }
+            if held.s || held.down || ps2_down > 0 { l_dir += 1; }
+            r_dir = game.ai_step();
+        } else {
+            // 2P: W/S = left, Up/Down = right (USB only — PS/2 arrows
+            // don't reach us here, so 2P mode is best on USB HID setups).
+            if held.w || ps2_up > 0 { l_dir -= 1; }
+            if held.s || ps2_down > 0 { l_dir += 1; }
+            if held.up { r_dir -= 1; }
+            if held.down { r_dir += 1; }
+        }
+
+        // Drain one tick of impulse credit per frame.
+        ps2_up = ps2_up.saturating_sub(1);
+        ps2_down = ps2_down.saturating_sub(1);
 
         game.update(l_dir.clamp(-1, 1), r_dir.clamp(-1, 1));
         game.render();
@@ -420,4 +454,33 @@ pub fn run() -> u64 {
     fb::clear();
     let _ = fb::fb_present();
     0
+}
+
+/// Edge-triggered handler shared between the USB HID and PS/2 input paths.
+/// `code` is a HID Usage ID (for the USB path) or one of our synthetic
+/// HID_SPACE / HID_T values (for the PS/2 path, which passes the matching
+/// HID code so the dispatch table is the same).
+fn handle_edge(game: &mut Game, code: u8) {
+    match code {
+        HID_ESC => game.quit = true,
+        HID_T => {
+            let new_ai = !game.ai_right;
+            let nw = game.w;
+            let nh = game.h;
+            *game = Game::new(nw, nh);
+            game.ai_right = new_ai;
+        }
+        HID_SPACE => {
+            if game.score_l >= WIN_SCORE || game.score_r >= WIN_SCORE {
+                let nw = game.w;
+                let nh = game.h;
+                let was_ai = game.ai_right;
+                *game = Game::new(nw, nh);
+                game.ai_right = was_ai;
+            } else {
+                game.paused = !game.paused;
+            }
+        }
+        _ => {}
+    }
 }
