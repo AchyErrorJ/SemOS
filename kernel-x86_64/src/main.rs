@@ -55,6 +55,7 @@ pub mod context;
 mod syscall;
 mod keyboard;
 mod editor;
+mod pong;
 mod nvme;
 mod ahci;
 mod hda;

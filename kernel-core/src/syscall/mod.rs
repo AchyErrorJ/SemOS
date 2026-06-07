@@ -146,6 +146,7 @@ pub mod numbers {
     pub const SYS_EDIT:         u64 = 113; // (path_ptr, path_len) -> 0/err; runs the modal text editor
     pub const SYS_USBINFO:      u64 = 114; // () -> 0; dumps every USB port + enumerated slot to the TTY
     pub const SYS_USBENUM:      u64 = 115; // () -> port_count; re-runs xHCI port enumeration (hot-plug retry)
+    pub const SYS_PONG:         u64 = 116; // () -> 0/err; runs the fullscreen pong game
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -257,6 +258,9 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
         // Hot-plug retry — re-runs xHCI port enumeration from the shell.
         SYS_USBENUM => crate::platform::get().run_usbenum(),
+
+        // Pong (the `pong` builtin) — fullscreen two-player game.
+        SYS_PONG => crate::platform::get().run_pong(),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),

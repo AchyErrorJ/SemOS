@@ -91,6 +91,12 @@ pub trait Platform: Send + Sync + 'static {
     /// number of devices that completed enumeration. Default: 0.
     fn run_usbenum(&self) -> u64 { 0 }
 
+    /// SYS_PONG: run the fullscreen pong game until the user hits Esc. Blocks
+    /// in the caller's syscall context driving the framebuffer + raw HID
+    /// keyboard at ~60 FPS. Returns 0 on a clean exit, 1 if headless.
+    /// Default: unavailable.
+    fn run_pong(&self) -> u64 { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`

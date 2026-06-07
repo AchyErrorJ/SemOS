@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_USBENUM, SYS_USBINFO,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_PONG, SYS_USBENUM, SYS_USBINFO,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -870,6 +870,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  fetch URL           HTTP GET (http:// only)");
             println!("  usbinfo             dump xHCI port state + enum'd USB devices");
             println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
+            println!("  pong                fullscreen two-player pong (W/S vs Up/Down, Esc quits)");
             println!("  exit [CODE]         leave the shell");
             println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
             0
@@ -912,6 +913,14 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             let n = unsafe { syscall1(SYS_USBENUM, 0) };
             println!("usbenum: {} device(s) enumerated", n);
             0
+        }
+        "pong" => {
+            // Hand off to the kernel-side fullscreen pong game. Two-player
+            // local: left W/S, right Up/Down, Space to pause/restart, Esc
+            // to quit. The kernel holds FULLSCREEN_APP_ACTIVE for the
+            // duration; control returns here on quit with the screen cleared.
+            let rc = unsafe { syscall1(SYS_PONG, 0) };
+            rc as i32
         }
         _ => exec_external(&argv),
     }

@@ -285,6 +285,14 @@ impl Platform for X86Platform {
         crate::usb::xhci::enumerate_ports() as u64
     }
 
+    fn run_pong(&self) -> u64 {
+        // The game's frame-pacing sleep + keyboard pump cadence need the
+        // timer; enable interrupts for the session. iretq restores the
+        // Ring-3 caller's flags on return.
+        x86_64::instructions::interrupts::enable();
+        crate::pong::run()
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,
