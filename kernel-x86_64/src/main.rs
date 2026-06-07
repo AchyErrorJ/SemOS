@@ -1880,10 +1880,93 @@ fn wireless_demo() {
     let stranger = wireless::is_known_iwlwifi(wireless::INTEL_VENDOR_ID, 0xDEAD);
     if ax211 == Some("Wi-Fi 6E AX211") && stranger.is_none() {
         println!("  [DEMO 65] PASS: iwlwifi PCI table recognises AX211 (0x51F0) and rejects unknown");
-        println!("  [DEMO 65] => M11 protocol layer ready; firmware/PHY waits for T440p hardware");
     } else {
         println!("  [DEMO 65] FAIL: device-id lookup — ax211={:?} stranger={:?}", ax211, stranger);
+        return;
     }
+
+    // --- iwlwifi firmware mapping -------------------------------------------
+    use wireless::{iwlwifi_fw, iwlwifi_pci};
+    let dummy_pci = iwlwifi_pci::IwlPciInfo {
+        loc: crate::pci::Location { bus: 0, slot: 0, func: 0 },
+        device_id: 0x51F0,
+        name: "Wi-Fi 6E AX211",
+        bar0_phys: 0xF000_0000,
+        bar0_size: 0x8000,
+    };
+    let fw = iwlwifi_fw::lookup(&dummy_pci);
+    if let Some(fw) = fw {
+        if fw.family == "AX211" && fw.ucode == "iwlwifi-ty-a0-gf-a0-83.ucode" {
+            println!("  [DEMO 65] PASS: firmware mapping resolves AX211 → {}", fw.ucode);
+        } else {
+            println!("  [DEMO 65] FAIL: AX211 firmware mapping wrong — {:?}", fw);
+            return;
+        }
+    } else {
+        println!("  [DEMO 65] FAIL: firmware mapping returned None for AX211");
+        return;
+    }
+
+    // --- iwlwifi association state machine ----------------------------------
+    use wireless::iwlwifi_sm::{AssocStateMachine, NetworkProfile, State};
+    let mut sm = AssocStateMachine::new(mac);
+    let profile = NetworkProfile::from_ssid_psk(b"SemOS-Test", b"secret-password");
+    sm.start_scan(profile);
+    if sm.state != State::Scanning {
+        println!("  [DEMO 65] FAIL: SM did not enter Scanning");
+        return;
+    }
+    let mut sbuf = [0u8; 256];
+    if sm.build_probe_req(&mut sbuf).is_none() {
+        println!("  [DEMO 65] FAIL: SM could not build Probe Request");
+        return;
+    }
+    sm.on_ap_found(bssid);
+    if sm.state != State::Authenticating {
+        println!("  [DEMO 65] FAIL: SM did not enter Authenticating");
+        return;
+    }
+    if sm.build_auth_req(&mut sbuf).is_none() {
+        println!("  [DEMO 65] FAIL: SM could not build Auth Request");
+        return;
+    }
+    sm.on_auth_accepted();
+    if sm.state != State::Associating {
+        println!("  [DEMO 65] FAIL: SM did not enter Associating");
+        return;
+    }
+    if sm.build_assoc_req(&mut sbuf).is_none() {
+        println!("  [DEMO 65] FAIL: SM could not build Assoc Request");
+        return;
+    }
+    sm.on_assoc_accepted();
+    if sm.state != State::FourWayHandshake {
+        println!("  [DEMO 65] FAIL: SM did not enter FourWayHandshake");
+        return;
+    }
+    println!("  [DEMO 65] PASS: association state machine steps Idle → Scanning → Authenticating → Associating → FourWayHandshake");
+
+    // --- iwlwifi NetDevice wiring (no hardware, just API) -------------------
+    use kernel_core::drivers::traits::NetDevice;
+    use wireless::iwlwifi_net::IWL_NET;
+    if IWL_NET.name() == "iwlwifi0" && IWL_NET.mtu() == 1500 && !IWL_NET.link_up() {
+        println!("  [DEMO 65] PASS: iwlwifi0 NetDevice present, MTU=1500, link_down until associated");
+    } else {
+        println!("  [DEMO 65] FAIL: NetDevice wiring — name={} mtu={} link_up={}",
+            IWL_NET.name(), IWL_NET.mtu(), IWL_NET.link_up());
+        return;
+    }
+
+    // --- PCI probe path (QEMU: SKIPPED; metal: prints NIC info) -------------
+    if let Some(pci) = iwlwifi_pci::probe() {
+        println!("  [DEMO 65] PASS: PCI probe found {} @ {:02X}:{:02X}.{}  BAR0=0x{:08X}",
+            pci.name, pci.loc.bus, pci.loc.slot, pci.loc.func, pci.bar0_phys);
+        iwlwifi_fw::print_mapping(&pci);
+    } else {
+        println!("  [DEMO 65] SKIPPED: PCI probe found no iwlwifi NIC (expected on QEMU)");
+    }
+
+    println!("  [DEMO 65] => M11 protocol + state machine + NetDevice ready; firmware/PHY waits for hardware");
 }
 
 /// DEMO 64: HID report-descriptor parser. A canned descriptor for a generic
