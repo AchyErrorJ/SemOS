@@ -1352,9 +1352,12 @@ pub fn enumerate_ports() -> usize {
     }
     // VBUS settle delay. USB 2.0 spec says PWRON2PWRGOOD ≥ 100 ms for
     // hubs. iPhone 16 Pro (USB-C) has an internal PD controller that
-    // negotiates VBUS before asserting the USB 2.0 D+ pull-up; empirically
-    // it needs 200–400 ms. We wait ~500 ms (31 ticks @ 62 Hz) to be safe.
-    let power_settle = kernel_core::platform::ticks() + 31;
+    // negotiates VBUS before asserting the USB 2.0 D+ pull-up;
+    // empirically the W540 + Lynx Point + Xbox cable seems to need >500ms,
+    // not the 200-400ms typical. Bump to ~2 s (124 ticks @ 62 Hz) for
+    // iPhone reliability. Cost is added 1.5s boot time on every boot,
+    // which is acceptable given USB is the primary IO.
+    let power_settle = kernel_core::platform::ticks() + 124;
     while kernel_core::platform::ticks() < power_settle {
         core::hint::spin_loop();
     }
@@ -1376,16 +1379,47 @@ pub fn enumerate_ports() -> usize {
 
     let mut connected = 0;
     let mut enumerated = 0;
+    // Track which ports we've already attempted so retry passes don't
+    // re-reset already-enumerated devices. Bit N set = port N+1 done.
+    // 21 ports max on Lynx Point, so u32 is plenty.
+    let mut tried_ports: u32 = 0;
+
+    // Up to 4 enumeration passes (1 initial + 3 retries). iPhone-class
+    // devices sometimes take 1-2 seconds to bring up their USB stack
+    // after VBUS rise, and a single pass would miss them. Each retry
+    // waits 1 second, then scans for any NEW CCS=1 ports we haven't
+    // tried yet.
+    for pass in 0..4 {
+        if pass > 0 {
+            // Wait 1 second between passes for slow-signaling devices.
+            let retry_wait = kernel_core::platform::ticks() + 62;
+            while kernel_core::platform::ticks() < retry_wait {
+                core::hint::spin_loop();
+            }
+            // Drain any new events from the wait window.
+            while poll_event().is_some() {}
+        }
+        let mut new_ccs_found = false;
 
     for port in 1..=info.max_ports {
+        // Skip ports we already enumerated in a previous pass.
+        if tried_ports & (1u32 << (port - 1)) != 0 {
+            continue;
+        }
         let portsc_addr = info.op_base + op_reg::PORTSC_BASE as u64
             + ((port as u64 - 1) * 0x10);
         let portsc = unsafe { read_u32(portsc_addr) };
         if portsc & portsc::CCS == 0 {
             continue;
         }
+        new_ccs_found = true;
+        tried_ports |= 1u32 << (port - 1);
         connected += 1;
-        println!("[xhci] port {}: connected (PORTSC=0x{:08X})", port, portsc);
+        if pass > 0 {
+            println!("[xhci] (retry pass {}) port {}: now connected (PORTSC=0x{:08X})", pass, port, portsc);
+        } else {
+            println!("[xhci] port {}: connected (PORTSC=0x{:08X})", port, portsc);
+        }
 
         // Reset the port. USB 2 ports latch PRC=1 + PED=1 simultaneously
         // when PR completes. USB 3 ports are different: PR may report
@@ -1557,7 +1591,14 @@ pub fn enumerate_ports() -> usize {
                 }
             }
         }
-    }
+    } // end for port
+
+        // If this retry pass found no new CCS=1 ports, no point in
+        // continuing — additional waiting won't help.
+        if pass > 0 && !new_ccs_found {
+            break;
+        }
+    } // end for pass
 
     if connected == 0 {
         println!("[xhci] no connected devices on any of {} root-hub ports", info.max_ports);
