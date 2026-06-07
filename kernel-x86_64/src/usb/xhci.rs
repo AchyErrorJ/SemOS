@@ -1840,187 +1840,172 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     println!("  [DEMO 18] PASS: keyboard descriptor parsed (vendor=0x{:04X} product=0x{:04X})",
         id_vendor, id_product);
 
-    // ---- GET_DESCRIPTOR(CONFIGURATION, 0) — first 9 bytes for total length ----
-    let mut cfg_desc = ConfigDescriptor::default();
-    if !control_in(slot_id, 0x80, request::GET_DESCRIPTOR,
-                   (desc_type::CONFIGURATION as u16) << 8, 0, 9,
-                   &mut cfg_desc as *mut _ as *mut u8, 9) {
-        if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
-            println!("[iphone] GET_DESCRIPTOR(CONFIG short) failed — iPhone not responding to USB; check 'Trust This Computer?' or USB Restricted Mode");
-        } else {
-            println!("[xhci] GET_DESCRIPTOR(CONFIG short) failed");
-        }
-        return false;
-    }
-    let total_len = cfg_desc.w_total_length as usize;
-    let read_len = total_len.min(SETUP_BUF_SIZE);
-    if total_len > SETUP_BUF_SIZE {
-        println!("[xhci] config descriptor larger than buffer ({} > {}), reading truncated {} bytes",
-            total_len, SETUP_BUF_SIZE, read_len);
-    }
-
-    // ---- Read configuration blob into DMA_BUF (clamped to buffer size) ----
+    // ---- Iterate all configurations (0 .. bNumConfigurations-1).
+    // iOS devices start in a deactivated config 0; the real ipheth iface
+    // is often in config 1, 2, or higher.  usbmuxd iterates in reverse;
+    // we go forward — the first matching config wins.
+    let num_configs = dev_desc.b_num_configurations.max(1);
     let blob_phys = match phys_of(unsafe { &raw const DMA_BUF } as u64) {
         Some(p) => p,
         None => { println!("[xhci] DMA_BUF phys translation failed"); return false; }
     };
-    if !control_in_phys(slot_id, 0x80, request::GET_DESCRIPTOR,
-                        (desc_type::CONFIGURATION as u16) << 8, 0,
-                        read_len as u16, blob_phys, read_len) {
-        if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
-            println!("[iphone] GET_DESCRIPTOR(CONFIG full) failed — iPhone STALL/NAK on config read; trust dialog may be pending or denied");
-        } else {
-            println!("[xhci] GET_DESCRIPTOR(CONFIG full) failed");
+
+    let mut first_blob_ok = false;
+    let mut matched_config_value = 0u8;
+
+    for cfg_idx in 0..num_configs {
+        // Read 9-byte header to get total length.
+        let mut cfg_desc = ConfigDescriptor::default();
+        let w_value = ((desc_type::CONFIGURATION as u16) << 8) | (cfg_idx as u16);
+        if !control_in(slot_id, 0x80, request::GET_DESCRIPTOR,
+                       w_value, 0, 9,
+                       &mut cfg_desc as *mut _ as *mut u8, 9) {
+            if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
+                println!("[iphone] GET_DESCRIPTOR(CONFIG short, idx={}) failed — skipping", cfg_idx);
+            } else {
+                println!("[xhci] GET_DESCRIPTOR(CONFIG short, idx={}) failed — skipping", cfg_idx);
+            }
+            continue;
         }
-        return false;
-    }
+        let total_len = cfg_desc.w_total_length as usize;
+        let read_len = total_len.min(SETUP_BUF_SIZE);
+        if total_len > SETUP_BUF_SIZE {
+            println!("[xhci] config[{}] descriptor larger than buffer ({} > {}), truncating to {} bytes",
+                cfg_idx, total_len, SETUP_BUF_SIZE, read_len);
+        }
 
-    // ---- Read string descriptors after config descriptor is known good.
-    // Linux does this order (config first, strings after). Apple devices
-    // in particular may stall EP0 on string reads; doing them after config
-    // means a stall can't break the critical config descriptor transfer.
-    let _ = read_string_descriptor(slot_id, dev_desc.i_manufacturer, "iManufacturer");
-    let _ = read_string_descriptor(slot_id, dev_desc.i_product,     "iProduct");
-    let _ = read_string_descriptor(slot_id, dev_desc.i_serial_number, "iSerialNumber");
+        // Read full configuration blob.
+        if !control_in_phys(slot_id, 0x80, request::GET_DESCRIPTOR,
+                            w_value, 0,
+                            read_len as u16, blob_phys, read_len) {
+            if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
+                println!("[iphone] GET_DESCRIPTOR(CONFIG full, idx={}) failed — skipping", cfg_idx);
+            } else {
+                println!("[xhci] GET_DESCRIPTOR(CONFIG full, idx={}) failed — skipping", cfg_idx);
+            }
+            continue;
+        }
+        first_blob_ok = true;
+        matched_config_value = cfg_desc.b_configuration_value;
 
-    // ---- Parse the descriptor chain looking for HID boot keyboard ----
-    let blob = unsafe { &DMA_BUF.0[..read_len] };
-    let (kbd, iface_num, cfg_val) = match find_boot_keyboard(blob, cfg_desc.b_configuration_value) {
-        Some(x) => x,
-        None => {
-            println!("[xhci] no HID boot keyboard — trying CDC-ECM, then Mass Storage");
-            // Stash a generic device record first so the DEMOs see vendor/product
-            // even if all class enumerations miss.
+        let blob = unsafe { &DMA_BUF.0[..read_len] };
+
+        // ---- Check for HID boot keyboard (highest priority) ----
+        if let Some((kbd, iface_num, cfg_val)) = find_boot_keyboard(blob, cfg_desc.b_configuration_value) {
+            println!("[xhci] HID boot keyboard found in config[{}] value={}", cfg_idx, cfg_val);
+            // Keyboard path: SET_CONFIGURATION, SET_PROTOCOL, configure endpoints.
+            if !control_out(slot_id, 0x00, request::SET_CONFIGURATION,
+                            cfg_val as u16, 0, 0) {
+                println!("[xhci] SET_CONFIGURATION failed");
+                return false;
+            }
+            if !control_out(slot_id, 0x21, request::HID_SET_PROTOCOL,
+                            0, iface_num as u16, 0) {
+                println!("[xhci] HID SET_PROTOCOL(boot) failed (non-fatal on some devs)");
+            }
+            let hid_ring_phys = match phys_of(unsafe { &raw const HID_TRANSFER_RING } as u64) {
+                Some(p) => p,
+                None => { println!("[xhci] HID ring phys translation failed"); return false; }
+            };
+            let ep_num = kbd.b_endpoint_address & 0x0F;
+            let dci = (ep_num * 2 + 1) as usize;
+            let interval_log2 = encode_interval(speed, kbd.b_interval);
+            let max_packet = kbd.w_max_packet_size & 0x07FF;
+            unsafe {
+                init_command_ring(&raw mut HID_TRANSFER_RING, hid_ring_phys);
+                HID_PROD = Producer::new();
+                HID_RING_PHYS = hid_ring_phys;
+                let ic = &mut INPUT_CTXS[si].0;
+                ic.reset();
+                ic.input_ctrl_mut().add_flags = (1 << 0) | (1u32 << dci);
+                let slot = ic.slot_mut();
+                slot.set_context_entries(dci as u32);
+                slot.set_root_hub_port(port);
+                slot.set_speed(speed as u32);
+                ic.ep_mut(dci - 1).init_interrupt_in_ep(max_packet, interval_log2, hid_ring_phys, true);
+            }
+            let idx = unsafe { CMD_PROD.enqueue };
+            let cmd_phys = cmd_trb_phys_at(idx);
+            let control = ((trb_type::CONFIGURE_ENDPOINT_CMD as u32) << 10) | ((slot_id as u32) << 24);
+            unsafe {
+                enqueue_command(&raw mut COMMAND_RING, &mut CMD_PROD, input_phys, 0, control);
+            }
+            ring_doorbell(info.db_base, 0, 0);
+            let (cc, _) = wait_command_completion(cmd_phys);
+            if cc != cc::SUCCESS {
+                println!("[xhci] ConfigureEndpoint (HID) failed: cc={}", cc);
+                return false;
+            }
+            println!("[xhci] HID kbd configured: slot={} dci={} ep=0x{:02X} mps={} interval_log2={}",
+                slot_id, dci, kbd.b_endpoint_address, max_packet, interval_log2);
             unsafe {
                 DEVICE = Some(EnumeratedDevice {
                     slot_id, usb_address: usb_addr, port, speed,
                     vendor: id_vendor, product: id_product,
                     max_packet_ep0: mps0,
-                    is_keyboard: false,
-                    kbd_ep_in: 0, kbd_ep_packet_size: 0, kbd_ep_interval: 0,
-                    config_value: cfg_desc.b_configuration_value,
-                    interface_number: 0,
+                    is_keyboard: true,
+                    kbd_ep_in: kbd.b_endpoint_address,
+                    kbd_ep_packet_size: max_packet,
+                    kbd_ep_interval: kbd.b_interval,
+                    config_value: cfg_val,
+                    interface_number: iface_num,
                 });
             }
-            // iPhone via ipheth (class 0xFF/0xFD/0x01) — ported from
-            // Linux's drivers/net/usb/ipheth.c. iPhones don't use
-            // CDC-ECM for tethering; they use a proprietary vendor-
-            // specific protocol at alt setting 1.
-            if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
-                if try_enumerate_ipheth(slot_id, port, speed, blob,
-                                         cfg_desc.b_configuration_value) {
-                    return true;
-                }
-                // Fall through to CDC-ECM if ipheth iface isn't there —
-                // older iOS or non-iPhone Apple devices.
-            }
-            // Phase 15 M50: CDC-ECM is the standard tether protocol for
-            // USB-Ethernet dongles + some Android tethering modes.
-            if try_enumerate_cdc_ecm(slot_id, port, speed, blob,
-                                      cfg_desc.b_configuration_value) {
-                return true;
-            }
-            // Try the Mass Storage path. Returns true if it found + configured
-            // an MSC device; false if no MSC interface was in the descriptor.
-            if try_enumerate_mass_storage(slot_id, port, speed, blob,
-                                           cfg_desc.b_configuration_value) {
-                let msc = unsafe { MSC.as_ref().unwrap() };
-                let vendor = core::str::from_utf8(&msc.inquiry[8..16]).unwrap_or("?");
-                let product = core::str::from_utf8(&msc.inquiry[16..32]).unwrap_or("?");
-                let revision = core::str::from_utf8(&msc.inquiry[32..36]).unwrap_or("?");
-                println!(
-                    "[xhci-msc] vendor=\"{}\" product=\"{}\" rev=\"{}\" capacity={} blocks x {} B",
-                    vendor.trim(), product.trim(), revision.trim(),
-                    msc.capacity_blocks, msc.capacity_bs
-                );
-            }
+            arm_hid_read(slot_id, dci as u8);
             return true;
         }
-    };
 
-    // ---- SET_CONFIGURATION ----
-    if !control_out(slot_id, 0x00, request::SET_CONFIGURATION,
-                    cfg_val as u16, 0, 0) {
-        println!("[xhci] SET_CONFIGURATION failed");
-        return false;
+        // ---- Check for iPhone ipheth ----
+        if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
+            if try_enumerate_ipheth(slot_id, port, speed, blob,
+                                     cfg_desc.b_configuration_value) {
+                return true;
+            }
+        }
+
+        // ---- Check for CDC-ECM ----
+        if try_enumerate_cdc_ecm(slot_id, port, speed, blob,
+                                  cfg_desc.b_configuration_value) {
+            return true;
+        }
+
+        // ---- Check for Mass Storage ----
+        if try_enumerate_mass_storage(slot_id, port, speed, blob,
+                                       cfg_desc.b_configuration_value) {
+            let msc = unsafe { MSC.as_ref().unwrap() };
+            let vendor = core::str::from_utf8(&msc.inquiry[8..16]).unwrap_or("?");
+            let product = core::str::from_utf8(&msc.inquiry[16..32]).unwrap_or("?");
+            let revision = core::str::from_utf8(&msc.inquiry[32..36]).unwrap_or("?");
+            println!(
+                "[xhci-msc] vendor=\"{}\" product=\"{}\" rev=\"{}\" capacity={} blocks x {} B",
+                vendor.trim(), product.trim(), revision.trim(),
+                msc.capacity_blocks, msc.capacity_bs
+            );
+            return true;
+        }
     }
 
-    // ---- SET_PROTOCOL (boot=0) on the HID interface ----
-    if !control_out(slot_id, 0x21, request::HID_SET_PROTOCOL,
-                    0, iface_num as u16, 0) {
-        println!("[xhci] HID SET_PROTOCOL(boot) failed (non-fatal on some devs)");
-        // Not fatal — qemu's usb-kbd defaults to boot protocol.
+    // No class-specific driver claimed this device in any config.
+    // Stash a generic record so usbinfo shows it, and read strings
+    // for diagnostics.
+    if first_blob_ok {
+        let _ = read_string_descriptor(slot_id, dev_desc.i_manufacturer, "iManufacturer");
+        let _ = read_string_descriptor(slot_id, dev_desc.i_product,     "iProduct");
+        let _ = read_string_descriptor(slot_id, dev_desc.i_serial_number, "iSerialNumber");
     }
-
-    // ---- ConfigureEndpoint to add the HID Interrupt-IN endpoint ----
-    let hid_ring_phys = match phys_of(unsafe { &raw const HID_TRANSFER_RING } as u64) {
-        Some(p) => p,
-        None => { println!("[xhci] HID ring phys translation failed"); return false; }
-    };
-    let ep_num = kbd.b_endpoint_address & 0x0F;
-    let dci = (ep_num * 2 + 1) as usize; // IN endpoint → DCI = 2*N+1
-    // Encode the interval as log2(b_interval) for HS/SS, b_interval directly for LS/FS.
-    // For QEMU usb-kbd in HS this is something like 7 (128 microframes).
-    let interval_log2 = encode_interval(speed, kbd.b_interval);
-    let max_packet = kbd.w_max_packet_size & 0x07FF;
-
-    unsafe {
-        init_command_ring(&raw mut HID_TRANSFER_RING, hid_ring_phys);
-        HID_PROD = Producer::new();
-        HID_RING_PHYS = hid_ring_phys;
-
-        let ic = &mut INPUT_CTXS[si].0;
-        // Reuse the input context. Add-flag for slot (A0) and the HID EP (Adci).
-        // We also need to bump context entries to dci.
-        ic.reset();
-        ic.input_ctrl_mut().add_flags = (1 << 0) | (1u32 << dci);
-        let slot = ic.slot_mut();
-        slot.set_context_entries(dci as u32);
-        slot.set_root_hub_port(port);
-        slot.set_speed(speed as u32);
-        // EP0 was already configured during AddressDevice — ConfigureEndpoint
-        // re-states the slot but doesn't re-add EP0 (A1 not set above).
-        // Configure the HID EP at index dci-1 in our eps array.
-        ic.ep_mut(dci - 1).init_interrupt_in_ep(max_packet, interval_log2, hid_ring_phys, true);
-    }
-
-    let idx = unsafe { CMD_PROD.enqueue };
-    let cmd_phys = cmd_trb_phys_at(idx);
-    let control = ((trb_type::CONFIGURE_ENDPOINT_CMD as u32) << 10) | ((slot_id as u32) << 24);
-    unsafe {
-        enqueue_command(
-            &raw mut COMMAND_RING, &mut CMD_PROD,
-            input_phys, 0, control,
-        );
-    }
-    ring_doorbell(info.db_base, 0, 0);
-    let (cc, _) = wait_command_completion(cmd_phys);
-    if cc != cc::SUCCESS {
-        println!("[xhci] ConfigureEndpoint (HID) failed: cc={}", cc);
-        return false;
-    }
-
-    println!("[xhci] HID kbd configured: slot={} dci={} ep=0x{:02X} mps={} interval_log2={}",
-        slot_id, dci, kbd.b_endpoint_address, max_packet, interval_log2);
-
+    println!("[xhci] no matching interface in any of {} config(s) for vendor=0x{:04X} product=0x{:04X}",
+        num_configs, id_vendor, id_product);
     unsafe {
         DEVICE = Some(EnumeratedDevice {
             slot_id, usb_address: usb_addr, port, speed,
             vendor: id_vendor, product: id_product,
             max_packet_ep0: mps0,
-            is_keyboard: true,
-            kbd_ep_in: kbd.b_endpoint_address,
-            kbd_ep_packet_size: max_packet,
-            kbd_ep_interval: kbd.b_interval,
-            config_value: cfg_val,
-            interface_number: iface_num,
+            is_keyboard: false,
+            kbd_ep_in: 0, kbd_ep_packet_size: 0, kbd_ep_interval: 0,
+            config_value: matched_config_value,
+            interface_number: 0,
         });
     }
-
-    // Prime the HID transfer ring with one Normal TRB pointing at HID_REPORT_BUF
-    // so the controller fills it on the first scheduled interval.
-    arm_hid_read(slot_id, dci as u8);
-
     true
 }
 
