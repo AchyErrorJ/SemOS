@@ -155,6 +155,9 @@
 #![deny(missing_docs)]
 #![no_std]
 
+// Stage G iter 6: macro_use brings vec! / format! into scope so .rs files
+// using bare `vec![...]` work without per-site `alloc::vec!` swaps.
+#[macro_use]
 extern crate alloc;
 
 #[cfg(feature = "std")]

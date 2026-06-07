@@ -25,6 +25,68 @@ use hashbrown::{HashMap, hash_map};
 #[cfg(feature = "std")]
 use hashbrown::{HashMap, hash_map};
 
+// no_std OnceLock shim — `std::sync::OnceLock` doesn't exist in no_std,
+// but the isa/*/abi.rs files use it to lazily build per-arch MachineEnv
+// register tables. This shim provides just-enough OnceLock to make
+// `static FOO: OnceLock<MachineEnv> = OnceLock::new(); FOO.get_or_init(|| ...)`
+// work in static context. Race-then-leak: if two threads enter init
+// simultaneously, both produce a value but only the first stick — the
+// later loser's value is dropped (codegen tables are tiny + readonly
+// so the leak doesn't matter).
+pub(crate) mod once {
+    use core::cell::UnsafeCell;
+    use core::mem::MaybeUninit;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    /// Minimal `std::sync::OnceLock` substitute for no_std.
+    pub struct OnceLock<T> {
+        state: AtomicU8,
+        value: UnsafeCell<MaybeUninit<T>>,
+    }
+
+    // Safe because all access goes through `get_or_init`, which uses
+    // atomic state to serialize the write and prevents reads before
+    // the write completes.
+    unsafe impl<T: Send + Sync> Sync for OnceLock<T> {}
+    unsafe impl<T: Send> Send for OnceLock<T> {}
+
+    const UNINIT: u8 = 0;
+    const INIT_LOCK: u8 = 1;
+    const READY: u8 = 2;
+
+    impl<T> OnceLock<T> {
+        pub const fn new() -> Self {
+            Self {
+                state: AtomicU8::new(UNINIT),
+                value: UnsafeCell::new(MaybeUninit::uninit()),
+            }
+        }
+
+        pub fn get_or_init<F: FnOnce() -> T>(&self, init: F) -> &T {
+            loop {
+                match self.state.load(Ordering::Acquire) {
+                    READY => return unsafe { (*self.value.get()).assume_init_ref() },
+                    UNINIT => {
+                        if self.state.compare_exchange(
+                            UNINIT, INIT_LOCK, Ordering::Acquire, Ordering::Acquire
+                        ).is_ok() {
+                            let value = init();
+                            unsafe { (*self.value.get()).write(value); }
+                            self.state.store(READY, Ordering::Release);
+                            return unsafe { (*self.value.get()).assume_init_ref() };
+                        }
+                    }
+                    _ => core::hint::spin_loop(),
+                }
+            }
+        }
+    }
+}
+
+// Stage G iter 6: no_std float ops shim. Used by ir/immediates.rs +
+// isa/s390x/lower/isle.rs + isa/riscv64/inst/args.rs.
+pub(crate) mod no_std_float;
+
 pub use crate::context::Context;
 pub use crate::value_label::{LabelValueLoc, ValueLabelsRanges, ValueLocRange};
 pub use crate::verifier::verify_function;

@@ -2976,3 +2976,133 @@ Cumulative through G iter 1b: **5 cranelift sub-crates vendored,
 1 patched, 0 verified-compiling** (cargo unavailable this session).
 Open: 9 remaining cranelift crates + downstream Cargo.toml audits.
 
+---
+
+## Stage G iter 5a — cranelift-codegen vendored (2026-06-04, partial)
+
+**Goal:** vendor the BIG one — cranelift-codegen 0.122.0, ~200 source
+files spread across `binemit/`, `dominator_tree/`, `egraph/`, `ir/`,
+`isa/{aarch64,riscv64,s390x,x64,pulley_shared,pulley32,pulley64}/`,
+`legalizer/`, `machinst/`, `opts/`, `verifier/` plus 26 top-level src
+files. Patch its Cargo.toml to drop `std`/`timing` from default-features
+and add `default-features = false` to every dep that defaults-on-std.
+
+### What landed this iteration
+
+1. **vendor-externals/cranelift-codegen/** seeded with the
+   top-level metadata (Cargo.toml, Cargo.toml.orig, Cargo.lock,
+   build.rs, .cargo_vcs_info.json, LICENSE, README.md). Source files
+   `src/**/*.rs` NOT yet copied (sandbox limitation — see below).
+
+2. **cranelift-codegen/Cargo.toml patched** (the deliverable that
+   does close real category-1 errors):
+   - **`default = ["std", "unwind", "host-arch", "timing"]` →
+     `default = ["unwind", "host-arch"]`**. `std` gates an `extern
+     crate std` block in lib.rs + activates the
+     `std::collections::HashMap` branch (we want the hashbrown branch
+     instead). `timing` activates the `timing` mod which uses
+     `std::time::Instant` and `thread_local!`.
+   - **`anyhow`**: dropped explicit `features = ["std"]`. Already
+     `default-features = false` in iter-1 source; the explicit `std`
+     re-leaked it.
+   - **`gimli`**: dropped `std` from features list; kept `read` +
+     `write`. Our vendored gimli (iter 4) already cfg-guards
+     std-only paths.
+   - **`hashbrown`** (line 141-143): already `default-features =
+     false` upstream — no change needed.
+   - **`smallvec`, `rustc-hash`, `bumpalo`, `target-lexicon`,
+     `wasmtime-math`, `pulley-interpreter`**: added explicit
+     `default-features = false` to each. Of these, `target-lexicon`
+     and `wasmtime-internal-math` are NOT yet vendored — their
+     upstream `default = ["std"]` would re-leak even with our flag,
+     because cargo's transitive feature unification doesn't honor
+     `default-features = false` for a non-leaf dep unless that dep
+     is also vendored. Stage G iter 5b TODO.
+
+3. **workspace `[patch.crates-io]`** in `user-programs/semos-rustc/
+   Cargo.toml` extended with one line:
+   `cranelift-codegen = { path = "vendor-externals/cranelift-codegen" }`.
+
+### Sandbox limitation, again
+
+Same as iter 1: `cp -r`, `Copy-Item -Recurse`, `xcopy`, `robocopy`,
+`tar`, `find -exec cp` all rejected. Only single-file `cp` works.
+~200 individual `cp` calls is beyond practical tool-call budget when
+the iteration also needs to read, patch, and document. Per-file
+parallel calls work (mkdir + cp batches succeed when sent in a single
+message) but the sheer fan-out is ~10+ messages of pure copy work,
+which crowds out the actual port engineering.
+
+Per RECIPE: this iter therefore lands the **Cargo.toml patches in
+isolation** so iter 5b can pick up source-vendoring on an environment
+with `cp -r` unlocked.
+
+### Source-level patches forecast (for iter 5b)
+
+`Grep "^use std::"` on the upstream source reports 30+ files
+needing `use std::* → use core::*/alloc::*` sweeps. Distribution:
+
+- `machinst/` (~6 files): `use std::{cmp, collections::HashMap,
+  collections::BinaryHeap, mem, string, vec, fmt::Debug, marker,
+  ops}`. All present in `core` or `alloc`.
+- `isa/x64/` (~5 files): `use std::{fmt, string, vec, boxed}`.
+- `isa/aarch64/`, `isa/s390x/`, `isa/pulley_shared/` abi.rs trio:
+  **`use std::sync::OnceLock`** — this has NO `alloc::sync` equivalent.
+  Either bring in `spin::Once` (already a transitive of `regalloc2`
+  probably) or use a manual `static OnceLockShim: spin::Once<T>`
+  pattern. Same in `isa/aarch64/abi.rs:20`,
+  `isa/s390x/abi.rs:151`, `isa/pulley_shared/abi.rs:18`,
+  `isa/x64/abi.rs:19`.
+- `ir/pcc.rs:81`: `use std::fmt;` → `use core::fmt;`.
+- `result.rs`, `souper_harvest.rs`, etc.: `use std::string::String;`
+  → `use alloc::string::String;`.
+- `ctxhash.rs:8`: `use std::hash::{Hash, Hasher};` →
+  `use core::hash::{Hash, Hasher};`.
+- `souper_harvest.rs`: uses `std::sync::mpsc` but gated by
+  `souper-harvest` feature which is off-by-default. Skip.
+- `lib.rs:26`: `use std::collections::{HashMap, hash_map};` —
+  already gated behind `cfg(feature = "std")` so safe (the
+  `cfg(not(feature = "std"))` arm uses hashbrown).
+
+**Total: ~30-50 mechanical edits, mostly safe**, plus the OnceLock
+patch which needs a one-time replacement type added. NO `extern
+crate std` to remove — lib.rs already has `#[cfg(feature = "std")]
+#[macro_use] extern crate std;` correctly gated.
+
+### Build-dep concern (carried from iter 4)
+
+`build-dependencies.cranelift-codegen-meta = "0.122.0"` +
+`build-dependencies.cranelift-isle = "=0.122.0"`. These run on the
+HOST during build (codegen → emit src/isle_generated_code etc.) so
+they ARE host-builds and `std` is fine. But they need to be
+findable; since we haven't vendored them and they're not in
+`[patch.crates-io]`, cargo will fetch from registry. If the
+workspace is offline (vendor mode) or if cargo's feature unification
+forces them into the same target-cfg pass as cranelift-codegen, this
+breaks. Iter 5b should verify the first `cargo check` actually
+resolves them; if not, vendor + add `[patch.crates-io]` lines BUT
+keep them host-default (no std stripping).
+
+### Forecast: iter 5b is the cargo-check checkpoint
+
+iter 5b: complete source-file vendoring (200+ `cp`s OR run `cp -r`
+once the sandbox allows it) + `sed` sweep for the ~30 `use std::*`
+sites + add `target-lexicon` + `wasmtime-internal-math` vendored
+crates + first `cargo check -p rustc_codegen_cranelift --target
+x86_64-unknown-none`. Expect ~hundreds of errors initially (since
+this is the first time cargo sees the patched defaults take effect);
+chip down 1-2 categories per iter from there.
+
+### Commits this iteration
+
+- (TBD this commit) — iter 5a: cranelift-codegen Cargo.toml patches
+  (no source) + workspace [patch] entry.
+
+Cumulative through G iter 5a: **6 cranelift sub-crates ATTEMPTED-vendored**
+(bitset, entity, control, bforest, codegen-shared in iters 1-1b;
+codegen Cargo.toml only in iter 5a). 1 leaf has source-vendoring TODO.
+0 verified-compiling. Open: cranelift-codegen source + target-lexicon
++ wasmtime-internal-math + cranelift-frontend/assembler-x64* (the
+parallel agent's lane).
+
+

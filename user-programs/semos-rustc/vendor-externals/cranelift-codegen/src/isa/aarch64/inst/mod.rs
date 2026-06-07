@@ -3064,6 +3064,6 @@ mod tests {
         } else {
             32
         };
-        assert_eq!(expected, std::mem::size_of::<Inst>());
+        assert_eq!(expected, core::mem::size_of::<Inst>());
     }
 }

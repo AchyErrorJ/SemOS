@@ -17,7 +17,7 @@ use alloc::vec::Vec;
 use regalloc2::{MachineEnv, PReg, PRegSet};
 use smallvec::{SmallVec, smallvec};
 use alloc::borrow::ToOwned;
-use std::sync::OnceLock;
+use crate::once::OnceLock;
 
 // We use a generic implementation that factors out AArch64 and x64 ABI commonalities, because
 // these ABIs are very similar.
@@ -348,7 +348,7 @@ impl ABIMachineSpec for AArch64MachineDeps {
             } else {
                 // Every arg takes a minimum slot of 8 bytes. (16-byte stack
                 // alignment happens separately after all args.)
-                std::cmp::max(size, 8)
+                core::cmp::max(size, 8)
             };
 
             if !is_winch_return {

@@ -100,6 +100,11 @@ ena = { path = "vendor-externals/ena" }
 cranelift-bitset = { path = "vendor-externals/cranelift-bitset" }
 cranelift-entity = { path = "vendor-externals/cranelift-entity" }
 cranelift-control = { path = "vendor-externals/cranelift-control" }
+# Stage G iter 6: libm gives cranelift-codegen no_std float ops (powi/
+# sqrt/ceil/floor/trunc/round_ties_even). f32/f64 methods live in
+# std::f32/f64 which doesn't exist in core; libm is the canonical
+# no_std replacement. Vendored from registry 0.2.16.
+libm = { path = "vendor-externals/libm" }
 # Stage G iter 1b: cranelift-bforest and cranelift-codegen-shared are
 # both no_std-clean upstream (bforest declares `#![no_std]` in lib.rs;
 # codegen-shared has no `extern crate std` and uses only const tables).

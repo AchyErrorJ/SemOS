@@ -68,12 +68,19 @@ version = "0.36.5"
 features = [
     "read_core",
     "elf",
+    "macho",
     "write_core",
 ]
 default-features = false
 
 [dependencies.target-lexicon]
 version = "0.13.0"
+
+# M27 Stage G iter 6: hashbrown HashMap replaces std::collections::HashMap.
+[dependencies.hashbrown]
+version = "0.15"
+default-features = false
+features = ["default-hasher"]
 
 [dev-dependencies.cranelift-codegen]
 version = "0.122.0"

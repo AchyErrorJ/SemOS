@@ -1717,7 +1717,7 @@ impl<T: CompilePhase> MachBufferFinalized<T> {
     /// Return the code in this mach buffer as a hex string for testing purposes.
     pub fn stringify_code_bytes(&self) -> String {
         // This is pretty lame, but whatever ..
-        use std::fmt::Write;
+        use core::fmt::Write;
         let mut s = String::with_capacity(self.data.len() * 2);
         for b in &self.data {
             write!(&mut s, "{b:02X}").unwrap();

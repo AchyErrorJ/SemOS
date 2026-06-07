@@ -223,8 +223,6 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64"
 version = "0.122.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ae7b60ec3fd7162427d3b3801520a1908bef7c035b52983cd3ca11b8e7deb51"
 dependencies = [
  "cranelift-assembler-x64-meta",
 ]
@@ -232,8 +230,6 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64-meta"
 version = "0.122.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6511c200fed36452697b4b6b161eae57d917a2044e6333b1c1389ed63ccadeee"
 dependencies = [
  "cranelift-srcgen",
 ]
@@ -252,8 +248,6 @@ version = "0.122.0"
 [[package]]
 name = "cranelift-codegen"
 version = "0.122.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "858fb3331e53492a95979378d6df5208dd1d0d315f19c052be8115f4efc888e0"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -266,10 +260,10 @@ dependencies = [
  "cranelift-isle",
  "gimli",
  "hashbrown 0.15.5",
+ "libm",
  "log",
  "regalloc2",
  "rustc-hash 2.1.2",
- "serde",
  "smallvec",
  "target-lexicon",
  "wasmtime-internal-math",
@@ -304,10 +298,9 @@ dependencies = [
 [[package]]
 name = "cranelift-frontend"
 version = "0.122.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "781f9905f8139b8de22987b66b522b416fe63eb76d823f0b3a8c02c8fd9500c7"
 dependencies = [
  "cranelift-codegen",
+ "hashbrown 0.15.5",
  "log",
  "smallvec",
  "target-lexicon",
@@ -326,6 +319,7 @@ dependencies = [
  "anyhow",
  "cranelift-codegen",
  "cranelift-control",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -336,6 +330,7 @@ dependencies = [
  "cranelift-codegen",
  "cranelift-control",
  "cranelift-module",
+ "hashbrown 0.15.5",
  "log",
  "object 0.36.7",
  "target-lexicon",
@@ -344,8 +339,6 @@ dependencies = [
 [[package]]
 name = "cranelift-srcgen"
 version = "0.122.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b530783809a55cb68d070e0de60cfbb3db0dc94c8850dd5725411422bedcf6bb"
 
 [[package]]
 name = "crc32fast"
@@ -921,8 +914,6 @@ dependencies = [
 [[package]]
 name = "libm"
 version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "linux-raw-sys"
@@ -1396,6 +1387,9 @@ checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 [[package]]
 name = "rustc-hash"
 version = "2.1.2"
+dependencies = [
+ "hashbrown 0.15.5",
+]
 
 [[package]]
 name = "rustc-literal-escaper"

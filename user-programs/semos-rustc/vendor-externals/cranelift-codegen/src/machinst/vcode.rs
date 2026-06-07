@@ -788,7 +788,7 @@ impl<I: VCodeInst> VCode<I> {
         let mut cur_srcloc = None;
         let mut last_offset = None;
         let mut inst_offsets = vec![];
-        let mut state = I::State::new(&self.abi, std::mem::take(ctrl_plane));
+        let mut state = I::State::new(&self.abi, core::mem::take(ctrl_plane));
 
         let mut disasm = String::new();
 
@@ -1481,7 +1481,7 @@ impl<I: VCodeInst> VCode<I> {
     }
 }
 
-impl<I: VCodeInst> std::ops::Index<InsnIndex> for VCode<I> {
+impl<I: VCodeInst> core::ops::Index<InsnIndex> for VCode<I> {
     type Output = I;
     fn index(&self, idx: InsnIndex) -> &Self::Output {
         &self.insts[idx.index()]
@@ -1969,7 +1969,7 @@ impl VCodeConstantData {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::mem::size_of;
+    use core::mem::size_of;
 
     #[test]
     fn size_of_constant_structs() {

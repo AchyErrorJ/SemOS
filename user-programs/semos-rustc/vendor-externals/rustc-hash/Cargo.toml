@@ -51,3 +51,11 @@ path = "src/lib.rs"
 [dependencies.rand]
 version = "0.8"
 optional = true
+
+# M27 Phase 5c Stage G iter 6: hashbrown gives us no_std HashMap/HashSet
+# for the FxHashMap/FxHashSet type aliases (upstream only defines them
+# under feature=std). cranelift-codegen pulls FxHashMap unconditionally.
+[dependencies.hashbrown]
+version = "0.15"
+default-features = false
+features = ["default-hasher"]

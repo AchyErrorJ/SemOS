@@ -88,6 +88,42 @@ fn main() {
         }
     }
 
+    // M27 Phase 5c Stage G iter 6: post-process generated files to swap
+    // `std::` → `core::`/`alloc::` references. The cranelift-isle codegen
+    // and opcodes generator emit `std::` paths which don't work on
+    // x86_64-unknown-none. Patching at write-time is cheaper than patching
+    // the upstream generators.
+    for entry in std::fs::read_dir(&out_dir).expect("read OUT_DIR") {
+        let entry = match entry { Ok(e) => e, Err(_) => continue };
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") { continue; }
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let is_isle = name.starts_with("isle_");
+        let is_opcodes = name == "opcodes.rs";
+        if !is_isle && !is_opcodes { continue; }
+        let contents = match std::fs::read_to_string(&path) {
+            Ok(s) => s, Err(_) => continue
+        };
+        let patched = contents
+            .replace("std::marker::PhantomData", "core::marker::PhantomData")
+            .replace("std::slice::from_ref", "core::slice::from_ref")
+            .replace("std::slice::", "core::slice::")
+            .replace("std::ops::Deref", "core::ops::Deref")
+            .replace("std::ops::", "core::ops::")
+            .replace("std::vec::Vec", "alloc::vec::Vec")
+            .replace("std::boxed::Box", "alloc::boxed::Box")
+            .replace("std::string::String", "alloc::string::String")
+            .replace("std::default::Default", "core::default::Default")
+            .replace("std::iter::", "core::iter::")
+            .replace("std::cmp::", "core::cmp::")
+            .replace("std::fmt::", "core::fmt::")
+            .replace("std::mem::", "core::mem::")
+            .replace("std::hash::", "core::hash::");
+        if patched != contents {
+            let _ = std::fs::write(&path, patched);
+        }
+    }
+
     if env::var("CRANELIFT_VERBOSE").is_ok() {
         for isa in &isas {
             println!("cargo:warning=Includes support for {} ISA", isa.to_string());

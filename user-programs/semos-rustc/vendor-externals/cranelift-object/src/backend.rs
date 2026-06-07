@@ -1,5 +1,11 @@
 //! Defines `ObjectModule`.
 
+// M27 Stage G iter 6: alloc prelude — Vec/Box/String aren't auto-imported
+// in no_std builds.
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use anyhow::anyhow;
 use cranelift_codegen::binemit::{Addend, CodeOffset, Reloc};
 use cranelift_codegen::entity::SecondaryMap;
@@ -18,9 +24,10 @@ use object::{
     RelocationEncoding, RelocationFlags, RelocationKind, SectionFlags, SectionKind, SymbolFlags,
     SymbolKind, SymbolScope, elf,
 };
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-use std::mem;
+// M27 Stage G iter 6: no_std hashbrown HashMap + core::mem.
+use hashbrown::HashMap;
+use hashbrown::hash_map::Entry;
+use core::mem;
 use target_lexicon::PointerWidth;
 
 /// A builder for `ObjectModule`.
@@ -493,7 +500,7 @@ impl Module for ObjectModule {
             }
         }
 
-        let align = std::cmp::max(align.unwrap_or(1), self.isa.symbol_alignment());
+        let align = core::cmp::max(align.unwrap_or(1), self.isa.symbol_alignment());
         let offset = match *init {
             Init::Uninitialized => {
                 panic!("data is not initialized yet");

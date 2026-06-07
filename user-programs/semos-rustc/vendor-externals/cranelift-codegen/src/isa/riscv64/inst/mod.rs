@@ -85,7 +85,7 @@ impl CondBrTarget {
 }
 
 impl Display for CondBrTarget {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
             CondBrTarget::Label(l) => write!(f, "{}", l.to_string()),
             CondBrTarget::Fallthrough => write!(f, "0"),

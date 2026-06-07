@@ -220,6 +220,14 @@ package = "wasmtime-internal-math"
 # from cg_clif at all (it's a low-level math helper; may be elidable).
 default-features = false
 
+# Stage G iter 6: libm provides no_std float ops (powi/sqrt/ceil/floor/
+# trunc/round_ties_even) that cranelift uses for const-folding and ISA
+# range checks. f32/f64 methods live in `std::f32/f64` which we don't
+# have. Used via local FloatNoStd helper in src/no_std_float.rs.
+[dependencies.libm]
+version = "0.2"
+default-features = false
+
 [dev-dependencies.criterion]
 version = "0.5.0"
 features = [

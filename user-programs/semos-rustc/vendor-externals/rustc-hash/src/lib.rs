@@ -45,6 +45,16 @@ pub type FxHashMap<K, V> = HashMap<K, V, FxBuildHasher>;
 #[cfg(feature = "std")]
 pub type FxHashSet<V> = HashSet<V, FxBuildHasher>;
 
+// M27 Phase 5c Stage G iter 6: no_std FxHashMap/FxHashSet aliases backed
+// by hashbrown's no_std HashMap/HashSet. Without these, cranelift-codegen
+// (and other rustc-hash consumers that pull FxHashMap unconditionally)
+// can't compile against x86_64-unknown-none.
+#[cfg(not(feature = "std"))]
+pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
+
+#[cfg(not(feature = "std"))]
+pub type FxHashSet<V> = hashbrown::HashSet<V, FxBuildHasher>;
+
 #[cfg(feature = "rand")]
 pub use random_state::{FxHashMapRand, FxHashSetRand, FxRandomState};
 

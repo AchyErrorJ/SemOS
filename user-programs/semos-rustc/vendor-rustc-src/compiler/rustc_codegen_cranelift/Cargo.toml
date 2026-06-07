@@ -35,8 +35,8 @@ crate-type = ["rlib"]
 [dependencies]
 # These have to be in sync with each other
 cranelift-codegen = { version = "0.122.0", default-features = false, features = ["unwind", "all-native-arch"] }
-cranelift-frontend = { version = "0.122.0", default-features = false }
-cranelift-module = { version = "0.122.0", default-features = false }
+cranelift-frontend = { version = "0.122.0", default-features = false, features = ["core"] }
+cranelift-module = { version = "0.122.0", default-features = false, features = ["core"] }
 cranelift-object = { version = "0.122.0", default-features = false }
 target-lexicon = { version = "0.13", default-features = false }
 gimli = { version = "0.31", default-features = false, features = ["write"] }

@@ -11,6 +11,11 @@ use core::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Sub};
 use core::str::FromStr;
 use core::{i32, u32};
 use cranelift_entity::{Signed, Unsigned};
+// Stage G iter 6: no_std float ops shim (powi/sqrt/ceil/floor/trunc/
+// round_ties_even). Method-style calls bind to this trait when self is
+// f32 or f64; impls forward to libm.
+#[allow(unused_imports)]
+use crate::no_std_float::FloatNoStd;
 #[cfg(feature = "enable-serde")]
 use serde_derive::{Deserialize, Serialize};
 

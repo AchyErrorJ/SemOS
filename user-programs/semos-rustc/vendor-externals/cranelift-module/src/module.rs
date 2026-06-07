@@ -286,7 +286,7 @@ pub enum ModuleError {
         /// Tell where the allocation came from
         message: &'static str,
         /// Io error the allocation failed with
-        err: std::io::Error,
+        err: core::convert::Infallible,
     },
 
     /// Wraps a generic error from a backend
@@ -304,8 +304,8 @@ impl<'a> From<CompileError<'a>> for ModuleError {
 
 // This is manually implementing Error and Display instead of using thiserror to reduce the amount
 // of dependencies used by Cranelift.
-impl std::error::Error for ModuleError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for ModuleError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::Undeclared { .. }
             | Self::IncompatibleDeclaration { .. }
@@ -356,13 +356,13 @@ impl std::fmt::Display for ModuleError {
     }
 }
 
-impl std::convert::From<CodegenError> for ModuleError {
+impl core::convert::From<CodegenError> for ModuleError {
     fn from(source: CodegenError) -> Self {
         Self::Compilation { 0: source }
     }
 }
 
-impl std::convert::From<SetError> for ModuleError {
+impl core::convert::From<SetError> for ModuleError {
     fn from(source: SetError) -> Self {
         Self::Flag { 0: source }
     }
@@ -730,7 +730,7 @@ impl ModuleDeclarations {
         signature: &ir::Signature,
     ) -> ModuleResult<(FuncId, Linkage)> {
         // TODO: Can we avoid allocating names so often?
-        use super::hash_map::Entry::*;
+        use hashbrown::hash_map::Entry::*;
         match self.names.entry(name.to_owned()) {
             Occupied(entry) => match *entry.get() {
                 FuncOrDataId::Func(id) => {
@@ -776,7 +776,7 @@ impl ModuleDeclarations {
         tls: bool,
     ) -> ModuleResult<(DataId, Linkage)> {
         // TODO: Can we avoid allocating names so often?
-        use super::hash_map::Entry::*;
+        use hashbrown::hash_map::Entry::*;
         match self.names.entry(name.to_owned()) {
             Occupied(entry) => match *entry.get() {
                 FuncOrDataId::Data(id) => {
