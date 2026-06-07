@@ -840,7 +840,7 @@ pub(crate) mod convert {
     use crate::common::UnitSectionOffset;
     use crate::read::{self, Reader};
     use crate::write::{ConvertError, ConvertResult, UnitId};
-    use std::collections::HashMap;
+    use alloc::collections::BTreeMap as HashMap;
 
     impl Expression {
         /// Create an expression from the input expression.
@@ -1066,7 +1066,7 @@ mod tests {
     use crate::read;
     use crate::write::{AttributeValue, Dwarf, EndianVec, LineProgram, Sections, Unit};
     use crate::LittleEndian;
-    use std::collections::HashMap;
+    use alloc::collections::BTreeMap as HashMap;
 
     #[test]
     #[allow(clippy::type_complexity)]

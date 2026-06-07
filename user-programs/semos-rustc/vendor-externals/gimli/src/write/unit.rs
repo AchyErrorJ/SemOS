@@ -1476,7 +1476,7 @@ pub(crate) mod convert {
     use crate::common::{DwoId, UnitSectionOffset};
     use crate::read::{self, Reader};
     use crate::write::{self, ConvertError, ConvertResult, LocationList, RangeList};
-    use std::collections::HashMap;
+    use alloc::collections::BTreeMap as HashMap;
 
     pub(crate) struct ConvertUnit<R: Reader<Offset = usize>> {
         from_unit: read::Unit<R>,

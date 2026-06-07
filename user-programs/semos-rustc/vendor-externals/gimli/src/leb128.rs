@@ -155,11 +155,40 @@ pub mod read {
     }
 }
 
+/// Minimal no_std io::Write shim — gimli's leb128::write needs it but we
+/// don't want to pull all of std. `&mut [u8]` implements this; gimli's
+/// callers all pass slices.
+#[cfg(feature = "write")]
+pub mod io {
+    /// Mirrors `std::io::Error` enough for leb128's purposes.
+    #[derive(Debug)]
+    pub struct Error;
+    /// Minimal Write trait — what leb128 needs.
+    pub trait Write {
+        /// Write up to `buf.len()` bytes from `buf`; return how many landed.
+        fn write(&mut self, buf: &[u8]) -> Result<usize, Error>;
+        /// Write the entire `buf`; error if the underlying sink can't hold it.
+        fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
+            let n = self.write(buf)?;
+            if n == buf.len() { Ok(()) } else { Err(Error) }
+        }
+    }
+    impl Write for &mut [u8] {
+        fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
+            let amt = core::cmp::min(buf.len(), self.len());
+            let (a, b) = core::mem::take(self).split_at_mut(amt);
+            a.copy_from_slice(&buf[..amt]);
+            *self = b;
+            Ok(amt)
+        }
+    }
+}
+
 /// A module for writing integers encoded as LEB128.
 #[cfg(feature = "write")]
 pub mod write {
     use super::{low_bits_of_u64, CONTINUATION_BIT};
-    use std::io;
+    use super::io;
 
     /// Write the given unsigned number using the LEB128 encoding to the given
     /// `std::io::Write`able. Returns the number of bytes written to `w`, or an

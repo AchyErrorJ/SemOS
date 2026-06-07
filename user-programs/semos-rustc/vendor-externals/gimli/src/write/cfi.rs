@@ -597,7 +597,7 @@ pub(crate) mod convert {
     use super::*;
     use crate::read::{self, Reader};
     use crate::write::{ConvertError, ConvertResult};
-    use std::collections::{hash_map, HashMap};
+    use alloc::collections::{btree_map as hash_map, BTreeMap as HashMap};
 
     impl FrameTable {
         /// Create a frame table by reading the data in the given section.

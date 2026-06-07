@@ -131,3 +131,39 @@ aho-corasick = { path = "vendor-externals/aho-corasick" }
 # where read-all depends on std.
 cranelift-module = { path = "vendor-externals/cranelift-module" }
 gimli = { path = "vendor-externals/gimli" }
+# Stage G iter 5a: cranelift-codegen 0.122.0 vendored. This is the big
+# one (~200 source files). Upstream defaults pull `std`, `timing`, plus
+# `anyhow/std`, `gimli/std`, `rustc-hash/std`, `target-lexicon/std`,
+# `wasmtime-internal-math/std` — none of which can be dropped from a
+# consumer Cargo.toml without vendoring. Our patched copy drops `std`
+# and `timing` from defaults and adds `default-features = false` to
+# every dep that defaults-on-std.
+#
+# CAVEAT: source-vendoring of the ~200 .rs files was NOT completed in
+# iter 5a (sandbox `cp -r` denied; per-file copy budget exceeded).
+# Only Cargo.toml + top-level metadata files landed in vendor-externals/
+# cranelift-codegen/. Stage G iter 5b must finish the source copy
+# (each src/**/*.rs) + the `use std::* → use core::*/alloc::*` sweep
+# + a replacement for `std::sync::OnceLock` (used in {aarch64,s390x,
+# x64,pulley_shared}/abi.rs — no alloc equivalent, needs spin::Once
+# or similar). See EXPERIMENT_LOG.md Stage G iter 5a section for the
+# 30-files-listing per-directory breakdown.
+cranelift-codegen = { path = "vendor-externals/cranelift-codegen" }
+# Stage G iter 5b: cranelift-frontend + cranelift-assembler-x64 +
+# cranelift-assembler-x64-meta + cranelift-srcgen — the cranelift-codegen
+# sibling family. frontend's `default = ["std"]` leaks std to
+# cranelift-codegen via `cranelift-codegen/std`; our fork switches the
+# default to `core` (hashbrown HashMap path) and drops `std` from the
+# `[dependencies.cranelift-codegen]` features list. assembler-x64 has no
+# std/no_std features upstream and only uses a thin std footprint
+# (std::fmt → core::fmt, std::vec::Vec → alloc::vec::Vec, std::num::*
+# → core::num::*); the [[bin]] cranelift-assembler-x64 CLI is dropped
+# because src/main.rs uses std::path::PathBuf + println! which the
+# x86_64-unknown-none target can't provide. assembler-x64-meta + srcgen
+# are HOST build-deps (used by assembler-x64's build.rs to generate the
+# instruction table), so they need no no_std treatment — only the
+# [workspace] opt-out so parent-workspace discovery doesn't claim them.
+cranelift-frontend = { path = "vendor-externals/cranelift-frontend" }
+cranelift-assembler-x64 = { path = "vendor-externals/cranelift-assembler-x64" }
+cranelift-assembler-x64-meta = { path = "vendor-externals/cranelift-assembler-x64-meta" }
+cranelift-srcgen = { path = "vendor-externals/cranelift-srcgen" }
