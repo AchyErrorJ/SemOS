@@ -1,5 +1,7 @@
 //! Codegen of `asm!` invocations.
 
+use alloc::borrow::ToOwned;
+use alloc::string::{String, ToString};
 use core::fmt::Write;
 
 use cranelift_codegen::isa::CallConv;

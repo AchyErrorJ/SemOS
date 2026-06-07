@@ -1,6 +1,6 @@
-use alloc::vec::Vec;
 //! Write the debuginfo into an object file.
 
+use alloc::vec::Vec;
 use cranelift_module::{DataId, FuncId};
 use cranelift_object::ObjectProduct;
 use gimli::write::{Address, AttributeValue, EndianVec, Result, Sections, Writer};

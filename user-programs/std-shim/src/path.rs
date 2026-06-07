@@ -11,6 +11,11 @@ use core::ops::Deref;
 
 const SEP: char = '/';
 
+/// The primary path separator for this platform (POSIX-like).
+pub const MAIN_SEPARATOR: char = '/';
+/// The primary path separator as a string (POSIX-like).
+pub const MAIN_SEPARATOR_STR: &str = "/";
+
 /// Borrowed path slice — a thin newtype over `str` so type signatures read
 /// naturally. Construct with `Path::new`.
 #[repr(transparent)]
@@ -28,6 +33,13 @@ impl Path {
         &self.inner
     }
 
+    /// Stage G iter 9 (cg_clif compat): std Path::to_str returns
+    /// Option<&str> because std paths can contain non-UTF-8. semos_std
+    /// stores UTF-8 internally, so this always returns Some.
+    pub fn to_str(&self) -> Option<&str> {
+        Some(&self.inner)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -35,6 +47,8 @@ impl Path {
     pub fn is_absolute(&self) -> bool {
         self.inner.starts_with(SEP)
     }
+
+    pub fn is_relative(&self) -> bool { !self.is_absolute() }
 
     /// Parent path, or `None` if this is a root / empty / single-component.
     pub fn parent(&self) -> Option<&Path> {
@@ -193,7 +207,7 @@ impl PartialEq for Path {
 impl Eq for Path {}
 
 /// Owned, mutable path. Backed by `String`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PathBuf {
     inner: String,
 }
@@ -214,6 +228,9 @@ impl PathBuf {
     pub fn into_string(self) -> String {
         self.inner
     }
+
+    /// std-compat alias for `into_string` — `OsString` on SemOS is `String`.
+    pub fn into_os_string(self) -> String { self.inner }
 
     /// Append a path component. If `other` is absolute, replaces the entire
     /// path. Otherwise adds a separator (unless the current path is empty or
@@ -286,6 +303,9 @@ impl From<&str> for PathBuf {
 impl From<String> for PathBuf {
     fn from(s: String) -> Self { Self { inner: s } }
 }
+impl From<&Path> for PathBuf {
+    fn from(p: &Path) -> Self { Self { inner: p.inner.to_owned() } }
+}
 impl AsRef<Path> for PathBuf {
     fn as_ref(&self) -> &Path { self.as_path() }
 }
@@ -347,6 +367,31 @@ impl<'a> Components<'a> {
     /// Convert the remainder back to a `&Path`.
     pub fn as_path(&self) -> &'a Path {
         Path::new(self.inner)
+    }
+}
+
+impl<'a> DoubleEndedIterator for Components<'a> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        // Stage G iter 9 (cg_clif compat): emit the last non-separator
+        // component, peeling from the tail. Treats trailing seps as
+        // already-skipped per `Components` invariant on `next()`.
+        self.inner = self.inner.trim_end_matches(SEP);
+        if self.inner.is_empty() {
+            // If yielded_root hasn't fired yet and original path was "/",
+            // surface RootDir; otherwise iteration ends.
+            if !self.yielded_root { return None; }
+            return None;
+        }
+        let (head, tail) = match self.inner.rfind(SEP) {
+            Some(idx) => (&self.inner[..idx], &self.inner[idx + 1..]),
+            None => ("", self.inner),
+        };
+        self.inner = head;
+        Some(match tail {
+            "." => Component::CurDir,
+            ".." => Component::ParentDir,
+            s => Component::Normal(s),
+        })
     }
 }
 

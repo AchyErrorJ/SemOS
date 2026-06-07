@@ -1,5 +1,6 @@
-use alloc::vec::Vec;
 //! Handling of everything related to debuginfo.
+
+use alloc::vec::Vec;
 
 mod emit;
 mod gcc_except_table;
@@ -16,7 +17,10 @@ use gimli::write::{
     RangeList, UnitEntryId,
 };
 use gimli::{AArch64, Encoding, Format, LineEncoding, Register, RiscV, RunTimeEndian, X86_64};
+// Stage G iter 9: vendored indexmap dropped the default hasher in
+// no_std mode; pin to FxBuildHasher to match the field type.
 use indexmap::IndexSet;
+use rustc_hash::FxBuildHasher;
 use rustc_codegen_ssa::debuginfo::type_names;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefIdMap;
@@ -51,7 +55,7 @@ pub(crate) struct DebugContext {
 pub(crate) struct FunctionDebugContext {
     entry_id: Option<UnitEntryId>,
     function_source_loc: (FileId, u64, u64),
-    source_loc_set: IndexSet<(FileId, u64, u64)>,
+    source_loc_set: IndexSet<(FileId, u64, u64), FxBuildHasher>,
 }
 
 impl DebugContext {
@@ -120,11 +124,13 @@ impl DebugContext {
         };
 
         let file_has_md5 = file_info.is_some();
+        // Stage G iter 9: cg_clif targets a newer gimli that takes an
+        // extra `None` (likely a comp_file_md5 hint) between comp_dir and
+        // comp_file. Our 0.31.x has only 5 args. Drop the extra None.
         let mut line_program = LineProgram::new(
             encoding,
             LineEncoding::default(),
             LineString::new(comp_dir.as_bytes(), encoding, &mut dwarf.line_strings),
-            None,
             LineString::new(name.as_bytes(), encoding, &mut dwarf.line_strings),
             file_info,
         );
@@ -225,7 +231,7 @@ impl DebugContext {
             return FunctionDebugContext {
                 entry_id: None,
                 function_source_loc: (file_id, line, column),
-                source_loc_set: IndexSet::new(),
+                source_loc_set: IndexSet::with_hasher(FxBuildHasher),
             };
         }
 
@@ -288,7 +294,7 @@ impl DebugContext {
         FunctionDebugContext {
             entry_id: Some(entry_id),
             function_source_loc: (file_id, line, column),
-            source_loc_set: IndexSet::new(),
+            source_loc_set: IndexSet::with_hasher(FxBuildHasher),
         }
     }
 

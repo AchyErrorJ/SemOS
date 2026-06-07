@@ -36,12 +36,17 @@ fn split_path_dir_and_file(path: &Path) -> (&Path, &OsStr) {
 
 // OPTIMIZATION: Avoid UTF-8 validation on UNIX.
 fn osstr_as_utf8_bytes(path: &OsStr) -> &[u8] {
-    #[cfg(unix)]
+    #[cfg(target_os = "none")]
+    {
+        // semos_std::ffi::OsStr is a `str` alias; .as_bytes() is direct.
+        path.as_bytes()
+    }
+    #[cfg(all(unix, not(target_os = "none")))]
     {
         use std::os::unix::ffi::OsStrExt;
         path.as_bytes()
     }
-    #[cfg(not(unix))]
+    #[cfg(all(not(unix), not(target_os = "none")))]
     {
         path.to_str().unwrap().as_bytes()
     }

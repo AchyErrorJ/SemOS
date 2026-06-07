@@ -1,3 +1,4 @@
+use alloc::borrow::ToOwned;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use rustc_hir::LangItem;
 use rustc_middle::ty::{AssocTag, GenericArg};

@@ -45,6 +45,12 @@ object = { version = "0.36", default-features = false, features = ["read_core", 
 indexmap = { version = "2.0.0", default-features = false }
 smallvec = { version = "1.8.1", default-features = false }
 
+# Stage G iter 9: hashbrown for no_std hash_map::Entry (pretty_clif.rs).
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
+# Stage G iter 9: rustc_data_structures::fx::FxBuildHasher for IndexSet
+# no_std construction (debuginfo/mod.rs).
+rustc-hash = { version = "2", default-features = false }
+
 # M27 Phase 5c Stage G iter 7: cg_clif uses `#![feature(rustc_private)]`
 # to consume rustc internal crates. Upstream rustc bootstrap injects
 # these via --extern flags. For our cargo-managed semos-rustc workspace

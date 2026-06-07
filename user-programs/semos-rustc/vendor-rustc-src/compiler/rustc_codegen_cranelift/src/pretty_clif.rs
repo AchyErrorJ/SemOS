@@ -219,7 +219,10 @@ impl FuncWriter for &'_ CommentWriter {
         inst: Inst,
         indent: usize,
     ) -> fmt::Result {
-        if let Some(comment) = self.entity_comments.get(&inst.into()) {
+        // Stage G iter 9: hashbrown's get<Q> needs explicit type vs std's
+        // PartialEq-only requirement. Cast first.
+        let inst_entity: AnyEntity = inst.into();
+        if let Some(comment) = self.entity_comments.get(&inst_entity) {
             writeln!(w, "; {}", comment.replace('\n', "\n; "))?;
         }
         PlainWriter.write_instruction(w, func, aliases, inst, indent)?;
@@ -261,26 +264,32 @@ pub(crate) fn write_ir_file(
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) {
-    let clif_output_dir = output_filenames.with_extension("clif");
-
+    // Stage G iter 9: IR dump writer is host-only. PathBuf↔&str impedance
+    // on semos_std::fs makes it not worth porting for target side, and
+    // SemOS-target cg_clif doesn't dump IR anyway.
     #[cfg(target_os = "none")]
-    use semos_std::fs;
+    let _ = (output_filenames, name, write);
+
     #[cfg(not(target_os = "none"))]
-    use std::fs;
-    match fs::create_dir(&clif_output_dir) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
-        res @ Err(_) => res.unwrap(),
-    }
+    {
+        let clif_output_dir = output_filenames.with_extension("clif");
 
-    let clif_file_name = clif_output_dir.join(name);
+        use std::fs;
+        match fs::create_dir(&clif_output_dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            res @ Err(_) => res.unwrap(),
+        }
 
-    let res = fs::File::create(clif_file_name).and_then(|mut file| write(&mut file));
-    if let Err(err) = res {
-        // Using early_warn as no Session is available here
-        let handler =
-            rustc_session::EarlyDiagCtxt::new(rustc_session::config::ErrorOutputType::default());
-        handler.early_warn(format!("error writing ir file: {}", err));
+        let clif_file_name = clif_output_dir.join(name);
+
+        let res = fs::File::create(clif_file_name).and_then(|mut file| write(&mut file));
+        if let Err(err) = res {
+            // Using early_warn as no Session is available here
+            let handler =
+                rustc_session::EarlyDiagCtxt::new(rustc_session::config::ErrorOutputType::default());
+            handler.early_warn(format!("error writing ir file: {}", err));
+        }
     }
 }
 
