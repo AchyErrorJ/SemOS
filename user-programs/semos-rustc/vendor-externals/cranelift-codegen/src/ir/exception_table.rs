@@ -25,6 +25,28 @@ use cranelift_entity::packed_option::PackedOption;
 #[cfg(feature = "enable-serde")]
 use serde_derive::{Deserialize, Serialize};
 
+/// M27 Phase 5c Stage G iter 8: forward-compat stub for cg_clif which
+/// targets a newer Cranelift API where exception-table items are
+/// described via this enum instead of `(Option<ExceptionTag>, BlockCall)`
+/// tuples. ExceptionTableData::new still takes the tuple form internally;
+/// IntoIterator<Item = ExceptionTableItem> converts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExceptionTableItem {
+    /// A specific exception tag with its catch destination.
+    Tag(ExceptionTag, BlockCall),
+    /// A catch-all handler.
+    Default(BlockCall),
+}
+
+impl From<ExceptionTableItem> for (Option<ExceptionTag>, BlockCall) {
+    fn from(item: ExceptionTableItem) -> Self {
+        match item {
+            ExceptionTableItem::Tag(tag, call) => (Some(tag), call),
+            ExceptionTableItem::Default(call) => (None, call),
+        }
+    }
+}
+
 /// Contents of an exception table.
 ///
 /// The "no exception" target for is stored as the last element of the
@@ -84,14 +106,19 @@ impl ExceptionTableData {
     /// corresponding to the number of payload values that the calling
     /// convention and platform support. (See [`isa::CallConv`] for
     /// more details.)
-    pub fn new(
+    pub fn new<I, T>(
         sig: SigRef,
         normal_return: BlockCall,
-        tags_and_targets: impl IntoIterator<Item = (Option<ExceptionTag>, BlockCall)>,
-    ) -> Self {
+        tags_and_targets: I,
+    ) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<(Option<ExceptionTag>, BlockCall)>,
+    {
         let mut targets = vec![];
         let mut tags = vec![];
-        for (tag, target) in tags_and_targets {
+        for item in tags_and_targets {
+            let (tag, target) = item.into();
             tags.push(tag.into());
             targets.push(target);
         }

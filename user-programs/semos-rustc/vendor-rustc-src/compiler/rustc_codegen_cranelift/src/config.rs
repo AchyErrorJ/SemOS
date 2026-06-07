@@ -1,3 +1,6 @@
+use alloc::string::String;
+use alloc::vec::Vec;
+
 /// Configuration of cg_clif as passed in through `-Cllvm-args` and various env vars.
 #[derive(Debug)]
 pub struct BackendConfig {
@@ -17,6 +20,11 @@ impl BackendConfig {
     pub fn from_opts(opts: &[String]) -> Result<Self, String> {
         let mut config = BackendConfig {
             jit_mode: false,
+            // Stage G iter 8: JIT mode is disabled on SemOS (no mmap+exec).
+            // Skip env var lookup target-side; host keeps original behaviour.
+            #[cfg(target_os = "none")]
+            jit_args: alloc::vec::Vec::new(),
+            #[cfg(not(target_os = "none"))]
             jit_args: match std::env::var("CG_CLIF_JIT_ARGS") {
                 Ok(args) => args.split(' ').map(|arg| arg.to_string()).collect(),
                 Err(std::env::VarError::NotPresent) => vec![],

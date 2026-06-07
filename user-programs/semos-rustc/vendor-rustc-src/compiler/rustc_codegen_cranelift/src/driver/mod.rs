@@ -10,6 +10,10 @@ use rustc_middle::mir::mono::{MonoItem, MonoItemData};
 
 use crate::prelude::*;
 
+// Stage G iter 8: aot driver does heavy disk I/O + threading via std::{fs,
+// io, path, thread, panic, env} + invokes global_asm/back::link. Phase 5
+// rewrites this for SemOS; meanwhile cfg-gate the host-only flavor.
+#[cfg(not(target_os = "none"))]
 pub(crate) mod aot;
 #[cfg(feature = "jit")]
 pub(crate) mod jit;
@@ -54,7 +58,7 @@ fn predefine_mono_items<'tcx>(
 struct MeasuremeProfiler(SelfProfilerRef);
 
 struct TimingGuard {
-    profiler: std::mem::ManuallyDrop<SelfProfilerRef>,
+    profiler: core::mem::ManuallyDrop<SelfProfilerRef>,
     inner: Option<rustc_data_structures::profiling::TimingGuard<'static>>,
 }
 
@@ -62,15 +66,15 @@ impl Drop for TimingGuard {
     fn drop(&mut self) {
         self.inner.take();
         unsafe {
-            std::mem::ManuallyDrop::drop(&mut self.profiler);
+            core::mem::ManuallyDrop::drop(&mut self.profiler);
         }
     }
 }
 
 impl cranelift_codegen::timing::Profiler for MeasuremeProfiler {
-    fn start_pass(&self, pass: cranelift_codegen::timing::Pass) -> Box<dyn std::any::Any> {
+    fn start_pass(&self, pass: cranelift_codegen::timing::Pass) -> Box<dyn core::any::Any> {
         let mut timing_guard = Box::new(TimingGuard {
-            profiler: std::mem::ManuallyDrop::new(self.0.clone()),
+            profiler: core::mem::ManuallyDrop::new(self.0.clone()),
             inner: None,
         });
         timing_guard.inner = Some(

@@ -365,7 +365,9 @@ pub struct MachBufferFinalized<T: CompilePhase> {
     /// Any call site records referring to this code.
     pub(crate) call_sites: SmallVec<[MachCallSite; 16]>,
     /// Any exception-handler records referred to at call sites.
-    pub(crate) exception_handlers: SmallVec<[(PackedOption<ir::ExceptionTag>, CodeOffset); 16]>,
+    /// Stage G iter 8: storage type widened to `FinalizedMachExceptionHandler`
+    /// so cg_clif's `match handler { Tag(tag, label) => ... }` works.
+    pub(crate) exception_handlers: SmallVec<[FinalizedMachExceptionHandler; 16]>,
     /// Any source location mappings referring to this code.
     pub(crate) srclocs: SmallVec<[T::MachSrcLocType; 64]>,
     /// Any user stack maps for this code.
@@ -1523,7 +1525,13 @@ impl<I: VCodeInst> MachBuffer<I> {
         let finalized_exception_handlers = self
             .exception_handlers
             .iter()
-            .map(|(tag, label)| (*tag, self.resolve_label_offset(*label)))
+            .map(|(tag, label)| {
+                let off = self.resolve_label_offset(*label);
+                match tag.expand() {
+                    Some(t) => FinalizedMachExceptionHandler::Tag(t, off),
+                    None => FinalizedMachExceptionHandler::Default(off),
+                }
+            })
             .collect();
 
         let mut srclocs = self.srclocs;
@@ -1962,7 +1970,18 @@ pub struct FinalizedMachCallSite<'a> {
 
     /// Exception handlers at this callsite, with target offsets
     /// *relative to the start of the buffer*.
-    pub exception_handlers: &'a [(PackedOption<ir::ExceptionTag>, CodeOffset)],
+    pub exception_handlers: &'a [FinalizedMachExceptionHandler],
+}
+
+/// Stage G iter 8: forward-compat enum stub matching newer Cranelift API.
+/// One per call-site exception handler; landingpad offsets are relative
+/// to the start of the code buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinalizedMachExceptionHandler {
+    /// Specific exception tag → landing pad.
+    Tag(ir::ExceptionTag, CodeOffset),
+    /// Catch-all → landing pad.
+    Default(CodeOffset),
 }
 
 /// A source-location mapping resulting from a compilation.

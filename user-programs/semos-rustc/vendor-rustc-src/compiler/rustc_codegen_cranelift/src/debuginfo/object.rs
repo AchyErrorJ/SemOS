@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use cranelift_module::{DataId, FuncId};
 use cranelift_object::ObjectProduct;
 use gimli::SectionId;

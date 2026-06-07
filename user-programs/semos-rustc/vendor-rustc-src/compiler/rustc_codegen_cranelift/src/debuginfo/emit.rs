@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 //! Write the debuginfo into an object file.
 
 use cranelift_module::{DataId, FuncId};

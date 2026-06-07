@@ -113,7 +113,7 @@ pub(super) fn codegen_x86_llvm_intrinsic_call<'tcx>(
             let ptr = ptr.load_scalar(fx);
             let scale = scale.load_scalar(fx);
             let scale = fx.bcx.ins().uextend(types::I64, scale);
-            for lane_idx in 0..std::cmp::min(src_lane_count, index_lane_count) {
+            for lane_idx in 0..core::cmp::min(src_lane_count, index_lane_count) {
                 let src_lane = src.value_lane(fx, lane_idx).load_scalar(fx);
                 let index_lane = index.value_lane(fx, lane_idx).load_scalar(fx);
                 let mask_lane = mask.value_lane(fx, lane_idx).load_scalar(fx);
@@ -161,7 +161,7 @@ pub(super) fn codegen_x86_llvm_intrinsic_call<'tcx>(
                     .write_cvalue(fx, CValue::by_val(res_lane, ret_lane_layout));
             }
 
-            for lane_idx in std::cmp::min(src_lane_count, index_lane_count)..ret_lane_count {
+            for lane_idx in core::cmp::min(src_lane_count, index_lane_count)..ret_lane_count {
                 let zero_lane = fx.bcx.ins().iconst(mask_lane_clif_ty.as_int(), 0);
                 let zero_lane = fx.bcx.ins().bitcast(mask_lane_clif_ty, MemFlags::new(), zero_lane);
                 ret.place_lane(fx, lane_idx)

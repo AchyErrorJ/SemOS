@@ -75,6 +75,11 @@ rustc_span = { path = "../rustc_span" }
 rustc_symbol_mangling = { path = "../rustc_symbol_mangling" }
 rustc_target = { path = "../rustc_target" }
 
+# Stage G iter 8: semos_std supplies path/fs/io/process/thread/sync surface
+# the no_std target build needs. Host build keeps native std.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+
 # Phase 5c Stage G iter 1: [patch.crates-io] inherited from parent
 # workspace at user-programs/semos-rustc/Cargo.toml. Per cargo: only the
 # workspace-root Cargo.toml's [patch.crates-io] is honored, so the

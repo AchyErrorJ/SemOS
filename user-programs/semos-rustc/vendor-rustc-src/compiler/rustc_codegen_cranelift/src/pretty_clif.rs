@@ -57,7 +57,11 @@
 //! ```
 
 use core::fmt;
-use std::io::Write;
+// Stage G iter 8: io::Write cfg-split between semos_std (target) and std (host).
+#[cfg(target_os = "none")]
+use semos_std::io::{self, Write};
+#[cfg(not(target_os = "none"))]
+use std::io::{self, Write};
 
 use cranelift_codegen::entity::SecondaryMap;
 use cranelift_codegen::ir::Fact;
@@ -124,7 +128,7 @@ impl CommentWriter {
     ) {
         debug_assert!(self.enabled);
 
-        use std::collections::hash_map::Entry;
+        use hashbrown::hash_map::Entry;
         match self.entity_comments.entry(entity.into()) {
             Entry::Occupied(mut occ) => {
                 occ.get_mut().push('\n');
@@ -143,7 +147,7 @@ impl CommentWriter {
     ) {
         debug_assert!(self.enabled);
 
-        use std::collections::hash_map::Entry;
+        use hashbrown::hash_map::Entry;
         match self.inst_post_comments.entry(entity) {
             Entry::Occupied(mut occ) => {
                 occ.get_mut().push('\n');
@@ -255,19 +259,23 @@ pub(crate) fn should_write_ir(sess: &Session) -> bool {
 pub(crate) fn write_ir_file(
     output_filenames: &OutputFilenames,
     name: &str,
-    write: impl FnOnce(&mut dyn Write) -> std::io::Result<()>,
+    write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) {
     let clif_output_dir = output_filenames.with_extension("clif");
 
-    match std::fs::create_dir(&clif_output_dir) {
+    #[cfg(target_os = "none")]
+    use semos_std::fs;
+    #[cfg(not(target_os = "none"))]
+    use std::fs;
+    match fs::create_dir(&clif_output_dir) {
         Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
         res @ Err(_) => res.unwrap(),
     }
 
     let clif_file_name = clif_output_dir.join(name);
 
-    let res = std::fs::File::create(clif_file_name).and_then(|mut file| write(&mut file));
+    let res = fs::File::create(clif_file_name).and_then(|mut file| write(&mut file));
     if let Err(err) = res {
         // Using early_warn as no Session is available here
         let handler =

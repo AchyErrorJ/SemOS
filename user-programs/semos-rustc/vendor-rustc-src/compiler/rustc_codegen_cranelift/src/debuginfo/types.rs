@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 // Adapted from https://github.com/rust-lang/rust/blob/10a7aa14fed9b528b74b0f098c4899c37c09a9c7/compiler/rustc_codegen_llvm/src/debuginfo/metadata.rs
 
 use gimli::write::{AttributeValue, UnitEntryId};

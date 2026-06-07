@@ -1,7 +1,9 @@
 //! Line info generation (`.debug_line`)
 
-use std::ffi::OsStr;
-use std::path::{Component, Path};
+#[cfg(target_os = "none")] use semos_std::ffi::OsStr;
+#[cfg(not(target_os = "none"))] use std::ffi::OsStr;
+#[cfg(target_os = "none")] use semos_std::path::{Component, Path};
+#[cfg(not(target_os = "none"))] use std::path::{Component, Path};
 
 use cranelift_codegen::MachSrcLoc;
 use cranelift_codegen::binemit::CodeOffset;

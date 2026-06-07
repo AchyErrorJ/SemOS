@@ -1,4 +1,8 @@
-use std::sync::{Arc, Condvar, Mutex};
+use alloc::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::sync::{Condvar, Mutex};
+#[cfg(not(target_os = "none"))]
+use std::sync::{Condvar, Mutex};
 
 use rustc_data_structures::jobserver::{self, HelperThread};
 use rustc_errors::DiagCtxtHandle;
@@ -90,7 +94,13 @@ impl ConcurrencyLimiter {
 
 impl Drop for ConcurrencyLimiter {
     fn drop(&mut self) {
-        if !self.finished && !std::thread::panicking() {
+        // Stage G iter 8: thread::panicking() is host-only; on no_std
+        // target there's no double-panic discriminator so we always assert.
+        #[cfg(not(target_os = "none"))]
+        let suppress = std::thread::panicking();
+        #[cfg(target_os = "none")]
+        let suppress = false;
+        if !self.finished && !suppress {
             panic!("Forgot to call finished() on ConcurrencyLimiter");
         }
     }
@@ -111,6 +121,8 @@ impl Drop for ConcurrencyLimiterToken {
 }
 
 mod state {
+    use alloc::string::String;
+    use alloc::vec::Vec;
     use rustc_data_structures::jobserver::Acquired;
 
     #[derive(Debug)]
@@ -193,11 +205,11 @@ mod state {
             self.assert_invariants();
 
             // Drop all tokens that can never be used anymore
-            self.tokens.truncate(std::cmp::max(self.pending_jobs, 1));
+            self.tokens.truncate(core::cmp::max(self.pending_jobs, 1));
 
             // Keep some excess tokens to satisfy requests faster
             const MAX_EXTRA_CAPACITY: usize = 2;
-            self.tokens.truncate(std::cmp::max(self.active_jobs + MAX_EXTRA_CAPACITY, 1));
+            self.tokens.truncate(core::cmp::max(self.active_jobs + MAX_EXTRA_CAPACITY, 1));
 
             self.assert_invariants();
         }

@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 //! Handling of everything related to debuginfo.
 
 mod emit;

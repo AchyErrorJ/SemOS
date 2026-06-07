@@ -57,7 +57,12 @@ use cranelift_codegen::isa::TargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CodegenResults, TargetConfig};
+// Stage G iter 8: rustc_log re-exports `tracing` host-only; target side
+// gets no-op info!/debug!/trace! macros from a local stub.
+#[cfg(not(target_os = "none"))]
 use rustc_log::tracing::info;
+#[cfg(target_os = "none")]
+macro_rules! info { ($($tt:tt)*) => {} }
 use rustc_middle::dep_graph::{WorkProduct, WorkProductId};
 use rustc_session::Session;
 use rustc_session::config::OutputFilenames;
@@ -76,12 +81,21 @@ mod codegen_f16_f128;
 mod codegen_i128;
 mod common;
 mod compiler_builtins;
+// Stage G iter 8: ConcurrencyLimiter is a jobserver-helper for parallel
+// codegen — only used by driver::aot (also host-only) and depends on
+// std::sync::Mutex's .lock().unwrap() and HelperThread which semos_std
+// doesn't provide.
+#[cfg(not(target_os = "none"))]
 mod concurrency_limiter;
 mod config;
 mod constant;
 mod debuginfo;
 mod discriminant;
 mod driver;
+// Stage G iter 8: global_asm + toolchain invoke external assembler/linker
+// binaries via std::process::Command — host-only. Target-side SemOS
+// builds skip them; cg_clif emits ELFs directly via cranelift-object.
+#[cfg(not(target_os = "none"))]
 mod global_asm;
 mod inline_asm;
 mod intrinsics;
@@ -91,6 +105,7 @@ mod num;
 mod optimize;
 mod pointer;
 mod pretty_clif;
+#[cfg(not(target_os = "none"))]
 mod toolchain;
 mod unsize;
 mod unwind_module;
@@ -138,9 +153,13 @@ mod prelude {
 struct PrintOnPanic<F: Fn() -> String>(F);
 impl<F: Fn() -> String> Drop for PrintOnPanic<F> {
     fn drop(&mut self) {
+        // Stage G iter 8: thread::panicking() + println! host-only.
+        #[cfg(not(target_os = "none"))]
         if ::std::thread::panicking() {
             println!("{}", (self.0)());
         }
+        #[cfg(target_os = "none")]
+        let _ = &self.0;
     }
 }
 
@@ -223,6 +242,9 @@ impl CodegenBackend for CraneliftCodegenBackend {
     }
 
     fn print_version(&self) {
+        // Stage G iter 8: println! host-only; SemOS target has no stdout
+        // here (semos-rustc owns its own output).
+        #[cfg(not(target_os = "none"))]
         println!("Cranelift version: {}", cranelift_codegen::VERSION);
     }
 
@@ -236,7 +258,13 @@ impl CodegenBackend for CraneliftCodegenBackend {
             #[cfg(not(feature = "jit"))]
             tcx.dcx().fatal("jit support was disabled when compiling rustc_codegen_cranelift");
         } else {
-            driver::aot::run_aot(tcx)
+            // Stage G iter 8: driver::aot is host-only. Phase 5b's
+            // semos-rustc binary swaps in a SemOS-native AOT driver
+            // that writes ELFs to the SemOS VFS instead.
+            #[cfg(not(target_os = "none"))]
+            { driver::aot::run_aot(tcx) }
+            #[cfg(target_os = "none")]
+            tcx.dcx().fatal("cg_clif AOT driver not yet wired for SemOS target")
         }
     }
 
@@ -246,7 +274,13 @@ impl CodegenBackend for CraneliftCodegenBackend {
         sess: &Session,
         outputs: &OutputFilenames,
     ) -> (CodegenResults, FxIndexMap<WorkProductId, WorkProduct>) {
-        ongoing_codegen.downcast::<driver::aot::OngoingCodegen>().unwrap().join(sess, outputs)
+        #[cfg(not(target_os = "none"))]
+        { ongoing_codegen.downcast::<driver::aot::OngoingCodegen>().unwrap().join(sess, outputs) }
+        #[cfg(target_os = "none")]
+        {
+            let _ = (ongoing_codegen, sess, outputs);
+            sess.dcx().fatal("cg_clif AOT join not yet wired for SemOS target")
+        }
     }
 }
 
@@ -255,9 +289,13 @@ impl CodegenBackend for CraneliftCodegenBackend {
 /// Returns true when `-Zverify-llvm-ir` is passed, the `CG_CLIF_ENABLE_VERIFIER` env var is set to
 /// 1 or when cg_clif is compiled with debug assertions enabled or false otherwise.
 fn enable_verifier(sess: &Session) -> bool {
-    sess.verify_llvm_ir()
-        || cfg!(debug_assertions)
-        || env::var("CG_CLIF_ENABLE_VERIFIER").as_deref() == Ok("1")
+    // Stage G iter 8: env::var is host-only; target side never gets the
+    // toggle (debug_assertions still picks it up on debug builds).
+    #[cfg(target_os = "none")]
+    let from_env = false;
+    #[cfg(not(target_os = "none"))]
+    let from_env = env::var("CG_CLIF_ENABLE_VERIFIER").as_deref() == Ok("1");
+    sess.verify_llvm_ir() || cfg!(debug_assertions) || from_env
 }
 
 fn target_triple(sess: &Session) -> target_lexicon::Triple {
@@ -342,7 +380,16 @@ fn build_isa(sess: &Session, jit: bool) -> Arc<dyn TargetIsa + 'static> {
     let flags = settings::Flags::new(flags_builder);
 
     let isa_builder = match sess.opts.cg.target_cpu.as_deref() {
-        Some("native") => cranelift_native::builder_with_options(true).unwrap(),
+        // Stage G iter 8: cranelift-native runtime CPU detection is
+        // host-only (uses libc cpuid via std). SemOS target hardcodes
+        // x86_64 features at build time; "native" falls through to
+        // explicit lookup of the build target.
+        Some("native") => {
+            #[cfg(not(target_os = "none"))]
+            { cranelift_native::builder_with_options(true).unwrap() }
+            #[cfg(target_os = "none")]
+            { cranelift_codegen::isa::lookup(target_triple.clone()).unwrap() }
+        }
         Some(value) => {
             let mut builder =
                 cranelift_codegen::isa::lookup(target_triple.clone()).unwrap_or_else(|err| {

@@ -34,7 +34,7 @@ use crate::codegen_f16_f128;
 use crate::debuginfo::EXCEPTION_HANDLER_CATCH;
 use crate::prelude::*;
 
-fn bug_on_incorrect_arg_count(intrinsic: impl std::fmt::Display) -> ! {
+fn bug_on_incorrect_arg_count(intrinsic: impl core::fmt::Display) -> ! {
     bug!("wrong number of args for intrinsic {}", intrinsic);
 }
 

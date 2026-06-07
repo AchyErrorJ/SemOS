@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use gimli::write::{Address, Writer};
 use gimli::{DW_EH_PE_omit, DW_EH_PE_uleb128, Encoding, LittleEndian};
 
