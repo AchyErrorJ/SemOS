@@ -974,6 +974,19 @@ pub fn init() -> bool {
     // the EHCI companion. (Lynx Point W540 + early Sunrise Point.)
     intel_pch_port_routing(loc);
 
+    // W540 diagnostic: USB2PHYCM bit 7 gates the USB-2 PHY digital logic.
+    // When set, CCS detection still works (analog) but the port state
+    // machine cannot drive SE0 or detect speed chirps, so PRC fires and
+    // PED stays 0. Clear it before HCRST so the PHY is fully active.
+    if loc.vendor_id() == 0x8086 {
+        let usb2phycm = pci::read_u32(loc.bus, loc.slot, loc.func, 0xE0);
+        if usb2phycm & (1 << 7) != 0 {
+            pci::write_u32(loc.bus, loc.slot, loc.func, 0xE0, usb2phycm & !(1 << 7));
+            let after = pci::read_u32(loc.bus, loc.slot, loc.func, 0xE0);
+            println!("[xhci] USB2PHYCM 0x{:08X} -> 0x{:08X} (cleared bit 7)", usb2phycm, after);
+        }
+    }
+
     // The bootloader identity-maps physical memory at PHYS_MEM_OFFSET, so
     // MMIO accesses go through the phys_to_virt window. xHCI BAR
     // addresses live in low MMIO (typically below 4 GiB), well within the
