@@ -4,8 +4,8 @@ mod comments;
 mod pass_mode;
 mod returning;
 
-use std::borrow::Cow;
-use std::mem;
+use alloc::borrow::Cow;
+use core::mem;
 
 use cranelift_codegen::ir::{
     ArgumentPurpose, BlockArg, ExceptionTableData, ExceptionTableItem, ExceptionTag, SigRef,

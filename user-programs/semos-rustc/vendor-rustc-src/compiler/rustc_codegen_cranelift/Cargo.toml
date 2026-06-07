@@ -45,6 +45,36 @@ object = { version = "0.36", default-features = false, features = ["read_core", 
 indexmap = { version = "2.0.0", default-features = false }
 smallvec = { version = "1.8.1", default-features = false }
 
+# M27 Phase 5c Stage G iter 7: cg_clif uses `#![feature(rustc_private)]`
+# to consume rustc internal crates. Upstream rustc bootstrap injects
+# these via --extern flags. For our cargo-managed semos-rustc workspace
+# we must declare them as path deps so cargo resolves them.
+#
+# rustc_driver is intentionally DROPPED here. Upstream's comment says
+# "This prevents duplicating functions and statics that are already part
+# of the host rustc process" — it's a host-bootstrap optimisation, not a
+# real codegen dep. It also transitively pulls rustc_mir_transform /
+# rustc_mir_build / rustc_hir_analysis / rustc_passes which still need
+# Phase 5a's alloc prelude sweep. Phase 5b wires rustc_driver back in
+# at the semos-rustc binary level (not here).
+rustc_middle = { path = "../rustc_middle" }
+rustc_abi = { path = "../rustc_abi" }
+rustc_ast = { path = "../rustc_ast" }
+rustc_codegen_ssa = { path = "../rustc_codegen_ssa" }
+rustc_const_eval = { path = "../rustc_const_eval" }
+rustc_data_structures = { path = "../rustc_data_structures" }
+rustc_errors = { path = "../rustc_errors" }
+rustc_fs_util = { path = "../rustc_fs_util" }
+rustc_hir = { path = "../rustc_hir" }
+rustc_incremental = { path = "../rustc_incremental" }
+rustc_index = { path = "../rustc_index" }
+rustc_log = { path = "../rustc_log" }
+rustc_metadata = { path = "../rustc_metadata" }
+rustc_session = { path = "../rustc_session" }
+rustc_span = { path = "../rustc_span" }
+rustc_symbol_mangling = { path = "../rustc_symbol_mangling" }
+rustc_target = { path = "../rustc_target" }
+
 # Phase 5c Stage G iter 1: [patch.crates-io] inherited from parent
 # workspace at user-programs/semos-rustc/Cargo.toml. Per cargo: only the
 # workspace-root Cargo.toml's [patch.crates-io] is honored, so the

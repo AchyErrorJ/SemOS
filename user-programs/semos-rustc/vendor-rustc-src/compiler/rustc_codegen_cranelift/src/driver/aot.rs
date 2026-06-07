@@ -5,7 +5,7 @@ use std::env;
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use alloc::sync::Arc;
 use std::thread::JoinHandle;
 
 use cranelift_object::{ObjectBuilder, ObjectModule};

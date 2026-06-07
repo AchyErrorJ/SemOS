@@ -56,7 +56,7 @@
 //! }
 //! ```
 
-use std::fmt;
+use core::fmt;
 use std::io::Write;
 
 use cranelift_codegen::entity::SecondaryMap;

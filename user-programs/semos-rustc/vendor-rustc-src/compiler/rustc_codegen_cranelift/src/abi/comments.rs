@@ -1,7 +1,7 @@
 //! Annotate the clif ir with comments describing how arguments are passed into the current function
 //! and where all locals are stored.
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 use rustc_target::callconv::PassMode;
 

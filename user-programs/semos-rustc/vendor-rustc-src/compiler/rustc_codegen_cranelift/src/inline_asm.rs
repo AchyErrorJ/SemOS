@@ -1,6 +1,6 @@
 //! Codegen of `asm!` invocations.
 
-use std::fmt::Write;
+use core::fmt::Write;
 
 use cranelift_codegen::isa::CallConv;
 use rustc_ast::ast::{InlineAsmOptions, InlineAsmTemplatePiece};

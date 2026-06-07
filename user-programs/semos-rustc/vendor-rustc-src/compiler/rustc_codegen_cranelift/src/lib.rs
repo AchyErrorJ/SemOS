@@ -1,3 +1,7 @@
+// M27 Phase 5c Stage G iter 7: no_std port for x86_64-unknown-none.
+// cg_clif itself runs target-side inside semos-rustc.
+#![cfg_attr(target_os = "none", no_std)]
+
 // tidy-alphabetical-start
 // Note: please avoid adding other feature gates where possible
 #![feature(rustc_private)]
@@ -9,6 +13,14 @@
 #![warn(unreachable_pub)]
 #![warn(unused_lifetimes)]
 // tidy-alphabetical-end
+
+// Stage G iter 7: macro_use pulls vec! / format! / write! into scope so
+// downstream modules don't each need to import them.
+#[macro_use]
+extern crate alloc;
+
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 #[macro_use]
 extern crate rustc_middle;
@@ -29,14 +41,17 @@ extern crate rustc_span;
 extern crate rustc_symbol_mangling;
 extern crate rustc_target;
 
-// This prevents duplicating functions and statics that are already part of the host rustc process.
-#[allow(unused_extern_crates)]
-extern crate rustc_driver;
+// M27 Phase 5c Stage G iter 7: rustc_driver dropped — upstream's
+// comment said it prevents host-rustc duplication. Phase 5b wires it
+// at the semos-rustc binary level (and only if needed).
+// #[allow(unused_extern_crates)]
+// extern crate rustc_driver;
 
-use std::any::Any;
-use std::cell::OnceCell;
+use core::any::Any;
+use core::cell::OnceCell;
+#[cfg(not(target_os = "none"))]
 use std::env;
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use cranelift_codegen::isa::TargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
@@ -83,6 +98,15 @@ mod value_and_place;
 mod vtable;
 
 mod prelude {
+    // M27 Phase 5c Stage G iter 7: alloc prelude reexports for no_std mode.
+    // Files that `use crate::prelude::*` get Vec/String/Box/BTreeMap/Arc
+    // without per-file alloc imports.
+    pub(crate) use alloc::boxed::Box;
+    pub(crate) use alloc::collections::BTreeMap;
+    pub(crate) use alloc::string::{String, ToString};
+    pub(crate) use alloc::sync::Arc;
+    pub(crate) use alloc::vec::Vec;
+
     pub(crate) use cranelift_codegen::Context;
     pub(crate) use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
     pub(crate) use cranelift_codegen::ir::function::Function;

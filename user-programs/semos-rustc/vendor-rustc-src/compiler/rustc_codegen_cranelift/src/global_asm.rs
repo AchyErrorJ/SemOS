@@ -4,7 +4,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use rustc_ast::{InlineAsmOptions, InlineAsmTemplatePiece};
 use rustc_codegen_ssa::traits::{AsmCodegenMethods, GlobalAsmOperandRef};

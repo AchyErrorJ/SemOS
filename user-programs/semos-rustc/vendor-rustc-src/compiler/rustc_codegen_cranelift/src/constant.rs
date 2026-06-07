@@ -1,6 +1,6 @@
 //! Handling of `static`s, `const`s and promoted allocations
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 use cranelift_module::*;
 use rustc_const_eval::interpret::CTFE_ALLOC_SALT;
