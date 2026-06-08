@@ -48,17 +48,16 @@ path = "src/main.rs"
 [dependencies]
 semos-std = { path = "../std-shim" }
 
-# M27 Phase 5c Stage G iter 10: rustc_driver_impl + rustc_driver are
-# DISABLED until Phase 5a finishes the alloc-prelude sweep on
-# rustc_mir_transform / rustc_mir_build / rustc_hir_analysis /
-# rustc_passes (task #15). Meanwhile semos-rustc bin uses cg_clif +
-# Cranelift directly to prove the codegen pipeline produces a SemOS
-# ELF from a hand-built Cranelift IR snippet. DEMO 80 lite: emit ELF
-# that SYS_SPAWN can load.
-# rustc_driver_impl = { path = "vendor-rustc-src/compiler/rustc_driver_impl" }
-# rustc_driver      = { path = "vendor-rustc-src/compiler/rustc_driver" }
+# M27 Phase 5b (re-enabled 2026-06-08 after Stage H iters 1-4 closed all
+# the previously-broken rustc_* crates target-side): wire rustc_driver_impl
+# into the semos-rustc binary so it can actually drive a rustc compile on
+# SemOS. rustc_driver is the thin wrapper re-export.
+rustc_driver_impl = { path = "vendor-rustc-src/compiler/rustc_driver_impl" }
+rustc_driver      = { path = "vendor-rustc-src/compiler/rustc_driver" }
 
-# Direct deps for the iter 10 cg_clif-only smoke path.
+# Direct Cranelift deps stay for the smoke-path fallback (if rustc_driver
+# integration hits a blocker we can still emit ELFs via cg_clif's lower
+# layer).
 cranelift-codegen   = { version = "0.122.0", default-features = false, features = ["unwind", "host-arch", "x86"] }
 cranelift-frontend  = { version = "0.122.0", default-features = false, features = ["core"] }
 cranelift-module    = { version = "0.122.0", default-features = false, features = ["core"] }

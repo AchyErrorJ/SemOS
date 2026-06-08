@@ -1847,6 +1847,7 @@ dependencies = [
  "rustc_codegen_ssa",
  "rustc_const_eval",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_expand",
  "rustc_feature",
@@ -1880,6 +1881,7 @@ dependencies = [
  "rustc_target",
  "rustc_trait_selection",
  "rustc_ty_utils",
+ "semos-std",
  "serde_json",
  "shlex",
  "tracing",
@@ -2039,6 +2041,7 @@ dependencies = [
  "rustc_arena",
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_feature",
  "rustc_fluent_macro",
@@ -2088,6 +2091,7 @@ dependencies = [
  "rustc_abi",
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2185,6 +2189,7 @@ dependencies = [
  "rustc_codegen_ssa",
  "rustc_const_eval",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_expand",
  "rustc_feature",
@@ -2215,6 +2220,7 @@ dependencies = [
  "rustc_trait_selection",
  "rustc_traits",
  "rustc_ty_utils",
+ "semos-std",
  "tracing",
 ]
 
@@ -2379,12 +2385,14 @@ dependencies = [
 name = "rustc_mir_build"
 version = "0.0.0"
 dependencies = [
+ "hashbrown 0.15.5",
  "itertools",
  "rustc_abi",
  "rustc_apfloat",
  "rustc_arena",
  "rustc_ast",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2433,6 +2441,7 @@ dependencies = [
  "rustc_ast",
  "rustc_const_eval",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_fluent_macro",
  "rustc_hir",
@@ -2522,11 +2531,13 @@ dependencies = [
 name = "rustc_passes"
 version = "0.0.0"
 dependencies = [
+ "hashbrown 0.15.5",
  "rustc_abi",
  "rustc_ast",
  "rustc_ast_lowering",
  "rustc_attr_parsing",
  "rustc_data_structures",
+ "rustc_error_messages",
  "rustc_errors",
  "rustc_expand",
  "rustc_feature",
@@ -3024,6 +3035,8 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-module",
  "cranelift-object",
+ "rustc_driver",
+ "rustc_driver_impl",
  "semos-std",
  "target-lexicon",
 ]

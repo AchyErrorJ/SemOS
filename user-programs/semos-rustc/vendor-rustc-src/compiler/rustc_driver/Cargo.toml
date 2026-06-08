@@ -4,7 +4,10 @@ version = "0.0.0"
 edition = "2024"
 
 [lib]
-crate-type = ["dylib"]
+# Stage H iter 4 / Phase 5b: x86_64-unknown-none doesn't support dylib;
+# semos-rustc statically links via rlib. Host can still build as rlib
+# since it just re-exports rustc_driver_impl's symbols.
+crate-type = ["rlib"]
 
 [dependencies]
 # tidy-alphabetical-start
