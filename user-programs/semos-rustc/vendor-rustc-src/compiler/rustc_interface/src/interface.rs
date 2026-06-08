@@ -1,7 +1,12 @@
 #[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+// Stage H iter 2: route eprintln to semos_std on target (same sink as println!).
+#[cfg(target_os = "none")] use semos_std::eprintln;
+#[cfg(not(target_os = "none"))]
 use std::path::PathBuf;
-use std::result;
-use std::sync::Arc;
+#[cfg(target_os = "none")]
+use semos_std::path::PathBuf;
+use core::result;
+use alloc::sync::Arc;
 
 use rustc_ast::{LitKind, MetaItemKind, token};
 use rustc_codegen_ssa::traits::CodegenBackend;
@@ -389,7 +394,7 @@ pub struct Config {
     /// The inner atomic value is set to true when a feature marked as `internal` is
     /// enabled. Makes it so that "please report a bug" is hidden, as ICEs with
     /// internal features are wontfix, and they are usually the cause of the ICEs.
-    pub using_internal_features: &'static std::sync::atomic::AtomicBool,
+    pub using_internal_features: &'static core::sync::atomic::AtomicBool,
 }
 
 /// Initialize jobserver before getting `jobserver::client` and `build_session`.
@@ -530,7 +535,13 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
             // - Panic, e.g. triggered by `abort_if_errors` or a fatal error.
             //
             // We must run `finish_diagnostics` in both cases.
+            // Stage H iter 2: panic-catching is host-only. On SemOS target,
+            // a panic in `f` aborts the task — same observable outcome as
+            // the resume_unwind branch below, just at coarser granularity.
+            #[cfg(not(target_os = "none"))]
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&compiler)));
+            #[cfg(target_os = "none")]
+            let res: Result<_, alloc::boxed::Box<dyn core::any::Any + Send>> = Ok(f(&compiler));
 
             compiler.sess.finish_diagnostics();
 
@@ -554,7 +565,10 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
             let res = match res {
                 Ok(res) => res,
                 // Resume unwinding if a panic happened.
+                #[cfg(not(target_os = "none"))]
                 Err(err) => std::panic::resume_unwind(err),
+                #[cfg(target_os = "none")]
+                Err(_) => panic!("compilation thread panicked (resume_unwind unsupported on SemOS)"),
             };
 
             let prof = compiler.sess.prof.clone();
@@ -568,7 +582,8 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
 pub fn try_print_query_stack(
     dcx: DiagCtxtHandle<'_>,
     limit_frames: Option<usize>,
-    file: Option<std::fs::File>,
+    #[cfg(not(target_os = "none"))] file: Option<std::fs::File>,
+    #[cfg(target_os = "none")] file: Option<semos_std::fs::File>,
 ) {
     eprintln!("query stack during panic:");
 

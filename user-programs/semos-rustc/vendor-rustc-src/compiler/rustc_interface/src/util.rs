@@ -1,14 +1,39 @@
 #[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+// Stage H iter 2: route eprintln to semos_std on target.
+#[cfg(target_os = "none")] use semos_std::eprintln;
 use core::any::Any;
+use core::sync::atomic::{AtomicBool, Ordering};
+use alloc::sync::Arc;
+
+#[cfg(not(target_os = "none"))]
 use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+#[cfg(not(target_os = "none"))]
+use std::sync::OnceLock;
+#[cfg(not(target_os = "none"))]
 use std::{env, thread};
+
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::sync::OnceLock;
+#[cfg(target_os = "none")]
+use semos_std::{env, thread};
+// SemOS has no dynamic libraries; the proc-macro loader is host-only.
+#[cfg(target_os = "none")]
+const DLL_PREFIX: &str = "lib";
+#[cfg(target_os = "none")]
+const DLL_SUFFIX: &str = ".so";
 
 use rustc_ast as ast;
 use rustc_attr_parsing::{ShouldEmit, validate_attr};
+// Stage H iter 2: back::archive and back::link are host-only (§1.7
+// drops the codegen_ssa::back::link subsystem for cg_clif's ET_EXEC
+// path). All callers below get cfg-gated to host.
+#[cfg(not(target_os = "none"))]
 use rustc_codegen_ssa::back::archive::{ArArchiveBuilderBuilder, ArchiveBuilderBuilder};
+#[cfg(not(target_os = "none"))]
 use rustc_codegen_ssa::back::link::link_binary;
 use rustc_codegen_ssa::target_features::cfg_target_feature;
 use rustc_codegen_ssa::traits::CodegenBackend;
@@ -105,6 +130,14 @@ pub(crate) fn check_abi_required_features(sess: &Session) {
 pub static STACK_SIZE: OnceLock<usize> = OnceLock::new();
 pub const DEFAULT_STACK_SIZE: usize = 8 * 1024 * 1024;
 
+#[cfg(target_os = "none")]
+fn init_stack_size(_early_dcx: &EarlyDiagCtxt) -> usize {
+    // SemOS target: env-driven stack-size override isn't wired here
+    // (rustc compilation thread runs on the caller's stack anyway).
+    DEFAULT_STACK_SIZE
+}
+
+#[cfg(not(target_os = "none"))]
 fn init_stack_size(early_dcx: &EarlyDiagCtxt) -> usize {
     // Obey the environment setting or default
     *STACK_SIZE.get_or_init(|| {
@@ -133,6 +166,7 @@ fn init_stack_size(early_dcx: &EarlyDiagCtxt) -> usize {
     })
 }
 
+#[cfg(not(target_os = "none"))]
 fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: Send>(
     thread_stack_size: usize,
     edition: Edition,
@@ -172,6 +206,27 @@ fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: 
     })
 }
 
+// Stage H iter 2: SemOS target — single-threaded, no thread::Builder /
+// thread::scope. Just create the session globals on the current task and
+// call `f`. The stack-size + parallel-safety motivations don't apply
+// here (the calling task already owns its own stack).
+#[cfg(target_os = "none")]
+fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R, R>(
+    _thread_stack_size: usize,
+    edition: Edition,
+    sm_inputs: SourceMapInputs,
+    extra_symbols: &[&'static str],
+    f: F,
+) -> R {
+    rustc_span::create_session_globals_then(
+        edition,
+        extra_symbols,
+        Some(sm_inputs),
+        || f(CurrentGcx::new(), Proxy::new()),
+    )
+}
+
+#[cfg(not(target_os = "none"))]
 pub(crate) fn run_in_thread_pool_with_globals<
     F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send,
     R: Send,
@@ -300,6 +355,25 @@ pub(crate) fn run_in_thread_pool_with_globals<
     })
 }
 
+// Stage H iter 2: SemOS target — collapse to single-threaded run.
+// No thread pool, no deadlock handler. f executes on the current task.
+#[cfg(target_os = "none")]
+pub(crate) fn run_in_thread_pool_with_globals<
+    F: FnOnce(CurrentGcx, Arc<Proxy>) -> R,
+    R,
+>(
+    thread_builder_diag: &EarlyDiagCtxt,
+    edition: Edition,
+    _threads: usize,
+    extra_symbols: &[&'static str],
+    sm_inputs: SourceMapInputs,
+    f: F,
+) -> R {
+    let thread_stack_size = init_stack_size(thread_builder_diag);
+    run_in_thread_with_globals(thread_stack_size, edition, sm_inputs, extra_symbols, f)
+}
+
+#[cfg(not(target_os = "none"))]
 fn load_backend_from_dylib(early_dcx: &EarlyDiagCtxt, path: &Path) -> MakeBackendFn {
     match unsafe { load_symbol_from_dylib::<MakeBackendFn>(path, "__rustc_codegen_backend") } {
         Ok(backend_sym) => backend_sym,
@@ -319,6 +393,7 @@ fn load_backend_from_dylib(early_dcx: &EarlyDiagCtxt, path: &Path) -> MakeBacken
 /// Get the codegen backend based on the name and specified sysroot.
 ///
 /// A name of `None` indicates that the default backend should be used.
+#[cfg(not(target_os = "none"))]
 pub fn get_codegen_backend(
     early_dcx: &EarlyDiagCtxt,
     sysroot: &Sysroot,
@@ -437,6 +512,11 @@ impl CodegenBackend for DummyCodegenBackend {
             ));
         }
 
+        // Stage H iter 2: link_binary + DummyArchiveBuilderBuilder are
+        // host-only (back::link subsystem dropped on SemOS per §1.7).
+        // SemOS target doesn't call this dummy backend's link path; the
+        // real codegen happens through cg_clif's static link.
+        #[cfg(not(target_os = "none"))]
         link_binary(
             sess,
             &DummyArchiveBuilderBuilder,
@@ -445,11 +525,19 @@ impl CodegenBackend for DummyCodegenBackend {
             outputs,
             self.name(),
         );
+        #[cfg(target_os = "none")]
+        let _ = (codegen_results, metadata, outputs);
     }
 }
 
+// Stage H iter 2: rustc_codegen_ssa::back::archive subsystem is dropped
+// host-only per Phase 3 §1.7 (cg_clif emits ET_EXEC directly without
+// rlib archives). The DummyArchiveBuilderBuilder is only used during the
+// link_binary path which is also host-only.
+#[cfg(not(target_os = "none"))]
 struct DummyArchiveBuilderBuilder;
 
+#[cfg(not(target_os = "none"))]
 impl ArchiveBuilderBuilder for DummyArchiveBuilderBuilder {
     fn new_archive_builder<'a>(
         &self,
@@ -470,9 +558,25 @@ impl ArchiveBuilderBuilder for DummyArchiveBuilderBuilder {
     }
 }
 
+// Stage H iter 2: target-side stub for get_codegen_backend. cg_clif is
+// statically linked into semos-rustc, so the host-side dylib-loader path
+// has no purpose on SemOS. The actual backend gets supplied via a
+// different code path (TBD in Phase 5b integration); this stub exists
+// so rustc_interface compiles target-side.
+#[cfg(target_os = "none")]
+pub fn get_codegen_backend(
+    _early_dcx: &EarlyDiagCtxt,
+    _sysroot: &Sysroot,
+    _backend_name: Option<&str>,
+    _target: &Target,
+) -> Box<dyn CodegenBackend> {
+    panic!("get_codegen_backend: SemOS target requires statically-linked backend (Phase 5b TODO)")
+}
+
 // This is used for rustdoc, but it uses similar machinery to codegen backend
 // loading, so we leave the code here. It is potentially useful for other tools
 // that want to invoke the rustc binary while linking to rustc as well.
+#[cfg(not(target_os = "none"))]
 pub fn rustc_path<'a>(sysroot: &Sysroot) -> Option<&'a Path> {
     static RUSTC_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
@@ -487,6 +591,13 @@ pub fn rustc_path<'a>(sysroot: &Sysroot) -> Option<&'a Path> {
         .as_deref()
 }
 
+#[cfg(target_os = "none")]
+pub fn rustc_path<'a>(_sysroot: &Sysroot) -> Option<&'a Path> {
+    // SemOS-target: no rustc-as-tool binary path lookup.
+    None
+}
+
+#[cfg(not(target_os = "none"))]
 fn get_codegen_sysroot(
     early_dcx: &EarlyDiagCtxt,
     sysroot: &Sysroot,

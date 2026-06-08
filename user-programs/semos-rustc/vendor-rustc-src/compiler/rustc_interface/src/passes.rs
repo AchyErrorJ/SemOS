@@ -1,10 +1,31 @@
 #[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+// Stage H iter 2: route eprint to semos_std on target.
+#[cfg(target_os = "none")] use semos_std::eprint;
 use core::any::Any;
+use core::iter;
+use alloc::sync::Arc;
+
+#[cfg(not(target_os = "none"))]
 use std::ffi::{OsStr, OsString};
+#[cfg(not(target_os = "none"))]
 use std::io::{self, BufWriter, Write};
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, OnceLock};
-use std::{env, fs, iter};
+#[cfg(not(target_os = "none"))]
+use std::sync::{LazyLock, OnceLock};
+#[cfg(not(target_os = "none"))]
+use std::{env, fs};
+
+#[cfg(target_os = "none")]
+use semos_std::ffi::{OsStr, OsString};
+#[cfg(target_os = "none")]
+use semos_std::io::{self, BufWriter, Write};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::sync::{LazyLock, OnceLock};
+#[cfg(target_os = "none")]
+use semos_std::{env, fs};
 
 use rustc_ast as ast;
 use rustc_attr_parsing::{AttributeParser, ShouldEmit};
@@ -177,6 +198,9 @@ fn configure_and_expand(
         // which runs rustc in parallel but has been seen (#33844) to cause
         // problems with PATH becoming too long.
         let mut old_path = OsString::new();
+        // Stage H iter 2: PATH manipulation only matters on Windows hosts;
+        // SemOS target has no dynamic linker invocation path here.
+        #[cfg(not(target_os = "none"))]
         if cfg!(windows) {
             old_path = env::var_os("PATH").unwrap_or(old_path);
             let mut new_path = Vec::from_iter(
@@ -197,6 +221,7 @@ fn configure_and_expand(
                 );
             }
         }
+        let _ = &old_path;
 
         // Create the config for macro expansion
         let recursion_limit = get_recursion_limit(pre_configured_attrs, sess);
@@ -313,8 +338,13 @@ fn print_macro_stats(ecx: &ExtCtxt<'_>) {
     let crate_name = ecx.ecfg.crate_name.as_str();
     let crate_name = if crate_name == "build_script_build" {
         // This is a build script. Get the package name from the environment.
+        // Stage H iter 2: env::var is host-only; SemOS target reports the
+        // crate name as-is (build scripts aren't a SemOS use case).
+        #[cfg(not(target_os = "none"))]
         let pkg_name =
             std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "<unknown crate>".to_string());
+        #[cfg(target_os = "none")]
+        let pkg_name = String::from("<unknown crate>");
         format!("{pkg_name} build script")
     } else {
         crate_name.to_string()
@@ -479,6 +509,7 @@ fn early_lint_checks(tcx: TyCtxt<'_>, (): ()) {
     )
 }
 
+#[cfg(not(target_os = "none"))]
 fn env_var_os<'tcx>(tcx: TyCtxt<'tcx>, key: &'tcx OsStr) -> Option<&'tcx OsStr> {
     let value = env::var_os(key);
 
@@ -499,6 +530,30 @@ fn env_var_os<'tcx>(tcx: TyCtxt<'tcx>, key: &'tcx OsStr) -> Option<&'tcx OsStr> 
     tcx.sess.psess.env_depinfo.borrow_mut().insert((
         Symbol::intern(&key.to_string_lossy()),
         value.as_ref().and_then(|value| value.to_str()).map(|value| Symbol::intern(value)),
+    ));
+
+    value_tcx
+}
+
+// Stage H iter 2: SemOS-target env_var_os — semos_std's OsStr is a `str`
+// alias (no as_encoded_bytes / from_encoded_bytes_unchecked), and env vars
+// are simpler. Look up the env, intern via semos_std::env directly. The
+// tcx-arena interning is a host optimization; on target we leak the
+// allocation through a side String (Symbol::intern copies anyway).
+#[cfg(target_os = "none")]
+fn env_var_os<'tcx>(tcx: TyCtxt<'tcx>, key: &'tcx OsStr) -> Option<&'tcx OsStr> {
+    let value = env::var(key).ok();
+
+    let value_tcx: Option<&'tcx OsStr> = value.as_ref().map(|value| {
+        let bytes = tcx.arena.alloc_slice(value.as_bytes());
+        // SAFETY: arena returned bytes are valid for 'tcx and originated
+        // from a UTF-8 String.
+        unsafe { core::str::from_utf8_unchecked(bytes) }
+    });
+
+    tcx.sess.psess.env_depinfo.borrow_mut().insert((
+        Symbol::intern(key),
+        value.as_deref().map(|v| Symbol::intern(v)),
     ));
 
     value_tcx
@@ -838,6 +893,10 @@ pub fn write_dep_info(tcx: TyCtxt<'_>) {
         }
     }
 
+    // Stage H iter 2: semos_std::fs lacks create_dir_all; target side
+    // assumes the output and temp directories already exist (semos-rustc
+    // is responsible for arranging that before calling the driver).
+    #[cfg(not(target_os = "none"))]
     if let Some(ref dir) = sess.io.temps_dir {
         if fs::create_dir_all(dir).is_err() {
             sess.dcx().emit_fatal(errors::TempsDirError);
@@ -850,6 +909,7 @@ pub fn write_dep_info(tcx: TyCtxt<'_>) {
         && sess.opts.output_types.len() == 1;
 
     if !only_dep_info {
+        #[cfg(not(target_os = "none"))]
         if let Some(ref dir) = sess.io.output_dir {
             if fs::create_dir_all(dir).is_err() {
                 sess.dcx().emit_fatal(errors::OutDirError);

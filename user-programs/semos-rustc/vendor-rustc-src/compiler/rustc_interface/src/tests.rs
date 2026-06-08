@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use core::num::NonZero;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicBool;
 
 use rustc_abi::Align;
 use rustc_data_structures::profiling::TimePassesFormat;

@@ -1,6 +1,8 @@
 #[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
-use std::io;
-use std::path::Path;
+#[cfg(not(target_os = "none"))]
+use std::{io, path::Path};
+#[cfg(target_os = "none")]
+use semos_std::{io, path::Path};
 
 use rustc_macros::{Diagnostic, LintDiagnostic, Subdiagnostic};
 use rustc_span::{Span, Symbol};

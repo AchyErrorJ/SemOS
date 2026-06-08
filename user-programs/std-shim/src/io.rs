@@ -91,6 +91,18 @@ pub trait Read {
     /// Read up to `buf.len()` bytes. Returns the count (0 == EOF).
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
 
+    /// Read exactly `buf.len()` bytes. Default impl loops on `read`.
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
+        let mut idx = 0;
+        while idx < buf.len() {
+            match self.read(&mut buf[idx..])? {
+                0 => return Err(Error::other()),
+                n => idx += n,
+            }
+        }
+        Ok(())
+    }
+
     /// Read everything to EOF, appending to `buf`. Returns total bytes read.
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
         let start = buf.len();
@@ -281,6 +293,37 @@ impl Read for &[u8] {
         *self = &self[n..];
         Ok(n)
     }
+    fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
+        if buf.len() > self.len() {
+            return Err(Error::other());
+        }
+        buf.copy_from_slice(&self[..buf.len()]);
+        *self = &self[buf.len()..];
+        Ok(())
+    }
+}
+
+// Stage F11: `impl io::Write for &mut [u8]` — std has this. rustc
+// uses it for fixed-size endian-encoding into a stack buffer.
+impl Write for &mut [u8] {
+    fn write(&mut self, data: &[u8]) -> Result<usize> {
+        let n = core::cmp::min(data.len(), self.len());
+        let (head, tail) = core::mem::take(self).split_at_mut(n);
+        head.copy_from_slice(&data[..n]);
+        *self = tail;
+        Ok(n)
+    }
+}
+
+// M27 rustc_borrowck: `dot::render` passes `&mut w` where `w` is
+// `&mut dyn io::Write`. std has `impl<W: Write + ?Sized> Write for &mut W`.
+impl<W: Write + ?Sized> Write for &mut W {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        (**self).write(buf)
+    }
+    fn flush(&mut self) -> Result<()> {
+        (**self).flush()
+    }
 }
 
 /// `std::io::copy`-shaped. Reads from `reader` and writes to `writer`
@@ -332,4 +375,11 @@ macro_rules! eprintln {
         $crate::print!($($arg)*);
         $crate::print!("\n");
     }};
+}
+
+/// `eprint!` — same sink as `print!`. SemOS routes stderr to the same
+/// serial / framebuffer console as stdout.
+#[macro_export]
+macro_rules! eprint {
+    ($($arg:tt)*) => {{ $crate::print!($($arg)*); }};
 }
