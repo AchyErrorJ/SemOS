@@ -258,13 +258,14 @@ impl CodegenBackend for CraneliftCodegenBackend {
             #[cfg(not(feature = "jit"))]
             tcx.dcx().fatal("jit support was disabled when compiling rustc_codegen_cranelift");
         } else {
-            // Stage G iter 8: driver::aot is host-only. Phase 5b's
-            // semos-rustc binary swaps in a SemOS-native AOT driver
-            // that writes ELFs to the SemOS VFS instead.
+            // Stage G iter 8: driver::aot is host-only.
+            // Phase 5b iter 3: target side calls the SemOS-native
+            // aot_semos::run_aot stub. iter 3 returns an empty
+            // OngoingCodegen; iter 4+ wires real codegen.
             #[cfg(not(target_os = "none"))]
             { driver::aot::run_aot(tcx) }
             #[cfg(target_os = "none")]
-            tcx.dcx().fatal("cg_clif AOT driver not yet wired for SemOS target")
+            { driver::aot_semos::run_aot(tcx) }
         }
     }
 
@@ -276,11 +277,9 @@ impl CodegenBackend for CraneliftCodegenBackend {
     ) -> (CodegenResults, FxIndexMap<WorkProductId, WorkProduct>) {
         #[cfg(not(target_os = "none"))]
         { ongoing_codegen.downcast::<driver::aot::OngoingCodegen>().unwrap().join(sess, outputs) }
+        // Phase 5b iter 3: target side uses the aot_semos stub.
         #[cfg(target_os = "none")]
-        {
-            let _ = (ongoing_codegen, sess, outputs);
-            sess.dcx().fatal("cg_clif AOT join not yet wired for SemOS target")
-        }
+        { ongoing_codegen.downcast::<driver::aot_semos::OngoingCodegen>().unwrap().join(sess, outputs) }
     }
 }
 

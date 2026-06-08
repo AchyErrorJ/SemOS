@@ -15,6 +15,10 @@ use crate::prelude::*;
 // rewrites this for SemOS; meanwhile cfg-gate the host-only flavor.
 #[cfg(not(target_os = "none"))]
 pub(crate) mod aot;
+// Phase 5b iter 3: SemOS-native AOT driver replacement. iter 3 stub
+// returns an empty OngoingCodegen; iter 4+ wires real codegen.
+#[cfg(target_os = "none")]
+pub(crate) mod aot_semos;
 #[cfg(feature = "jit")]
 pub(crate) mod jit;
 
