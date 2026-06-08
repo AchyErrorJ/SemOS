@@ -3679,4 +3679,77 @@ CraneliftCodegenBackend::default())))`. Then a minimal hello-world
 Then DEMO 80 (compile-and-spawn `fn main() { println!("hi"); }`
 end-to-end on SemOS) is reachable.
 
+---
+
+## Phase 5b iter 2 — static cg_clif backend via Callbacks::config (2026-06-08)
+
+**Goal:** plug the cfg-stubbed `get_codegen_backend` panic (introduced
+in Stage H iter 2) by giving the driver a static backend via the
+`Config::make_codegen_backend` precedence path so the dlopen loader
+is never reached.
+
+### What landed (commit `fa3561c`)
+
+- Add direct deps to semos-rustc/Cargo.toml: `rustc_codegen_cranelift`,
+  `rustc_codegen_ssa` (for the `CodegenBackend` trait), `rustc_session`
+  (for `config::Options`), `rustc_target` (for `Target`),
+  `rustc_interface` (for `Config`). All were already transitively
+  linked through `rustc_driver_impl`; we just need them named to
+  reference their public types from `main.rs`.
+- Rewrite `Callbacks::config(&mut Config)` in
+  `user-programs/semos-rustc/src/main.rs`:
+  ```rust
+  config.make_codegen_backend = Some(Box::new(
+      |_opts: &Options, _target: &Target| -> Box<dyn CodegenBackend> {
+          rustc_codegen_cranelift::__rustc_codegen_backend()
+      },
+  ));
+  ```
+  Per `rustc_interface/src/interface.rs:454`, when
+  `make_codegen_backend` is `Some(_)`, the driver calls that closure
+  and skips the dylib loader entirely. cg_clif's
+  `__rustc_codegen_backend()` is the canonical factory the upstream
+  dlopen path calls into — we just call it directly.
+
+### Numbers
+
+- `cargo check -p semos-rustc --target x86_64-unknown-none` → 0
+  errors, ~23s incremental.
+- `cargo build -p semos-rustc --target x86_64-unknown-none --release`
+  → 0 errors, ~2m 07s. **77.2 MB statically-linked ELF target-side**
+  (vs iter 1's 77.0 MB — direct dep additions were already
+  transitively linked, just renamed for the imports).
+
+### What iter 2 unblocks at runtime (untested yet — needs boot)
+
+`run_compiler(["rustc", "--version"], &mut SemosCallbacks)` should:
+
+1. Parse the early CLI (`--version`).
+2. Build the `Config` via `Callbacks::config` — our impl sets
+   `make_codegen_backend`.
+3. Print the version string and exit cleanly (no codegen actually
+   needed for `--version`).
+
+A real `.rs` source compile would reach the cg_clif AOT driver
+(`driver::aot::run_aot`) which is cfg-gated host-only in Stage G
+iter 8 (`tcx.dcx().fatal("cg_clif AOT driver not yet wired for
+SemOS target")`). That's the iter 3 work.
+
+### Forecast
+
+iter 3: SemOS-native AOT driver. cg_clif's upstream `driver::aot`
+writes object files to host fs + spawns linker; we need a target
+variant that writes ELFs directly to the SemOS VFS via
+`semos_std::fs::write` (cranelift-object already emits in-memory ELF
+bytes — Stage G iter 10 proved this). Approximate work:
+- ~200 LOC of `driver::aot` rewrite as `driver::aot_semos`.
+- Hook `CraneliftCodegenBackend::codegen_crate` (cg_clif lib.rs:246)
+  to call `aot_semos::run_aot` on target.
+- Verify with a hand-built `fn main() { println!("hi"); }` source
+  string compiled in-process.
+
+Then DEMO 80 boot test: write source to a SemOS file, semos-rustc
+reads it, emits ELF, SYS_SPAWN it, check "hi" lands on the
+framebuffer.
+
 
