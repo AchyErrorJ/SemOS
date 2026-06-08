@@ -3836,4 +3836,106 @@ Then DEMO 80: a source file (or hand-built source string)
 compiled in-process, written to `/tmp/hello.elf`, SYS_SPAWN'd,
 "hi" lands on the framebuffer. M27 done.
 
+---
+
+## Phase 5b iter 4 — real codegen in aot_semos (2026-06-08)
+
+**Goal:** turn iter 3's empty stub into a working AOT driver that
+emits actual machine code.
+
+### What landed (commit `a38704a`)
+
+`aot_semos.rs` grew from 50 LOC to ~150 LOC. The shape:
+
+1. Build a single shared `UnwindModule<ObjectModule>` via cg_clif's
+   `build_isa` + cranelift-object's `ObjectBuilder`. Single-module /
+   single-task — no jobserver, no parallel CGUs, no incremental cache.
+   The upstream `make_module` is private to `aot.rs` and uses
+   `tcx.sess.target.is_like_windows` to gate function-section settings;
+   we don't need that nuance on SemOS so we inline the few lines.
+
+2. Walk `tcx.collect_and_partition_mono_items().codegen_units` and
+   per CGU:
+   - Call `super::predefine_mono_items(tcx, &mut module, &mono_items)`
+     to declare every function up front.
+   - First pass: `MonoItem::Fn` → `crate::base::codegen_fn(tcx,
+     cgu.name(), None /*no debug*/, &mut type_dbg, Function::new(),
+     &mut module, *instance)` → collect into a `Vec<CodegenedFunction>`.
+     This is the MIR→Cranelift-IR lowering pass.
+   - `MonoItem::Static` → `crate::constant::codegen_static(tcx, &mut
+     module, *def_id)`.
+   - `MonoItem::GlobalAsm` → skipped (would need an external `as`
+     assembler we don't have).
+   - Second pass: drive each `CodegenedFunction` through
+     `crate::base::compile_fn(&tcx.prof, tcx.output_filenames(()),
+     false, &mut ctx, &mut module, None, &mut global_asm, f)`. This
+     is the call that actually emits x86_64 machine code via the
+     Cranelift backend.
+
+3. `crate::main_shim::maybe_create_entry_wrapper(tcx, &mut module,
+   false, true)` synthesises the program's `main` entry shim (calls
+   user `main`, then exits).
+
+4. `module.finish().object.write()` returns `Vec<u8>` ELF bytes
+   in memory.
+
+5. `OutFileName` (the type `OutputFilenames::path(OutputType::Exe)`
+   returns) is an enum `Real(PathBuf) | Stdout`. Match `Real(path)`
+   and call `semos_std::fs::write(path.as_str(), &elf_bytes)`;
+   `Stdout` is a fatal on target (no piped output sink).
+
+### Gotchas
+
+- `OutFileName` doesn't impl `.as_str()` or `.path()` directly; it's
+  an enum. First write attempted `out_path.as_str()` which fails with
+  E0599 — needed an explicit match on `OutFileName::Real(ref
+  path_buf)`.
+- `semos_std::fs::write` takes `&str` not `&Path`, so the inner
+  `path_buf.as_str()` borrow comes from semos_std's PathBuf-as-newtype
+  -around-String impl.
+- We don't emit DWARF (passed `None` as the `debug_context` arg to
+  `codegen_fn`). Future iter can wire `DebugContext::new` if we want
+  source-level debugging.
+
+### Numbers
+
+- `cargo check -p semos-rustc --target x86_64-unknown-none` → 0
+  errors, ~1.8s incremental.
+- `cargo build -p semos-rustc --target x86_64-unknown-none --release`
+  → 0 errors, ~2m 09s. **88 MB ELF** (vs iter 3's 77 MB — +11 MB of
+  cg_clif's `base::codegen_fn` / `compile_fn` / `constant::
+  codegen_static` / `main_shim::maybe_create_entry_wrapper` /
+  allocator paths that are now actually instantiated rather than
+  dead-code-eliminated).
+
+### What iter 4 unblocks at runtime (untested — needs boot + a source file)
+
+A `.rs` source compile from semos-rustc should now produce an actual
+ELF at the `-o` output path. The path:
+
+1. `rustc_driver_impl::run_compiler(["rustc", "hello.rs", "-o",
+   "/tmp/hello.elf"], &mut cb)`
+2. Driver parses, expands, type-checks, MIR-builds hello.rs.
+3. Calls `CraneliftCodegenBackend::codegen_crate(tcx)` which routes
+   to `driver::aot_semos::run_aot` (Phase 5b iter 3 wire).
+4. run_aot does all 5 steps above, writes ELF to `/tmp/hello.elf`.
+5. Driver `join_codegen` returns empty `CodegenResults` — the rustc
+   pipeline doesn't see modules to link because we bypassed the
+   object→link split.
+
+### Forecast
+
+iter 5: end-to-end boot validation. Test plan:
+
+1. Build the kernel image with semos-rustc in `/bin/`.
+2. Add a `compile-hello` shell builtin (or just `semos-rustc hello.rs
+   -o /tmp/hello.elf`) that writes a hello-world `.rs` to the VFS,
+   spawns semos-rustc with appropriate args.
+3. Check the output ELF: SYS_SPAWN it, expect "hi" on the
+   framebuffer.
+
+If the rustc invocation panics or produces a malformed ELF, iter 6
+debugs. If it works — M27 closes. M28 self-bootstrap (rebuild
+semos-rustc using semos-rustc itself) becomes the next milestone.
+
 
