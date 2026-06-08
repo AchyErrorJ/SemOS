@@ -15,7 +15,7 @@ PRELUDE_TAG='use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borro
 
 ROOT="${1:-F:/Software/ArmKernel3/user-programs/semos-rustc/vendor-rustc-src/compiler}"
 
-for crate in rustc_passes rustc_mir_transform rustc_mir_build rustc_hir_analysis rustc_hir_typeck rustc_interface; do
+for crate in rustc_passes rustc_mir_transform rustc_mir_build rustc_hir_analysis rustc_hir_typeck rustc_interface rustc_driver_impl; do
   count=0
   while IFS= read -r f; do
     # Skip if the exact import is already present anywhere in the file.

@@ -46,8 +46,9 @@ pub(crate) use __semos_stub_print as print;
 
 // Stage F9: getopts is host-only (CLI option parsing). SemOS-target
 // rustc doesn't read argv via getopts, so we stub the surface used.
+// Stage H iter 4: pub so rustc_driver_impl can reach Matches.
 #[cfg(target_os = "none")]
-mod getopts {
+pub mod getopts {
     use alloc::string::String;
     use alloc::vec::Vec;
     pub struct Matches {
@@ -73,6 +74,31 @@ mod getopts {
         pub fn optmulti(&mut self, _: &str, _: &str, _: &str, _: &str) -> &mut Self { self }
         pub fn optflag(&mut self, _: &str, _: &str, _: &str) -> &mut Self { self }
         pub fn optflagmulti(&mut self, _: &str, _: &str, _: &str) -> &mut Self { self }
+        pub fn parse(&self, _args: &[String]) -> Result<Matches, Fail> {
+            Ok(Matches { free: Vec::new() })
+        }
+        pub fn usage(&self, brief: &str) -> String { String::from(brief) }
+        pub fn usage_with_format<F: FnOnce(&mut dyn Iterator<Item = String>) -> String>(
+            &self, format: F,
+        ) -> String {
+            let mut empty = core::iter::empty();
+            format(&mut empty)
+        }
+    }
+    /// Stage H iter 4: parse-error variant used by rustc_driver_impl.
+    /// On SemOS the stub `parse` always succeeds so this variant is unreachable.
+    #[derive(Debug)]
+    pub enum Fail {
+        ArgumentMissing(String),
+        UnrecognizedOption(String),
+        OptionMissing(String),
+        OptionDuplicated(String),
+        UnexpectedArgument(String),
+    }
+    impl core::fmt::Display for Fail {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{:?}", self)
+        }
     }
 }
 

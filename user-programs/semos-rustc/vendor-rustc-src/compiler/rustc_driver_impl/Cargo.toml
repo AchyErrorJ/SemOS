@@ -17,6 +17,7 @@ rustc_codegen_ssa = { path = "../rustc_codegen_ssa" }
 rustc_const_eval = { path = "../rustc_const_eval" }
 rustc_data_structures = { path = "../rustc_data_structures" }
 rustc_errors = { path = "../rustc_errors" }
+rustc_error_messages = { path = "../rustc_error_messages" }
 rustc_expand = { path = "../rustc_expand" }
 rustc_feature = { path = "../rustc_feature" }
 rustc_fluent_macro = { path = "../rustc_fluent_macro" }
@@ -93,3 +94,7 @@ jiff = { version = "0.2.5", default-features = false, features = ["std"] }
 # Phase 5b Stage E iter 9: shlex parses POSIX-style argv strings.
 # SemOS uses kernel-provided argv directly so this is host-only.
 shlex = "1.0"
+
+# Stage H iter 4: semos-std for target-only ffi/fs/io/path/sync surface.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

@@ -1,11 +1,16 @@
 //! The various pretty-printing routines.
 
-use std::cell::Cell;
-use std::fmt::Write;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::cell::Cell;
+use core::fmt::Write;
 
 use rustc_ast_pretty::pprust as pprust_ast;
 use rustc_middle::bug;
-use rustc_middle::mir::{write_mir_graphviz, write_mir_pretty};
+// Stage H iter 4: write_mir_graphviz is host-only (rustc_middle gates it
+// out of target builds). MIR-as-graphviz pretty-print is unused on SemOS.
+#[cfg(not(target_os = "none"))]
+use rustc_middle::mir::write_mir_graphviz;
+use rustc_middle::mir::write_mir_pretty;
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_mir_build::thir::print::{thir_flat, thir_tree};
 use rustc_public::rustc_internal::pretty::write_smir_pretty;
@@ -304,9 +309,14 @@ pub fn print<'tcx>(sess: &Session, ppm: PpMode, ex: PrintExtra<'tcx>) {
             String::from_utf8(out).unwrap()
         }
         MirCFG => {
-            let mut out = Vec::new();
-            write_mir_graphviz(ex.tcx(), None, &mut out).unwrap();
-            String::from_utf8(out).unwrap()
+            #[cfg(not(target_os = "none"))]
+            {
+                let mut out = Vec::new();
+                write_mir_graphviz(ex.tcx(), None, &mut out).unwrap();
+                String::from_utf8(out).unwrap()
+            }
+            #[cfg(target_os = "none")]
+            String::from("(MirCFG output unavailable: write_mir_graphviz is host-only)")
         }
         StableMir => {
             let mut out = Vec::new();

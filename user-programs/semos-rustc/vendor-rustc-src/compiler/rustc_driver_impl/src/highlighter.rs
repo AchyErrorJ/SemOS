@@ -5,7 +5,11 @@
 //! function to parse the Rust code into a `Vec` of tokens.
 //! The highlighter then highlights the tokens in the `Vec`,
 //! and writes the highlighted output to the buffer.
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+#[cfg(not(target_os = "none"))]
 use std::io::{self, Write};
+#[cfg(target_os = "none")]
+use semos_std::io::{self, Write};
 
 use anstyle::{AnsiColor, Color, Effects, Style};
 use rustc_lexer::{LiteralKind, strip_shebang, tokenize};

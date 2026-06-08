@@ -1,15 +1,19 @@
-use std::fmt;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::fmt;
+#[cfg(not(target_os = "none"))]
 use std::io::{self, Write as _};
+#[cfg(target_os = "none")]
+use semos_std::io::{self, Write as _};
 
 macro_rules! safe_print {
     ($($arg:tt)*) => {{
-        $crate::print::print(std::format_args!($($arg)*));
+        $crate::print::print(::core::format_args!($($arg)*));
     }};
 }
 
 macro_rules! safe_println {
     ($($arg:tt)*) => {
-        safe_print!("{}\n", std::format_args!($($arg)*))
+        safe_print!("{}\n", ::core::format_args!($($arg)*))
     };
 }
 

@@ -1,4 +1,11 @@
-use std::{env, error, fmt, fs, io};
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::fmt;
+#[cfg(not(target_os = "none"))]
+use std::{env, error, fs, io};
+#[cfg(target_os = "none")]
+use core::error;
+#[cfg(target_os = "none")]
+use semos_std::{env, fs, io};
 
 use rustc_session::EarlyDiagCtxt;
 
@@ -16,11 +23,18 @@ impl Expander {
     fn arg(&mut self, arg: &str) -> Result<(), Error> {
         if let Some(argfile) = arg.strip_prefix('@') {
             match argfile.split_once(':') {
+                // Stage H iter 4: shlex POSIX-quote parsing is host-only.
+                // SemOS uses kernel-provided argv directly.
+                #[cfg(not(target_os = "none"))]
                 Some(("shell", path)) if self.shell_argfiles => {
                     shlex::split(&Self::read_file(path)?)
                         .ok_or_else(|| Error::ShellParseError(path.to_string()))?
                         .into_iter()
                         .for_each(|arg| self.push(arg));
+                }
+                #[cfg(target_os = "none")]
+                Some(("shell", path)) if self.shell_argfiles => {
+                    return Err(Error::ShellParseError(path.to_string()));
                 }
                 _ => {
                     let contents = Self::read_file(argfile)?;
@@ -118,15 +132,21 @@ pub fn arg_expand_all(early_dcx: &EarlyDiagCtxt, at_args: &[String]) -> Vec<Stri
 /// non-Unicode arguments instead of panicking.
 pub fn raw_args(early_dcx: &EarlyDiagCtxt) -> Vec<String> {
     let mut args = Vec::new();
-    let mut guar = Ok(());
-    for (i, arg) in env::args_os().enumerate() {
+    #[allow(unused_assignments)]
+    let mut guar: Result<(), rustc_errors::ErrorGuaranteed> = Ok(());
+    for (_i, arg) in env::args_os().enumerate() {
+        // Stage H iter 4: semos_std::env::args_os returns String (OsString
+        // is a String alias on SemOS — args are always UTF-8). Push directly.
+        #[cfg(not(target_os = "none"))]
         match arg.into_string() {
             Ok(arg) => args.push(arg),
             Err(arg) => {
                 guar =
-                    Err(early_dcx.early_err(format!("argument {i} is not valid Unicode: {arg:?}")))
+                    Err(early_dcx.early_err(format!("argument {_i} is not valid Unicode: {arg:?}")))
             }
         }
+        #[cfg(target_os = "none")]
+        args.push(arg);
     }
     if let Err(guar) = guar {
         guar.raise_fatal();

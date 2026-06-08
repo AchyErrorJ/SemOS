@@ -4,27 +4,66 @@
 //!
 //! This API is completely unstable and subject to change.
 
+// M27 Stage H iter 4: no_std hygiene per RECIPE §1.2.
+#![cfg_attr(target_os = "none", no_std)]
+
 // tidy-alphabetical-start
 #![feature(decl_macro)]
-#![feature(panic_backtrace_config)]
-#![feature(panic_update_hook)]
+// Stage H iter 4: panic_backtrace_config + panic_update_hook aren't on
+// this toolchain version; only used by host-side panic hook setup.
+#![cfg_attr(not(target_os = "none"), feature(panic_backtrace_config))]
+#![cfg_attr(not(target_os = "none"), feature(panic_update_hook))]
 #![feature(trim_prefix_suffix)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
-use std::cmp::max;
-use std::collections::{BTreeMap, BTreeSet};
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::cmp::max;
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::fmt::Write as _;
+use core::str;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(not(target_os = "none"))]
 use std::ffi::OsString;
-use std::fmt::Write as _;
+#[cfg(not(target_os = "none"))]
 use std::fs::{self, File};
+#[cfg(not(target_os = "none"))]
 use std::io::{self, IsTerminal, Read, Write};
+#[cfg(not(target_os = "none"))]
 use std::panic::{self, PanicHookInfo};
+#[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "none"))]
 use std::process::{self, Command, Stdio};
+#[cfg(not(target_os = "none"))]
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_os = "none"))]
 use std::time::Instant;
-use std::{env, str};
+#[cfg(not(target_os = "none"))]
+use std::env;
+
+#[cfg(target_os = "none")]
+use semos_std::ffi::OsString;
+#[cfg(target_os = "none")]
+use semos_std::fs::{self, File};
+#[cfg(target_os = "none")]
+use semos_std::io::{self, Read, Write};
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use semos_std::process::{self, Command};
+#[cfg(target_os = "none")]
+use semos_std::sync::OnceLock;
+#[cfg(target_os = "none")]
+use semos_std::time::Instant;
+#[cfg(target_os = "none")]
+use semos_std::env;
 
 use rustc_ast as ast;
 use rustc_codegen_ssa::traits::CodegenBackend;
@@ -36,7 +75,12 @@ pub use rustc_errors::catch_fatal_errors;
 use rustc_errors::emitter::stderr_destination;
 use rustc_errors::registry::Registry;
 use rustc_errors::translation::Translator;
-use rustc_errors::{ColorConfig, DiagCtxt, ErrCode, PResult, markdown};
+// Stage H iter 4: rustc_errors::markdown is host-only (pulldown-cmark
+// transitively + pager output). Same for the show_md_content_with_pager
+// path that consumes it.
+use rustc_errors::{ColorConfig, DiagCtxt, ErrCode, PResult};
+#[cfg(not(target_os = "none"))]
+use rustc_errors::markdown;
 use rustc_feature::find_gated_cfg;
 // This avoids a false positive with `-Wunused_crate_dependencies`.
 // `rust_index` isn't used in this crate's code, but it must be named in the
@@ -86,6 +130,9 @@ pub mod args;
 pub mod pretty;
 #[macro_use]
 mod print;
+// Stage H iter 4: highlighter pulls anstyle (host-only ANSI styling) and
+// is only used by show_md_content_with_pager which is also host-gated.
+#[cfg(not(target_os = "none"))]
 pub mod highlighter;
 mod session_diagnostics;
 
@@ -127,6 +174,7 @@ pub static DEFAULT_LOCALE_RESOURCES: &[&str] = &[
     rustc_expand::DEFAULT_LOCALE_RESOURCE,
     rustc_hir_analysis::DEFAULT_LOCALE_RESOURCE,
     rustc_hir_typeck::DEFAULT_LOCALE_RESOURCE,
+    #[cfg(not(target_os = "none"))]
     rustc_incremental::DEFAULT_LOCALE_RESOURCE,
     rustc_infer::DEFAULT_LOCALE_RESOURCE,
     rustc_interface::DEFAULT_LOCALE_RESOURCE,
@@ -413,7 +461,7 @@ fn dump_feature_usage_metrics(tcxt: TyCtxt<'_>, metrics_dir: &Path) {
 
 /// Extract output directory and file from matches.
 fn make_output(matches: &getopts::Matches) -> (Option<PathBuf>, Option<OutFileName>) {
-    let odir = matches.opt_str("out-dir").map(|o| PathBuf::from(&o));
+    let odir = matches.opt_str("out-dir").map(|o| PathBuf::from(o.as_str()));
     let ofile = matches.opt_str("o").map(|o| match o.as_str() {
         "-" => OutFileName::Stdout,
         path => OutFileName::Real(PathBuf::from(path)),
@@ -426,6 +474,13 @@ fn make_output(matches: &getopts::Matches) -> (Option<PathBuf>, Option<OutFileNa
 fn make_input(early_dcx: &EarlyDiagCtxt, free_matches: &[String]) -> Option<Input> {
     match free_matches {
         [] => None, // no input: we will exit early,
+        // Stage H iter 4: semos_std::io lacks stdin(); SemOS-rustc reads
+        // source files only, not piped stdin.
+        #[cfg(target_os = "none")]
+        [ifile] if ifile == "-" => {
+            early_dcx.early_fatal("reading source from stdin not supported on SemOS target");
+        }
+        #[cfg(not(target_os = "none"))]
         [ifile] if ifile == "-" => {
             // read from stdin as `Input::Str`
             let mut input = String::new();
@@ -452,7 +507,7 @@ fn make_input(early_dcx: &EarlyDiagCtxt, free_matches: &[String]) -> Option<Inpu
 
             Some(Input::Str { name, input })
         }
-        [ifile] => Some(Input::File(PathBuf::from(ifile))),
+        [ifile] => Some(Input::File(PathBuf::from(ifile.as_str()))),
         [ifile1, ifile2, ..] => early_dcx.early_fatal(format!(
             "multiple input filenames provided (first two filenames are `{}` and `{}`)",
             ifile1, ifile2
@@ -490,7 +545,12 @@ fn handle_explain(early_dcx: &EarlyDiagCtxt, registry: Registry, code: &str, col
             }
             text.push('\n');
         }
-        if io::stdout().is_terminal() {
+        // Stage H iter 4: IsTerminal is host-only.
+        #[cfg(not(target_os = "none"))]
+        let stdout_is_terminal = io::stdout().is_terminal();
+        #[cfg(target_os = "none")]
+        let stdout_is_terminal = false;
+        if stdout_is_terminal {
             show_md_content_with_pager(&text, color);
         } else {
             safe_print!("{text}");
@@ -504,6 +564,13 @@ fn handle_explain(early_dcx: &EarlyDiagCtxt, registry: Registry, code: &str, col
 /// that fails or `color` is `never`, print the raw markdown.
 ///
 /// Uses a pager if possible, falls back to stdout.
+// Stage H iter 4: pager invocation needs std::process::Command + Stdio
+// + anstyle which are host-only. SemOS rustc-on-metal won't have a
+// pager subprocess; --explain output just gets printed directly.
+#[cfg(target_os = "none")]
+fn show_md_content_with_pager(_content: &str, _color: ColorConfig) {}
+
+#[cfg(not(target_os = "none"))]
 fn show_md_content_with_pager(content: &str, color: ColorConfig) {
     let pager_name = env::var_os("PAGER").unwrap_or_else(|| {
         if cfg!(windows) { OsString::from("more.com") } else { OsString::from("less") }
@@ -567,7 +634,14 @@ fn process_rlink(sess: &Session, compiler: &interface::Compiler) {
     assert!(sess.opts.unstable_opts.link_only);
     let dcx = sess.dcx();
     if let Input::File(file) = &sess.io.input {
+        // Stage H iter 4: semos_std::fs::read takes &str; PathBuf needs
+        // .as_str() to coerce.
+        #[cfg(not(target_os = "none"))]
         let rlink_data = fs::read(file).unwrap_or_else(|err| {
+            dcx.emit_fatal(RlinkUnableToRead { err });
+        });
+        #[cfg(target_os = "none")]
+        let rlink_data = fs::read(file.as_str()).unwrap_or_else(|err| {
             dcx.emit_fatal(RlinkUnableToRead { err });
         });
         let (codegen_results, metadata, outputs) =
@@ -674,8 +748,15 @@ fn print_crate_info(
                 println_info!("{}", serde_json::to_string_pretty(&sess.target.to_json()).unwrap());
             }
             TargetSpecJsonSchema => {
-                let schema = rustc_target::spec::json_schema();
-                println_info!("{}", serde_json::to_string_pretty(&schema).unwrap());
+                // Stage H iter 4: target_spec::json_schema is host-only
+                // (uses schemars; target build skips the schema dump).
+                #[cfg(not(target_os = "none"))]
+                {
+                    let schema = rustc_target::spec::json_schema();
+                    println_info!("{}", serde_json::to_string_pretty(&schema).unwrap());
+                }
+                #[cfg(target_os = "none")]
+                println_info!("{{\"unavailable\":\"target_spec json_schema not built on SemOS\"}}");
             }
             AllTargetSpecsJson => {
                 let mut targets = BTreeMap::new();
@@ -703,7 +784,13 @@ fn print_crate_info(
                     let fname = rustc_session::output::filename_for_input(
                         sess, style, crate_name, &t_outputs,
                     );
+                    // Stage H iter 4: semos_std::path::Path::file_name
+                    // returns Option<&str> directly; no to_string_lossy
+                    // needed since SemOS paths are guaranteed UTF-8.
+                    #[cfg(not(target_os = "none"))]
                     println_info!("{}", fname.as_path().file_name().unwrap().to_string_lossy());
+                    #[cfg(target_os = "none")]
+                    println_info!("{}", fname.as_path().file_name().unwrap());
                 }
             }
             CrateName => {
@@ -898,7 +985,10 @@ pub fn version_at_macro_invocation(
 
     let mut version = version;
     let mut release = release;
+    // Stage H iter 4: RUSTC_OVERRIDE_VERSION_STRING env var is host-only.
+    #[cfg(not(target_os = "none"))]
     let tmp;
+    #[cfg(not(target_os = "none"))]
     if let Ok(force_version) = std::env::var("RUSTC_OVERRIDE_VERSION_STRING") {
         tmp = force_version;
         version = &tmp;
@@ -1400,6 +1490,23 @@ fn ice_path() -> &'static Option<PathBuf> {
     ice_path_with_config(None)
 }
 
+// Stage H iter 4: host-only ICE-handler / panic-hook / ctrlc subsystem.
+// Below uses std::env / std::fs / std::io / std::panic / std::process /
+// std::thread + the host-only `ctrlc` + `jiff` crates. SemOS target gets
+// no-op stubs for the public surface so callers compile.
+#[cfg(target_os = "none")]
+fn ice_path_with_config(_config: Option<&UnstableOptions>) -> &'static Option<PathBuf> {
+    static NONE_PATH: Option<PathBuf> = None;
+    &NONE_PATH
+}
+
+#[cfg(target_os = "none")]
+pub fn install_ice_hook(_bug_report_url: &'static str, _extra_info: fn(&DiagCtxt)) {}
+
+#[cfg(target_os = "none")]
+pub fn install_ctrlc_handler() {}
+
+#[cfg(not(target_os = "none"))]
 fn ice_path_with_config(config: Option<&UnstableOptions>) -> &'static Option<PathBuf> {
     if ICE_PATH.get().is_some() && config.is_some() && cfg!(debug_assertions) {
         tracing::warn!(
@@ -1448,6 +1555,7 @@ pub static USING_INTERNAL_FEATURES: AtomicBool = AtomicBool::new(false);
 /// extra_info.
 ///
 /// A custom rustc driver can skip calling this to set up a custom ICE hook.
+#[cfg(not(target_os = "none"))]
 pub fn install_ice_hook(bug_report_url: &'static str, extra_info: fn(&DiagCtxt)) {
     // If the user has not explicitly overridden "RUST_BACKTRACE", then produce
     // full backtraces. When a compiler ICE happens, we want to gather
@@ -1527,6 +1635,7 @@ pub fn install_ice_hook(bug_report_url: &'static str, extra_info: fn(&DiagCtxt))
 ///
 /// When `install_ice_hook` is called, this function will be called as the panic
 /// hook.
+#[cfg(not(target_os = "none"))]
 fn report_ice(
     info: &panic::PanicHookInfo<'_>,
     bug_report_url: &str,
@@ -1654,6 +1763,7 @@ pub fn init_logger_with_additional_layer<F, T>(
 
 /// Install our usual `ctrlc` handler, which sets [`rustc_const_eval::CTRL_C_RECEIVED`].
 /// Making this handler optional lets tools can install a different handler, if they wish.
+#[cfg(not(target_os = "none"))]
 pub fn install_ctrlc_handler() {
     #[cfg(all(not(miri), not(target_family = "wasm")))]
     ctrlc::set_handler(move || {

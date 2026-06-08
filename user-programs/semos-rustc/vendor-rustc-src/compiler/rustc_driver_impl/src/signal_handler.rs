@@ -1,6 +1,7 @@
 //! Signal handler for rustc
 //! Primarily used to extract a backtrace from stack overflow
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use std::alloc::{Layout, alloc};
 use std::{fmt, mem, ptr, slice};
 

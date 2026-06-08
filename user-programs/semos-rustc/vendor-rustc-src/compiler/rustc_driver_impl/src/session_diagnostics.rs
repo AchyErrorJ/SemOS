@@ -1,17 +1,21 @@
-use std::error::Error;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+#[cfg(not(target_os = "none"))] use std::error::Error;
+#[cfg(target_os = "none")] use core::error::Error;
+#[cfg(not(target_os = "none"))] use std::{io, path::{Path, PathBuf}};
+#[cfg(target_os = "none")] use semos_std::{io, path::{Path, PathBuf}};
 
 use rustc_macros::{Diagnostic, Subdiagnostic};
 
 #[derive(Diagnostic)]
 #[diag(driver_impl_cant_emit_mir)]
 pub struct CantEmitMIR {
-    pub error: std::io::Error,
+    pub error: io::Error,
 }
 
 #[derive(Diagnostic)]
 #[diag(driver_impl_rlink_unable_to_read)]
 pub(crate) struct RlinkUnableToRead {
-    pub err: std::io::Error,
+    pub err: io::Error,
 }
 
 #[derive(Diagnostic)]
@@ -43,7 +47,7 @@ pub(crate) struct RlinkNotAFile;
 #[derive(Diagnostic)]
 #[diag(driver_impl_rlink_corrupt_file)]
 pub(crate) struct RlinkCorruptFile<'a> {
-    pub file: &'a std::path::Path,
+    pub file: &'a Path,
 }
 
 #[derive(Diagnostic)]
@@ -74,13 +78,13 @@ pub(crate) struct IceVersion<'a> {
 #[derive(Diagnostic)]
 #[diag(driver_impl_ice_path)]
 pub(crate) struct IcePath {
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
 }
 
 #[derive(Diagnostic)]
 #[diag(driver_impl_ice_path_error)]
 pub(crate) struct IcePathError {
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
     pub error: String,
     #[subdiagnostic]
     pub env_var: Option<IcePathErrorEnv>,
@@ -89,7 +93,7 @@ pub(crate) struct IcePathError {
 #[derive(Subdiagnostic)]
 #[note(driver_impl_ice_path_error_env)]
 pub(crate) struct IcePathErrorEnv {
-    pub env_var: std::path::PathBuf,
+    pub env_var: PathBuf,
 }
 
 #[derive(Diagnostic)]
