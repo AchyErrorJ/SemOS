@@ -55,6 +55,18 @@ semos-std = { path = "../std-shim" }
 rustc_driver_impl = { path = "vendor-rustc-src/compiler/rustc_driver_impl" }
 rustc_driver      = { path = "vendor-rustc-src/compiler/rustc_driver" }
 
+# Phase 5b iter 2: cg_clif statically linked so the Callbacks::config
+# hook can hand it to the driver via `make_codegen_backend`. Bypasses
+# the cfg-stubbed `get_codegen_backend` panic path that would otherwise
+# fire when run_compiler tries to dlopen a backend dylib (a host-only
+# rustc bootstrap concern that doesn't apply to a statically-linked
+# semos-rustc binary).
+rustc_codegen_cranelift = { path = "vendor-rustc-src/compiler/rustc_codegen_cranelift" }
+rustc_codegen_ssa = { path = "vendor-rustc-src/compiler/rustc_codegen_ssa" }
+rustc_session = { path = "vendor-rustc-src/compiler/rustc_session" }
+rustc_target = { path = "vendor-rustc-src/compiler/rustc_target" }
+rustc_interface = { path = "vendor-rustc-src/compiler/rustc_interface" }
+
 # Direct Cranelift deps stay for the smoke-path fallback (if rustc_driver
 # integration hits a blocker we can still emit ELFs via cg_clif's lower
 # layer).

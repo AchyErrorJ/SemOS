@@ -3035,8 +3035,13 @@ dependencies = [
  "cranelift-frontend",
  "cranelift-module",
  "cranelift-object",
+ "rustc_codegen_cranelift",
+ "rustc_codegen_ssa",
  "rustc_driver",
  "rustc_driver_impl",
+ "rustc_interface",
+ "rustc_session",
+ "rustc_target",
  "semos-std",
  "target-lexicon",
 ]
