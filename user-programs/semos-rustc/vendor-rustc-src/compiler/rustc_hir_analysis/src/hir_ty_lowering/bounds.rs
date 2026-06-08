@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::ops::ControlFlow;
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -16,7 +17,7 @@ use rustc_middle::ty::{
 use rustc_span::{ErrorGuaranteed, Ident, Span, kw, sym};
 use rustc_trait_selection::traits;
 use smallvec::SmallVec;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::errors;
 use crate::hir_ty_lowering::{
@@ -356,7 +357,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     ///
     /// There is an implied binder around `param_ty` and `hir_bounds`.
     /// See `lower_poly_trait_ref` for more details.
-    #[instrument(level = "debug", skip(self, hir_bounds, bounds))]
     pub(crate) fn lower_bounds<'hir, I: IntoIterator<Item = &'hir hir::GenericBound<'tcx>>>(
         &self,
         param_ty: Ty<'tcx>,
@@ -423,7 +423,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// the `trait_ref` here will be `for<'a> T: Iterator`.
     /// The `constraint` data however is from *inside* the binder
     /// (e.g., `&'a u32`) and hence may reference bound regions.
-    #[instrument(level = "debug", skip(self, bounds, duplicates, path_span))]
     pub(super) fn lower_assoc_item_constraint(
         &self,
         hir_ref_id: hir::HirId,

@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::Size;
 use rustc_ast::{self as ast, UintTy};
 use rustc_hir::LangItem;

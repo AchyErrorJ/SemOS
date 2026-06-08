@@ -1,5 +1,6 @@
 //! Errors emitted by `rustc_hir_analysis`.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::ExternAbi;
 use rustc_errors::codes::*;
 use rustc_errors::{
@@ -672,7 +673,7 @@ pub(crate) struct ReturnTypeNotationOnNonRpitit<'tcx> {
 #[derive(Subdiagnostic)]
 #[multipart_suggestion(hir_analysis_invalid_union_field_sugg, applicability = "machine-applicable")]
 pub(crate) struct InvalidUnionFieldSuggestion {
-    #[suggestion_part(code = "std::mem::ManuallyDrop<")]
+    #[suggestion_part(code = "core::mem::ManuallyDrop<")]
     pub lo: Span,
     #[suggestion_part(code = ">")]
     pub hi: Span,

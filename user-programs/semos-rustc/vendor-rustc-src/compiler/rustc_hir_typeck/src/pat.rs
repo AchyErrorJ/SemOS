@@ -1,5 +1,9 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cmp;
-use hashbrown::hash_map::Entry::{Occupied, Vacant};
+// Stage H iter 1: rustc_data_structures::fx::StdEntry is the canonical
+// type alias for the hash-map Entry that matches FxHashMap. Use the
+// alias directly via match arms rather than glob-importing variants.
+use rustc_data_structures::fx::StdEntry as Entry;
 
 use rustc_abi::FieldIdx;
 use rustc_ast as ast;
@@ -28,7 +32,7 @@ use rustc_span::source_map::Spanned;
 use rustc_span::{BytePos, DUMMY_SP, Ident, Span, kw, sym};
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits::{ObligationCause, ObligationCauseCode};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 use ty::VariantDef;
 use ty::adjustment::{PatAdjust, PatAdjustment};
 
@@ -402,7 +406,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     ///
     /// Outside of this module, `check_pat_top` should always be used.
     /// Conversely, inside this module, `check_pat_top` should never be used.
-    #[instrument(level = "debug", skip(self, pat_info))]
     fn check_pat(&self, pat: &'tcx Pat<'tcx>, expected: Ty<'tcx>, pat_info: PatInfo<'tcx>) {
         // For patterns containing paths, we need the path's resolution to determine whether to
         // implicitly dereference the scrutinee before matching.
@@ -2035,12 +2038,12 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             let span = field.span;
             let ident = tcx.adjust_ident(field.ident, variant.def_id);
             let field_ty = match used_fields.entry(ident) {
-                Occupied(occupied) => {
+                Entry::Occupied(occupied) => {
                     let guar = self.error_field_already_bound(span, field.ident, *occupied.get());
                     result = Err(guar);
                     Ty::new_error(tcx, guar)
                 }
-                Vacant(vacant) => {
+                Entry::Vacant(vacant) => {
                     vacant.insert(span);
                     field_map
                         .get(&ident)

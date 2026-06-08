@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::RefCell;
 
 use rustc_abi::ExternAbi;
@@ -11,7 +12,7 @@ use rustc_middle::ty::{self, Binder, Ty, TyCtxt};
 use rustc_span::def_id::LocalDefId;
 use rustc_span::sym;
 use rustc_trait_selection::traits::{ObligationCause, ObligationCauseCode};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::coercion::CoerceMany;
 use crate::gather_locals::GatherLocalsVisitor;
@@ -23,7 +24,6 @@ use crate::{CoroutineTypes, Diverges, FnCtxt};
 ///
 /// * ...
 /// * inherited: other fields inherited from the enclosing fn (if any)
-#[instrument(skip(fcx, body), level = "debug")]
 pub(super) fn check_fn<'a, 'tcx>(
     fcx: &mut FnCtxt<'a, 'tcx>,
     fn_sig: ty::FnSig<'tcx>,

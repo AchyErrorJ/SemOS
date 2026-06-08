@@ -6,9 +6,10 @@
 //! the types in HIR to identify late-bound lifetimes and assign their Debruijn indices. This file
 //! is also responsible for assigning their semantics to implicit lifetimes in trait objects.
 
-use std::cell::RefCell;
-use std::fmt;
-use std::ops::ControlFlow;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::cell::RefCell;
+use core::fmt;
+use core::ops::ControlFlow;
 
 use rustc_ast::visit::walk_list;
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
@@ -27,7 +28,7 @@ use rustc_middle::ty::{self, TyCtxt, TypeSuperVisitable, TypeVisitor};
 use rustc_middle::{bug, span_bug};
 use rustc_span::def_id::{DefId, LocalDefId};
 use rustc_span::{Ident, Span, sym};
-use tracing::{debug, debug_span, instrument};
+use tracing::{debug, debug_span};
 
 use crate::errors;
 
@@ -252,7 +253,6 @@ pub(crate) fn provide(providers: &mut Providers) {
 /// Computes the `ResolveBoundVars` map that contains data for an entire `Item`.
 /// You should not read the result of this query directly, but rather use
 /// `named_variable_map`, `late_bound_vars_map`, etc.
-#[instrument(level = "debug", skip(tcx))]
 fn resolve_bound_vars(tcx: TyCtxt<'_>, local_def_id: hir::OwnerId) -> ResolveBoundVars {
     let mut rbv = ResolveBoundVars::default();
     let mut visitor = BoundVarContext {
@@ -518,7 +518,6 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
     ///
     /// This method has special handling for opaques that capture all lifetimes,
     /// like async desugaring.
-    #[instrument(level = "debug", skip(self))]
     fn visit_opaque_ty(&mut self, opaque: &'tcx rustc_hir::OpaqueTy<'tcx>) {
         let captures = RefCell::new(FxIndexMap::default());
 
@@ -612,7 +611,6 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
         self.rbv.opaque_captured_lifetimes.insert(opaque.def_id, captures);
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_item(&mut self, item: &'tcx hir::Item<'tcx>) {
         if let hir::ItemKind::Impl(impl_) = item.kind
             && let Some(of_trait) = impl_.of_trait
@@ -708,7 +706,6 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_ty(&mut self, ty: &'tcx hir::Ty<'tcx, AmbigArg>) {
         match ty.kind {
             hir::TyKind::FnPtr(c) => {
@@ -830,12 +827,10 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_pattern_type_pattern(&mut self, p: &'tcx hir::TyPat<'tcx>) {
         intravisit::walk_ty_pat(self, p)
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_trait_item(&mut self, trait_item: &'tcx hir::TraitItem<'tcx>) {
         use self::hir::TraitItemKind::*;
         match trait_item.kind {
@@ -861,7 +856,6 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_impl_item(&mut self, impl_item: &'tcx hir::ImplItem<'tcx>) {
         use self::hir::ImplItemKind::*;
         match impl_item.kind {
@@ -878,7 +872,6 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_lifetime(&mut self, lifetime_ref: &'tcx hir::Lifetime) {
         match lifetime_ref.kind {
             hir::LifetimeKind::Static => {
@@ -1211,7 +1204,6 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn resolve_lifetime_ref(
         &mut self,
         region_def_id: LocalDefId,
@@ -1490,7 +1482,6 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         Some(guar)
     }
 
-    #[instrument(level = "trace", skip(self, opaque_capture_scopes), ret)]
     fn remap_opaque_captures(
         &mut self,
         opaque_capture_scopes: &Vec<(LocalDefId, &RefCell<FxIndexMap<ResolvedArg, LocalDefId>>)>,
@@ -1663,7 +1654,6 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
             .span_bug(self.tcx.hir_span(hir_id), format!("could not resolve {param_def_id:?}"));
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_segment_args(
         &mut self,
         res: Res,
@@ -1981,7 +1971,6 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn visit_fn_like_elision(
         &mut self,
         inputs: &'tcx [hir::Ty<'tcx>],
@@ -2007,7 +1996,6 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn resolve_object_lifetime_default(&mut self, lifetime_ref: &'tcx hir::Lifetime) {
         let mut late_depth = 0;
         let mut scope = self.scope;
@@ -2049,7 +2037,6 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         self.insert_lifetime(lifetime_ref, lifetime);
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn insert_lifetime(&mut self, lifetime_ref: &'tcx hir::Lifetime, def: ResolvedArg) {
         debug!(span = ?lifetime_ref.ident.span);
         self.rbv.defs.insert(lifetime_ref.hir_id.local_id, def);

@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::assert_matches;
 use rustc_data_structures::fx::StdEntry as Entry;
 use rustc_data_structures::fx::FxHashMap;

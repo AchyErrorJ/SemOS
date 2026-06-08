@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::{fmt, iter, mem};
 
 use rustc_abi::{FIRST_VARIANT, FieldIdx, VariantIdx};
@@ -11,7 +12,7 @@ use rustc_middle::ty::{self, GenericArg, GenericArgsRef, Ty, TyCtxt};
 use rustc_middle::{bug, span_bug, traits};
 use rustc_span::DUMMY_SP;
 use rustc_span::source_map::{Spanned, dummy_spanned};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::patch::MirPatch;
 
@@ -185,7 +186,6 @@ where
     D: DropElaborator<'b, 'tcx>,
     'tcx: 'b,
 {
-    #[instrument(level = "trace", skip(self), ret)]
     fn place_ty(&self, place: Place<'tcx>) -> Ty<'tcx> {
         if place.local < self.elaborator.body().local_decls.next_index() {
             place.ty(self.elaborator.body(), self.tcx()).ty
@@ -468,7 +468,6 @@ where
     //
     // FIXME: I think we should just control the flags externally,
     // and then we do not need this machinery.
-    #[instrument(level = "debug")]
     fn elaborate_drop(&mut self, bb: BasicBlock) {
         match self.elaborator.drop_style(self.path, DropFlagMode::Deep) {
             DropStyle::Dead => {
@@ -700,7 +699,6 @@ where
     }
 
     /// Drops the T contained in a `Box<T>` if it has not been moved out of
-    #[instrument(level = "debug", ret)]
     fn open_drop_for_box_contents(
         &mut self,
         adt: ty::AdtDef<'tcx>,
@@ -740,7 +738,6 @@ where
         self.elaborator.patch().new_block(setup_bbd)
     }
 
-    #[instrument(level = "debug", ret)]
     fn open_drop_for_adt(
         &mut self,
         adt: ty::AdtDef<'tcx>,

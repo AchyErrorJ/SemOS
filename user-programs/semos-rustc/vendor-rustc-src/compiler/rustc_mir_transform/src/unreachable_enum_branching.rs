@@ -1,5 +1,6 @@
 //! A pass that eliminates branches on uninhabited or unreachable enum variants.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::Variants;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::bug;

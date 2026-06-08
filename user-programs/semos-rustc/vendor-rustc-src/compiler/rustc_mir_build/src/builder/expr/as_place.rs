@@ -1,5 +1,6 @@
 //! See docs in build/expr/mod.rs
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 
 use rustc_abi::{FIRST_VARIANT, FieldIdx, VariantIdx};
@@ -12,7 +13,7 @@ use rustc_middle::thir::*;
 use rustc_middle::ty::{self, AdtDef, CanonicalUserTypeAnnotation, Ty, Variance};
 use rustc_middle::{bug, span_bug};
 use rustc_span::Span;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::builder::ForGuard::{OutsideGuard, RefWithinGuard};
 use crate::builder::expr::category::Category;
@@ -169,7 +170,6 @@ fn find_capture_matching_projections<'a, 'tcx>(
 
 /// Takes an upvar place and tries to resolve it into a `PlaceBuilder`
 /// with `PlaceBase::Local`
-#[instrument(level = "trace", skip(cx), ret)]
 fn to_upvars_resolved_place_builder<'tcx>(
     cx: &Builder<'_, 'tcx>,
     var_hir_id: LocalVarId,

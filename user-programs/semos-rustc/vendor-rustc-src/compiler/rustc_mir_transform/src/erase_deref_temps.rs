@@ -1,6 +1,7 @@
 //! This pass converts all `DerefTemp` locals into normal temporaries
 //! and turns their `CopyForDeref` rvalues into normal copies.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::mir::visit::MutVisitor;
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;

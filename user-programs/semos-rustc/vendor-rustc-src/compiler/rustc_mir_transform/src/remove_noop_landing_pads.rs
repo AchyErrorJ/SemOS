@@ -1,7 +1,8 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_index::bit_set::DenseBitSet;
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::patch::MirPatch;
 
@@ -15,7 +16,6 @@ impl<'tcx> crate::MirPass<'tcx> for RemoveNoopLandingPads {
         sess.panic_strategy().unwinds()
     }
 
-    #[instrument(level = "debug", skip(self, _tcx, body))]
     fn run_pass(&self, _tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         let def_id = body.source.def_id();
         debug!(?def_id);

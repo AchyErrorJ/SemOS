@@ -9,7 +9,8 @@
 // `InferredIndex` is a newtype'd int representing the index of such
 // a variable.
 
-use std::fmt;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::fmt;
 
 use rustc_arena::DroplessArena;
 use rustc_hir::def::DefKind;

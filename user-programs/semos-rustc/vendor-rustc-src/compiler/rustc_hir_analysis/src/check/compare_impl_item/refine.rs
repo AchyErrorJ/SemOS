@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use itertools::Itertools as _;
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_hir as hir;
@@ -279,7 +280,7 @@ fn report_mismatched_rpitit_signature<'tcx>(
     unmatched_bound: Option<Span>,
     is_internal: bool,
 ) {
-    let mapping = std::iter::zip(
+    let mapping = core::iter::zip(
         tcx.fn_sig(trait_m_def_id).skip_binder().bound_vars(),
         tcx.fn_sig(impl_m_def_id).skip_binder().bound_vars(),
     )
@@ -428,7 +429,14 @@ fn report_mismatched_rpitit_captures<'tcx>(
 
     trait_captured_args
         .sort_by_cached_key(|arg| !matches!(arg.kind(), ty::GenericArgKind::Lifetime(_)));
-    let suggestion = format!("use<{}>", trait_captured_args.iter().join(", "));
+    let suggestion = format!(
+        "use<{}>",
+        trait_captured_args
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     tcx.emit_node_span_lint(
         if is_internal { REFINING_IMPL_TRAIT_INTERNAL } else { REFINING_IMPL_TRAIT_REACHABLE },

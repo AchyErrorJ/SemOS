@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::{Cell, RefCell};
 use core::cmp::max;
 use core::ops::Deref;
@@ -37,7 +38,7 @@ use rustc_trait_selection::traits::query::method_autoderef::{
 };
 use rustc_trait_selection::traits::{self, ObligationCause, ObligationCtxt};
 use smallvec::{SmallVec, smallvec};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use self::CandidateKind::*;
 pub(crate) use self::PickKind::*;
@@ -278,7 +279,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// would result in an error (basically, the same criteria we
     /// would use to decide if a method is a plausible fit for
     /// ambiguity purposes).
-    #[instrument(level = "debug", skip(self, candidate_filter))]
     pub(crate) fn probe_for_return_type_for_diagnostic(
         &self,
         span: Span,
@@ -321,7 +321,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .collect()
     }
 
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn probe_for_name(
         &self,
         mode: Mode,
@@ -345,7 +344,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         )
     }
 
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn probe_for_name_many(
         &self,
         mode: Mode,
@@ -811,7 +809,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn assemble_probe(
         &mut self,
         self_ty: &Canonical<'tcx, QueryResponse<'tcx, Ty<'tcx>>>,
@@ -894,7 +891,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn assemble_inherent_impl_probe(&mut self, impl_def_id: DefId, receiver_steps: usize) {
         if !self.impl_dups.insert(impl_def_id) {
             return; // already visited
@@ -917,7 +913,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn assemble_inherent_candidates_from_object(&mut self, self_ty: Ty<'tcx>) {
         let principal = match self_ty.kind() {
             ty::Dynamic(data, ..) => Some(data),
@@ -954,7 +949,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         );
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn assemble_inherent_candidates_from_param(&mut self, param_ty: Ty<'tcx>) {
         debug_assert_matches!(param_ty.kind(), ty::Param(_));
 
@@ -1013,7 +1007,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn assemble_extension_candidates_for_traits_in_scope(&mut self) {
         let mut duplicates = FxHashSet::default();
         let opt_applicable_traits = self.tcx.in_scope_traits(self.scope_expr_id);
@@ -1031,7 +1024,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn assemble_extension_candidates_for_all_traits(&mut self) {
         let mut duplicates = FxHashSet::default();
         for trait_info in suggest::all_traits(self.tcx) {
@@ -1061,7 +1053,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn assemble_extension_candidates_for_trait(
         &mut self,
         import_ids: &SmallVec<[LocalDefId; 1]>,
@@ -1157,7 +1148,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
     ///////////////////////////////////////////////////////////////////////////
     // THE ACTUAL SEARCH
 
-    #[instrument(level = "debug", skip(self))]
     fn pick(mut self) -> PickResult<'tcx> {
         assert!(self.method_name.is_some());
 
@@ -1573,7 +1563,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
     }
 
     /// Looks for applicable methods if we reborrow a `Pin<&mut T>` as a `Pin<&T>`.
-    #[instrument(level = "debug", skip(self, step, pick_diag_hints))]
     fn pick_reborrow_pin_method(
         &self,
         step: &CandidateStep<'tcx>,
@@ -1890,7 +1879,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, possibly_unsatisfied_predicates), ret)]
     fn consider_probe(
         &self,
         self_ty: Ty<'tcx>,
@@ -2195,7 +2183,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
     ///
     /// This needs to happen at the end of `consider_probe` as we need to take
     /// all the constraints from that into account.
-    #[instrument(level = "debug", skip(self), ret)]
     fn should_reject_candidate_due_to_opaque_treated_as_rigid(
         &self,
         trait_predicate: Option<ty::Predicate<'tcx>>,
@@ -2390,7 +2377,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
     /// Similarly to `probe_for_return_type`, this method attempts to find the best matching
     /// candidate method where the method name may have been misspelled. Similarly to other
     /// edit distance based suggestions, we provide at most one such suggestion.
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn probe_for_similar_candidate(
         &mut self,
     ) -> Result<Option<ty::AssocItem>, MethodError<'tcx>> {
@@ -2481,7 +2467,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         self.static_candidates.borrow_mut().push(source);
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn xform_self_ty(
         &self,
         item: ty::AssocItem,
@@ -2496,7 +2481,6 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn xform_method_sig(&self, method: DefId, args: GenericArgsRef<'tcx>) -> ty::FnSig<'tcx> {
         let fn_sig = self.tcx.fn_sig(method);
         debug!(?fn_sig);

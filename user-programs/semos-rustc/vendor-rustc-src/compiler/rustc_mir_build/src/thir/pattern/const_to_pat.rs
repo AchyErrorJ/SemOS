@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::ops::ControlFlow;
 
 use rustc_abi::{FieldIdx, VariantIdx};
@@ -18,7 +19,7 @@ use rustc_span::def_id::DefId;
 use rustc_span::{DUMMY_SP, Span};
 use rustc_trait_selection::traits::ObligationCause;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use super::PatCtxt;
 use crate::errors::{
@@ -34,7 +35,6 @@ impl<'tcx> PatCtxt<'tcx> {
     /// Only type system constants are supported, as we are using valtrees
     /// as an intermediate step. Unfortunately those don't carry a type
     /// so we have to carry one ourselves.
-    #[instrument(level = "debug", skip(self), ret)]
     pub(super) fn const_to_pat(
         &self,
         c: ty::Const<'tcx>,
@@ -204,7 +204,6 @@ impl<'tcx> ConstToPat<'tcx> {
     }
 
     // Recursive helper for `to_pat`; invoke that (instead of calling this directly).
-    #[instrument(skip(self), level = "debug")]
     fn valtree_to_pat(&self, value: ty::Value<'tcx>) -> Box<Pat<'tcx>> {
         let span = self.span;
         let tcx = self.tcx;
@@ -460,7 +459,6 @@ struct PartialEqImplStatus {
     non_blanket_impl: Option<DefId>,
 }
 
-#[instrument(level = "trace", skip(tcx), ret)]
 fn type_has_partial_eq_impl<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,

@@ -10,6 +10,7 @@
 //! them automatically, preferring the built-in instead, they're common in generic code (such as
 //! `Vec::truncate`) so removing them from things like inlined `Vec<u8>` is helpful.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::LangItem;
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;

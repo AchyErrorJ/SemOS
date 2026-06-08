@@ -81,6 +81,7 @@ that contains only loops and breakable blocks. It tracks where a `break`,
 
 */
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::mem;
 
 use interpret::ErrorHandled;
@@ -96,7 +97,7 @@ use rustc_pattern_analysis::rustc::RustcPatCtxt;
 use rustc_session::lint::Level;
 use rustc_span::source_map::Spanned;
 use rustc_span::{DUMMY_SP, Span};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::matches::BuiltMatchTree;
 use crate::builder::{BlockAnd, BlockAndExtension, BlockFrame, Builder, CFG};
@@ -680,7 +681,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
     /// Convenience wrapper that pushes a scope and then executes `f`
     /// to build its contents, popping the scope afterwards.
-    #[instrument(skip(self, f), level = "debug")]
     pub(crate) fn in_scope<F, R>(
         &mut self,
         region_scope: (region::Scope, SourceInfo),
@@ -1501,7 +1501,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
     /// Schedule emission of a backwards incompatible drop lint hint.
     /// Applicable only to temporary values for now.
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn schedule_backwards_incompatible_drop(
         &mut self,
         span: Span,

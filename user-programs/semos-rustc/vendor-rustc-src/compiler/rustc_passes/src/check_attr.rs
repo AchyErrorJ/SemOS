@@ -5,6 +5,7 @@
 //! conflicts between multiple such attributes attached to the same
 //! item.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::Cell;
 use core::slice;
 use hashbrown::hash_map::Entry;
@@ -440,7 +441,7 @@ impl<'tcx> CheckAttrVisitor<'tcx> {
                             attr.path
                                 .segments
                                 .first()
-                                .and_then(|name| BUILTIN_ATTRIBUTE_MAP.get(&name))
+                                .and_then(|name| BUILTIN_ATTRIBUTE_MAP.get(name))
                         {
                             match attr.style {
                                 ast::AttrStyle::Outer => {

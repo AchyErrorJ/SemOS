@@ -9,7 +9,8 @@
 //! The functions in this file should fall back to the default set in their
 //! origin crate when the `TyCtxt` is not present in TLS.
 
-use std::fmt;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::fmt;
 
 use rustc_errors::{DiagInner, TRACK_DIAGNOSTIC};
 use rustc_middle::dep_graph::{DepNodeExt, TaskDepsRef};
@@ -69,7 +70,7 @@ fn def_id_debug(def_id: rustc_hir::def_id::DefId, f: &mut fmt::Formatter<'_>) ->
 
 /// This is a callback from `rustc_query_system` as it cannot access the implicit state
 /// in `rustc_middle` otherwise.
-pub fn dep_kind_debug(kind: DepKind, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+pub fn dep_kind_debug(kind: DepKind, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     tls::with_opt(|opt_tcx| {
         if let Some(tcx) = opt_tcx {
             write!(f, "{}", tcx.dep_kind_info(kind).name)
@@ -81,7 +82,7 @@ pub fn dep_kind_debug(kind: DepKind, f: &mut std::fmt::Formatter<'_>) -> std::fm
 
 /// This is a callback from `rustc_query_system` as it cannot access the implicit state
 /// in `rustc_middle` otherwise.
-pub fn dep_node_debug(node: DepNode, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+pub fn dep_node_debug(node: DepNode, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     write!(f, "{:?}(", node.kind)?;
 
     tls::with_opt(|opt_tcx| {

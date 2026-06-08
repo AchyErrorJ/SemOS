@@ -1,5 +1,6 @@
 //! Some helper functions for `AutoDeref`.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 
 use itertools::Itertools;

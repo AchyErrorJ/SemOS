@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use hir::HirId;
 use rustc_abi::Primitive::Pointer;
 use rustc_abi::VariantIdx;

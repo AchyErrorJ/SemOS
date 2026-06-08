@@ -1,6 +1,7 @@
 //! Orphan checker: every impl either implements a trait defined in this
 //! crate or pertains to a type defined in this crate.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_errors::ErrorGuaranteed;
 use rustc_infer::infer::{DefineOpaqueTypes, InferCtxt, TyCtxtInferExt};
@@ -13,11 +14,10 @@ use rustc_span::def_id::{DefId, LocalDefId};
 use rustc_trait_selection::traits::{
     self, IsFirstInputType, OrphanCheckErr, OrphanCheckMode, UncoveredTyParams,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::errors;
 
-#[instrument(level = "debug", skip(tcx))]
 pub(crate) fn orphan_check_impl(
     tcx: TyCtxt<'_>,
     impl_def_id: LocalDefId,
@@ -280,7 +280,6 @@ pub(crate) fn orphan_check_impl(
 ///
 /// 1. All type parameters in `Self` must be "covered" by some local type constructor.
 /// 2. Some local type must appear in `Self`.
-#[instrument(level = "debug", skip(tcx), ret)]
 fn orphan_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_def_id: LocalDefId,
@@ -355,7 +354,7 @@ fn orphan_check<'tcx>(
                 // Map the unconstrained args back to their params,
                 // ignoring any type unification errors.
                 for (arg, id_arg) in
-                    std::iter::zip(args, ty::GenericArgs::identity_for_item(tcx, impl_def_id))
+                    core::iter::zip(args, ty::GenericArgs::identity_for_item(tcx, impl_def_id))
                 {
                     let _ = infcx.at(&cause, ty::ParamEnv::empty()).eq(
                         DefineOpaqueTypes::No,

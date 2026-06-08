@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast::ast::ParamKindOrd;
 use rustc_errors::codes::*;
 use rustc_errors::{Applicability, Diag, ErrorGuaranteed, MultiSpan, struct_span_code_err};
@@ -11,7 +12,7 @@ use rustc_session::lint::builtin::LATE_BOUND_LIFETIME_ARGUMENTS;
 use rustc_span::kw;
 use rustc_trait_selection::traits;
 use smallvec::SmallVec;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::{HirTyLowerer, IsMethodCall};
 use crate::errors::wrong_number_of_generic_args::{GenericArgsInfo, WrongNumberOfGenericArgs};
@@ -399,7 +400,6 @@ pub fn check_generic_arg_count_for_call(
 
 /// Checks that the correct number of generic arguments have been provided.
 /// This is used both for datatypes and function calls.
-#[instrument(skip(cx, gen_pos), level = "debug")]
 pub(crate) fn check_generic_arg_count(
     cx: &dyn HirTyLowerer<'_>,
     def_id: DefId,

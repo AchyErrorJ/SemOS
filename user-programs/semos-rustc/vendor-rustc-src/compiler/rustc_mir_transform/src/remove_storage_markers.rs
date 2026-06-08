@@ -1,5 +1,6 @@
 //! This pass removes storage markers if they won't be emitted during codegen.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;
 use tracing::trace;

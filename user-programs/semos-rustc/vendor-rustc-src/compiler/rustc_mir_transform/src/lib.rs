@@ -5,13 +5,16 @@
 #![feature(box_patterns)]
 #![feature(const_type_name)]
 #![feature(cow_is_borrowed)]
-#![feature(file_buffered)]
+// Stage H iter 1: file_buffered isn't on this toolchain; only the host
+// build path actually uses File::open_buffered.
+#![cfg_attr(not(target_os = "none"), feature(file_buffered))]
 #![feature(if_let_guard)]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(try_blocks)]
 #![feature(yeet_expr)]
 // tidy-alphabetical-end
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 #[macro_use]
 extern crate alloc;
 

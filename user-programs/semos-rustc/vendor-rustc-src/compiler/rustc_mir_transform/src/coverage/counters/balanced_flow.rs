@@ -14,6 +14,7 @@
 //! on an underlying graph. This is done by non-destructively adding synthetic
 //! nodes and edges as necessary.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::graph;
 use rustc_data_structures::graph::iterate::DepthFirstSearch;
 use rustc_data_structures::graph::reversed::ReversedGraph;

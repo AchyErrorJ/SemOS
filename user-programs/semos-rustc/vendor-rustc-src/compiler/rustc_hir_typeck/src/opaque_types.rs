@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::def::DefKind;
 use rustc_infer::traits::ObligationCause;
 use rustc_middle::ty::{
@@ -9,7 +10,7 @@ use rustc_trait_selection::opaque_types::{
     NonDefiningUseReason, opaque_type_has_defining_use_args, report_item_does_not_constrain_error,
 };
 use rustc_trait_selection::solve;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::FnCtxt;
 
@@ -24,7 +25,6 @@ impl<'tcx> FnCtxt<'_, 'tcx> {
     /// It then uses these defining uses to guide inference for all other uses.
     ///
     /// Unlike `handle_opaque_type_uses_next`, this does not report errors.
-    #[instrument(level = "debug", skip(self))]
     pub(super) fn try_handle_opaque_type_uses_next(&mut self) {
         // We clone the opaques instead of stealing them here as we still need
         // to use them after fallback.
@@ -41,7 +41,6 @@ impl<'tcx> FnCtxt<'_, 'tcx> {
     /// inference variables.
     ///
     /// It then uses these defining uses to guide inference for all other uses.
-    #[instrument(level = "debug", skip(self))]
     pub(super) fn handle_opaque_type_uses_next(&mut self) {
         // We clone the opaques instead of stealing them here as they are still used for
         // normalization in the next generation trait solver.
@@ -196,7 +195,6 @@ impl<'tcx> FnCtxt<'_, 'tcx> {
         }
     }
 
-    #[tracing::instrument(skip(self), ret)]
     fn consider_opaque_type_use(
         &self,
         opaque_type_key: OpaqueTypeKey<'tcx>,

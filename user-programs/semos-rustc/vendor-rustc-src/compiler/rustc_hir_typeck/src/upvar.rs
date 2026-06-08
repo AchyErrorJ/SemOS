@@ -30,6 +30,7 @@
 //! then mean that all later passes would have to check for these figments
 //! and report an error, and it just seems like more mess in the end.)
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 
 use rustc_abi::FIRST_VARIANT;
@@ -51,7 +52,7 @@ use rustc_middle::{bug, span_bug};
 use rustc_session::lint;
 use rustc_span::{BytePos, Pos, Span, Symbol, sym};
 use rustc_trait_selection::infer::InferCtxtExt;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::FnCtxt;
 use crate::expr_use_visitor as euv;
@@ -161,7 +162,6 @@ impl<'a, 'tcx> Visitor<'tcx> for InferBorrowKindVisitor<'a, 'tcx> {
 
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// Analysis starting point.
-    #[instrument(skip(self, body), level = "debug")]
     fn analyze_closure(
         &self,
         closure_hir_id: HirId,
@@ -761,7 +761,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     ///       ],
     /// }
     /// ```
-    #[instrument(level = "debug", skip(self))]
     fn compute_min_captures(
         &self,
         closure_def_id: LocalDefId,
@@ -1253,7 +1252,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     ///
     /// This function only returns a HashSet of CapturesInfo for significant drops. If there
     /// are no significant drops than None is returned
-    #[instrument(level = "debug", skip(self))]
     fn compute_2229_migrations_for_drop(
         &self,
         closure_def_id: LocalDefId,
@@ -1360,7 +1358,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// Returns a tuple containing a vector of MigrationDiagnosticInfo, as well as a String
     /// containing the reason why root variables whose HirId is contained in the vector should
     /// be captured
-    #[instrument(level = "debug", skip(self))]
     fn compute_2229_migrations(
         &self,
         closure_def_id: LocalDefId,
@@ -2030,7 +2027,6 @@ struct InferBorrowKind<'tcx> {
 }
 
 impl<'tcx> euv::Delegate<'tcx> for InferBorrowKind<'tcx> {
-    #[instrument(skip(self), level = "debug")]
     fn fake_read(
         &mut self,
         place_with_id: &PlaceWithHirId<'tcx>,
@@ -2050,7 +2046,6 @@ impl<'tcx> euv::Delegate<'tcx> for InferBorrowKind<'tcx> {
         self.fake_reads.push((place, cause, diag_expr_id));
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn consume(&mut self, place_with_id: &PlaceWithHirId<'tcx>, diag_expr_id: HirId) {
         let PlaceBase::Upvar(upvar_id) = place_with_id.place.base else { return };
         assert_eq!(self.closure_def_id, upvar_id.closure_expr_id);
@@ -2065,7 +2060,6 @@ impl<'tcx> euv::Delegate<'tcx> for InferBorrowKind<'tcx> {
         ));
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn use_cloned(&mut self, place_with_id: &PlaceWithHirId<'tcx>, diag_expr_id: HirId) {
         let PlaceBase::Upvar(upvar_id) = place_with_id.place.base else { return };
         assert_eq!(self.closure_def_id, upvar_id.closure_expr_id);
@@ -2080,7 +2074,6 @@ impl<'tcx> euv::Delegate<'tcx> for InferBorrowKind<'tcx> {
         ));
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn borrow(
         &mut self,
         place_with_id: &PlaceWithHirId<'tcx>,
@@ -2114,14 +2107,12 @@ impl<'tcx> euv::Delegate<'tcx> for InferBorrowKind<'tcx> {
         ));
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn mutate(&mut self, assignee_place: &PlaceWithHirId<'tcx>, diag_expr_id: HirId) {
         self.borrow(assignee_place, diag_expr_id, ty::BorrowKind::Mutable);
     }
 }
 
 /// Rust doesn't permit moving fields out of a type that implements drop
-#[instrument(skip(fcx), ret, level = "debug")]
 fn restrict_precision_for_drop_types<'a, 'tcx>(
     fcx: &'a FnCtxt<'a, 'tcx>,
     mut place: Place<'tcx>,
@@ -2182,7 +2173,6 @@ fn restrict_precision_for_unsafe(
 /// - No unsafe block is required to capture `place`.
 ///
 /// Returns the truncated place and updated capture mode.
-#[instrument(ret, level = "debug")]
 fn restrict_capture_precision(
     place: Place<'_>,
     curr_mode: ty::UpvarCapture,
@@ -2212,7 +2202,6 @@ fn restrict_capture_precision(
 }
 
 /// Truncate deref of any reference.
-#[instrument(ret, level = "debug")]
 fn adjust_for_move_closure(
     mut place: Place<'_>,
     mut kind: ty::UpvarCapture,
@@ -2227,7 +2216,6 @@ fn adjust_for_move_closure(
 }
 
 /// Truncate deref of any reference.
-#[instrument(ret, level = "debug")]
 fn adjust_for_use_closure(
     mut place: Place<'_>,
     mut kind: ty::UpvarCapture,
@@ -2243,7 +2231,6 @@ fn adjust_for_use_closure(
 
 /// Adjust closure capture just that if taking ownership of data, only move data
 /// from enclosing stack frame.
-#[instrument(ret, level = "debug")]
 fn adjust_for_non_move_closure(
     mut place: Place<'_>,
     mut kind: ty::UpvarCapture,
@@ -2330,7 +2317,6 @@ fn var_name(tcx: TyCtxt<'_>, var_hir_id: HirId) -> Symbol {
     tcx.hir_name(var_hir_id)
 }
 
-#[instrument(level = "debug", skip(tcx))]
 fn should_do_rust_2021_incompatible_closure_captures_analysis(
     tcx: TyCtxt<'_>,
     closure_id: HirId,
@@ -2566,7 +2552,6 @@ fn determine_place_ancestry_relation<'tcx>(
 ///     // it is constrained to `'a`
 /// }
 /// ```
-#[instrument(ret, level = "debug")]
 fn truncate_capture_for_optimization(
     mut place: Place<'_>,
     mut curr_mode: ty::UpvarCapture,

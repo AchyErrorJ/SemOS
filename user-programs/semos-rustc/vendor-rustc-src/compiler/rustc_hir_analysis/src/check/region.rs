@@ -6,7 +6,8 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/borrow_check.html
 
-use std::mem;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::mem;
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir as hir;
@@ -211,7 +212,6 @@ fn resolve_arm<'tcx>(visitor: &mut ScopeResolutionVisitor<'tcx>, arm: &'tcx hir:
     visitor.cx = prev_cx;
 }
 
-#[tracing::instrument(level = "debug", skip(visitor))]
 fn resolve_pat<'tcx>(visitor: &mut ScopeResolutionVisitor<'tcx>, pat: &'tcx hir::Pat<'tcx>) {
     // If this is a binding then record the lifetime of that binding.
     if let PatKind::Binding(..) = pat.kind {
@@ -250,7 +250,6 @@ fn resolve_stmt<'tcx>(visitor: &mut ScopeResolutionVisitor<'tcx>, stmt: &'tcx hi
     }
 }
 
-#[tracing::instrument(level = "debug", skip(visitor))]
 fn resolve_expr<'tcx>(
     visitor: &mut ScopeResolutionVisitor<'tcx>,
     expr: &'tcx hir::Expr<'tcx>,

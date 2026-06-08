@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_hir as hir;
 use rustc_infer::traits::util;
@@ -8,7 +9,7 @@ use rustc_middle::ty::{
 use rustc_middle::{bug, span_bug};
 use rustc_span::Span;
 use rustc_span::def_id::{DefId, LocalDefId};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::ItemCtxt;
 use super::predicates_of::assert_only_contains_predicates_from;
@@ -185,7 +186,7 @@ fn remap_gat_vars_and_recurse_into_nested_projections<'tcx>(
     // If we find a duplicate, then it can't be mapped to the definition's params.
     let mut mapping = FxIndexMap::default();
     let generics = tcx.generics_of(assoc_item_def_id);
-    for (param, var) in std::iter::zip(&generics.own_params, gat_vars) {
+    for (param, var) in core::iter::zip(&generics.own_params, gat_vars) {
         let existing = match var.kind() {
             ty::GenericArgKind::Lifetime(re) => {
                 let ty::RegionKind::ReBound(ty::BoundVarIndexKind::Bound(ty::INNERMOST), bv) =
@@ -350,7 +351,6 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for MapAndCompressBoundVars<'tcx> {
 /// impl trait it isn't possible to write a suitable predicate on the
 /// containing function and for type-alias impl trait we don't have a backwards
 /// compatibility issue.
-#[instrument(level = "trace", skip(tcx, item_ty))]
 fn opaque_type_bounds<'tcx>(
     tcx: TyCtxt<'tcx>,
     opaque_def_id: LocalDefId,

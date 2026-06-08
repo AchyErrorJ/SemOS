@@ -14,6 +14,7 @@
 //! At present, however, we do run collection across all items in the
 //! crate as a kind of pass. This should eventually be factored away.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::Cell;
 use core::iter;
 use core::ops::Bound;
@@ -44,7 +45,7 @@ use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits::{
     FulfillmentError, ObligationCtxt, hir_ty_lowering_dyn_compatibility_violations,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::errors;
 use crate::hir_ty_lowering::{HirTyLowerer, InherentAssocCandidate, RegionInferReason};
@@ -362,7 +363,6 @@ impl<'tcx> HirTyLowerer<'tcx> for ItemCtxt<'tcx> {
         self.tcx.at(span).type_param_predicates((self.item_def_id, def_id, assoc_ident))
     }
 
-    #[instrument(level = "debug", skip(self, _span), ret)]
     fn select_inherent_assoc_candidates(
         &self,
         _span: Span,
@@ -945,7 +945,6 @@ fn trait_def(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::TraitDef {
     }
 }
 
-#[instrument(level = "debug", skip(tcx), ret)]
 fn fn_sig(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::EarlyBinder<'_, ty::PolyFnSig<'_>> {
     use rustc_hir::Node::*;
     use rustc_hir::*;
@@ -1527,7 +1526,6 @@ fn anon_const_kind<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> ty::AnonConstKin
     }
 }
 
-#[instrument(level = "debug", skip(tcx), ret)]
 fn const_of_item<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,

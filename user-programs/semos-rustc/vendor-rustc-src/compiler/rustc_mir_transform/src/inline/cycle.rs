@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_data_structures::unord::UnordSet;
@@ -6,9 +7,8 @@ use rustc_hir::limit::Limit;
 use rustc_middle::mir::TerminatorKind;
 use rustc_middle::ty::{self, GenericArgsRef, InstanceKind, TyCtxt, TypeVisitableExt};
 use rustc_span::sym;
-use tracing::{instrument, trace};
+use tracing::{trace};
 
-#[instrument(level = "debug", skip(tcx), ret)]
 fn should_recurse<'tcx>(tcx: TyCtxt<'tcx>, callee: ty::Instance<'tcx>) -> bool {
     match callee.def {
         // If there is no MIR available (either because it was not in metadata or
@@ -54,11 +54,8 @@ fn should_recurse<'tcx>(tcx: TyCtxt<'tcx>, callee: ty::Instance<'tcx>) -> bool {
         || crate::inline::ForceInline::should_run_pass_for_callee(tcx, callee.def.def_id())
 }
 
-#[instrument(
-    level = "debug",
-    skip(tcx, typing_env, seen, involved, recursion_limiter, recursion_limit),
-    ret
-)]
+// Stripped #[instrument(...)] — tracing-attributes proc-macro unavailable
+// in no_std target builds. Diagnostic-only attribute; removal is no-op.
 fn process<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,
@@ -146,7 +143,6 @@ fn process<'tcx>(
     Some(reaches_root)
 }
 
-#[instrument(level = "debug", skip(tcx), ret)]
 pub(crate) fn mir_callgraph_cyclic<'tcx>(
     tcx: TyCtxt<'tcx>,
     root: LocalDefId,

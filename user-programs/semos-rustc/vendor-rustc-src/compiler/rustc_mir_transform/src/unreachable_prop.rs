@@ -2,6 +2,7 @@
 //! when all of their successors are unreachable. This is achieved through a
 //! post-order traversal of the blocks.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::Size;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::bug;

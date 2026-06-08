@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::ops::Deref;
 use core::{fmt, iter};
 
@@ -283,7 +284,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                                 ocx.eq(&origin, self.param_env, ty, generalized_ty).unwrap();
                                 generalized_ty
                             })
-                            .collect_vec();
+                            .collect::<Vec<_>>();
 
                         formal_input_tys_ns.as_slice()
                     } else {
@@ -296,11 +297,11 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
                     // Record all the argument types, with the args
                     // produced from the above subtyping unification.
-                    Ok(Some(
+                    Ok::<_, TypeError>(Some(
                         formal_input_tys
                             .iter()
                             .map(|&ty| self.resolve_vars_if_possible(ty))
-                            .collect(),
+                            .collect::<Vec<_>>(),
                     ))
                 })
                 .ok()
@@ -322,14 +323,14 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     let expected_input_tys = match expected_input_tys {
                         Some(expected_input_tys) => match expected_input_tys.get(0) {
                             Some(ty) => match ty.kind() {
-                                ty::Tuple(tys) => Some(tys.iter().collect()),
+                                ty::Tuple(tys) => Some(tys.iter().collect::<Vec<_>>()),
                                 _ => None,
                             },
                             None => None,
                         },
                         None => None,
                     };
-                    (arg_types.iter().collect(), expected_input_tys)
+                    (arg_types.iter().collect::<Vec<_>>(), expected_input_tys)
                 }
                 _ => {
                     // Otherwise, there's a mismatch, so clear out what we're expecting, and set

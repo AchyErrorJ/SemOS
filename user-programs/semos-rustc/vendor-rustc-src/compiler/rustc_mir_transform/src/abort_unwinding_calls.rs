@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::ExternAbi;
 use rustc_ast::InlineAsmOptions;
 use rustc_middle::mir::*;

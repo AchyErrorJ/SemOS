@@ -1,11 +1,12 @@
 //! See docs in build/expr/mod.rs
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_hir::HirId;
 use rustc_middle::middle::region::{Scope, ScopeData, TempLifetime};
 use rustc_middle::mir::*;
 use rustc_middle::thir::*;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::builder::scope::{DropKind, LintLevel};
 use crate::builder::{BlockAnd, BlockAndExtension, Builder};
@@ -26,7 +27,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         ensure_sufficient_stack(|| self.as_temp_inner(block, temp_lifetime, expr_id, mutability))
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn as_temp_inner(
         &mut self,
         mut block: BasicBlock,

@@ -34,6 +34,7 @@
 //! The normal logic that a program with UB can be changed to do anything does not apply to
 //! pre-"runtime" MIR!
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use itertools::Itertools as _;
 use rustc_index::bit_set::DenseBitSet;
 use rustc_index::{Idx, IndexSlice, IndexVec};

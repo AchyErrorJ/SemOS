@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::limit::Limit;
 use rustc_infer::infer::InferCtxt;
 use rustc_infer::traits::PredicateObligations;
@@ -5,7 +6,7 @@ use rustc_middle::ty::{self, Ty, TyCtxt, TypeVisitableExt};
 use rustc_span::def_id::{LOCAL_CRATE, LocalDefId};
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_trait_selection::traits::ObligationCtxt;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::errors::AutoDerefReachedRecursionLimit;
 use crate::traits;
@@ -184,7 +185,6 @@ impl<'a, 'tcx> Autoderef<'a, 'tcx> {
         Some(self.infcx.resolve_vars_if_possible(normalized_ty))
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     pub fn structurally_normalize_ty(
         &self,
         ty: Ty<'tcx>,

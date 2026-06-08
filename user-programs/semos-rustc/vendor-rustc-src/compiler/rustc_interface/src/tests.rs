@@ -1,6 +1,7 @@
 #![allow(rustc::bad_opt_access)]
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use std::collections::BTreeMap;
-use std::num::NonZero;
+use core::num::NonZero;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 

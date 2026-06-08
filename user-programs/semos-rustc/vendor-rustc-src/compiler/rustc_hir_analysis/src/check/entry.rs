@@ -1,4 +1,5 @@
-use std::ops::Not;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::ops::Not;
 
 use rustc_abi::ExternAbi;
 use rustc_hir as hir;

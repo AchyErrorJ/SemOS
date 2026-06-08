@@ -35,6 +35,7 @@
 //! // and are then unable to coerce `&7i32` to `&mut i32`.
 //! ```
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::ops::{ControlFlow, Deref};
 
 use rustc_errors::codes::*;
@@ -63,7 +64,7 @@ use rustc_trait_selection::traits::{
     self, ImplSource, NormalizeExt, ObligationCause, ObligationCauseCode, ObligationCtxt,
 };
 use smallvec::{SmallVec, smallvec};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::FnCtxt;
 use crate::errors::SuggestBoxingForReturnImplTrait;
@@ -217,7 +218,6 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
         })
     }
 
-    #[instrument(skip(self), ret)]
     fn coerce(&self, a: Ty<'tcx>, b: Ty<'tcx>) -> CoerceResult<'tcx> {
         // First, remove any resolved type variables (at the top level, at least):
         let a = self.shallow_resolve(a);
@@ -504,7 +504,6 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
     /// are successfully selected.
     ///
     /// [unsized coercion](https://doc.rust-lang.org/reference/type-coercions.html#unsized-coercions)
-    #[instrument(skip(self), level = "debug")]
     fn coerce_unsized(&self, source: Ty<'tcx>, target: Ty<'tcx>) -> CoerceResult<'tcx> {
         debug!(?source, ?target);
         debug_assert!(self.shallow_resolve(source) == source);
@@ -799,7 +798,6 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
     /// - `Pin<&T>` as `Pin<&T>`
     /// - `Pin<Box<T>>` as `Pin<&T>`
     /// - `Pin<Box<T>>` as `Pin<&mut T>`
-    #[instrument(skip(self), level = "trace")]
     fn coerce_to_pin_ref(&self, a: Ty<'tcx>, b: Ty<'tcx>) -> CoerceResult<'tcx> {
         debug_assert!(self.shallow_resolve(a) == a);
         debug_assert!(self.shallow_resolve(b) == b);
@@ -1071,7 +1069,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         })
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     fn sig_for_coerce_lub(
         &self,
         ty: Ty<'tcx>,
@@ -1464,7 +1461,6 @@ impl<'tcx> CoerceMany<'tcx> {
     /// The inner coercion "engine". If `expression` is `None`, this
     /// is a forced-unit case, and hence `expression_ty` must be
     /// `Nil`.
-    #[instrument(skip(self, fcx, augment_error, label_expression_as_expected), level = "debug")]
     pub(crate) fn coerce_inner<'a>(
         &mut self,
         fcx: &FnCtxt<'a, 'tcx>,

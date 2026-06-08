@@ -1,6 +1,7 @@
 //! A pass that annotates every item and method with its stability level,
 //! propagating default levels lexically from parent to children ast nodes.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::num::NonZero;
 
 use rustc_ast_lowering::stability::extern_abi_stability;
@@ -26,7 +27,7 @@ use rustc_middle::ty::{AssocContainer, TyCtxt};
 use rustc_session::lint;
 use rustc_session::lint::builtin::{DEPRECATED, INEFFECTIVE_UNSTABLE_TRAIT_IMPL};
 use rustc_span::{Span, Symbol, sym};
-use tracing::instrument;
+// (instrument removed)
 
 use crate::errors;
 
@@ -139,7 +140,6 @@ const FORCE_UNSTABLE: Stability = Stability {
     feature: sym::rustc_private,
 };
 
-#[instrument(level = "debug", skip(tcx))]
 fn lookup_stability(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<Stability> {
     // Propagate unstability. This can happen even for non-staged-api crates in case
     // -Zforce-unstable-if-unmarked is set.
@@ -186,7 +186,6 @@ fn lookup_stability(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<Stability> {
     None
 }
 
-#[instrument(level = "debug", skip(tcx))]
 fn lookup_default_body_stability(
     tcx: TyCtxt<'_>,
     def_id: LocalDefId,
@@ -200,7 +199,6 @@ fn lookup_default_body_stability(
     find_attr!(attrs, AttributeKind::BodyStability { stability, .. } => *stability)
 }
 
-#[instrument(level = "debug", skip(tcx))]
 fn lookup_const_stability(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Option<ConstStability> {
     if !tcx.features().staged_api() {
         // Propagate unstability. This can happen even for non-staged-api crates in case
@@ -322,7 +320,6 @@ struct MissingStabilityAnnotations<'tcx> {
 
 impl<'tcx> MissingStabilityAnnotations<'tcx> {
     /// Verify that deprecation and stability attributes make sense with one another.
-    #[instrument(level = "trace", skip(self))]
     fn check_compatible_stability(&self, def_id: LocalDefId) {
         if !self.tcx.features().staged_api() {
             return;
@@ -419,7 +416,6 @@ impl<'tcx> MissingStabilityAnnotations<'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn check_missing_stability(&self, def_id: LocalDefId) {
         let stab = self.tcx.lookup_stability(def_id);
         self.tcx.ensure_ok().lookup_const_stability(def_id);

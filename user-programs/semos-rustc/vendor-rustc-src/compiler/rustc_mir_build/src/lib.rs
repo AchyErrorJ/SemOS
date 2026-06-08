@@ -8,6 +8,7 @@
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 #[macro_use]
 extern crate alloc;
 

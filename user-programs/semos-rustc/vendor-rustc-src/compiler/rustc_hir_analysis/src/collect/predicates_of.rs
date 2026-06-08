@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use hir::Node;
 use rustc_data_structures::assert_matches;
 use rustc_data_structures::fx::FxIndexSet;
@@ -11,7 +12,7 @@ use rustc_middle::ty::{
 };
 use rustc_middle::{bug, span_bug};
 use rustc_span::{DUMMY_SP, Ident, Span};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use super::item_bounds::explicit_item_bounds_with_filter;
 use crate::collect::ItemCtxt;
@@ -25,7 +26,6 @@ use crate::hir_ty_lowering::{
 /// Returns a list of all type predicates (explicit and implicit) for the definition with
 /// ID `def_id`. This includes all predicates returned by `explicit_predicates_of`, plus
 /// inferred constraints concerning which regions outlive other regions.
-#[instrument(level = "debug", skip(tcx))]
 pub(super) fn predicates_of(tcx: TyCtxt<'_>, def_id: DefId) -> ty::GenericPredicates<'_> {
     let mut result = tcx.explicit_predicates_of(def_id);
     debug!("predicates_of: explicit_predicates_of({:?}) = {:?}", def_id, result);
@@ -69,7 +69,7 @@ pub(super) fn predicates_of(tcx: TyCtxt<'_>, def_id: DefId) -> ty::GenericPredic
                 .predicates
                 .iter()
                 .copied()
-                .chain(std::iter::once((ty::TraitRef::identity(tcx, def_id).upcast(tcx), span))),
+                .chain(core::iter::once((ty::TraitRef::identity(tcx, def_id).upcast(tcx), span))),
         );
     }
 
@@ -79,7 +79,6 @@ pub(super) fn predicates_of(tcx: TyCtxt<'_>, def_id: DefId) -> ty::GenericPredic
 
 /// Returns a list of user-specified type predicates for the definition with ID `def_id`.
 /// N.B., this does not include any implied/inferred constraints.
-#[instrument(level = "trace", skip(tcx), ret)]
 fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::GenericPredicates<'_> {
     use rustc_hir::*;
 
@@ -401,7 +400,6 @@ fn compute_bidirectional_outlives_predicates<'tcx>(
     }
 }
 
-#[instrument(level = "debug", skip(tcx, predicates), ret)]
 fn const_evaluatable_predicates_of<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
@@ -871,7 +869,6 @@ pub(super) fn assert_only_contains_predicates_from<'tcx>(
 
 /// Returns the predicates defined on `item_def_id` of the form
 /// `X: Foo` where `X` is the type parameter `def_id`.
-#[instrument(level = "trace", skip(tcx))]
 pub(super) fn type_param_predicates<'tcx>(
     tcx: TyCtxt<'tcx>,
     (item_def_id, def_id, assoc_ident): (LocalDefId, LocalDefId, Ident),
@@ -962,7 +959,6 @@ impl<'tcx> ItemCtxt<'tcx> {
     /// This requires scanning through the HIR.
     /// We do this to avoid having to lower *all* the bounds, which would create artificial cycles.
     /// Instead, we can only lower the bounds for a type parameter `X` if `X::Foo` is used.
-    #[instrument(level = "trace", skip(self, hir_generics))]
     fn probe_ty_param_bounds_in_generics(
         &self,
         hir_generics: &'tcx hir::Generics<'tcx>,

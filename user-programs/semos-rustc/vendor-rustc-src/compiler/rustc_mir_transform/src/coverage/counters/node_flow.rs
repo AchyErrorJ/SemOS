@@ -6,6 +6,7 @@
 //! "Optimal measurement points for program frequency counts"
 //! (Knuth & Stevenson, 1973).
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::graph;
 use rustc_data_structures::union_find::UnionFind;
 use rustc_index::bit_set::DenseBitSet;

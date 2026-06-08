@@ -1,6 +1,7 @@
 //! Miscellaneous builder routines that are not specific to building any particular
 //! kind of thing.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::mir::*;
 use rustc_middle::ty::{self, Ty};
 use rustc_span::Span;

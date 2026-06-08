@@ -1,4 +1,5 @@
-use std::any::Any;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::any::Any;
 use std::sync::Arc;
 
 use rustc_codegen_ssa::CodegenResults;

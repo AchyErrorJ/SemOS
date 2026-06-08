@@ -10,6 +10,7 @@
 //! otherwise silence errors, if move analysis runs after promotion on broken
 //! MIR.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::Cell;
 use core::{cmp, iter, mem};
 
@@ -25,7 +26,7 @@ use rustc_middle::ty::{self, GenericArgs, List, Ty, TyCtxt, TypeVisitableExt};
 use rustc_middle::{bug, mir, span_bug};
 use rustc_span::Span;
 use rustc_span::source_map::Spanned;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 /// A `MirPass` for promotion.
 ///
@@ -98,7 +99,6 @@ struct Collector<'a, 'tcx> {
 }
 
 impl<'tcx> Visitor<'tcx> for Collector<'_, 'tcx> {
-    #[instrument(level = "debug", skip(self))]
     fn visit_local(&mut self, index: Local, context: PlaceContext, location: Location) {
         // We're only interested in temporaries and the return place
         match self.ccx.body.local_kind(index) {

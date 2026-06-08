@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_errors::{Applicability, Diag, MultiSpan, listify};
 use rustc_hir as hir;
 use rustc_hir::def::Res;
@@ -11,7 +12,7 @@ use rustc_middle::ty::{self, AssocItem, BottomUpFolder, Ty, TypeFoldable, TypeVi
 use rustc_span::{DUMMY_SP, Ident, Span, sym};
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits::ObligationCause;
-use tracing::instrument;
+// (instrument removed)
 
 use super::method::probe;
 use crate::FnCtxt;
@@ -182,7 +183,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         self.demand_suptype_with_origin(&self.misc(sp), expected, actual)
     }
 
-    #[instrument(skip(self), level = "debug")]
     pub(crate) fn demand_suptype_with_origin(
         &'a self,
         cause: &ObligationCause<'tcx>,
@@ -251,7 +251,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     ///
     /// N.B., this code relies on `self.diverges` to be accurate. In particular, assignments to `!`
     /// will be permitted if the diverges flag is currently "always".
-    #[instrument(level = "debug", skip(self, expr, expected_ty_expr, allow_two_phase))]
     pub(crate) fn demand_coerce_diag(
         &'a self,
         mut expr: &'tcx hir::Expr<'tcx>,

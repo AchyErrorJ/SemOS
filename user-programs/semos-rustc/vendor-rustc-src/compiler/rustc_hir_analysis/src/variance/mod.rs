@@ -3,6 +3,7 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/variance.html
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use itertools::Itertools;
 use rustc_arena::DroplessArena;
 use rustc_hir as hir;
@@ -12,7 +13,7 @@ use rustc_middle::span_bug;
 use rustc_middle::ty::{
     self, CrateVariancesMap, GenericArgsRef, Ty, TyCtxt, TypeSuperVisitable, TypeVisitable,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 /// Defines the `TermsContext` basically houses an arena where we can
 /// allocate terms.
@@ -97,7 +98,6 @@ enum ForceCaptureTraitArgs {
     No,
 }
 
-#[instrument(level = "trace", skip(tcx), ret)]
 fn variance_of_opaque(
     tcx: TyCtxt<'_>,
     item_def_id: LocalDefId,
@@ -117,7 +117,6 @@ fn variance_of_opaque(
     }
 
     impl<'tcx> OpaqueTypeLifetimeCollector<'tcx> {
-        #[instrument(level = "trace", skip(self), ret)]
         fn visit_opaque(&mut self, def_id: DefId, args: GenericArgsRef<'tcx>) {
             if def_id != self.root_def_id && self.tcx.is_descendant_of(def_id, self.root_def_id) {
                 let child_variances = self.tcx.variances_of(def_id);
@@ -133,14 +132,12 @@ fn variance_of_opaque(
     }
 
     impl<'tcx> ty::TypeVisitor<TyCtxt<'tcx>> for OpaqueTypeLifetimeCollector<'tcx> {
-        #[instrument(level = "trace", skip(self), ret)]
         fn visit_region(&mut self, r: ty::Region<'tcx>) {
             if let ty::RegionKind::ReEarlyParam(ebr) = r.kind() {
                 self.variances[ebr.index as usize] = ty::Invariant;
             }
         }
 
-        #[instrument(level = "trace", skip(self), ret)]
         fn visit_ty(&mut self, t: Ty<'tcx>) {
             match t.kind() {
                 ty::Alias(ty::Opaque, ty::AliasTy { def_id, args, .. }) => {

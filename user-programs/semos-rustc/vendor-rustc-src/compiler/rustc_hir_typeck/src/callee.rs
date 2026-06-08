@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 
 use rustc_abi::{CanonAbi, ExternAbi};
@@ -20,7 +21,7 @@ use rustc_target::spec::{AbiMap, AbiMapping};
 use rustc_trait_selection::error_reporting::traits::DefIdOrName;
 use rustc_trait_selection::infer::InferCtxtExt as _;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::method::MethodCallee;
 use super::method::probe::ProbeScope;
@@ -193,7 +194,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, call_expr, callee_expr, arg_exprs, autoderef), ret)]
     fn try_overloaded_call_step(
         &self,
         call_expr: &'tcx hir::Expr<'tcx>,
@@ -892,7 +892,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         fn_sig.output()
     }
 
-    #[tracing::instrument(level = "debug", skip(self, span))]
     pub(super) fn enforce_context_effects(
         &self,
         call_hir_id: Option<HirId>,

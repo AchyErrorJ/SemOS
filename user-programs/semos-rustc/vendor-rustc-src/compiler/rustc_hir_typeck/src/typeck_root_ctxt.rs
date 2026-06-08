@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::{Cell, RefCell};
 use core::ops::Deref;
 
@@ -10,7 +11,7 @@ use rustc_middle::ty::{self, Ty, TyCtxt, TypeVisitableExt, TypingMode};
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefIdMap;
 use rustc_trait_selection::traits::{self, FulfillmentError, TraitEngine, TraitEngineExt as _};
-use tracing::instrument;
+// (instrument removed)
 
 use super::callee::DeferredCallResolution;
 
@@ -104,7 +105,6 @@ impl<'tcx> TypeckRootCtxt<'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     pub(super) fn register_predicate(&self, obligation: traits::PredicateObligation<'tcx>) {
         if obligation.has_escaping_bound_vars() {
             span_bug!(obligation.cause.span, "escaping bound vars in predicate {:?}", obligation);

@@ -2,6 +2,7 @@
 //!
 //! Currently, this pass only propagates scalar values.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::RefCell;
 use core::fmt::Formatter;
 
@@ -25,7 +26,7 @@ use rustc_mir_dataflow::value_analysis::{
 };
 use rustc_mir_dataflow::{Analysis, ResultsVisitor, visit_reachable_results};
 use rustc_span::DUMMY_SP;
-use tracing::{debug, debug_span, instrument};
+use tracing::{debug, debug_span};
 
 // These constants are somewhat random guesses and have not been optimized.
 // If `tcx.sess.mir_opt_level() >= 4`, we ignore the limits (this can become very expensive).
@@ -39,7 +40,6 @@ impl<'tcx> crate::MirPass<'tcx> for DataflowConstProp {
         sess.mir_opt_level() >= 3
     }
 
-    #[instrument(skip_all level = "debug")]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         debug!(def_id = ?body.source.def_id());
         if tcx.sess.mir_opt_level() < 4 && body.basic_blocks.len() > BLOCK_LIMIT {
@@ -561,7 +561,6 @@ impl<'a, 'tcx> ConstAnalysis<'a, 'tcx> {
     /// The caller must have flooded `place`.
     ///
     /// Perform: `place = operand.projection`.
-    #[instrument(level = "trace", skip(self, state))]
     fn assign_constant(
         &self,
         state: &mut State<FlatSet<Scalar>>,
@@ -787,7 +786,6 @@ impl<'a, 'tcx> Collector<'a, 'tcx> {
         Self { patch: Patch::new(tcx), local_decls }
     }
 
-    #[instrument(level = "trace", skip(self, ecx, map), ret)]
     fn try_make_constant(
         &self,
         ecx: &mut InterpCx<'tcx, DummyMachine>,
@@ -826,7 +824,6 @@ impl<'a, 'tcx> Collector<'a, 'tcx> {
     }
 }
 
-#[instrument(level = "trace", skip(map), ret)]
 fn propagatable_scalar(
     place: PlaceIndex,
     state: &State<FlatSet<Scalar>>,
@@ -842,7 +839,6 @@ fn propagatable_scalar(
     }
 }
 
-#[instrument(level = "trace", skip(ecx, state, map), ret)]
 fn try_write_constant<'tcx>(
     ecx: &mut InterpCx<'tcx, DummyMachine>,
     dest: &PlaceTy<'tcx>,
@@ -946,7 +942,6 @@ fn try_write_constant<'tcx>(
 }
 
 impl<'tcx> ResultsVisitor<'tcx, ConstAnalysis<'_, 'tcx>> for Collector<'_, 'tcx> {
-    #[instrument(level = "trace", skip(self, analysis, statement))]
     fn visit_after_early_statement_effect(
         &mut self,
         analysis: &ConstAnalysis<'_, 'tcx>,
@@ -968,7 +963,6 @@ impl<'tcx> ResultsVisitor<'tcx, ConstAnalysis<'_, 'tcx>> for Collector<'_, 'tcx>
         }
     }
 
-    #[instrument(level = "trace", skip(self, analysis, statement))]
     fn visit_after_primary_statement_effect(
         &mut self,
         analysis: &ConstAnalysis<'_, 'tcx>,

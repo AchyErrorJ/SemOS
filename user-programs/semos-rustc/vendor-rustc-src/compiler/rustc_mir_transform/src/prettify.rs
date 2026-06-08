@@ -4,6 +4,7 @@
 //! (`-Zmir-enable-passes=+ReorderBasicBlocks,+ReorderLocals`)
 //! to make the MIR easier to read for humans.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_index::bit_set::DenseBitSet;
 use rustc_index::{IndexSlice, IndexVec};
 use rustc_middle::mir::visit::{MutVisitor, PlaceContext, Visitor};

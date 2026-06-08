@@ -1,5 +1,6 @@
 //! See docs in build/expr/mod.rs
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast::{AsmMacro, InlineAsmOptions};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::stack::ensure_sufficient_stack;
@@ -12,7 +13,7 @@ use rustc_middle::ty::{self, CanonicalUserTypeAnnotation, Ty};
 use rustc_span::DUMMY_SP;
 use rustc_span::source_map::Spanned;
 use rustc_trait_selection::infer::InferCtxtExt;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::builder::expr::category::{Category, RvalueFunc};
 use crate::builder::matches::{DeclareLetBindings, HasMatchGuard};
@@ -23,7 +24,6 @@ use crate::errors::{LoopMatchArmWithGuard, LoopMatchUnsupportedType};
 impl<'a, 'tcx> Builder<'a, 'tcx> {
     /// Compile `expr`, storing the result into `destination`, which
     /// is assumed to be uninitialized.
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn expr_into_dest(
         &mut self,
         destination: Place<'tcx>,

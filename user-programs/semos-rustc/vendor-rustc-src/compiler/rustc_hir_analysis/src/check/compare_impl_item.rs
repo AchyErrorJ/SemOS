@@ -1,6 +1,7 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::ops::ControlFlow;
-use std::borrow::Cow;
-use std::iter;
+use alloc::borrow::Cow;
+use core::iter;
 
 use hir::def_id::{DefId, DefIdMap, LocalDefId};
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -26,7 +27,7 @@ use rustc_trait_selection::regions::InferCtxtRegionExt;
 use rustc_trait_selection::traits::{
     self, FulfillmentError, ObligationCause, ObligationCauseCode, ObligationCtxt,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::potentially_plural_count;
 use crate::errors::{LifetimesOrBoundsMismatchOnTrait, MethodShouldReturnFuture};
@@ -60,7 +61,6 @@ pub(super) fn compare_impl_item(
 /// - `impl_m`: type of the method we are checking
 /// - `trait_m`: the method in the trait
 /// - `impl_trait_ref`: the TraitRef corresponding to the trait implementation
-#[instrument(level = "debug", skip(tcx))]
 fn compare_impl_method<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_m: ty::AssocItem,
@@ -169,7 +169,6 @@ fn check_method_is_structurally_compatible<'tcx>(
 ///
 /// Finally we register each of these predicates as an obligation and check that
 /// they hold.
-#[instrument(level = "debug", skip(tcx, impl_trait_ref))]
 fn compare_method_predicate_entailment<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_m: ty::AssocItem,
@@ -437,7 +436,7 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for RemapLateParam<'tcx> {
 /// For example, given the sample code:
 ///
 /// ```
-/// use std::ops::Deref;
+/// use core::ops::Deref;
 ///
 /// trait Foo {
 ///     fn bar() -> impl Deref<Target = impl Sized>;
@@ -456,7 +455,6 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for RemapLateParam<'tcx> {
 /// The relationship between these two types is straightforward in this case, but
 /// may be more tenuously connected via other `impl`s and normalization rules for
 /// cases of more complicated nested RPITITs.
-#[instrument(skip(tcx), level = "debug", ret)]
 pub(super) fn collect_return_position_impl_trait_in_trait_tys<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_m_def_id: LocalDefId,
@@ -714,7 +712,7 @@ pub(super) fn collect_return_position_impl_trait_in_trait_tys<'tcx>(
                 // contains `def_id`'s early-bound regions.
                 let id_args = GenericArgs::identity_for_item(tcx, def_id);
                 debug!(?id_args, ?args);
-                let map: FxIndexMap<_, _> = std::iter::zip(args, id_args)
+                let map: FxIndexMap<_, _> = core::iter::zip(args, id_args)
                     .skip(tcx.generics_of(trait_m.def_id).count())
                     .filter_map(|(a, b)| Some((a.as_region()?, b.as_region()?)))
                     .collect();
@@ -1278,7 +1276,7 @@ fn check_region_late_boundedness<'tcx>(
 
     let impl_generics = tcx.generics_of(impl_m.def_id);
     for (id_arg, arg) in
-        std::iter::zip(ty::GenericArgs::identity_for_item(tcx, impl_m.def_id), impl_m_args)
+        core::iter::zip(ty::GenericArgs::identity_for_item(tcx, impl_m.def_id), impl_m_args)
     {
         if let ty::GenericArgKind::Lifetime(r) = arg.kind()
             && let ty::ReVar(vid) = r.kind()
@@ -1303,7 +1301,7 @@ fn check_region_late_boundedness<'tcx>(
 
     let trait_generics = tcx.generics_of(trait_m.def_id);
     for (id_arg, arg) in
-        std::iter::zip(ty::GenericArgs::identity_for_item(tcx, trait_m.def_id), trait_m_args)
+        core::iter::zip(ty::GenericArgs::identity_for_item(tcx, trait_m.def_id), trait_m_args)
     {
         if let ty::GenericArgKind::Lifetime(r) = arg.kind()
             && let ty::ReVar(vid) = r.kind()
@@ -1454,7 +1452,6 @@ fn find_region_in_predicates<'tcx>(
     None
 }
 
-#[instrument(level = "debug", skip(infcx))]
 fn extract_spans_for_error_reporting<'tcx>(
     infcx: &infer::InferCtxt<'tcx>,
     terr: TypeError<'_>,
@@ -2082,7 +2079,6 @@ fn compare_type_const<'tcx>(
 /// The equivalent of [compare_method_predicate_entailment], but for associated constants
 /// instead of associated functions.
 // FIXME(generic_const_items): If possible extract the common parts of `compare_{type,const}_predicate_entailment`.
-#[instrument(level = "debug", skip(tcx))]
 fn compare_const_predicate_entailment<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_ct: ty::AssocItem,
@@ -2202,7 +2198,6 @@ fn compare_const_predicate_entailment<'tcx>(
     ocx.resolve_regions_and_report_errors(impl_ct_def_id, param_env, [])
 }
 
-#[instrument(level = "debug", skip(tcx))]
 fn compare_impl_ty<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_ty: ty::AssocItem,
@@ -2218,7 +2213,6 @@ fn compare_impl_ty<'tcx>(
 
 /// The equivalent of [compare_method_predicate_entailment], but for associated types
 /// instead of associated functions.
-#[instrument(level = "debug", skip(tcx))]
 fn compare_type_predicate_entailment<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl_ty: ty::AssocItem,
@@ -2354,7 +2348,6 @@ fn compare_type_predicate_entailment<'tcx>(
 /// For default associated types the normalization is not possible (the value
 /// from the impl could be overridden). We also can't normalize generic
 /// associated types (yet) because they contain bound parameters.
-#[instrument(level = "debug", skip(tcx))]
 pub(super) fn check_type_bounds<'tcx>(
     tcx: TyCtxt<'tcx>,
     trait_ty: ty::AssocItem,

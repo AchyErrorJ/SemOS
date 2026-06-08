@@ -1,5 +1,6 @@
-use std::cell::LazyCell;
-use std::ops::ControlFlow;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::cell::LazyCell;
+use core::ops::ControlFlow;
 
 use rustc_abi::{ExternAbi, FieldIdx, ScalableElt};
 use rustc_data_structures::unord::{UnordMap, UnordSet};
@@ -29,7 +30,7 @@ use rustc_trait_selection::error_reporting::InferCtxtErrorExt;
 use rustc_trait_selection::error_reporting::traits::on_unimplemented::OnUnimplementedDirective;
 use rustc_trait_selection::traits;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
-use tracing::{debug, instrument};
+use tracing::{debug};
 use ty::TypingMode;
 
 use super::compare_impl_item::check_type_bounds;
@@ -267,7 +268,6 @@ pub(super) fn check_opaque_for_cycles<'tcx>(
 ///
 /// Without this check the above code is incorrectly accepted: we would ICE if
 /// some tried, for example, to clone an `Option<X<&mut ()>>`.
-#[instrument(level = "debug", skip(tcx))]
 fn check_opaque_meets_bounds<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
@@ -1428,7 +1428,6 @@ fn check_simd(tcx: TyCtxt<'_>, sp: Span, def_id: LocalDefId) {
     }
 }
 
-#[tracing::instrument(skip(tcx), level = "debug")]
 fn check_scalable_vector(tcx: TyCtxt<'_>, span: Span, def_id: LocalDefId, scalable: ScalableElt) {
     let ty = tcx.type_of(def_id).instantiate_identity();
     let ty::Adt(def, args) = ty.kind() else { return };

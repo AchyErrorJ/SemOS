@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 
 use rustc_abi::Integer;
@@ -5,7 +6,7 @@ use rustc_index::IndexSlice;
 use rustc_middle::mir::*;
 use rustc_middle::ty::layout::{IntegerExt, TyAndLayout};
 use rustc_middle::ty::{self, ScalarInt, Ty, TyCtxt};
-use tracing::instrument;
+// (instrument removed)
 
 use super::simplify::simplify_cfg;
 use crate::patch::MirPatch;
@@ -153,7 +154,6 @@ struct SimplifyToIf;
 /// }
 /// ```
 impl<'tcx> SimplifyMatch<'tcx> for SimplifyToIf {
-    #[instrument(level = "debug", skip(self, tcx), ret)]
     fn can_simplify(
         &mut self,
         tcx: TyCtxt<'tcx>,
@@ -368,7 +368,6 @@ impl From<ExpectedTransformKind<'_, '_>> for TransformKind {
 /// }
 /// ```
 impl<'tcx> SimplifyMatch<'tcx> for SimplifyToExp {
-    #[instrument(level = "debug", skip(self, tcx), ret)]
     fn can_simplify(
         &mut self,
         tcx: TyCtxt<'tcx>,

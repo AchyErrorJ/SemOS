@@ -5,6 +5,7 @@
 //! `ShallowInitBox` being a device for drop elaboration to understand deferred assignment to box
 //! contents, we do not need this any more on runtime MIR.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_index::{IndexVec, indexvec};
 use rustc_middle::mir::visit::MutVisitor;

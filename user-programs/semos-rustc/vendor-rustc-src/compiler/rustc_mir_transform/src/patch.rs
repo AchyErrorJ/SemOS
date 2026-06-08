@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_index::Idx;
 use rustc_middle::mir::*;
@@ -219,7 +220,6 @@ impl<'tcx> MirPatch<'tcx> {
     ///
     /// This method only works on statements from the initial body, and cannot be used to remove
     /// statements from `add_statement` or `add_assign`.
-    #[tracing::instrument(level = "debug", skip(self))]
     pub(crate) fn nop_statement(&mut self, loc: Location) {
         self.nop_statements.push(loc);
     }

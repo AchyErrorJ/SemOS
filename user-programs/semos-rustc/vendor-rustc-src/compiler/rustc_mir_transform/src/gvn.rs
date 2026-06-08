@@ -84,6 +84,7 @@
 //! Second, when writing constants in MIR, we do not write `Const::Slice` or `Const`
 //! that contain `AllocId`s.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use alloc::borrow::Cow;
 use core::hash::{Hash, Hasher};
 
@@ -110,7 +111,7 @@ use rustc_middle::ty::layout::HasTypingEnv;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::DUMMY_SP;
 use smallvec::SmallVec;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::ssa::SsaLocals;
 
@@ -121,7 +122,6 @@ impl<'tcx> crate::MirPass<'tcx> for GVN {
         sess.mir_opt_level() >= 2
     }
 
-    #[instrument(level = "trace", skip(self, tcx, body))]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         debug!(def_id = ?body.source.def_id());
 
@@ -433,7 +433,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         index
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn insert(&mut self, ty: Ty<'tcx>, value: Value<'a, 'tcx>) -> VnIndex {
         let (index, new) = self.values.insert(ty, value);
         if new {
@@ -448,7 +447,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
 
     /// Create a new `Value` for which we have no information at all, except that it is distinct
     /// from all the others.
-    #[instrument(level = "trace", skip(self), ret)]
     fn new_opaque(&mut self, ty: Ty<'tcx>) -> VnIndex {
         let index = self.insert_unique(ty, Value::Opaque);
         self.evaluated[index] = Some(None);
@@ -456,7 +454,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     }
 
     /// Create a new `Value::Address` distinct from all the others.
-    #[instrument(level = "trace", skip(self), ret)]
     fn new_pointer(&mut self, place: Place<'tcx>, kind: AddressKind) -> Option<VnIndex> {
         let pty = place.ty(self.local_decls, self.tcx).ty;
         let ty = match kind {
@@ -489,7 +486,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         Some(index)
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn insert_constant(&mut self, value: Const<'tcx>) -> VnIndex {
         if value.is_deterministic() {
             // The constant is deterministic, no need to disambiguate.
@@ -516,7 +512,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     }
 
     /// Record that `local` is assigned `value`. `local` must be SSA.
-    #[instrument(level = "trace", skip(self))]
     fn assign(&mut self, local: Local, value: VnIndex) {
         debug_assert!(self.ssa.is_ssa(local));
         self.locals[local] = Some(value);
@@ -553,7 +548,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn eval_to_const_inner(&mut self, value: VnIndex) -> Option<OpTy<'tcx>> {
         use Value::*;
         let ty = self.ty(value);
@@ -772,7 +766,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     }
 
     /// Represent the *value* we obtain by dereferencing an `Address` value.
-    #[instrument(level = "trace", skip(self), ret)]
     fn dereference_address(
         &mut self,
         base: AddressBase,
@@ -797,7 +790,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         Some(value)
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn project(
         &mut self,
         place_ty: PlaceTy<'tcx>,
@@ -886,7 +878,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
     }
 
     /// Simplify the projection chain if we know better.
-    #[instrument(level = "trace", skip(self))]
     fn simplify_place_projection(&mut self, place: &mut Place<'tcx>, location: Location) {
         // If the projection is indirect, we treat the local as a value, so can replace it with
         // another local.
@@ -930,7 +921,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
 
     /// Represent the *value* which would be read from `place`. If we succeed, return it.
     /// If we fail, return a `PlaceRef` that contains the same value.
-    #[instrument(level = "trace", skip(self), ret)]
     fn compute_place_value(
         &mut self,
         place: Place<'tcx>,
@@ -966,7 +956,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
 
     /// Represent the *value* which would be read from `place`, and point `place` to a preexisting
     /// place with the same value (if that already exists).
-    #[instrument(level = "trace", skip(self), ret)]
     fn simplify_place_value(
         &mut self,
         place: &mut Place<'tcx>,
@@ -998,7 +987,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn simplify_operand(
         &mut self,
         operand: &mut Operand<'tcx>,
@@ -1021,7 +1009,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn simplify_rvalue(
         &mut self,
         lhs: &Place<'tcx>,
@@ -1246,7 +1233,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         Some(self.insert(ty, Value::Aggregate(variant_index, fields)))
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn simplify_unary(
         &mut self,
         op: UnOp,
@@ -1333,7 +1319,6 @@ impl<'body, 'a, 'tcx> VnState<'body, 'a, 'tcx> {
         Some(self.insert(ret_ty, value))
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn simplify_binary(
         &mut self,
         op: BinOp,
@@ -1824,7 +1809,6 @@ impl<'tcx> VnState<'_, '_, 'tcx> {
     /// Construct a place which holds the same value as `index` and for which all locals strictly
     /// dominate `loc`. If you used this place, add its base local to `reused_locals` to remove
     /// storage statements.
-    #[instrument(level = "trace", skip(self), ret)]
     fn try_as_place(
         &mut self,
         mut index: VnIndex,

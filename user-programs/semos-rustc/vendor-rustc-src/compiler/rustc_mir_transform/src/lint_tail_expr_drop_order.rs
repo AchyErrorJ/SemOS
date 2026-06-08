@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::RefCell;
 use alloc::rc::Rc;
 use rustc_data_structures::fx::StdEntry;

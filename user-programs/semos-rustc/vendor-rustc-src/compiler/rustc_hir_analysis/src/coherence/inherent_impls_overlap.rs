@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet, IndexEntry};
 use rustc_errors::codes::*;
 use rustc_errors::struct_span_code_err;
@@ -46,7 +47,7 @@ impl<'tcx> InherentOverlapChecker<'tcx> {
 
         // Performance optimization: iterate over the smaller list
         if impl_items1.len() > impl_items2.len() {
-            std::mem::swap(&mut impl_items1, &mut impl_items2);
+            core::mem::swap(&mut impl_items1, &mut impl_items2);
         }
 
         for &item1 in impl_items1.in_definition_order() {
@@ -255,7 +256,7 @@ impl<'tcx> InherentOverlapChecker<'tcx> {
                             id_to_set,
                             ConnectedRegion {
                                 idents: idents_to_add,
-                                impl_blocks: std::iter::once(i).collect(),
+                                impl_blocks: core::iter::once(i).collect(),
                             },
                         );
                     }

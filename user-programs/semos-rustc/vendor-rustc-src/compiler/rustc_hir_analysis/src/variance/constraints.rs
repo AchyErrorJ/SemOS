@@ -3,12 +3,13 @@
 //! The second pass over the HIR determines the set of constraints.
 //! We walk the set of items and, for each member, generate new constraints.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use hir::def_id::{DefId, LocalDefId};
 use rustc_hir as hir;
 use rustc_hir::def::DefKind;
 use rustc_middle::ty::{self, GenericArgKind, GenericArgsRef, Ty, TyCtxt};
 use rustc_middle::{bug, span_bug};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::terms::VarianceTerm::*;
 use super::terms::*;
@@ -190,7 +191,6 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, current))]
     fn add_constraints_from_invariant_args(
         &mut self,
         current: &CurrentItem,

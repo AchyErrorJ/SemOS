@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast::attr;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::query::Providers;

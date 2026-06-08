@@ -9,6 +9,7 @@
 //! after `optimized_mir`! We check for things that are *not* guaranteed to be preserved by MIR
 //! transforms, such as which local variables happen to be mutated.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::def_id::LocalDefId;
 use rustc_index::IndexVec;
 use rustc_middle::middle::deduced_param_attrs::{DeducedParamAttrs, UsageSummary};
@@ -158,7 +159,6 @@ fn type_will_always_be_passed_directly(ty: Ty<'_>) -> bool {
 /// body of the function instead of just the signature. These can be useful for optimization
 /// purposes on a best-effort basis. We compute them here and store them into the crate metadata so
 /// dependent crates can use them.
-#[tracing::instrument(level = "trace", skip(tcx), ret)]
 pub(super) fn deduced_param_attrs<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,

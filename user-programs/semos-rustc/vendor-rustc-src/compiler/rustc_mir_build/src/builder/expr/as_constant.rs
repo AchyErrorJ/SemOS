@@ -1,5 +1,6 @@
 //! See docs in build/expr/mod.rs
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::Size;
 use rustc_ast::{self as ast};
 use rustc_hir::LangItem;
@@ -11,7 +12,7 @@ use rustc_middle::ty::{
     UserTypeAnnotationIndex,
 };
 use rustc_middle::{bug, mir, span_bug};
-use tracing::{instrument, trace};
+use tracing::{trace};
 
 use crate::builder::{Builder, parse_float_into_constval};
 
@@ -105,7 +106,6 @@ pub(crate) fn as_constant_inner<'tcx>(
     }
 }
 
-#[instrument(skip(tcx, lit_input))]
 fn lit_to_mir_constant<'tcx>(tcx: TyCtxt<'tcx>, lit_input: LitToConstInput<'tcx>) -> Const<'tcx> {
     let LitToConstInput { lit, ty, neg } = lit_input;
 

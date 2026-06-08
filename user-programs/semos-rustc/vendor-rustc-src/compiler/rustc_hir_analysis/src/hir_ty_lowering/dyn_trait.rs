@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast::TraitObjectSyntax;
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet};
 use rustc_errors::codes::*;
@@ -19,7 +20,7 @@ use rustc_trait_selection::error_reporting::traits::report_dyn_incompatibility;
 use rustc_trait_selection::error_reporting::traits::suggestions::NextTypeParamName;
 use rustc_trait_selection::traits;
 use smallvec::{SmallVec, smallvec};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::HirTyLowerer;
 use crate::errors::SelfInTypeAlias;
@@ -30,7 +31,6 @@ use crate::hir_ty_lowering::{
 
 impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// Lower a trait object type from the HIR to our internal notion of a type.
-    #[instrument(level = "debug", skip_all, ret)]
     pub(super) fn lower_trait_object_ty(
         &self,
         span: Span,

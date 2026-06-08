@@ -60,6 +60,7 @@
 //! basically the point where the "by value" operations are bridged
 //! over to the "by reference" mode (`as_place`).
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 pub(crate) mod as_constant;
 mod as_operand;
 pub(crate) mod as_place;

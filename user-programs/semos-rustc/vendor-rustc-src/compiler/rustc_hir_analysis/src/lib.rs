@@ -68,6 +68,7 @@ This API is completely unstable and subject to change.
 #![feature(unwrap_infallible)]
 // tidy-alphabetical-end
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 #[macro_use]
 extern crate alloc;
 

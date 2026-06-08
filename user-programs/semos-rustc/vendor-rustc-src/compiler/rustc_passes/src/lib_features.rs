@@ -4,6 +4,7 @@
 //! but are not declared in one single location (unlike lang features), which means we need to
 //! collect them instead.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::attrs::AttributeKind;
 use rustc_hir::intravisit::Visitor;
 use rustc_hir::{Attribute, StabilityLevel, StableSince};

@@ -8,6 +8,7 @@
 //! specialization errors. These things can (and probably should) be
 //! fixed, but for the moment it's easier to do these checks early.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use min_specialization::check_min_specialization;
 use rustc_data_structures::debug_assert_matches;
 use rustc_data_structures::fx::FxHashSet;

@@ -1,6 +1,7 @@
 //! This pass removes jumps to basic blocks containing only a return, and replaces them with a
 //! return instead.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_index::bit_set::DenseBitSet;
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;

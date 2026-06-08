@@ -137,6 +137,7 @@
 //! [attempt 3]: https://github.com/rust-lang/rust/pull/72632
 //! [attempt 4]: https://github.com/rust-lang/rust/pull/96451
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 #[cfg(not(target_os = "none"))]
 use std::io;
 #[cfg(target_os = "none")]
@@ -161,7 +162,6 @@ impl<'tcx> crate::MirPass<'tcx> for DestinationPropagation {
         sess.mir_opt_level() >= 2
     }
 
-    #[tracing::instrument(level = "trace", skip(self, tcx, body))]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         let def_id = body.source.def_id();
         trace!(?def_id);
@@ -325,7 +325,6 @@ struct RelevantLocals {
 }
 
 impl RelevantLocals {
-    #[tracing::instrument(level = "trace", skip(candidates, num_locals), ret)]
     fn compute(candidates: &Candidates, num_locals: usize) -> RelevantLocals {
         let mut original = IndexVec::with_capacity(candidates.c.len());
         let mut shrink = IndexVec::from_elem_n(None, num_locals);

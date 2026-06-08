@@ -51,6 +51,7 @@
 //!
 //! [libfirm]: <https://pp.ipd.kit.edu/uploads/publikationen/priesner17masterarbeit.pdf>
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use itertools::Itertools as _;
 use rustc_const_eval::const_eval::DummyMachine;
 use rustc_const_eval::interpret::{ImmTy, Immediate, InterpCx, OpTy, Projectable};
@@ -66,7 +67,7 @@ use rustc_mir_dataflow::value_analysis::{
     Map, PlaceCollectionMode, PlaceIndex, TrackElem, ValueIndex,
 };
 use rustc_span::DUMMY_SP;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::cost_checker::CostChecker;
 
@@ -79,7 +80,6 @@ impl<'tcx> crate::MirPass<'tcx> for JumpThreading {
         sess.mir_opt_level() >= 2
     }
 
-    #[instrument(skip_all level = "debug")]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         let def_id = body.source.def_id();
         debug!(?def_id);
@@ -226,7 +226,6 @@ impl ConditionSet {
         self.active.is_empty()
     }
 
-    #[tracing::instrument(level = "trace", skip(self))]
     fn push_condition(&mut self, c: Condition, target: BasicBlock) {
         let index = self.targets.push(vec![EdgeEffect::Goto { target }]);
         self.active.push((index, c));
@@ -288,7 +287,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
     }
 
     /// Construct the condition set for `bb` from the terminator, without executing its effect.
-    #[instrument(level = "trace", skip(self))]
     fn populate_from_outgoing_edges(&mut self, bb: BasicBlock) -> ConditionSet {
         let bbdata = &self.body[bb];
 
@@ -382,7 +380,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
     ///     (_1 as Some).0 = _6;
     ///     SetDiscriminant(_1, 1);
     ///     switchInt((_1 as Some).0)
-    #[instrument(level = "trace", skip(self), ret)]
     fn mutated_statement(
         &self,
         stmt: &Statement<'tcx>,
@@ -409,7 +406,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self, state))]
     fn process_immediate(&mut self, lhs: PlaceIndex, rhs: ImmTy<'tcx>, state: &mut ConditionSet) {
         if let Some(lhs) = self.value(lhs)
             && let Immediate::Scalar(Scalar::Int(int)) = *rhs
@@ -419,7 +415,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
     }
 
     /// If we expect `lhs ?= A`, we have an opportunity if we assume `constant == A`.
-    #[instrument(level = "trace", skip(self, state))]
     fn process_constant(
         &mut self,
         lhs: PlaceIndex,
@@ -457,7 +452,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
         );
     }
 
-    #[instrument(level = "trace", skip(self, state))]
     fn process_copy(&mut self, lhs: PlaceIndex, rhs: PlaceIndex, state: &mut ConditionSet) {
         let mut renames = FxHashMap::default();
         self.map.register_copy_tree(
@@ -474,7 +468,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
         });
     }
 
-    #[instrument(level = "trace", skip(self, state))]
     fn process_operand(&mut self, lhs: PlaceIndex, rhs: &Operand<'tcx>, state: &mut ConditionSet) {
         match rhs {
             // If we expect `lhs ?= A`, we have an opportunity if we assume `constant == A`.
@@ -495,7 +488,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self, state))]
     fn process_assign(
         &mut self,
         lhs_place: &Place<'tcx>,
@@ -602,7 +594,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self, state))]
     fn process_statement(&mut self, stmt: &Statement<'tcx>, state: &mut ConditionSet) {
         // Below, `lhs` is the return value of `mutated_statement`,
         // the place to which `conditions` apply.
@@ -640,7 +631,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
     }
 
     /// Execute the terminator for block `bb` into state `entry_states[bb]`.
-    #[instrument(level = "trace", skip(self, state))]
     fn process_terminator(&mut self, bb: BasicBlock, state: &mut ConditionSet) {
         let term = self.body.basic_blocks[bb].terminator();
         let place_to_flood = match term.kind {
@@ -678,7 +668,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
     fn process_switch_int(
         &mut self,
         discr: &Operand<'tcx>,
@@ -774,7 +763,6 @@ impl<'a, 'tcx> TOFinder<'a, 'tcx> {
 }
 
 /// Propagate fulfilled conditions forward in the CFG to reduce the amount of duplication.
-#[instrument(level = "debug", skip(body, entry_states))]
 fn simplify_conditions(body: &Body<'_>, entry_states: &mut IndexVec<BasicBlock, ConditionSet>) {
     let basic_blocks = &body.basic_blocks;
     let reverse_postorder = basic_blocks.reverse_postorder();
@@ -858,7 +846,6 @@ fn simplify_conditions(body: &Body<'_>, entry_states: &mut IndexVec<BasicBlock, 
     }
 }
 
-#[instrument(level = "debug", skip(tcx, typing_env, body, entry_states))]
 fn remove_costly_conditions<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,
@@ -963,7 +950,6 @@ impl<'a, 'tcx> OpportunitySet<'a, 'tcx> {
     }
 
     /// Apply the opportunities on the graph.
-    #[instrument(level = "debug", skip(self))]
     fn apply(mut self) {
         let mut worklist = Vec::with_capacity(self.basic_blocks.len());
         worklist.push(START_BLOCK);
@@ -985,7 +971,6 @@ impl<'a, 'tcx> OpportunitySet<'a, 'tcx> {
     }
 
     /// Apply the opportunities on `bb`.
-    #[instrument(level = "debug", skip(self))]
     fn apply_once(&mut self, bb: BasicBlock) {
         let state = &mut self.entry_states[bb];
         trace!(?state);
@@ -1049,12 +1034,10 @@ impl<'a, 'tcx> OpportunitySet<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
     fn apply_goto(&mut self, bb: BasicBlock, target: BasicBlock) {
         self.basic_blocks[bb].terminator_mut().kind = TerminatorKind::Goto { target };
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     fn apply_chain(
         &mut self,
         bb: BasicBlock,

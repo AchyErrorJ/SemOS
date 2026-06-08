@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::fmt::Debug;
 
 use rustc_middle::mir::*;
@@ -21,8 +22,8 @@ use crate::patch::MirPatch;
 /// ```ignore (syntax-highlighting-only)
 /// let x: Option<()>;
 /// let y: Option<()>;
-/// let discriminant_x = std::mem::discriminant(x);
-/// let discriminant_y = std::mem::discriminant(y);
+/// let discriminant_x = core::mem::discriminant(x);
+/// let discriminant_y = core::mem::discriminant(y);
 /// if discriminant_x == discriminant_y {
 ///     match x {
 ///         Some(_) => 0,

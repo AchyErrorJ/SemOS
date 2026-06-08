@@ -1,5 +1,6 @@
 //! Automatic migration of Rust 2021 patterns to a form valid in both Editions 2021 and 2024.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_errors::{Applicability, Diag, EmissionGuarantee, MultiSpan, pluralize};
 use rustc_hir::{BindingMode, ByRef, HirId, Mutability};

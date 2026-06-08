@@ -8,6 +8,7 @@
 //! Users can override these limits via an attribute on the crate like
 //! `#![recursion_limit="22"]`. This pass just looks for those attributes.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::attrs::AttributeKind;
 use rustc_hir::limit::Limit;
 use rustc_hir::{Attribute, find_attr};

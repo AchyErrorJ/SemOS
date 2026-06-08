@@ -1,5 +1,6 @@
 //! Routines for manipulating the control-flow graph.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;
 use tracing::debug;

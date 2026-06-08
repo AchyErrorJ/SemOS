@@ -1,5 +1,6 @@
 //! Validation of patterns/matches.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 mod check_match;
 mod const_to_pat;
 mod migration;
@@ -23,7 +24,7 @@ use rustc_middle::ty::layout::IntegerExt;
 use rustc_middle::ty::{self, CanonicalUserTypeAnnotation, Ty, TyCtxt};
 use rustc_middle::{bug, span_bug};
 use rustc_span::ErrorGuaranteed;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 pub(crate) use self::check_match::check_match;
 use self::migration::PatMigration;
@@ -39,7 +40,6 @@ struct PatCtxt<'tcx> {
     rust_2024_migration: Option<PatMigration<'tcx>>,
 }
 
-#[instrument(level = "debug", skip(tcx, typing_env, typeck_results), ret)]
 pub(super) fn pat_from_hir<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,
@@ -306,7 +306,6 @@ impl<'tcx> PatCtxt<'tcx> {
         Ok(thir_pat)
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn lower_pattern_unadjusted(&mut self, pat: &'tcx hir::Pat<'tcx>) -> Box<Pat<'tcx>> {
         let ty = self.typeck_results.node_type(pat.hir_id);
         let span = pat.span;
@@ -616,7 +615,6 @@ impl<'tcx> PatCtxt<'tcx> {
     /// Takes a HIR Path. If the path is a constant, evaluates it and feeds
     /// it to `const_to_pat`. Any other path (like enum variants without fields)
     /// is converted to the corresponding pattern via `lower_variant_or_leaf`.
-    #[instrument(skip(self), level = "debug")]
     fn lower_path(
         &mut self,
         pat: &'tcx hir::Pat<'tcx>, // Pattern that directly contains `expr`

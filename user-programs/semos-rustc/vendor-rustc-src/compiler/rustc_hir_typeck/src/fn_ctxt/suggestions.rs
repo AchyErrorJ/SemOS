@@ -1,4 +1,5 @@
 // ignore-tidy-filelength
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cmp::min;
 use core::iter;
 
@@ -30,7 +31,7 @@ use rustc_trait_selection::error_reporting::traits::DefIdOrName;
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::FnCtxt;
 use crate::fn_ctxt::rustc_span::BytePos;
@@ -646,7 +647,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     }
 
     /// When encountering an `impl Future` where `BoxFuture` is expected, suggest `Box::pin`.
-    #[instrument(skip(self, err))]
     pub(in super::super) fn suggest_calling_boxed_future_when_appropriate(
         &self,
         err: &mut Diag<'_>,
@@ -894,7 +894,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// This routine checks if the return type is left as default, the method is not part of an
     /// `impl` block and that it isn't the `main` method. If so, it suggests setting the return
     /// type.
-    #[instrument(level = "trace", skip(self, err))]
     pub(in super::super) fn suggest_missing_return_type(
         &self,
         err: &mut Diag<'_>,
@@ -1552,7 +1551,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     }
 
     // Suggest to change `Option<&Vec<T>>::unwrap_or(&[])` to `Option::map_or(&[], |v| v)`.
-    #[instrument(level = "trace", skip(self, err, provided_expr))]
     pub(crate) fn suggest_deref_unwrap_or(
         &self,
         err: &mut Diag<'_>,
@@ -1661,7 +1659,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, err))]
     pub(crate) fn suggest_floating_point_literal(
         &self,
         err: &mut Diag<'_>,
@@ -1743,7 +1740,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     /// Suggest providing `std::ptr::null()` or `std::ptr::null_mut()` if they
     /// pass in a literal 0 to an raw pointer.
-    #[instrument(skip(self, err))]
     pub(crate) fn suggest_null_ptr_for_literal_zero_given_to_ptr_arg(
         &self,
         err: &mut Diag<'_>,

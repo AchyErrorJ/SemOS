@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_errors::{Applicability, Diag};
 use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::LocalDefId;
@@ -8,13 +9,12 @@ use rustc_span::Span;
 use rustc_trait_selection::traits::{
     MatchExpressionArmCause, ObligationCause, ObligationCauseCode,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::coercion::CoerceMany;
 use crate::{Diverges, Expectation, FnCtxt, GatherLocalsVisitor, Needs};
 
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
-    #[instrument(skip(self), level = "debug", ret)]
     pub(crate) fn check_expr_match(
         &self,
         expr: &'tcx hir::Expr<'tcx>,

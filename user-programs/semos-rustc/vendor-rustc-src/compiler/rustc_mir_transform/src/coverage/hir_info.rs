@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir as hir;
 use rustc_hir::intravisit::{Visitor, walk_expr};
 use rustc_middle::hir::nested_filter;

@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::{Scalar, Size, TagEncoding, Variants, WrappingRange};
 use rustc_hir::LangItem;
 use rustc_index::IndexVec;

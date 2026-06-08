@@ -1,5 +1,6 @@
 //! A utility module to inspect currently ambiguous obligations in the current context.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_infer::traits::{self, ObligationCause, PredicateObligations};
 use rustc_middle::ty::{self, Ty, TypeVisitableExt};
 use rustc_span::Span;
@@ -7,14 +8,13 @@ use rustc_trait_selection::solve::Certainty;
 use rustc_trait_selection::solve::inspect::{
     InferCtxtProofTreeExt, InspectConfig, InspectGoal, ProofTreeVisitor,
 };
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::FnCtxt;
 
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// Returns a list of all obligations whose self type has been unified
     /// with the unconstrained type `self_ty`.
-    #[instrument(skip(self), level = "debug")]
     pub(crate) fn obligations_for_self_ty(&self, self_ty: ty::TyVid) -> PredicateObligations<'tcx> {
         if self.next_trait_solver() {
             self.obligations_for_self_ty_next(self_ty)
@@ -28,7 +28,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     fn predicate_has_self_ty(
         &self,
         predicate: ty::Predicate<'tcx>,
@@ -58,7 +57,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     fn type_matches_expected_vid(&self, expected_vid: ty::TyVid, ty: Ty<'tcx>) -> bool {
         let ty = self.shallow_resolve(ty);
         debug!(?ty);

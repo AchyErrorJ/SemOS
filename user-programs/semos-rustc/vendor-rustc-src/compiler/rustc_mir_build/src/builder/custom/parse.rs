@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_index::IndexSlice;
 use rustc_middle::mir::*;
 use rustc_middle::thir::*;

@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::FieldIdx;
 use rustc_data_structures::flat_map_in_place::FlatMapInPlace;
 use rustc_hir::LangItem;
@@ -8,7 +9,7 @@ use rustc_middle::mir::visit::*;
 use rustc_middle::mir::*;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_mir_dataflow::value_analysis::{excluded_locals, iter_fields};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::patch::MirPatch;
 
@@ -19,7 +20,6 @@ impl<'tcx> crate::MirPass<'tcx> for ScalarReplacementOfAggregates {
         sess.mir_opt_level() >= 2
     }
 
-    #[instrument(level = "debug", skip(self, tcx, body))]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         debug!(def_id = ?body.source.def_id());
 
@@ -259,7 +259,6 @@ struct ReplacementVisitor<'tcx, 'll> {
 }
 
 impl<'tcx> ReplacementVisitor<'tcx, '_> {
-    #[instrument(level = "trace", skip(self))]
     fn expand_var_debug_info(&mut self, var_debug_info: &mut Vec<VarDebugInfo<'tcx>>) {
         var_debug_info.flat_map_in_place(|mut var_debug_info| {
             let place = match var_debug_info.value {
@@ -307,7 +306,6 @@ impl<'tcx, 'll> MutVisitor<'tcx> for ReplacementVisitor<'tcx, 'll> {
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
     fn visit_statement(&mut self, statement: &mut Statement<'tcx>, location: Location) {
         match statement.kind {
             // Duplicate storage and deinit statements, as they pretty much apply to all fields.

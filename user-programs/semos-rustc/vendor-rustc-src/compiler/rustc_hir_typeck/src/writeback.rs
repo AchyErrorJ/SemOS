@@ -8,6 +8,7 @@
 //! of the replacement happens at the end in [`FnCtxt::resolve_type_vars_in_body`],
 //! which creates a new `TypeckResults` which doesn't contain any inference variables.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::mem;
 use core::ops::ControlFlow;
 
@@ -30,7 +31,7 @@ use rustc_span::Span;
 use rustc_trait_selection::error_reporting::infer::need_type_info::TypeAnnotationNeeded;
 use rustc_trait_selection::opaque_types::opaque_type_has_defining_use_args;
 use rustc_trait_selection::solve;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::FnCtxt;
 
@@ -552,7 +553,6 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         self.typeck_results.hidden_types = mem::take(&mut fcx_typeck_results.hidden_types);
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn visit_opaque_types(&mut self) {
         if self.fcx.next_trait_solver() {
             return self.visit_opaque_types_next();
@@ -653,7 +653,6 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, span), level = "debug")]
     fn visit_node_id(&mut self, span: Span, hir_id: HirId) {
         // Export associated path extensions and method resolutions.
         if let Some(def) =
@@ -680,7 +679,6 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, span), level = "debug")]
     fn visit_adjustments(&mut self, span: Span, hir_id: HirId) {
         let adjustment = self.fcx.typeck_results.borrow_mut().adjustments_mut().remove(hir_id);
         match adjustment {
@@ -696,7 +694,6 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn visit_rust_2024_migration_desugared_pats(&mut self, hir_id: hir::HirId) {
         if let Some(is_hard_error) = self
             .fcx
@@ -714,7 +711,6 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, span), level = "debug")]
     fn visit_pat_adjustments(&mut self, span: Span, hir_id: HirId) {
         let adjustment = self.fcx.typeck_results.borrow_mut().pat_adjustments_mut().remove(hir_id);
         match adjustment {
@@ -730,7 +726,6 @@ impl<'cx, 'tcx> WritebackCx<'cx, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn visit_skipped_ref_pats(&mut self, hir_id: hir::HirId) {
         if self.fcx.typeck_results.borrow_mut().skipped_ref_pats_mut().remove(hir_id) {
             debug!("node is a skipped ref pat");
@@ -928,7 +923,6 @@ impl<'cx, 'tcx> Resolver<'cx, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, outer_exclusive_binder, new_err))]
     fn handle_term<T>(
         &mut self,
         value: T,

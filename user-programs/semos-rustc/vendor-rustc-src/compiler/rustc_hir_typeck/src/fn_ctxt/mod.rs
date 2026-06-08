@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 mod _impl;
 mod adjust_fulfillment_errors;
 mod arg_matrix;

@@ -2,6 +2,7 @@
 //! out-of-bound access etc. Uses const propagation to determine the values of
 //! operands during checks.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::fmt::Debug;
 
 use rustc_abi::{BackendRepr, FieldIdx, HasDataLayout, Size, TargetDataLayout, VariantIdx};
@@ -20,7 +21,7 @@ use rustc_middle::mir::*;
 use rustc_middle::ty::layout::{LayoutError, LayoutOf, LayoutOfHelpers, TyAndLayout};
 use rustc_middle::ty::{self, ConstInt, ScalarInt, Ty, TyCtxt, TypeVisitableExt};
 use rustc_span::Span;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::errors::{AssertLint, AssertLintKind};
 
@@ -269,7 +270,6 @@ impl<'mir, 'tcx> ConstPropagator<'mir, 'tcx> {
     }
 
     /// Returns the value, if any, of evaluating `place`.
-    #[instrument(level = "trace", skip(self), ret)]
     fn eval_place(&mut self, place: Place<'tcx>) -> Option<ImmTy<'tcx>> {
         match self.get_const(place)? {
             Value::Immediate(imm) => Some(imm.clone()),
@@ -535,7 +535,6 @@ impl<'mir, 'tcx> ConstPropagator<'mir, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
     fn eval_rvalue(&mut self, rvalue: &Rvalue<'tcx>, dest: &Place<'tcx>) -> Option<()> {
         if !dest.projection.is_empty() {
             return None;

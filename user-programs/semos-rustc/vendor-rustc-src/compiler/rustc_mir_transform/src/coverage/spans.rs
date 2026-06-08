@@ -1,8 +1,9 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::mir::coverage::{Mapping, MappingKind, START_BCB};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::SourceMap;
 use rustc_span::{BytePos, DesugaringKind, ExpnId, ExpnKind, MacroKind, Span};
-use tracing::instrument;
+// (instrument removed)
 
 use crate::coverage::expansion::{ExpnTree, SpanWithBcb};
 use crate::coverage::graph::{BasicCoverageBlock, CoverageGraph};
@@ -184,7 +185,6 @@ fn discard_spans_overlapping_holes(covspans: &mut Vec<Covspan>, holes: &[Hole]) 
 
 /// Takes a list of sorted spans extracted from MIR, and "refines"
 /// those spans by removing spans that overlap in unwanted ways.
-#[instrument(level = "debug")]
 fn remove_unwanted_overlapping_spans(sorted_spans: Vec<Covspan>) -> Vec<Covspan> {
     debug_assert!(sorted_spans.is_sorted_by(|a, b| compare_spans(a.span, b.span).is_le()));
 

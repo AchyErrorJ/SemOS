@@ -1,6 +1,7 @@
 //! Check that a body annotated with `#[rustc_force_inline]` will not fail to inline based on its
 //! definition alone (irrespective of any specific caller).
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::attrs::InlineAttr;
 use rustc_hir::def_id::DefId;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;

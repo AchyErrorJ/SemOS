@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::LocalDefId;
 use rustc_hir::{self as hir, Expr, ImplItem, Item, Node, TraitItem, def, intravisit};
@@ -5,13 +6,12 @@ use rustc_middle::bug;
 use rustc_middle::hir::nested_filter;
 use rustc_middle::ty::{self, DefiningScopeKind, EarlyBinder, Ty, TyCtxt, TypeVisitableExt};
 use rustc_trait_selection::opaque_types::report_item_does_not_constrain_error;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::errors::UnconstrainedOpaqueType;
 
 /// Checks "defining uses" of opaque `impl Trait` in associated types.
 /// These can only be defined by associated items of the same trait.
-#[instrument(skip(tcx), level = "debug")]
 pub(super) fn find_opaque_ty_constraints_for_impl_trait_in_assoc_type(
     tcx: TyCtxt<'_>,
     def_id: LocalDefId,
@@ -71,7 +71,6 @@ pub(super) fn find_opaque_ty_constraints_for_impl_trait_in_assoc_type(
 /// // Not okay -- `Foo` is applied to a non-generic type.
 /// fn b<T>() -> Foo<T, u32> { .. }
 /// ```
-#[instrument(skip(tcx), level = "debug")]
 pub(super) fn find_opaque_ty_constraints_for_tait(
     tcx: TyCtxt<'_>,
     def_id: LocalDefId,
@@ -136,7 +135,6 @@ impl<'tcx> TaitConstraintLocator<'tcx> {
         self.insert_found(ty::DefinitionSiteHiddenType::new_error(self.tcx, guar));
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn check(&mut self, item_def_id: LocalDefId) {
         // Don't try to check items that cannot possibly constrain the type.
         let tcx = self.tcx;

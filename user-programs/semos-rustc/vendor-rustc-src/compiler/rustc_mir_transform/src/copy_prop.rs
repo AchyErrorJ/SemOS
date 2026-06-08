@@ -1,9 +1,10 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_index::IndexSlice;
 use rustc_index::bit_set::DenseBitSet;
 use rustc_middle::mir::visit::*;
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::ssa::SsaLocals;
 
@@ -24,7 +25,6 @@ impl<'tcx> crate::MirPass<'tcx> for CopyProp {
         sess.mir_opt_level() >= 1
     }
 
-    #[instrument(level = "trace", skip(self, tcx, body))]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         debug!(def_id = ?body.source.def_id());
 
@@ -70,12 +70,10 @@ impl<'tcx> MutVisitor<'tcx> for Replacer<'_, 'tcx> {
         self.tcx
     }
 
-    #[tracing::instrument(level = "trace", skip(self))]
     fn visit_local(&mut self, local: &mut Local, ctxt: PlaceContext, _: Location) {
         *local = self.copy_classes[*local];
     }
 
-    #[tracing::instrument(level = "trace", skip(self))]
     fn visit_operand(&mut self, operand: &mut Operand<'tcx>, loc: Location) {
         if let Operand::Move(place) = *operand
             // A move out of a projection of a copy is equivalent to a copy of the original
@@ -88,7 +86,6 @@ impl<'tcx> MutVisitor<'tcx> for Replacer<'_, 'tcx> {
         self.super_operand(operand, loc);
     }
 
-    #[tracing::instrument(level = "trace", skip(self))]
     fn visit_statement(&mut self, stmt: &mut Statement<'tcx>, loc: Location) {
         // When removing storage statements, we need to remove both (#107511).
         if let StatementKind::StorageLive(l) | StatementKind::StorageDead(l) = stmt.kind

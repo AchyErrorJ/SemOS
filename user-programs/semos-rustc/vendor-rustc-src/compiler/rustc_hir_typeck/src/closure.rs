@@ -1,5 +1,6 @@
 //! Code for type-checking closure expressions.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 use core::ops::ControlFlow;
 
@@ -20,7 +21,7 @@ use rustc_span::def_id::LocalDefId;
 use rustc_span::{DUMMY_SP, Span};
 use rustc_trait_selection::error_reporting::traits::ArgKind;
 use rustc_trait_selection::traits;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use super::{CoroutineTypes, Expectation, FnCtxt, check_fn};
 
@@ -44,7 +45,6 @@ struct ClosureSignatures<'tcx> {
 }
 
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
-    #[instrument(skip(self, closure), level = "debug")]
     pub(crate) fn check_expr_closure(
         &self,
         closure: &hir::Closure<'tcx>,
@@ -298,7 +298,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     /// Given the expected type, figures out what it can about this closure we
     /// are about to type check:
-    #[instrument(skip(self), level = "debug", ret)]
     fn deduce_closure_signature(
         &self,
         expected_ty: Ty<'tcx>,
@@ -492,7 +491,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// The `cause_span` should be the span that caused us to
     /// have this expected signature, or `None` if we can't readily
     /// know that.
-    #[instrument(level = "debug", skip(self, cause_span), ret)]
     fn deduce_sig_from_projection(
         &self,
         cause_span: Option<Span>,
@@ -657,7 +655,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     /// If there is no expected signature, then we will convert the
     /// types that the user gave into a signature.
-    #[instrument(skip(self, expr_def_id, decl), level = "debug")]
     fn sig_of_closure_no_expectation(
         &self,
         expr_def_id: LocalDefId,
@@ -716,7 +713,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// - `expected_sig`: the expected signature (if any). Note that
     ///   this is missing a binder: that is, there may be late-bound
     ///   regions with depth 1, which are bound then by the closure.
-    #[instrument(skip(self, expr_def_id, decl), level = "debug")]
     fn sig_of_closure_with_expectation(
         &self,
         expr_def_id: LocalDefId,
@@ -815,7 +811,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// Enforce the user's types against the expectation. See
     /// `sig_of_closure_with_expectation` for details on the overall
     /// strategy.
-    #[instrument(level = "debug", skip(self, expr_def_id, decl, expected_sigs))]
     fn merge_supplied_sig_with_expectation(
         &self,
         expr_def_id: LocalDefId,
@@ -897,7 +892,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// types that the user gave into a signature.
     ///
     /// Also, record this closure signature for later.
-    #[instrument(skip(self, decl), level = "debug", ret)]
     fn supplied_sig_of_closure(
         &self,
         expr_def_id: LocalDefId,
@@ -981,7 +975,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// user specified. The "desugared" return type is an `impl
     /// Future<Output = T>`, so we do this by searching through the
     /// obligations to extract the `T`.
-    #[instrument(skip(self), level = "debug", ret)]
     fn deduce_future_output_from_obligations(&self, body_def_id: LocalDefId) -> Option<Ty<'tcx>> {
         let ret_coercion = self.ret_coercion.as_ref().unwrap_or_else(|| {
             span_bug!(self.tcx.def_span(body_def_id), "async fn coroutine outside of a fn")
@@ -1134,7 +1127,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         result
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     fn closure_sigs(
         &self,
         expr_def_id: LocalDefId,

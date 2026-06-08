@@ -1,4 +1,5 @@
-use std::any::Any;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::any::Any;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -127,7 +128,6 @@ impl LintStoreExpand for LintStoreExpandImpl<'_> {
 /// syntax expansion, secondary `cfg` expansion, synthesis of a test
 /// harness if one is to be provided, injection of a dependency on the
 /// standard library and prelude, and name resolution.
-#[instrument(level = "trace", skip(krate, resolver))]
 fn configure_and_expand(
     mut krate: ast::Crate,
     pre_configured_attrs: &[ast::Attribute],
@@ -308,7 +308,7 @@ fn configure_and_expand(
 }
 
 fn print_macro_stats(ecx: &ExtCtxt<'_>) {
-    use std::fmt::Write;
+    use core::fmt::Write;
 
     let crate_name = ecx.ecfg.crate_name.as_str();
     let crate_name = if crate_name == "build_script_build" {

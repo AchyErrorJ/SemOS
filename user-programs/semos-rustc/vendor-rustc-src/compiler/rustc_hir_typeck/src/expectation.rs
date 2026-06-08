@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::traits::ObligationCause;
 use rustc_middle::ty::{self, Ty};
 use rustc_span::Span;

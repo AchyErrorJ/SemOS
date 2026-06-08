@@ -2,6 +2,7 @@
 // pieces of AST and HIR. The resulting numbers are good approximations but not
 // completely accurate (some things might be counted twice, others missed).
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast::visit::BoundKind;
 use rustc_ast::{self as ast, AttrVec, NodeId, visit as ast_visit};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
@@ -195,7 +196,12 @@ impl<'k> StatCollector<'k> {
             usize_with_underscores(total_count),
         );
         _ = writeln!(s, "{prefix} {}", "=".repeat(banner_w));
+        // Stage H iter 1: eprint! is std-only. SemOS target has no stderr
+        // sink here; -Z input-stats output is host-side diagnostic anyway.
+        #[cfg(not(target_os = "none"))]
         eprint!("{s}");
+        #[cfg(target_os = "none")]
+        let _ = &s;
     }
 }
 

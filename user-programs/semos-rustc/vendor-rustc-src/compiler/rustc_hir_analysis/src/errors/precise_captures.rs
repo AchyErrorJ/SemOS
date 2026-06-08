@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_errors::E0799;
 use rustc_macros::Diagnostic;
 use rustc_span::{Span, Symbol};

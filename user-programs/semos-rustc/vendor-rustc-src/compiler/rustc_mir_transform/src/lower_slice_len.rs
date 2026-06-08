@@ -1,6 +1,7 @@
 //! This pass lowers calls to core::slice::len to just PtrMetadata op.
 //! It should run before inlining!
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;

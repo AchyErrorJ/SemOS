@@ -4,6 +4,7 @@
 //! of MIR building, and only after this pass we think of the program has having the
 //! normal MIR semantics.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::mir::*;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 

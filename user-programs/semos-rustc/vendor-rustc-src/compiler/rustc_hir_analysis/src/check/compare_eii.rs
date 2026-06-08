@@ -3,8 +3,9 @@
 //! since in a very similar way we're comparing some declaration of a signature to an implementation.
 //! The major difference is that we don't bother with self types, since for EIIs we're comparing freestanding item.
 
-use std::borrow::Cow;
-use std::iter;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use alloc::borrow::Cow;
+use core::iter;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_errors::{Applicability, E0806, struct_span_code_err};
@@ -19,7 +20,7 @@ use rustc_span::{ErrorGuaranteed, Ident, Span, Symbol};
 use rustc_trait_selection::error_reporting::InferCtxtErrorExt;
 use rustc_trait_selection::regions::InferCtxtRegionExt;
 use rustc_trait_selection::traits::{self, ObligationCtxt};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::potentially_plural_count;
 use crate::check::compare_impl_item::{
@@ -403,7 +404,6 @@ fn report_eii_mismatch<'tcx>(
     diag.emit()
 }
 
-#[instrument(level = "debug", skip(infcx))]
 fn extract_spans_for_error_reporting<'tcx>(
     infcx: &infer::InferCtxt<'tcx>,
     terr: TypeError<'_>,

@@ -5,6 +5,7 @@
 //!
 //! See [`rustc_hir_analysis::check`] for more context on type checking in general.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::{FIRST_VARIANT, FieldIdx};
 use rustc_ast::util::parser::ExprPrecedence;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
@@ -36,7 +37,7 @@ use rustc_span::source_map::Spanned;
 use rustc_span::{Ident, Span, Symbol, kw, sym};
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits::{self, ObligationCauseCode, ObligationCtxt};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 use {rustc_ast as ast, rustc_hir as hir};
 
 use crate::Expectation::{self, ExpectCastableToType, ExpectHasType, NoExpectation};
@@ -222,7 +223,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     /// Check an expr with an expectation type which may be used to eagerly
     /// guide inference when evaluating that expr.
-    #[instrument(skip(self, expr), level = "debug")]
     pub(super) fn check_expr_with_expectation(
         &self,
         expr: &'tcx hir::Expr<'tcx>,
@@ -339,7 +339,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         ty
     }
 
-    #[instrument(skip(self, expr), level = "debug")]
     fn check_expr_kind(
         &self,
         expr: &'tcx hir::Expr<'tcx>,
@@ -3356,7 +3355,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     /// This method is called after we have encountered a missing field error to recursively
     /// search for the field
-    #[instrument(skip(self, matches, mod_id, hir_id), level = "debug")]
     pub(crate) fn check_for_nested_field_satisfying_condition_for_diag(
         &self,
         span: Span,

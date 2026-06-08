@@ -67,6 +67,7 @@
 //! in case precise captures (edition 2021 closure capture rules) caused the inner coroutine
 //! to split one field capture into two.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::steal::Steal;
 use rustc_data_structures::unord::UnordMap;

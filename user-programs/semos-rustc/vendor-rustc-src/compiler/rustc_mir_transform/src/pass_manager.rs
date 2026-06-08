@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::RefCell;
 
 use rustc_data_structures::fx::StdEntry as Entry;
@@ -10,6 +11,9 @@ use tracing::trace;
 use crate::lint::lint_body;
 use crate::{errors, validate};
 
+// Stage H iter 1: thread_local! is std-only. On host we keep the cache;
+// on target we recompute each call (cheap and called rarely).
+#[cfg(not(target_os = "none"))]
 thread_local! {
     /// Maps MIR pass names to a snake case form to match profiling naming style
     static PASS_TO_PROFILER_NAMES: RefCell<FxHashMap<&'static str, &'static str>> = {
@@ -17,28 +21,38 @@ thread_local! {
     };
 }
 
+fn snake_case_pass_name(type_name: &'static str) -> &'static str {
+    let snake_case: String = type_name
+        .chars()
+        .flat_map(|c| {
+            if c.is_ascii_uppercase() {
+                vec!['_', c.to_ascii_lowercase()]
+            } else if c == '-' {
+                vec!['_']
+            } else {
+                vec![c]
+            }
+        })
+        .collect();
+    &*String::leak(format!("mir_pass{}", snake_case))
+}
+
 /// Converts a MIR pass name into a snake case form to match the profiling naming style.
+#[cfg(not(target_os = "none"))]
 fn to_profiler_name(type_name: &'static str) -> &'static str {
     PASS_TO_PROFILER_NAMES.with(|names| match names.borrow_mut().entry(type_name) {
         Entry::Occupied(e) => *e.get(),
         Entry::Vacant(e) => {
-            let snake_case: String = type_name
-                .chars()
-                .flat_map(|c| {
-                    if c.is_ascii_uppercase() {
-                        vec!['_', c.to_ascii_lowercase()]
-                    } else if c == '-' {
-                        vec!['_']
-                    } else {
-                        vec![c]
-                    }
-                })
-                .collect();
-            let result = &*String::leak(format!("mir_pass{}", snake_case));
+            let result = snake_case_pass_name(type_name);
             e.insert(result);
             result
         }
     })
+}
+
+#[cfg(target_os = "none")]
+fn to_profiler_name(type_name: &'static str) -> &'static str {
+    snake_case_pass_name(type_name)
 }
 
 // A function that simplifies a pass's type_name. E.g. `Baz`, `Baz<'_>`,

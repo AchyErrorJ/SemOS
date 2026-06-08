@@ -9,6 +9,7 @@
 #![feature(trim_prefix_suffix)]
 // tidy-alphabetical-end
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 #[macro_use]
 extern crate alloc;
 
@@ -64,7 +65,7 @@ use rustc_middle::{bug, span_bug};
 use rustc_session::config;
 use rustc_span::Span;
 use rustc_span::def_id::LocalDefId;
-use tracing::{debug, instrument};
+use tracing::{debug};
 use typeck_root_ctxt::TypeckRootCtxt;
 
 use crate::check::check_fn;
@@ -109,7 +110,6 @@ pub fn inspect_typeck<'tcx>(
     typeck_with_inspect(tcx, def_id, Some(inspect))
 }
 
-#[instrument(level = "debug", skip(tcx, inspector), ret)]
 fn typeck_with_inspect<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,

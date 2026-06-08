@@ -5,6 +5,7 @@
 //! In the compiler, this is only used for upvar inference, but there
 //! are many uses within clippy.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::{Ref, RefCell};
 use core::ops::Deref;
 
@@ -28,7 +29,7 @@ use rustc_middle::ty::{
 use rustc_middle::{bug, span_bug};
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_trait_selection::infer::InferCtxtExt;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::fn_ctxt::FnCtxt;
 
@@ -321,7 +322,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
         Ok(())
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn consume_or_copy(&self, place_with_id: &PlaceWithHirId<'tcx>, diag_expr_id: HirId) {
         if self.cx.type_is_copy_modulo_regions(place_with_id.place.ty()) {
             self.delegate.borrow_mut().copy(place_with_id, diag_expr_id);
@@ -330,7 +330,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
     pub fn consume_clone_or_copy(&self, place_with_id: &PlaceWithHirId<'tcx>, diag_expr_id: HirId) {
         // `x.use` will do one of the following
         // * if it implements `Copy`, it will be a copy
@@ -356,7 +355,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
     }
 
     // FIXME: It's suspicious that this is public; clippy should probably use `walk_expr`.
-    #[instrument(skip(self), level = "debug")]
     pub fn consume_expr(&self, expr: &hir::Expr<'_>) -> Result<(), Cx::Error> {
         let place_with_id = self.cat_expr(expr)?;
         self.consume_or_copy(&place_with_id, place_with_id.hir_id);
@@ -364,7 +362,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
         Ok(())
     }
 
-    #[instrument(skip(self), level = "debug")]
     pub fn consume_or_clone_expr(&self, expr: &hir::Expr<'_>) -> Result<(), Cx::Error> {
         let place_with_id = self.cat_expr(expr)?;
         self.consume_clone_or_copy(&place_with_id, place_with_id.hir_id);
@@ -379,14 +376,12 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
         Ok(())
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn borrow_expr(&self, expr: &hir::Expr<'_>, bk: ty::BorrowKind) -> Result<(), Cx::Error> {
         let place_with_id = self.cat_expr(expr)?;
         self.delegate.borrow_mut().borrow(&place_with_id, place_with_id.hir_id, bk);
         self.walk_expr(expr)
     }
 
-    #[instrument(skip(self), level = "debug")]
     pub fn walk_expr(&self, expr: &hir::Expr<'_>) -> Result<(), Cx::Error> {
         self.walk_adjustment(expr)?;
 
@@ -594,7 +589,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
         Ok(())
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn fake_read_scrutinee(
         &self,
         discr_place: &PlaceWithHirId<'tcx>,
@@ -639,7 +633,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
 
     /// Indicates that the value of `blk` will be consumed, meaning either copied or moved
     /// depending on its type.
-    #[instrument(skip(self), level = "debug")]
     fn walk_block(&self, blk: &hir::Block<'_>) -> Result<(), Cx::Error> {
         for stmt in blk.stmts {
             self.walk_stmt(stmt)?;
@@ -829,7 +822,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
     ///
     /// Do note that discrepancies like these do still create obscure corners
     /// in the semantics of the language, and should be avoided if possible.
-    #[instrument(skip(self), level = "debug")]
     fn walk_pat(
         &self,
         discr_place: &PlaceWithHirId<'tcx>,
@@ -993,7 +985,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
     ///
     /// - When reporting the Place back to the Delegate, ensure that the UpvarId uses the enclosing
     /// closure as the DefId.
-    #[instrument(skip(self), level = "debug")]
     fn walk_captures(&self, closure_expr: &hir::Closure<'_>) -> Result<(), Cx::Error> {
         fn upvar_is_local_variable(
             upvars: Option<&FxIndexMap<HirId, hir::Upvar>>,
@@ -1864,7 +1855,6 @@ impl<'tcx, Cx: TypeInformationCtxt<'tcx>, D: Delegate<'tcx>> ExprUseVisitor<'tcx
     ///
     /// FIXME(never_patterns): update this comment once the aforementioned MIR builder
     /// code is changed to be insensitive to inhhabitedness.
-    #[instrument(skip(self, span), level = "debug")]
     fn is_multivariant_adt(&self, ty: Ty<'tcx>, span: Span) -> bool {
         if let ty::Adt(def, _) = self.cx.structurally_resolve_type(span, ty).kind() {
             // Note that if a non-exhaustive SingleVariant is defined in another crate, we need

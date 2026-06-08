@@ -9,6 +9,7 @@
 //!
 //! * Compiler internal types like `Ty` and `TyCtxt`
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::diagnostic_items::DiagnosticItems;
 use rustc_hir::{Attribute, CRATE_OWNER_ID, OwnerId};
 use rustc_middle::query::{LocalCrate, Providers};

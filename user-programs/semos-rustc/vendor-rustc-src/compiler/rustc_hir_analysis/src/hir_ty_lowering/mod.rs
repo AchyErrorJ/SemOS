@@ -13,13 +13,14 @@
 //! [^1]: This includes types, lifetimes / regions, constants in type positions,
 //! trait references and bounds.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 mod bounds;
 mod cmse;
 mod dyn_trait;
 pub mod errors;
 pub mod generics;
 
-use std::slice;
+use core::slice;
 
 use rustc_ast::LitKind;
 use rustc_data_structures::assert_matches;
@@ -49,7 +50,7 @@ use rustc_span::{DUMMY_SP, Ident, Span, kw, sym};
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits::wf::object_region_bounds;
 use rustc_trait_selection::traits::{self, FulfillmentError};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::check::check_abi;
 use crate::check_c_variadic_abi;
@@ -489,7 +490,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a lifetime from the HIR to our internal notion of a lifetime called a *region*.
-    #[instrument(level = "debug", skip(self), ret)]
     pub fn lower_lifetime(
         &self,
         lifetime: &hir::Lifetime,
@@ -504,7 +504,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a lifetime from the HIR to our internal notion of a lifetime called a *region*.
-    #[instrument(level = "debug", skip(self), ret)]
     fn lower_resolved_lifetime(&self, resolved: rbv::ResolvedArg) -> ty::Region<'tcx> {
         let tcx = self.tcx();
 
@@ -565,12 +564,12 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// ### Example
     ///
     /// ```ignore (illustrative)
-    ///    T: std::ops::Index<usize, Output = u32>
+    ///    T: core::ops::Index<usize, Output = u32>
     /// // ^1 ^^^^^^^^^^^^^^2 ^^^^3  ^^^^^^^^^^^4
     /// ```
     ///
     /// 1. The `self_ty` here would refer to the type `T`.
-    /// 2. The path in question is the path to the trait `std::ops::Index`,
+    /// 2. The path in question is the path to the trait `core::ops::Index`,
     ///    which will have been resolved to a `def_id`
     /// 3. The `generic_args` contains info on the `<...>` contents. The `usize` type
     ///    parameters are returned in the `GenericArgsRef`
@@ -588,7 +587,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// `[Vec<u8>, u8]` and `generic_args` are the arguments for the associated
     /// type itself: `['a]`. The returned `GenericArgsRef` concatenates these two
     /// lists: `[Vec<u8>, u8, 'a]`.
-    #[instrument(level = "debug", skip(self, span), ret)]
     fn lower_generic_args_of_path(
         &self,
         span: Span,
@@ -801,7 +799,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
         (args, arg_count)
     }
 
-    #[instrument(level = "debug", skip(self))]
     pub fn lower_generic_args_of_assoc_item(
         &self,
         span: Span,
@@ -861,7 +858,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// If for example you had `for<'a> Foo<'a>: Bar<'a>`, then the `self_ty` would be `Foo<'a>`
     /// where `'a` is a bound region at depth 0. Similarly, the `trait_ref` would be `Bar<'a>`.
     /// The lowered poly-trait-ref will track this binder explicitly, however.
-    #[instrument(level = "debug", skip(self, bounds))]
     pub(crate) fn lower_poly_trait_ref(
         &self,
         &hir::PolyTraitRef {
@@ -1146,7 +1142,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// candidates in which case it reports ambiguity.
     ///
     /// `ty_param_def_id` is the `LocalDefId` of the type parameter.
-    #[instrument(level = "debug", skip_all, ret)]
     fn probe_single_ty_param_bound_for_assoc_item(
         &self,
         ty_param_def_id: LocalDefId,
@@ -1181,7 +1176,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     ///
     /// This fails if there is no such bound in the list of candidates or if there are multiple
     /// candidates in which case it reports ambiguity.
-    #[instrument(level = "debug", skip(self, all_candidates, qself, constraint), ret)]
     fn probe_single_bound_for_assoc_item<I>(
         &self,
         all_candidates: impl Fn() -> I,
@@ -1367,7 +1361,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     //
     // NOTE: When this function starts resolving `Trait::AssocTy` successfully
     // it should also start reporting the `BARE_TRAIT_OBJECTS` lint.
-    #[instrument(level = "debug", skip_all, ret)]
     pub fn lower_type_relative_ty_path(
         &self,
         self_ty: Ty<'tcx>,
@@ -1404,7 +1397,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a [type-relative][hir::QPath::TypeRelative] path to a (type-level) constant.
-    #[instrument(level = "debug", skip_all, ret)]
     fn lower_type_relative_const_path(
         &self,
         self_ty: Ty<'tcx>,
@@ -1453,7 +1445,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a [type-relative][hir::QPath::TypeRelative] (and type-level) path.
-    #[instrument(level = "debug", skip_all, ret)]
     fn lower_type_relative_path(
         &self,
         self_ty: Ty<'tcx>,
@@ -1725,7 +1716,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
         let parent_args = ty::GenericArgs::identity_for_item(tcx, impl_);
         let args = self.lower_generic_args_of_assoc_item(span, assoc_item, segment, parent_args);
         let args = tcx.mk_args_from_iter(
-            std::iter::once(ty::GenericArg::from(self_ty))
+            core::iter::once(ty::GenericArg::from(self_ty))
                 .chain(args.into_iter().skip(parent_args.len())),
         );
 
@@ -1853,7 +1844,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a [resolved][hir::QPath::Resolved] associated type path to a projection.
-    #[instrument(level = "debug", skip_all)]
     fn lower_resolved_assoc_ty_path(
         &self,
         span: Span,
@@ -1878,7 +1868,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a [resolved][hir::QPath::Resolved] associated const path to a (type-level) constant.
-    #[instrument(level = "debug", skip_all)]
     fn lower_resolved_assoc_const_path(
         &self,
         span: Span,
@@ -1913,7 +1902,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a [resolved][hir::QPath::Resolved] (type-level) associated item path.
-    #[instrument(level = "debug", skip_all)]
     fn lower_resolved_assoc_item_path(
         &self,
         span: Span,
@@ -2118,7 +2106,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a [resolved][hir::QPath::Resolved] path to a type.
-    #[instrument(level = "debug", skip_all)]
     pub fn lower_resolved_ty_path(
         &self,
         opt_self_ty: Option<Ty<'tcx>>,
@@ -2319,7 +2306,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a [`hir::ConstArg`] to a (type-level) [`ty::Const`](Const).
-    #[instrument(skip(self), level = "debug")]
     pub fn lower_const_arg(&self, const_arg: &hir::ConstArg<'tcx>, ty: Ty<'tcx>) -> Const<'tcx> {
         let tcx = self.tcx();
 
@@ -2780,7 +2766,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Literals are eagerly converted to a constant, everything else becomes `Unevaluated`.
-    #[instrument(skip(self), level = "debug")]
     fn lower_const_arg_anon(&self, anon: &AnonConst) -> Const<'tcx> {
         let tcx = self.tcx();
 
@@ -2804,14 +2789,12 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn lower_const_arg_literal(&self, kind: &LitKind, ty: Ty<'tcx>, span: Span) -> Const<'tcx> {
         let tcx = self.tcx();
         let input = LitToConstInput { lit: *kind, ty, neg: false };
         tcx.at(span).lit_to_const(input)
     }
 
-    #[instrument(skip(self), level = "debug")]
     fn try_lower_anon_const_lit(
         &self,
         ty: Ty<'tcx>,
@@ -2853,7 +2836,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a type from the HIR to our internal notion of a type.
-    #[instrument(level = "debug", skip(self), ret)]
     pub fn lower_ty(&self, hir_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
         let tcx = self.tcx();
 
@@ -3046,7 +3028,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower an opaque type (i.e., an existential impl-Trait type) from the HIR.
-    #[instrument(level = "debug", skip(self), ret)]
     fn lower_opaque_ty(&self, def_id: LocalDefId, in_trait: Option<LocalDefId>) -> Ty<'tcx> {
         let tcx = self.tcx();
 
@@ -3097,7 +3078,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     }
 
     /// Lower a function type from the HIR to our internal notion of a function signature.
-    #[instrument(level = "debug", skip(self, hir_id, safety, abi, decl, generics, hir_ty), ret)]
     pub fn lower_fn_ty(
         &self,
         hir_id: HirId,
@@ -3193,7 +3173,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
         })
     }
 
-    #[instrument(level = "trace", skip(self, generate_err))]
     fn validate_late_bound_regions<'cx>(
         &'cx self,
         constrained_regions: FxIndexSet<ty::BoundRegionKind>,
@@ -3233,7 +3212,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// provided, if they provided one, and otherwise search the supertypes of trait bounds
     /// for region bounds. It may be that we can derive no bound at all, in which case
     /// we return `None`.
-    #[instrument(level = "debug", skip(self, span), ret)]
     fn compute_object_lifetime_bound(
         &self,
         span: Span,

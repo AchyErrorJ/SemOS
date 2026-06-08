@@ -1,5 +1,6 @@
 //! Validates the MIR to ensure that invariants are upheld.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::{ExternAbi, FIRST_VARIANT, Size};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::LangItem;

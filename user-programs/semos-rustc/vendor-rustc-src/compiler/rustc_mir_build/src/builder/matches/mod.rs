@@ -5,6 +5,7 @@
 //! This also includes code for pattern bindings in `let` statements and
 //! function parameters.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::borrow::Borrow;
 use core::mem;
 use alloc::sync::Arc;
@@ -23,7 +24,7 @@ use rustc_middle::{bug, span_bug};
 use rustc_pattern_analysis::constructor::RangeEnd;
 use rustc_pattern_analysis::rustc::{DeconstructedPat, RustcPatCtxt};
 use rustc_span::{BytePos, Pos, Span, Symbol, sym};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::builder::ForGuard::{self, OutsideGuard, RefWithinGuard};
 use crate::builder::expr::as_place::PlaceBuilder;
@@ -348,7 +349,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     /// On top of this, we also add a false edge from the otherwise_block of each guard to the
     /// aforementioned start block of the next candidate, to ensure borrock doesn't rely on which
     /// guards may have run.
-    #[instrument(level = "debug", skip(self, arms))]
     pub(crate) fn match_expr(
         &mut self,
         destination: Place<'tcx>,
@@ -704,7 +704,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     /// scope for the bindings in these patterns, if such a scope had to be
     /// created. NOTE: Declaring the bindings should always be done in their
     /// drop scope.
-    #[instrument(skip(self), level = "debug")]
     pub(crate) fn declare_bindings(
         &mut self,
         mut visibility_scope: Option<SourceScope>,
@@ -837,7 +836,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     /// This also has the side-effect of pushing all user type annotations
     /// onto `canonical_user_type_annotations`, so that they end up in MIR
     /// even if they aren't associated with any bindings.
-    #[instrument(level = "debug", skip(self, f))]
     fn visit_primary_bindings_special(
         &mut self,
         pattern: &Pat<'tcx>,
@@ -1741,7 +1739,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     ///
     /// Note how we test `x` twice. This is the tradeoff of backtracking automata: we prefer smaller
     /// code size so we accept non-optimal code paths.
-    #[instrument(skip(self), level = "debug")]
     fn match_candidates(
         &mut self,
         span: Span,
@@ -2792,7 +2789,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     /// first local is a binding for occurrences of `var` in the guard, which
     /// will have type `&T`. The second local is a binding for occurrences of
     /// `var` in the arm body, which will have type `T`.
-    #[instrument(skip(self), level = "debug")]
     fn declare_binding(
         &mut self,
         source_info: SourceInfo,

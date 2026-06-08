@@ -5,6 +5,7 @@
 // identify what tests are needed, perform the tests, and then filter
 // the candidates based on the result.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use alloc::sync::Arc;
 
 use rustc_data_structures::fx::FxIndexMap;
@@ -16,7 +17,7 @@ use rustc_middle::ty::{self, GenericArg, Ty, TyCtxt};
 use rustc_span::def_id::DefId;
 use rustc_span::source_map::Spanned;
 use rustc_span::{DUMMY_SP, Span, Symbol, sym};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::builder::Builder;
 use crate::builder::matches::{
@@ -64,7 +65,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         Test { span: match_pair.pattern_span, kind }
     }
 
-    #[instrument(skip(self, target_blocks, place), level = "debug")]
     pub(super) fn perform_test(
         &mut self,
         match_start_span: Span,
@@ -169,7 +169,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                     Rvalue::Ref(tcx.lifetimes.re_erased, BorrowKind::Shared, place),
                 );
 
-                // Compare two strings using `<str as std::cmp::PartialEq>::eq`.
+                // Compare two strings using `<str as core::cmp::PartialEq>::eq`.
                 // (Interestingly this means that exhaustiveness analysis relies, for soundness,
                 // on the `PartialEq` impl for `str` to be correct!)
                 self.string_compare(
@@ -408,7 +408,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         );
     }
 
-    /// Compare two values of type `&str` using `<str as std::cmp::PartialEq>::eq`.
+    /// Compare two values of type `&str` using `<str as core::cmp::PartialEq>::eq`.
     fn string_compare(
         &mut self,
         block: BasicBlock,

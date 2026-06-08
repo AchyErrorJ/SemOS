@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_hir::attrs::{AttributeKind, CoverageAttrKind};
 use rustc_hir::find_attr;
 use rustc_index::bit_set::DenseBitSet;

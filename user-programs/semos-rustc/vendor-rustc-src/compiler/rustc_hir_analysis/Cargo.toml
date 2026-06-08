@@ -31,3 +31,6 @@ rustc_trait_selection = { path = "../rustc_trait_selection" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+# Stage H iter 1: needed by rustc_fluent_macro::fluent_messages! expansion.
+rustc_error_messages = { path = "../rustc_error_messages" }

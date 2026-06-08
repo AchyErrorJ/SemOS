@@ -3,6 +3,7 @@
 
 // ignore-tidy-filelength
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::ops::ControlFlow;
 use alloc::borrow::Cow;
 use semos_std::path::PathBuf; // M27 R4 B5
@@ -42,7 +43,7 @@ use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _
 use rustc_trait_selection::traits::{
     FulfillmentError, Obligation, ObligationCauseCode, supertraits,
 };
-use tracing::{debug, info, instrument};
+use tracing::{debug, info};
 
 use super::probe::{AutorefOrPtrAdjustment, IsSuggestion, Mode, ProbeScope};
 use super::{CandidateSource, MethodError, NoMatchData};
@@ -141,7 +142,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         false
     }
 
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn report_method_error(
         &self,
         call_id: HirId,

@@ -22,6 +22,7 @@
 //! codegen everything called by this function -- but that's a very different graph from what we are
 //! considering here as at that point, everything is monomorphic.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use hir::def_id::LocalDefIdSet;
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_hir as hir;

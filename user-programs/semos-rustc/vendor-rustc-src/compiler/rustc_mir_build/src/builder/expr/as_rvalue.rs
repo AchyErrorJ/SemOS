@@ -1,5 +1,6 @@
 //! See docs in `build/expr/mod.rs`.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::FieldIdx;
 use rustc_hir::lang_items::LangItem;
 use rustc_index::{Idx, IndexVec};

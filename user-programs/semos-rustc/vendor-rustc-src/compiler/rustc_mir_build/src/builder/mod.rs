@@ -20,6 +20,7 @@
 //! `let this = self;` or similar, allowing subsequent code to uniformly refer
 //! to the builder as `this` (and never `self`), even when not nested.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use itertools::Itertools;
 use rustc_abi::{ExternAbi, FieldIdx};
 use rustc_apfloat::Float;
@@ -820,8 +821,15 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         );
         body.coverage_info_hi = self.coverage_info.as_ref().map(|b| b.as_done());
 
-        let writer = pretty::MirWriter::new(self.tcx);
-        writer.write_mir_fn(&body, &mut semos_std::io::stdout()).unwrap();
+        // Stage H iter 1: diagnostic MIR dump is host-only (no stdout sink
+        // on SemOS target rustc build).
+        #[cfg(not(target_os = "none"))]
+        {
+            let writer = pretty::MirWriter::new(self.tcx);
+            let _ = writer.write_mir_fn(&body, &mut std::io::stdout());
+        }
+        #[cfg(target_os = "none")]
+        let _ = &body;
     }
 
     fn lint_and_remove_uninhabited(&mut self) {
@@ -955,7 +963,15 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         let writer = pretty::MirWriter::new(self.tcx);
         for (index, block) in body.basic_blocks.iter().enumerate() {
             if block.terminator.is_none() {
-                writer.write_mir_fn(&body, &mut semos_std::io::stdout()).unwrap();
+                // Stage H iter 1: diagnostic MIR dump is host-only (no
+                // stdout sink in the SemOS target rustc build). The
+                // span_bug ICE below covers what the dump would have
+                // told a developer anyway.
+                #[cfg(not(target_os = "none"))]
+                {
+                    let _ = writer.write_mir_fn(&body, &mut std::io::stdout());
+                }
+                let _ = &writer;
                 span_bug!(self.fn_span, "no terminator on block {:?}", index);
             }
         }

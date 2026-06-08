@@ -1,5 +1,6 @@
 //! Validity checking for weak lang items
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast as ast;
 use rustc_ast::visit;
 use rustc_data_structures::fx::FxHashSet;

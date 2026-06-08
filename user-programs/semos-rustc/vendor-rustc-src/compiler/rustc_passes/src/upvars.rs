@@ -1,5 +1,6 @@
 //! Upvar (closure capture) collection from cross-body HIR uses of `Res::Local`s.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
 use rustc_hir as hir;
 use rustc_hir::def::Res;

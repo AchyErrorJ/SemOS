@@ -4,6 +4,7 @@
 //! unit-tested and separated from the Rust source and compiler data
 //! structures.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 pub(crate) mod constant;
 pub(crate) mod cx;
 pub(crate) mod pattern;

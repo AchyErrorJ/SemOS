@@ -1,5 +1,6 @@
 //! Errors emitted by `rustc_hir_typeck`.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use alloc::borrow::Cow;
 
 use rustc_abi::ExternAbi;

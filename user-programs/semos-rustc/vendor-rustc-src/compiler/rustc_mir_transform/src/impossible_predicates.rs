@@ -26,6 +26,7 @@
 //!    the normalization code (leading to cycle errors), since
 //!    it's usually never invoked in this way.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::mir::{Body, START_BLOCK, TerminatorKind};
 use rustc_middle::ty::{TyCtxt, TypeFlags, TypeVisitableExt};
 use rustc_span::def_id::DefId;
@@ -53,7 +54,6 @@ fn has_impossible_predicates(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 }
 
 impl<'tcx> MirPass<'tcx> for ImpossiblePredicates {
-    #[tracing::instrument(level = "trace", skip(self, tcx, body))]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         tracing::trace!(def_id = ?body.source.def_id());
         let impossible = body.tainted_by_errors.is_some()

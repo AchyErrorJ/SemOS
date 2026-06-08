@@ -24,6 +24,7 @@
 //! globals is comparatively simpler. The easiest way is to wrap the test in a closure argument
 //! to: `rustc_span::create_default_session_globals_then(|| { test_here(); })`.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use itertools::Itertools;
 use rustc_data_structures::graph::{DirectedGraph, Successors};
 use rustc_index::{Idx, IndexVec};

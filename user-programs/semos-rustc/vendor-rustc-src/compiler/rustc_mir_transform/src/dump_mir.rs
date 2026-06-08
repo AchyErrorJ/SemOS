@@ -1,5 +1,6 @@
 //! This pass just dumps MIR at a specified point.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 #[cfg(not(target_os = "none"))]
 use std::fs::File;
 #[cfg(not(target_os = "none"))]

@@ -1,17 +1,17 @@
 //! A pass that inserts the `ConstEvalCounter` instruction into any blocks that have a back edge
 //! (thus indicating there is a loop in the CFG), or whose terminator is a function call.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::graph::dominators::Dominators;
 use rustc_middle::mir::{
     BasicBlock, BasicBlockData, Body, Statement, StatementKind, TerminatorKind,
 };
 use rustc_middle::ty::TyCtxt;
-use tracing::instrument;
+// (instrument removed)
 
 pub(super) struct CtfeLimit;
 
 impl<'tcx> crate::MirPass<'tcx> for CtfeLimit {
-    #[instrument(skip(self, _tcx, body))]
     fn run_pass(&self, _tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         let doms = body.basic_blocks.dominators();
         let indices: Vec<BasicBlock> = body

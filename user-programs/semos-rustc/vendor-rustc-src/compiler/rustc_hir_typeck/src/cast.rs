@@ -28,6 +28,7 @@
 //! expression, `e as U2` is not necessarily so (in fact it will only be valid if
 //! `U1` coerces to `U2`).
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast::util::parser::ExprPrecedence;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_errors::codes::*;
@@ -45,7 +46,7 @@ use rustc_middle::{bug, span_bug};
 use rustc_session::lint;
 use rustc_span::{DUMMY_SP, Span, sym};
 use rustc_trait_selection::infer::InferCtxtExt;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::FnCtxt;
 use crate::{errors, type_error_struct};
@@ -683,7 +684,6 @@ impl<'a, 'tcx> CastCheck<'tcx> {
         );
     }
 
-    #[instrument(skip(fcx), level = "debug")]
     pub(crate) fn check(mut self, fcx: &FnCtxt<'a, 'tcx>) {
         self.expr_ty = fcx.structurally_resolve_type(self.expr_span, self.expr_ty);
         self.cast_ty = fcx.structurally_resolve_type(self.cast_span, self.cast_ty);

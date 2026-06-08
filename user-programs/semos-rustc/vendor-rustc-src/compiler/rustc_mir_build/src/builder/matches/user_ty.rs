@@ -4,6 +4,7 @@
 //! This avoids having to repeatedly clone a partly-built [`UserTypeProjections`]
 //! at every step of the traversal, which is what the previous code was doing.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 
 use rustc_abi::{FieldIdx, VariantIdx};

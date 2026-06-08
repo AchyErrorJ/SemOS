@@ -1,4 +1,5 @@
-use std::ops::ControlFlow;
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::ops::ControlFlow;
 
 use rustc_data_structures::assert_matches;
 use rustc_hir::def::DefKind;
@@ -9,12 +10,11 @@ use rustc_middle::span_bug;
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_session::lint;
 use rustc_span::{Span, Symbol, kw};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::delegation::inherit_generics_for_delegation_item;
 use crate::middle::resolve_bound_vars as rbv;
 
-#[instrument(level = "debug", skip(tcx), ret)]
 pub(super) fn generics_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Generics {
     use rustc_hir::*;
 

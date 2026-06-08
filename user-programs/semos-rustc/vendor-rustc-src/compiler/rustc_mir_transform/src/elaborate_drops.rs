@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::fmt;
 
 use rustc_abi::{FieldIdx, VariantIdx};
@@ -12,7 +13,7 @@ use rustc_mir_dataflow::{
     on_lookup_result_bits,
 };
 use rustc_span::Span;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::elaborate_drop::{DropElaborator, DropFlagMode, DropStyle, Unwind, elaborate_drop};
 use crate::patch::MirPatch;
@@ -48,7 +49,6 @@ use crate::patch::MirPatch;
 pub(super) struct ElaborateDrops;
 
 impl<'tcx> crate::MirPass<'tcx> for ElaborateDrops {
-    #[instrument(level = "trace", skip(self, tcx, body))]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         debug!("elaborate_drops({:?} @ {:?})", body.source, body.span);
         // FIXME(#132279): This is used during the phase transition from analysis
@@ -95,7 +95,6 @@ impl<'tcx> crate::MirPass<'tcx> for ElaborateDrops {
 
 /// Records unwind edges which are known to be unreachable, because they are in `drop` terminators
 /// that can't drop anything.
-#[instrument(level = "trace", skip(body, flow_inits), ret)]
 fn compute_dead_unwinds<'a, 'tcx>(
     body: &'a Body<'tcx>,
     flow_inits: &mut ResultsCursor<'a, 'tcx, MaybeInitializedPlaces<'a, 'tcx>>,
@@ -166,7 +165,6 @@ impl<'a, 'tcx> DropElaborator<'a, 'tcx> for ElaborateDropsCtxt<'a, 'tcx> {
         self.patch.terminator_loc(self.body, bb)
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     fn drop_style(&self, path: Self::Path, mode: DropFlagMode) -> DropStyle {
         let ((maybe_init, maybe_uninit), multipart) = match mode {
             DropFlagMode::Shallow => (self.init_data.maybe_init_uninit(path), false),

@@ -5,6 +5,7 @@
 // done by the orphan and overlap modules. Then we build up various
 // mappings. That mapping code resides here.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_errors::codes::*;
 use rustc_errors::struct_span_code_err;
 use rustc_hir::LangItem;

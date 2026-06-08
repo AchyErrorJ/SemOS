@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
 use rustc_data_structures::sorted_map::SortedMap;
 use rustc_data_structures::unord::UnordMap;
@@ -268,7 +269,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                     let trait_args = &ty::GenericArgs::identity_for_item(tcx, best_trait)[1..];
                     let mut trait_ref = trait_name.clone();
                     let applicability = if let [arg, args @ ..] = trait_args {
-                        use std::fmt::Write;
+                        use core::fmt::Write;
                         write!(trait_ref, "</* {arg}").unwrap();
                         args.iter().try_for_each(|arg| write!(trait_ref, ", {arg}")).unwrap();
                         trait_ref += " */>";

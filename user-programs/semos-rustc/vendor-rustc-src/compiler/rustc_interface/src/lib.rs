@@ -1,10 +1,18 @@
+// M27 Stage H iter 1: no_std hygiene per RECIPE §1.2.
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(decl_macro)]
-#![feature(file_buffered)]
+#![cfg_attr(not(target_os = "none"), feature(file_buffered))]
 #![feature(iter_intersperse)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 mod callbacks;
 pub mod errors;
 pub mod interface;

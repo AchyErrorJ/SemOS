@@ -1,6 +1,7 @@
 //! Checks necessary for externally implementable items:
 //! Are all items implemented etc.?
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 
 use rustc_data_structures::fx::FxIndexMap;

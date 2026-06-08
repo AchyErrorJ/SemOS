@@ -62,6 +62,7 @@ a type parameter).
 
 */
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 pub mod always_applicable;
 mod check;
 mod compare_eii;
@@ -71,8 +72,8 @@ pub mod intrinsic;
 mod region;
 pub mod wfcheck;
 
-use std::borrow::Cow;
-use std::num::NonZero;
+use alloc::borrow::Cow;
+use core::num::NonZero;
 
 pub use check::{check_abi, check_custom_abi};
 use rustc_abi::VariantIdx;
@@ -485,7 +486,7 @@ fn fn_sig_suggestion<'tcx>(
                 }
             })
         })
-        .chain(std::iter::once(if sig.c_variadic { Some("...".to_string()) } else { None }))
+        .chain(core::iter::once(if sig.c_variadic { Some("...".to_string()) } else { None }))
         .flatten()
         .collect::<Vec<String>>()
         .join(", ");
@@ -637,7 +638,7 @@ pub fn check_function_signature<'tcx>(
         let mut args = {
             let node = tcx.expect_hir_owner_node(fn_id);
             let decl = node.fn_decl().unwrap_or_else(|| bug!("expected fn decl, found {:?}", node));
-            decl.inputs.iter().map(|t| t.span).chain(std::iter::once(decl.output.span()))
+            decl.inputs.iter().map(|t| t.span).chain(core::iter::once(decl.output.span()))
         };
 
         match err {

@@ -1,5 +1,6 @@
 //! Detecting usage of the `#[debugger_visualizer]` attribute.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_ast::ast::NodeId;
 use rustc_ast::{HasNodeId, ItemKind, ast};
 use rustc_attr_parsing::AttributeParser;

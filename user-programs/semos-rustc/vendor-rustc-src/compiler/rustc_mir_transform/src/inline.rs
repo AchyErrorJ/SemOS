@@ -1,5 +1,6 @@
 //! Inlining pass for MIR functions.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::iter;
 use core::ops::{Range, RangeFrom};
 
@@ -17,7 +18,7 @@ use rustc_middle::mir::*;
 use rustc_middle::ty::{self, Instance, InstanceKind, Ty, TyCtxt, TypeFlags, TypeVisitableExt};
 use rustc_session::config::{DebugInfo, OptLevel};
 use rustc_span::source_map::Spanned;
-use tracing::{debug, instrument, trace, trace_span};
+use tracing::{debug, trace, trace_span};
 
 use crate::cost_checker::{CostChecker, is_call_like};
 use crate::simplify::{UsedInStmtLocals, simplify_cfg};
@@ -200,7 +201,6 @@ impl<'tcx> Inliner<'tcx> for ForceInliner<'tcx> {
         true
     }
 
-    #[instrument(level = "debug", skip(self, callee_body))]
     fn check_callee_mir_body(
         &self,
         _: &CallSite<'tcx>,
@@ -357,7 +357,6 @@ impl<'tcx> Inliner<'tcx> for NormalInliner<'tcx> {
         true
     }
 
-    #[instrument(level = "debug", skip(self, callee_body))]
     fn check_callee_mir_body(
         &self,
         callsite: &CallSite<'tcx>,
@@ -1363,7 +1362,6 @@ impl<'tcx> MutVisitor<'tcx> for Integrator<'_, 'tcx> {
     }
 }
 
-#[instrument(skip(tcx), level = "debug")]
 fn try_instance_mir<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: InstanceKind<'tcx>,

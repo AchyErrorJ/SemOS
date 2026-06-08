@@ -1,9 +1,10 @@
 //! See docs in build/expr/mod.rs
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_middle::middle::region::TempLifetime;
 use rustc_middle::mir::*;
 use rustc_middle::thir::*;
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::builder::expr::category::Category;
 use crate::builder::scope::LintLevel;
@@ -111,7 +112,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     ///
     /// Like `as_local_call_operand`, except that the argument will
     /// not be valid once `scope` ends.
-    #[instrument(level = "debug", skip(self, scope))]
     pub(crate) fn as_operand(
         &mut self,
         mut block: BasicBlock,

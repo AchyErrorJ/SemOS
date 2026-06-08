@@ -2,6 +2,7 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/method-lookup.html
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 mod confirm;
 mod prelude_edition_lints;
 pub(crate) mod probe;
@@ -21,7 +22,7 @@ use rustc_middle::{bug, span_bug};
 use rustc_span::{ErrorGuaranteed, Ident, Span, Symbol};
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
 use rustc_trait_selection::traits::{self, NormalizeExt};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 pub(crate) use self::MethodError::*;
 use self::probe::{IsSuggestion, ProbeScope};
@@ -88,7 +89,6 @@ pub(crate) enum CandidateSource {
 
 impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// Determines whether the type `self_ty` supports a visible method named `method_name` or not.
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn method_exists_for_diagnostic(
         &self,
         method_name: Ident,
@@ -123,7 +123,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     }
 
     /// Adds a suggestion to call the given method to the provided diagnostic.
-    #[instrument(level = "debug", skip(self, err, call_expr))]
     pub(crate) fn suggest_method_call(
         &self,
         err: &mut Diag<'_>,
@@ -172,7 +171,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// * `call_expr`:             the complete method call: (`foo.bar::<T1,...Tn>(...)`)
     /// * `self_expr`:             the self expression (`foo`)
     /// * `args`:                  the expressions of the arguments (`a, b + 1, ...`)
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn lookup_method(
         &self,
         self_ty: Ty<'tcx>,
@@ -277,7 +275,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             .callee)
     }
 
-    #[instrument(level = "debug", skip(self, call_expr))]
     pub(crate) fn lookup_probe(
         &self,
         method_name: Ident,
@@ -342,7 +339,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// In particular, it doesn't really do any probing: it simply constructs
     /// an obligation for a particular trait with the given self type and checks
     /// whether that trait is implemented.
-    #[instrument(level = "debug", skip(self))]
     pub(super) fn lookup_method_for_operator(
         &self,
         cause: ObligationCause<'tcx>,
@@ -490,7 +486,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// * `self_ty`:               the type to search within (`Foo`)
     /// * `self_ty_span`           the span for the type being searched within (span of `Foo`)
     /// * `expr_id`:               the [`hir::HirId`] of the expression composing the entire call
-    #[instrument(level = "debug", skip(self), ret)]
     pub(crate) fn resolve_fully_qualified_call(
         &self,
         span: Span,

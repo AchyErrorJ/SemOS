@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::FieldIdx;
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap, IndexEntry};
 use rustc_hir::attrs::AttributeKind;
@@ -50,7 +51,6 @@ struct Access {
     is_direct: bool,
 }
 
-#[tracing::instrument(level = "debug", skip(tcx), ret)]
 pub(crate) fn check_liveness<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> DenseBitSet<FieldIdx> {
     // Don't run on synthetic MIR, as that will ICE trying to access HIR.
     if tcx.is_synthetic_mir(def_id) {

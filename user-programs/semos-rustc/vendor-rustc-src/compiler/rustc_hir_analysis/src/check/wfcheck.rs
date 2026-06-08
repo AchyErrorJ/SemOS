@@ -1,5 +1,6 @@
-use std::cell::LazyCell;
-use std::ops::{ControlFlow, Deref};
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
+use core::cell::LazyCell;
+use core::ops::{ControlFlow, Deref};
 
 use hir::intravisit::{self, Visitor};
 use rustc_abi::{ExternAbi, ScalableElt};
@@ -36,7 +37,7 @@ use rustc_trait_selection::traits::{
     self, FulfillmentError, Obligation, ObligationCause, ObligationCauseCode, ObligationCtxt,
     WellFormedLoc,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 use {rustc_ast as ast, rustc_hir as hir};
 
 use super::compare_eii::compare_eii_function_types;
@@ -216,7 +217,6 @@ pub(super) fn check_well_formed(
 /// We do this check as a pre-pass before checking fn bodies because if these constraints are
 /// not included it frequently leads to confusing errors in fn bodies. So it's better to check
 /// the types first.
-#[instrument(skip(tcx), level = "debug")]
 pub(super) fn check_item<'tcx>(
     tcx: TyCtxt<'tcx>,
     item: &'tcx hir::Item<'tcx>,
@@ -924,7 +924,6 @@ fn check_param_wf(tcx: TyCtxt<'_>, param: &ty::GenericParamDef) -> Result<(), Er
     }
 }
 
-#[instrument(level = "debug", skip(tcx))]
 pub(crate) fn check_associated_item(
     tcx: TyCtxt<'_>,
     def_id: LocalDefId,
@@ -1121,7 +1120,6 @@ fn check_type_defn<'tcx>(
     })
 }
 
-#[instrument(skip(tcx, item))]
 fn check_trait(tcx: TyCtxt<'_>, item: &hir::Item<'_>) -> Result<(), ErrorGuaranteed> {
     debug!(?item.owner_id);
 
@@ -1221,7 +1219,6 @@ fn check_eiis(tcx: TyCtxt<'_>, def_id: LocalDefId) {
     }
 }
 
-#[instrument(level = "debug", skip(tcx))]
 pub(crate) fn check_static_item<'tcx>(
     tcx: TyCtxt<'tcx>,
     item_id: LocalDefId,
@@ -1283,7 +1280,6 @@ pub(crate) fn check_static_item<'tcx>(
     })
 }
 
-#[instrument(level = "debug", skip(wfcx))]
 pub(super) fn check_type_const<'tcx>(
     wfcx: &WfCheckingCtxt<'_, 'tcx>,
     def_id: LocalDefId,
@@ -1315,7 +1311,6 @@ pub(super) fn check_type_const<'tcx>(
     Ok(())
 }
 
-#[instrument(level = "debug", skip(tcx, impl_))]
 fn check_impl<'tcx>(
     tcx: TyCtxt<'tcx>,
     item: &'tcx hir::Item<'tcx>,
@@ -1411,7 +1406,6 @@ fn check_impl<'tcx>(
 }
 
 /// Checks where-clauses and inline bounds that are declared on `def_id`.
-#[instrument(level = "debug", skip(wfcx))]
 pub(super) fn check_where_clauses<'tcx>(wfcx: &WfCheckingCtxt<'_, 'tcx>, def_id: LocalDefId) {
     let infcx = wfcx.infcx;
     let tcx = wfcx.tcx();
@@ -1575,7 +1569,6 @@ pub(super) fn check_where_clauses<'tcx>(wfcx: &WfCheckingCtxt<'_, 'tcx>, def_id:
     wfcx.register_obligations(obligations);
 }
 
-#[instrument(level = "debug", skip(wfcx, hir_decl))]
 fn check_fn_or_method<'tcx>(
     wfcx: &WfCheckingCtxt<'_, 'tcx>,
     sig: ty::PolyFnSig<'tcx>,
@@ -1673,7 +1666,6 @@ enum ArbitrarySelfTypesLevel {
     WithPointers, // both arbitrary_self_types and arbitrary_self_types_pointers
 }
 
-#[instrument(level = "debug", skip(wfcx))]
 fn check_method_receiver<'tcx>(
     wfcx: &WfCheckingCtxt<'_, 'tcx>,
     fn_sig: &hir::FnSig<'_>,
@@ -2251,7 +2243,6 @@ impl<'tcx> Visitor<'tcx> for CollectUsageSpans<'_> {
 impl<'tcx> WfCheckingCtxt<'_, 'tcx> {
     /// Feature gates RFC 2056 -- trivial bounds, checking for global bounds that
     /// aren't true.
-    #[instrument(level = "debug", skip(self))]
     fn check_false_global_bounds(&mut self) {
         let tcx = self.ocx.infcx.tcx;
         let mut span = tcx.def_span(self.body_def_id);

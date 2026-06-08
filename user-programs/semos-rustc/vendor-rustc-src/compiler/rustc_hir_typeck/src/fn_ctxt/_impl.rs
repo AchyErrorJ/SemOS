@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::StdEntry as Entry;
 use core::slice;
 
@@ -35,7 +36,7 @@ use rustc_trait_selection::error_reporting::infer::need_type_info::TypeAnnotatio
 use rustc_trait_selection::traits::{
     self, NormalizeExt, ObligationCauseCode, StructurallyNormalizeExt,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::callee::{self, DeferredCallResolution};
 use crate::errors::{self, CtorIsPrivate};
@@ -84,7 +85,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// to get more type information.
     // FIXME(-Znext-solver): A lot of the calls to this method should
     // probably be `try_structurally_resolve_type` or `structurally_resolve_type` instead.
-    #[instrument(skip(self), level = "debug", ret)]
     pub(crate) fn resolve_vars_with_obligations<T: TypeFoldable<TyCtxt<'tcx>>>(
         &self,
         mut t: T,
@@ -167,7 +167,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         self.typeck_results.borrow_mut().field_indices_mut().insert(hir_id, index);
     }
 
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn write_resolution(
         &self,
         hir_id: HirId,
@@ -176,7 +175,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         self.typeck_results.borrow_mut().type_dependent_defs_mut().insert(hir_id, r);
     }
 
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn write_method_call_and_enforce_effects(
         &self,
         hir_id: HirId,
@@ -203,7 +201,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// This should be invoked **before any unifications have
     /// occurred**, so that annotations like `Vec<_>` are preserved
     /// properly.
-    #[instrument(skip(self), level = "debug")]
     pub(crate) fn write_user_type_annotation_from_args(
         &self,
         hir_id: HirId,
@@ -229,7 +226,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
     pub(crate) fn write_user_type_annotation(
         &self,
         hir_id: HirId,
@@ -248,7 +244,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, expr), level = "debug")]
     pub(crate) fn apply_adjustments(&self, expr: &hir::Expr<'_>, adj: Vec<Adjustment<'tcx>>) {
         debug!("expr = {:#?}", expr);
 
@@ -497,7 +492,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         self.tcx.mk_clauses(&clauses.clauses)
     }
 
-    #[instrument(level = "debug", skip_all)]
     pub(crate) fn lower_ty_saving_user_provided_ty(&self, hir_ty: &'tcx hir::Ty<'tcx>) -> Ty<'tcx> {
         let ty = self.lower_ty(hir_ty);
         debug!(?ty);
@@ -605,7 +599,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     }
 
     /// Drain all obligations that are stalled on coroutines defined in this body.
-    #[instrument(level = "debug", skip(self))]
     pub(crate) fn drain_stalled_coroutine_obligations(&self) {
         // Make as much inference progress as possible before
         // draining the stalled coroutine obligations as this may
@@ -632,7 +625,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
     pub(crate) fn report_ambiguity_errors(&self) {
         let mut errors = self.fulfillment_cx.borrow_mut().collect_remaining_errors(self);
 
@@ -686,7 +678,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     /// Resolves an associated value path into a base type and associated constant, or method
     /// resolution. The newly resolved definition is written into `type_dependent_defs`.
-    #[instrument(level = "trace", skip(self), ret)]
     pub(crate) fn resolve_ty_and_res_fully_qualified_call(
         &self,
         qpath: &'tcx QPath<'tcx>,
@@ -906,7 +897,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
 
     // Instantiates the given path, which must refer to an item with the given
     // number of type parameters and type.
-    #[instrument(skip(self, span), level = "debug")]
     pub(crate) fn instantiate_value_path(
         &self,
         segments: &'tcx [hir::PathSegment<'tcx>],
@@ -1338,7 +1328,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         })
     }
 
-    #[instrument(level = "debug", skip(self, code, span, args))]
     pub(crate) fn add_required_obligations_with_code(
         &self,
         span: Span,
@@ -1364,7 +1353,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     /// In case there is still ambiguity, the returned type may be an inference
     /// variable. This is different from `structurally_resolve_type` which errors
     /// in this case.
-    #[instrument(level = "debug", skip(self, sp), ret)]
     pub(crate) fn try_structurally_resolve_type(&self, sp: Span, ty: Ty<'tcx>) -> Ty<'tcx> {
         if self.next_trait_solver()
             && let ty::Alias(..) = ty.kind()
@@ -1387,7 +1375,6 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, sp), ret)]
     pub(crate) fn try_structurally_resolve_const(
         &self,
         sp: Span,

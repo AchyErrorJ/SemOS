@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use alloc::borrow::Cow;
 
 use rustc_data_structures::fx::FxHashSet;
@@ -9,7 +10,7 @@ use rustc_middle::mir::*;
 use rustc_middle::ty::TyCtxt;
 use rustc_mir_dataflow::Analysis;
 use rustc_mir_dataflow::impls::{MaybeStorageDead, always_storage_live_locals};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::ssa::{SsaLocals, StorageLiveLocals};
 
@@ -76,7 +77,6 @@ impl<'tcx> crate::MirPass<'tcx> for ReferencePropagation {
         sess.mir_opt_level() >= 2
     }
 
-    #[instrument(level = "trace", skip(self, tcx, body))]
     fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
         debug!(def_id = ?body.source.def_id());
         move_to_copy_pointers(tcx, body);
@@ -148,7 +148,6 @@ enum Value<'tcx> {
 }
 
 /// For each local, save the place corresponding to `*local`.
-#[instrument(level = "trace", skip(tcx, body, ssa))]
 fn compute_replacement<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,

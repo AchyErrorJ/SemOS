@@ -6,6 +6,7 @@
 //! borrow operator) is considered non-SSA. However, it is UB to modify through an immutable borrow
 //! of a `Freeze` local. Those can still be considered to be SSA.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::graph::dominators::Dominators;
 use rustc_index::bit_set::DenseBitSet;
 use rustc_index::{IndexSlice, IndexVec};
@@ -14,7 +15,7 @@ use rustc_middle::middle::resolve_bound_vars::Set1;
 use rustc_middle::mir::visit::*;
 use rustc_middle::mir::*;
 use rustc_middle::ty::{self, TyCtxt};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 pub(super) struct SsaLocals {
     /// Assignments to each local. This defines whether the local is SSA.
@@ -291,7 +292,6 @@ impl<'tcx> Visitor<'tcx> for SsaVisitor<'_, 'tcx> {
     }
 }
 
-#[instrument(level = "trace", skip(ssa, body))]
 fn compute_copy_classes(ssa: &mut SsaLocals, body: &Body<'_>) {
     let mut direct_uses = core::mem::take(&mut ssa.direct_uses);
     let mut copies = IndexVec::from_fn_n(|l| l, body.local_decls.len());

@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_middle::ty::outlives::{Component, push_outlives_components};
 use rustc_middle::ty::{self, GenericArg, GenericArgKind, Region, Ty, TyCtxt};

@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_abi::FieldIdx;
 use rustc_index::bit_set::MixedBitSet;
 use rustc_middle::mir::{Body, TerminatorKind};

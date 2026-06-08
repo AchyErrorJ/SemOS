@@ -1,6 +1,7 @@
 //! Unsafety checker: every impl either implements a trait defined in this
 //! crate or pertains to a type defined in this crate.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_errors::codes::*;
 use rustc_errors::struct_span_code_err;
 use rustc_hir::{LangItem, Safety};

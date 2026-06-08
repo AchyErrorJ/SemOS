@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_arena::{DroplessArena, TypedArena};
 use rustc_ast::Mutability;
 use rustc_data_structures::fx::FxIndexSet;
@@ -26,7 +27,7 @@ use rustc_span::edit_distance::find_best_match_for_name;
 use rustc_span::hygiene::DesugaringKind;
 use rustc_span::{Ident, Span};
 use rustc_trait_selection::infer::InferCtxtExt;
-use tracing::instrument;
+// (instrument removed)
 
 use crate::errors::*;
 use crate::fluent_generated as fluent;
@@ -109,7 +110,6 @@ impl<'p, 'tcx> Visitor<'p, 'tcx> for MatchVisitor<'p, 'tcx> {
         self.thir
     }
 
-    #[instrument(level = "trace", skip(self))]
     fn visit_arm(&mut self, arm: &'p Arm<'tcx>) {
         self.with_hir_source(arm.hir_id, |this| {
             if let Some(expr) = arm.guard {
@@ -122,7 +122,6 @@ impl<'p, 'tcx> Visitor<'p, 'tcx> for MatchVisitor<'p, 'tcx> {
         });
     }
 
-    #[instrument(level = "trace", skip(self))]
     fn visit_expr(&mut self, ex: &'p Expr<'tcx>) {
         match ex.kind {
             ExprKind::Scope { value, hir_id, .. } => {
@@ -199,7 +198,6 @@ impl<'p, 'tcx> Visitor<'p, 'tcx> for MatchVisitor<'p, 'tcx> {
 }
 
 impl<'p, 'tcx> MatchVisitor<'p, 'tcx> {
-    #[instrument(level = "trace", skip(self, f))]
     fn with_let_source(&mut self, let_source: LetSource, f: impl FnOnce(&mut Self)) {
         let old_let_source = self.let_source;
         self.let_source = let_source;
@@ -427,7 +425,6 @@ impl<'p, 'tcx> MatchVisitor<'p, 'tcx> {
         Ok(report)
     }
 
-    #[instrument(level = "trace", skip(self))]
     fn check_let(&mut self, pat: &'p Pat<'tcx>, scrutinee: Option<ExprId>, span: Span) {
         assert!(self.let_source != LetSource::None);
         let scrut = scrutinee.map(|id| &self.thir[id]);
@@ -550,7 +547,6 @@ impl<'p, 'tcx> MatchVisitor<'p, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
     fn check_let_chain(
         &mut self,
         chain_refutabilities: Vec<Option<(Span, RefutableFlag)>>,
@@ -647,7 +643,6 @@ impl<'p, 'tcx> MatchVisitor<'p, 'tcx> {
         Ok(if report.non_exhaustiveness_witnesses.is_empty() { Irrefutable } else { Refutable })
     }
 
-    #[instrument(level = "trace", skip(self))]
     fn check_binding_is_irrefutable(
         &mut self,
         pat: &'p Pat<'tcx>,

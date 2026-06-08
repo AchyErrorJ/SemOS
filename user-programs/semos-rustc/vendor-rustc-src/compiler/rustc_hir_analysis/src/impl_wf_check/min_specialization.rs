@@ -65,6 +65,7 @@
 //! cause use after frees with purely safe code in the same way as specializing
 //! on traits with methods can.
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_infer::infer::TyCtxtInferExt;
@@ -77,7 +78,7 @@ use rustc_middle::ty::{
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_trait_selection::error_reporting::InferCtxtErrorExt;
 use rustc_trait_selection::traits::{self, ObligationCtxt, translate_args_with_cause, wf};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::errors::GenericArgsOnOverriddenImpl;
 use crate::{constrained_generic_params as cgp, errors};
@@ -112,7 +113,6 @@ fn parent_specialization_node(tcx: TyCtxt<'_>, impl1_def_id: LocalDefId) -> Opti
 }
 
 /// Check that `impl1` is a sound specialization
-#[instrument(level = "debug", skip(tcx))]
 fn check_always_applicable(
     tcx: TyCtxt<'_>,
     impl1_def_id: LocalDefId,
@@ -315,7 +315,6 @@ fn check_static_lifetimes<'tcx>(
 ///     * This check is done using the `trait_predicates_eq` function below.
 /// * A well-formed predicate of a type argument of the trait being implemented,
 ///   including the `Self`-type.
-#[instrument(level = "debug", skip(tcx))]
 fn check_predicates<'tcx>(
     tcx: TyCtxt<'tcx>,
     impl1_def_id: LocalDefId,
@@ -397,7 +396,6 @@ fn check_predicates<'tcx>(
     res
 }
 
-#[instrument(level = "debug", skip(tcx))]
 fn check_specialization_on<'tcx>(
     tcx: TyCtxt<'tcx>,
     clause: ty::Clause<'tcx>,

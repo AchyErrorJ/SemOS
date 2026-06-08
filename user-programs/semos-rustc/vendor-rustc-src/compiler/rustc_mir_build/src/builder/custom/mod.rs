@@ -17,6 +17,7 @@
 //! terminators, and everything below can be found in the `parse::instruction` submodule.
 //!
 
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_hir::{HirId, attrs};

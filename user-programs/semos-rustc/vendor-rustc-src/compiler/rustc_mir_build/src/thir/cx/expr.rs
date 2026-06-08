@@ -1,3 +1,4 @@
+#[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use itertools::Itertools;
 use rustc_abi::{FIRST_VARIANT, FieldIdx, Size, VariantIdx};
 use rustc_ast::UnsafeBinderCastKind;
@@ -21,7 +22,7 @@ use rustc_middle::ty::{
 };
 use rustc_middle::{bug, span_bug};
 use rustc_span::{Span, sym};
-use tracing::{debug, info, instrument, trace};
+use tracing::{debug, info, trace};
 
 use crate::errors::*;
 use crate::thir::cx::ThirBuildCx;
@@ -47,7 +48,6 @@ impl<'tcx> ThirBuildCx<'tcx> {
         ensure_sufficient_stack(|| exprs.iter().map(|expr| self.mirror_expr_inner(expr)).collect())
     }
 
-    #[instrument(level = "trace", skip(self, hir_expr))]
     pub(super) fn mirror_expr_inner(&mut self, hir_expr: &'tcx hir::Expr<'tcx>) -> ExprId {
         let expr_scope =
             region::Scope { local_id: hir_expr.hir_id.local_id, data: region::ScopeData::Node };
@@ -85,7 +85,6 @@ impl<'tcx> ThirBuildCx<'tcx> {
         self.thir.exprs.push(expr)
     }
 
-    #[instrument(level = "trace", skip(self, expr, span))]
     fn apply_adjustment(
         &mut self,
         hir_expr: &'tcx hir::Expr<'tcx>,
@@ -332,7 +331,6 @@ impl<'tcx> ThirBuildCx<'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
     fn make_mirror_unadjusted(&mut self, expr: &'tcx hir::Expr<'tcx>) -> Expr<'tcx> {
         let tcx = self.tcx;
         let expr_ty = self.typeck_results.expr_ty(expr);
