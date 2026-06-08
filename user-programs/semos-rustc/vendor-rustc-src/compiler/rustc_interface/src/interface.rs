@@ -541,7 +541,7 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
             #[cfg(not(target_os = "none"))]
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&compiler)));
             #[cfg(target_os = "none")]
-            let res: Result<_, alloc::boxed::Box<dyn core::any::Any + Send>> = Ok(f(&compiler));
+            let res: core::result::Result<_, alloc::boxed::Box<dyn core::any::Any + Send>> = Ok(f(&compiler));
 
             compiler.sess.finish_diagnostics();
 

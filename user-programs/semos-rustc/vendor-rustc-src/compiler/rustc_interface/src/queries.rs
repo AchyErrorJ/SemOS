@@ -97,7 +97,12 @@ impl Linker {
         }
 
         if sess.opts.unstable_opts.no_link {
+            // Stage H iter 3: CodegenResults::serialize_rlink is host-only
+            // (rlink files are an incremental-link host artifact). SemOS
+            // target never needs no_link mode.
+            #[cfg(not(target_os = "none"))]
             let rlink_file = self.output_filenames.with_extension(config::RLINK_EXT);
+            #[cfg(not(target_os = "none"))]
             CodegenResults::serialize_rlink(
                 sess,
                 &rlink_file,
@@ -108,6 +113,8 @@ impl Linker {
             .unwrap_or_else(|error| {
                 sess.dcx().emit_fatal(FailedWritingFile { path: &rlink_file, error })
             });
+            #[cfg(target_os = "none")]
+            sess.dcx().fatal("rlink (no_link mode) not supported on SemOS target");
             return;
         }
 

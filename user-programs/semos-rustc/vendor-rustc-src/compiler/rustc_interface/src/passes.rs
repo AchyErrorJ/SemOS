@@ -672,7 +672,13 @@ fn write_out_deps(tcx: TyCtxt<'_>, outputs: &OutputFilenames, out_filenames: &[P
             checksum_hash_algo: Option<SourceFileHashAlgorithm>,
         ) -> impl Iterator<Item = (P, u64, Option<SourceFileHash>)> {
             it.map(move |path| {
-                match checksum_hash_algo.and_then(|algo| {
+                // Stage H iter 3: file checksum/length is host-only diagnostic
+                // for dep-info; semos_std::fs::File lacks open + Read + metadata
+                // surface. Target side skips the hash and reports length 0.
+                #[cfg(target_os = "none")]
+                let _ = checksum_hash_algo;
+                #[cfg(not(target_os = "none"))]
+                let result = checksum_hash_algo.and_then(|algo| {
                     fs::File::open(path.as_ref())
                         .and_then(|mut file| {
                             SourceFileHash::new(algo, &mut file).map(|h| (file, h))
@@ -685,7 +691,10 @@ fn write_out_deps(tcx: TyCtxt<'_>, outputs: &OutputFilenames, out_filenames: &[P
                             )
                         })
                         .ok()
-                }) {
+                });
+                #[cfg(target_os = "none")]
+                let result: Option<(u64, SourceFileHash)> = None;
+                match result {
                     Some((file_len, checksum)) => (path, file_len, Some(checksum)),
                     None => (path, 0, None),
                 }
@@ -818,7 +827,12 @@ fn write_out_deps(tcx: TyCtxt<'_>, outputs: &OutputFilenames, out_filenames: &[P
                 write_deps_to_file(&mut file)?;
             }
             OutFileName::Real(ref path) => {
+                // Stage H iter 3: semos_std::fs::File lacks create_buffered;
+                // wrap a plain File in BufWriter on target.
+                #[cfg(not(target_os = "none"))]
                 let mut file = fs::File::create_buffered(path)?;
+                #[cfg(target_os = "none")]
+                let mut file = BufWriter::new(fs::File::create(path.as_str())?);
                 write_deps_to_file(&mut file)?;
             }
         }
@@ -931,7 +945,12 @@ pub fn write_interface<'tcx>(tcx: TyCtxt<'tcx>) {
         &tcx.sess.psess.attr_id_generator,
     );
     let export_output = tcx.output_filenames(()).interface_path();
+    // Stage H iter 3: semos_std::fs::File lacks create_buffered; target
+    // side wraps create() in BufWriter.
+    #[cfg(not(target_os = "none"))]
     let mut file = fs::File::create_buffered(export_output).unwrap();
+    #[cfg(target_os = "none")]
+    let mut file = BufWriter::new(fs::File::create(export_output.as_str()).unwrap());
     if let Err(err) = write!(file, "{}", krate) {
         tcx.dcx().fatal(format!("error writing interface file: {}", err));
     }
@@ -1026,9 +1045,23 @@ pub fn create_and_enter_global_ctxt<T, F: for<'tcx> FnOnce(TyCtxt<'tcx>) -> T>(
 
     let incremental = dep_graph.is_fully_enabled();
 
+    // Stage H iter 3: borrow-checker disagrees with us on target about T
+    // depending on these allocations' lifetime even though
+    // `F: for<'tcx> FnOnce(TyCtxt<'tcx>) -> T` rules it out. Box::leak
+    // upgrades them to `'static`, which is fine — `create_and_enter_global_ctxt`
+    // is called at most once per compile and the leak is per-process.
+    #[cfg(not(target_os = "none"))]
     let gcx_cell = OnceLock::new();
+    #[cfg(not(target_os = "none"))]
     let arena = WorkerLocal::new(|_| Arena::default());
+    #[cfg(not(target_os = "none"))]
     let hir_arena = WorkerLocal::new(|_| rustc_hir::Arena::default());
+    #[cfg(target_os = "none")]
+    let gcx_cell = Box::leak(Box::new(OnceLock::new()));
+    #[cfg(target_os = "none")]
+    let arena = Box::leak(Box::new(WorkerLocal::new(|_| Arena::default())));
+    #[cfg(target_os = "none")]
+    let hir_arena = Box::leak(Box::new(WorkerLocal::new(|_| rustc_hir::Arena::default())));
 
     // This closure is necessary to force rustc to perform the correct lifetime
     // subtyping for GlobalCtxt::enter to be allowed.
@@ -1084,13 +1117,19 @@ pub fn create_and_enter_global_ctxt<T, F: for<'tcx> FnOnce(TyCtxt<'tcx>) -> T>(
         )
     });
 
+    // Stage H iter 3: target gcx_cell/arena/hir_arena are already `&'static`
+    // (Box::leak'd above); host versions are local values borrowed by `&`.
+    #[cfg(not(target_os = "none"))]
+    let (gcx_ref, arena_ref, hir_arena_ref) = (&gcx_cell, &arena, &hir_arena);
+    #[cfg(target_os = "none")]
+    let (gcx_ref, arena_ref, hir_arena_ref) = (gcx_cell, arena, hir_arena);
     inner(
         &compiler.sess,
         compiler.current_gcx.clone(),
         Arc::clone(&compiler.jobserver_proxy),
-        &gcx_cell,
-        &arena,
-        &hir_arena,
+        gcx_ref,
+        arena_ref,
+        hir_arena_ref,
         f,
     )
 }
@@ -1373,7 +1412,10 @@ pub fn get_crate_name(sess: &Session, krate_attrs: &[ast::Attribute]) -> Symbol 
     }
 
     if let Input::File(ref path) = sess.io.input
-        && let Some(file_stem) = path.file_stem().and_then(|s| s.to_str())
+        && let Some(file_stem) = path.file_stem().and_then(|s| {
+            #[cfg(not(target_os = "none"))] { s.to_str() }
+            #[cfg(target_os = "none")] { Some(s) }
+        })
     {
         if file_stem.starts_with('-') {
             sess.dcx().emit_err(errors::CrateNameInvalid { crate_name: file_stem });

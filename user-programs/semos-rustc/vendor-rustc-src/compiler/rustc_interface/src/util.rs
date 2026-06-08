@@ -739,8 +739,17 @@ fn multiple_output_types_to_stdout(
     output_types: &OutputTypes,
     single_output_file_is_stdout: bool,
 ) -> bool {
+    // Stage H iter 3: IsTerminal is host-only (SemOS stdout is always
+    // a serial+framebuffer console, never a real tty). Target side
+    // assumes stdout is never a terminal — multiple text outputs to
+    // stdout aren't ambiguous because nobody's interactively viewing.
+    #[cfg(not(target_os = "none"))]
     use std::io::IsTerminal;
-    if std::io::stdout().is_terminal() {
+    #[cfg(not(target_os = "none"))]
+    let stdout_is_terminal = std::io::stdout().is_terminal();
+    #[cfg(target_os = "none")]
+    let stdout_is_terminal = false;
+    if stdout_is_terminal {
         // If stdout is a tty, check if multiple text output types are
         // specified by `--emit foo=- --emit bar=-` or `-o - --emit foo,bar`
         let named_text_types = output_types
@@ -810,8 +819,14 @@ pub fn build_output_filenames(attrs: &[ast::Attribute], sess: &Session) -> Outpu
                 sess.dcx().emit_warn(errors::IgnoringOutDir);
             }
 
+            // Stage H iter 3: semos_std::path::Path::filestem returns &str
+            // (no OsStr abstraction); .to_str() is the OsStr accessor and
+            // doesn't exist on target. Just call .to_string() directly.
+            #[cfg(not(target_os = "none"))]
             let out_filestem =
                 out_file.filestem().unwrap_or_default().to_str().unwrap().to_string();
+            #[cfg(target_os = "none")]
+            let out_filestem = out_file.filestem().unwrap_or_default().to_string();
             OutputFilenames::new(
                 out_file.parent().unwrap_or_else(|| Path::new("")).to_path_buf(),
                 crate_name.unwrap_or_else(|| out_filestem.replace('-', "_")),
