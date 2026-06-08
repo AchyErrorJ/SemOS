@@ -3752,4 +3752,88 @@ Then DEMO 80 boot test: write source to a SemOS file, semos-rustc
 reads it, emits ELF, SYS_SPAWN it, check "hi" lands on the
 framebuffer.
 
+---
+
+## Phase 5b iter 3 — SemOS-native AOT driver stub (2026-06-08)
+
+**Goal:** unblock the panic-stub paths cg_clif's `codegen_crate` and
+`join_codegen` hit on target (Stage G iter 8 cfg-gated
+`driver::aot` host-only since it uses `std::fs`/`std::process` /
+`std::thread::Builder` and the dropped `back::link` subsystem).
+Replace the panic stubs with a real driver that satisfies the
+rustc-driver contract end-to-end, even if iter 3 doesn't yet emit
+any machine code.
+
+### What landed (commit `cece597`)
+
+- **New module** `driver/aot_semos.rs` in cg_clif (50 LOC):
+  ```rust
+  pub(crate) struct OngoingCodegen { crate_info: CrateInfo }
+  impl OngoingCodegen {
+      pub(crate) fn join(self, _sess, _outputs)
+          -> (CodegenResults, FxIndexMap<WorkProductId, WorkProduct>)
+      { /* empty modules + crate_info */ }
+  }
+  pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
+      let target_cpu = tcx.sess.opts.cg.target_cpu.clone()
+          .unwrap_or_else(|| tcx.sess.target.cpu.to_string());
+      let crate_info = CrateInfo::new(tcx, target_cpu);
+      Box::new(OngoingCodegen { crate_info })
+  }
+  ```
+- `driver/mod.rs`: `#[cfg(target_os = "none")] pub(crate) mod
+  aot_semos;` alongside the host-gated `mod aot`.
+- `lib.rs` `codegen_crate`: target arm now calls
+  `driver::aot_semos::run_aot(tcx)` instead of fatalling.
+- `lib.rs` `join_codegen`: target arm downcasts to
+  `driver::aot_semos::OngoingCodegen` and calls `.join`.
+
+One mistake worth flagging — I initially imported
+`use rustc_codegen_ssa::back::write::CodegenContext;` as a
+PhantomData token "to silence host-side import-but-not-used
+warnings." `CodegenContext<()>` requires the inner type to impl
+`WriteBackendMethods`; `()` doesn't. Just dropped the import — the
+warning was imaginary anyway.
+
+### Numbers
+
+- `cargo check -p semos-rustc --target x86_64-unknown-none` → 0
+  errors, ~1.3s incremental.
+- `cargo build -p semos-rustc --target x86_64-unknown-none --release`
+  → 0 errors, ~1m 47s. **77.2 MB ELF**, indistinguishable from
+  iter 2 (new stub is ~50 LOC against ~14 MB of rustc-internal
+  code).
+
+### What iter 3 unblocks at runtime
+
+- `rustc --version` — exits before codegen.
+- `rustc --help`, `--explain <code>`, `--print target-list`,
+  `--print cfg`, etc — all early-exit paths that never reach
+  `codegen_crate`. Should all work.
+- A `.rs` source compile invocation reaches the driver, parses,
+  type-checks, MIR-builds, **then `run_aot` returns an empty
+  OngoingCodegen → join returns empty CodegenResults → no machine
+  code emitted, no ELF written**. The compiler exits cleanly but
+  produces no output. Useful as a "rustc actually parses and
+  type-checks on SemOS" milestone before real codegen lands.
+
+### Forecast
+
+iter 4 wires actual codegen. The shape:
+
+1. In `run_aot`, call `tcx.collect_and_partition_mono_items()` to
+   get the list of mono items to compile.
+2. For each item, drive cg_clif's existing `base::codegen_fn`
+   (which Stage G already verified compiles target-side) into a
+   shared `cranelift_module::Module` backed by `cranelift_object::
+   ObjectModule`.
+3. After all items: `module.finish().emit()` returns ELF bytes
+   in-memory.
+4. `semos_std::fs::write(out_path, &elf_bytes)` to write to the
+   SemOS VFS. `out_path` comes from `tcx.output_filenames()`.
+
+Then DEMO 80: a source file (or hand-built source string)
+compiled in-process, written to `/tmp/hello.elf`, SYS_SPAWN'd,
+"hi" lands on the framebuffer. M27 done.
+
 
