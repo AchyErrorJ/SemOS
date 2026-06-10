@@ -149,11 +149,19 @@ struct AsyncPage {
     qtds: [Qtd; NUM_QTDS],
 }
 
-static mut ASYNCP: AsyncPage = AsyncPage {
-    head: Qh([0; 32]),
-    xfer: Qh([0; 32]),
-    qtds: [const { Qtd([0; 16]) }; NUM_QTDS],
-};
+/// One schedule page PER CONTROLLER. The W540 has two EHCI controllers
+/// running simultaneously; sharing one head QH between them means both
+/// HCs traverse (and write back!) the same schedule — racing qTD token
+/// writebacks corrupted transfers on real hardware (zero-byte reads,
+/// cascading qTD halts). Each controller gets a private async list.
+const MAX_CTLS: usize = 4;
+static mut ASYNCPS: [AsyncPage; MAX_CTLS] = [const {
+    AsyncPage {
+        head: Qh([0; 32]),
+        xfer: Qh([0; 32]),
+        qtds: [const { Qtd([0; 16]) }; NUM_QTDS],
+    }
+}; MAX_CTLS];
 
 /// Setup packets (8 bytes used).
 #[repr(C, align(64))]
@@ -170,17 +178,18 @@ static mut DATA_BUF: DataBuf = DataBuf([0; 4096]);
 // Controller + device state
 // ============================================================================
 
-const MAX_CTLS: usize = 4;
-
 #[derive(Copy, Clone)]
 struct Ctl {
     loc: pci::Location,
     op_base: u64,
     n_ports: u8,
     ppc: bool,
+    /// Index into ASYNCPS — this controller's private schedule page.
+    page: usize,
     /// Next USB device address to hand out (1..127, per controller bus).
     next_addr: u8,
-    /// Physical addresses of the schedule statics (32-bit, validated).
+    /// Physical addresses of this controller's schedule statics
+    /// (32-bit, validated).
     head_phys: u32,
     xfer_phys: u32,
     qtd_phys: [u32; NUM_QTDS],
@@ -308,7 +317,8 @@ fn bios_handoff(loc: pci::Location, mmio: u64) {
 
 /// Bring one EHCI controller from whatever state BIOS left it in to
 /// "running, async schedule enabled, all ports routed to EHCI".
-fn init_controller(loc: pci::Location) -> Option<Ctl> {
+/// `page` selects this controller's private ASYNCPS schedule page.
+fn init_controller(loc: pci::Location, page: usize) -> Option<Ctl> {
     let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
     let mmio_phys = (bar0 & !0xF) as u64;
     if mmio_phys == 0 {
@@ -354,20 +364,20 @@ fn init_controller(loc: pci::Location) -> Option<Ctl> {
         return None;
     }
 
-    // Schedule structures.
-    let head_virt = unsafe { &raw const ASYNCP.head } as u64;
-    let xfer_virt = unsafe { &raw const ASYNCP.xfer } as u64;
+    // Schedule structures (this controller's private page).
+    let head_virt = unsafe { &raw const ASYNCPS[page].head } as u64;
+    let xfer_virt = unsafe { &raw const ASYNCPS[page].xfer } as u64;
     let head_phys = phys32_of(head_virt)?;
     let xfer_phys = phys32_of(xfer_virt)?;
     let mut qtd_phys = [0u32; NUM_QTDS];
     for (i, item) in qtd_phys.iter_mut().enumerate() {
-        *item = phys32_of(unsafe { &raw const ASYNCP.qtds[i] } as u64)?;
+        *item = phys32_of(unsafe { &raw const ASYNCPS[page].qtds[i] } as u64)?;
     }
 
     // Reclamation head: H=1, self-linked, overlay halted so the HC
     // never tries to execute transfers on it.
     unsafe {
-        let h = &raw mut ASYNCP.head.0;
+        let h = &raw mut ASYNCPS[page].head.0;
         for dw in (*h).iter_mut() { *dw = 0; }
         (*h)[0] = head_phys | LINK_TYP_QH; // points at itself
         (*h)[1] = 1 << 15;                 // H = head of reclamation list
@@ -398,7 +408,7 @@ fn init_controller(loc: pci::Location) -> Option<Ctl> {
         loc.bus, loc.slot, loc.func, mmio_phys, n_ports, ppc as u8, addr64 as u8);
 
     Some(Ctl {
-        loc, op_base, n_ports, ppc,
+        loc, op_base, n_ports, ppc, page,
         next_addr: 1,
         head_phys, xfer_phys, qtd_phys,
     })
@@ -419,7 +429,7 @@ pub fn init() -> usize {
                 println!("[ehci] more than {} controllers — ignoring extras", MAX_CTLS);
                 break;
             }
-            if let Some(ctl) = init_controller(loc) {
+            if let Some(ctl) = init_controller(loc, count) {
                 unsafe { CTLS[count] = Some(ctl); }
                 count += 1;
             }
@@ -435,9 +445,23 @@ pub fn init() -> usize {
 // Transfer engine
 // ============================================================================
 
-/// Build one qTD in the static pool. `buf_phys==0` means no buffer.
-unsafe fn build_qtd(idx: usize, next_phys: u32, alt_phys: u32, tok: u32, buf_phys: u32) {
-    let q = &raw mut ASYNCP.qtds[idx].0;
+/// Token of the most recently failed qTD, for diagnostics on serial-less
+/// hardware. Halted WITHOUT XactErr/Babble = endpoint STALL (a protocol
+/// "no" from the device); Halted WITH XactErr = device not responding.
+static mut LAST_ERR_TOKEN: u32 = 0;
+
+fn err_token_name(tok: u32) -> &'static str {
+    if tok & token::XACTERR != 0 { "XactErr/no-response" }
+    else if tok & token::BABBLE != 0 { "babble" }
+    else if tok & token::BUFERR != 0 { "buffer-error" }
+    else if tok & token::MISSED_UF != 0 { "missed-uframe" }
+    else if tok & token::HALTED != 0 { "STALL" }
+    else { "?" }
+}
+
+/// Build one qTD in `page`'s pool. `buf_phys==0` means no buffer.
+unsafe fn build_qtd(page: usize, idx: usize, next_phys: u32, alt_phys: u32, tok: u32, buf_phys: u32) {
+    let q = &raw mut ASYNCPS[page].qtds[idx].0;
     (*q)[0] = if next_phys == 0 { LINK_T } else { next_phys };
     (*q)[1] = if alt_phys == 0 { LINK_T } else { alt_phys };
     (*q)[2] = tok;
@@ -487,8 +511,9 @@ fn qh_dw2(dev: &DevCtx) -> u32 {
 /// part of this transfer, so the error scan ignores stale retired tokens
 /// from earlier transfers.
 unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: usize, timeout_ms: u64) -> Result<(), &'static str> {
+    let pg = ctl.page;
     // Initialize the transfer QH.
-    let x = &raw mut ASYNCP.xfer.0;
+    let x = &raw mut ASYNCPS[pg].xfer.0;
     for dw in (*x).iter_mut() { *dw = 0; }
     (*x)[0] = ctl.head_phys | LINK_TYP_QH; // close the ring back to head
     (*x)[1] = dw1;
@@ -498,16 +523,17 @@ unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: 
     fence(Ordering::SeqCst);
 
     // Link into the schedule (single atomic dword write).
-    write_volatile(&raw mut ASYNCP.head.0[0], ctl.xfer_phys | LINK_TYP_QH);
+    write_volatile(&raw mut ASYNCPS[pg].head.0[0], ctl.xfer_phys | LINK_TYP_QH);
     fence(Ordering::SeqCst);
 
     // Wait for the last qTD to retire (Active clears) or any error.
     let deadline = kernel_core::platform::ticks() + (timeout_ms * 62).div_ceil(1000) + 2;
     let mut result: Result<(), &'static str> = Err("timeout");
     'wait: while kernel_core::platform::ticks() < deadline {
-        let tok = read_volatile(&raw const ASYNCP.qtds[last_qtd_idx].0[2]);
+        let tok = read_volatile(&raw const ASYNCPS[pg].qtds[last_qtd_idx].0[2]);
         if tok & token::ACTIVE == 0 {
             if tok & token::ERR_MASK != 0 {
+                LAST_ERR_TOKEN = tok;
                 result = Err("last qTD error");
             } else {
                 result = Ok(());
@@ -517,8 +543,9 @@ unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: 
         // An earlier qTD halting stops the queue without ever touching
         // the last one — check for that so errors don't become timeouts.
         for i in 0..=last_qtd_idx {
-            let t = read_volatile(&raw const ASYNCP.qtds[i].0[2]);
+            let t = read_volatile(&raw const ASYNCPS[pg].qtds[i].0[2]);
             if t & token::ACTIVE == 0 && t & token::HALTED != 0 {
+                LAST_ERR_TOKEN = t;
                 result = Err("qTD halted");
                 break 'wait;
             }
@@ -529,7 +556,7 @@ unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: 
     // Unlink: point head back at itself, then ring the IAA doorbell and
     // wait for the advance interrupt status so we know the HC no longer
     // holds a cached pointer to the transfer QH.
-    write_volatile(&raw mut ASYNCP.head.0[0], ctl.head_phys | LINK_TYP_QH);
+    write_volatile(&raw mut ASYNCPS[pg].head.0[0], ctl.head_phys | LINK_TYP_QH);
     fence(Ordering::SeqCst);
     let cmd = read_u32(ctl.op_base + op::USBCMD);
     write_u32(ctl.op_base + op::USBCMD, cmd | usbcmd::IAAD);
@@ -587,10 +614,11 @@ pub fn control(
     // qTD 0: SETUP (DT=0). qTD 1: data (DT=1). qTD 2: status (DT=1,
     // opposite direction, zero length, IOC).
     let status_idx = if has_data { 2 } else { 1 };
+    let pg = ctl.page;
     unsafe {
         let status_pid = if is_in && has_data { token::PID_OUT } else { token::PID_IN };
         build_qtd(
-            status_idx,
+            pg, status_idx,
             0, 0,
             token::ACTIVE | token::CERR_3 | status_pid | token::IOC | token::DT,
             0,
@@ -599,7 +627,7 @@ pub fn control(
             let data_pid = if is_in { token::PID_IN } else { token::PID_OUT };
             // alt-next jumps straight to status on a short IN read.
             build_qtd(
-                1,
+                pg, 1,
                 ctl.qtd_phys[2], ctl.qtd_phys[2],
                 token::ACTIVE | token::CERR_3 | data_pid | token::DT
                     | ((w_length as u32) << token::TOTAL_SHIFT),
@@ -609,7 +637,7 @@ pub fn control(
         // SETUP's successor is index 1 either way: the data qTD when
         // there's a data stage, the status qTD when there isn't.
         build_qtd(
-            0,
+            pg, 0,
             ctl.qtd_phys[1],
             0,
             token::ACTIVE | token::CERR_3 | token::PID_SETUP
@@ -622,14 +650,16 @@ pub fn control(
     let dw2 = qh_dw2(dev);
     let res = unsafe { run_xfer(&ctl, dw1, dw2, ctl.qtd_phys[0], status_idx, 1000) };
     if let Err(e) = res {
-        println!("[ehci] control failed ({}): req=0x{:02X}/0x{:02X} val=0x{:04X} idx={} addr={}",
-            e, bm_req_type, b_request, w_value, w_index, dev.addr);
+        let tok = unsafe { LAST_ERR_TOKEN };
+        println!("[ehci] control failed ({}, tok=0x{:08X} {}): req=0x{:02X}/0x{:02X} val=0x{:04X} idx={} addr={}",
+            e, tok, err_token_name(tok),
+            bm_req_type, b_request, w_value, w_index, dev.addr);
         return None;
     }
 
     if has_data {
         let residual = unsafe {
-            (read_volatile(&raw const ASYNCP.qtds[1].0[2]) & token::TOTAL_MASK)
+            (read_volatile(&raw const ASYNCPS[pg].qtds[1].0[2]) & token::TOTAL_MASK)
                 >> token::TOTAL_SHIFT
         } as usize;
         let got = (w_length as usize).saturating_sub(residual);
@@ -665,11 +695,12 @@ pub fn bulk(
     if !is_in {
         unsafe { DATA_BUF.0[..len].copy_from_slice(&buf[..len]); }
     }
+    let pg = ctl.page;
     unsafe {
         let pid = if is_in { token::PID_IN } else { token::PID_OUT };
         let dt = if *toggle { token::DT } else { 0 };
         build_qtd(
-            0, 0, 0,
+            pg, 0, 0, 0,
             token::ACTIVE | token::CERR_3 | pid | token::IOC | dt
                 | ((len as u32) << token::TOTAL_SHIFT),
             data_phys,
@@ -681,7 +712,7 @@ pub fn bulk(
     if res.is_err() {
         return None;
     }
-    let final_tok = unsafe { read_volatile(&raw const ASYNCP.qtds[0].0[2]) };
+    let final_tok = unsafe { read_volatile(&raw const ASYNCPS[pg].qtds[0].0[2]) };
     *toggle = final_tok & token::DT != 0;
     let residual = ((final_tok & token::TOTAL_MASK) >> token::TOTAL_SHIFT) as usize;
     let got = len.saturating_sub(residual);
@@ -834,10 +865,40 @@ fn bring_up_hub(ctl_idx: usize, hub: &DevCtx, depth: u8) -> usize {
         let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
         sleep_ms(30); // reset recovery (spec: 10 ms minimum)
 
-        let (status2, _c2) = match hub_get_port_status(ctl_idx, hub, port) {
+        let (mut status2, _c2) = match hub_get_port_status(ctl_idx, hub, port) {
             Some(s) => s,
             None => continue,
         };
+        if status2 & 0x0001 == 0 {
+            // Device dropped off the bus during reset (seen on W540 RMH
+            // port 6). Give it a long debounce and one more try — some
+            // devices disconnect/reconnect on their first reset.
+            println!("[ehci] hub addr={} port {}: device vanished during reset (status=0x{:04X}) — re-checking",
+                hub.addr, port, status2);
+            sleep_ms(300);
+            match hub_get_port_status(ctl_idx, hub, port) {
+                Some((s, _)) if s & 0x0001 != 0 => {
+                    let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_CONNECTION);
+                    if hub_set_port_feature(ctl_idx, hub, port, hub_feature::PORT_RESET) {
+                        let mut ok = false;
+                        for _ in 0..50 {
+                            sleep_ms(20);
+                            if let Some((_s, c)) = hub_get_port_status(ctl_idx, hub, port) {
+                                if c & 0x0010 != 0 { ok = true; break; }
+                            } else { break; }
+                        }
+                        if ok {
+                            let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
+                            sleep_ms(30);
+                            if let Some((s2, _)) = hub_get_port_status(ctl_idx, hub, port) {
+                                status2 = s2;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         if status2 & 0x0002 == 0 {
             println!("[ehci] hub addr={} port {}: not enabled after reset (status=0x{:04X})",
                 hub.addr, port, status2);
@@ -941,13 +1002,22 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
         hub_port,
     };
 
+    // First contact is the flakiest transfer on real hardware (Linux
+    // retries it 3x with a fresh port reset in between; we retry with a
+    // settle delay, which has proven enough for the RMH).
     let mut first8 = [0u8; 8];
-    match control(ctl_idx, &dev, 0x80, 6, 0x0100, 0, Some(&mut first8)) {
-        Some(n) if n >= 8 => {}
-        other => {
-            println!("[ehci] GET_DESCRIPTOR(8) at addr 0 failed ({:?})", other);
-            return false;
+    let mut got_first8 = false;
+    for attempt in 0..3 {
+        match control(ctl_idx, &dev, 0x80, 6, 0x0100, 0, Some(&mut first8)) {
+            Some(n) if n >= 8 => { got_first8 = true; break; }
+            other => {
+                println!("[ehci] GET_DESCRIPTOR(8) at addr 0 attempt {} failed ({:?})", attempt, other);
+                sleep_ms(50);
+            }
         }
+    }
+    if !got_first8 {
+        return false;
     }
     dev.mps0 = first8[7] as u16;
 
