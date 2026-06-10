@@ -71,6 +71,11 @@ impl SlotContext {
     pub fn set_root_hub_port(&mut self, port: u8) {
         self.dw1 = (self.dw1 & 0xFF00_FFFF) | ((port as u32) << 16);
     }
+    /// Set the number of downstream ports (hub-only, dw1 bits 31:24).
+    #[inline]
+    pub fn set_number_of_ports(&mut self, n: u8) {
+        self.dw1 = (self.dw1 & 0x00FF_FFFF) | ((n as u32) << 24);
+    }
     /// Set USB device speed (1..4: FS, LS, HS, SS, see spec §6.2.2 Table 6-9).
     #[inline]
     pub fn set_speed(&mut self, speed: u32) {
@@ -120,6 +125,12 @@ impl SlotContext {
     #[inline]
     pub fn set_parent_port_number(&mut self, port: u8) {
         self.dw2 = (self.dw2 & 0xFFFF_00FF) | ((port as u32) << 8);
+    }
+    /// Set TT Think Time (dw2 bits 17:16). Encoded as:
+    /// 00b=8 FS bit times, 01b=16, 10b=24, 11b=32. Defaults to 0 (8).
+    #[inline]
+    pub fn set_tt_think_time(&mut self, ttt: u8) {
+        self.dw2 = (self.dw2 & 0xFFFC_FFFF) | (((ttt as u32) & 0x3) << 16);
     }
 }
 

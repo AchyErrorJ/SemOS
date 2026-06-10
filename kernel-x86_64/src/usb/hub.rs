@@ -64,18 +64,25 @@ pub struct HubDescriptor {
 pub struct PortStatus {
     pub status: u16,
     pub change: u16,
+    /// true when the hub itself is SuperSpeed; SS hub ports only ever see
+    /// SS devices, so xhci_speed() returns 4 without inspecting status bits.
+    pub hub_is_ss: bool,
 }
 
 impl PortStatus {
     pub fn connected(&self) -> bool { (self.status & 0x0001) != 0 }
     pub fn enabled(&self) -> bool { (self.status & 0x0002) != 0 }
     pub fn powered(&self) -> bool { (self.status & 0x0100) != 0 }
-    pub fn low_speed(&self) -> bool { (self.status & 0x0200) != 0 }
-    pub fn high_speed(&self) -> bool { (self.status & 0x0400) != 0 }
+    pub fn low_speed(&self) -> bool { !self.hub_is_ss && (self.status & 0x0200) != 0 }
+    pub fn high_speed(&self) -> bool { !self.hub_is_ss && (self.status & 0x0400) != 0 }
+    /// PORT_LINK_STATE for USB 3.0 hub ports (bits 7:4 of wPortStatus).
+    /// U0 = 3, U1 = 4, U2 = 5, U3 = 6, etc.
+    pub fn link_state(&self) -> u8 { ((self.status >> 4) & 0xF) as u8 }
     /// Convert to the xHCI-style speed enum used by the rest of the driver
-    /// (1=FS, 2=LS, 3=HS, 4=SS). Default to FS if uncertain.
+    /// (1=FS, 2=LS, 3=HS, 4=SS).
     pub fn xhci_speed(&self) -> u8 {
-        if self.low_speed() { 2 }
+        if self.hub_is_ss { 4 }
+        else if self.low_speed() { 2 }
         else if self.high_speed() { 3 }
         else { 1 }
     }
@@ -141,6 +148,20 @@ pub fn set_port_reset(slot_id: u8, port_num: u8) -> bool {
     )
 }
 
+/// SET_HUB_DEPTH — USB 3.0 hubs require this before they can route packets
+/// to downstream ports using the route_string. `depth` is the hub's tier
+/// depth (0 = directly on root hub, 1 = behind one hub, etc.).
+pub fn set_hub_depth(slot_id: u8, depth: u8) -> bool {
+    crate::usb::xhci::control_out(
+        slot_id,
+        0x20, // host→device, class, recipient=device
+        0x0C, // SET_HUB_DEPTH
+        depth as u16,
+        0,
+        0,
+    )
+}
+
 /// CLEAR_FEATURE on a port (used for C_PORT_RESET / C_PORT_CONNECTION).
 pub fn clear_port_feature(slot_id: u8, port_num: u8, feature: u16) -> bool {
     crate::usb::xhci::control_out(
@@ -154,7 +175,9 @@ pub fn clear_port_feature(slot_id: u8, port_num: u8, feature: u16) -> bool {
 }
 
 /// GET_PORT_STATUS — 4-byte response: { wPortStatus, wPortChange }.
-pub fn get_port_status(slot_id: u8, port_num: u8) -> Option<PortStatus> {
+/// `hub_speed` is the speed of the hub itself (4 = SuperSpeed); needed so
+/// `PortStatus::xhci_speed()` knows whether to trust the LS/HS bits.
+pub fn get_port_status(slot_id: u8, port_num: u8, hub_speed: u8) -> Option<PortStatus> {
     let mut buf = [0u8; 4];
     let ok = crate::usb::xhci::control_in(
         slot_id,
@@ -170,6 +193,7 @@ pub fn get_port_status(slot_id: u8, port_num: u8) -> Option<PortStatus> {
     Some(PortStatus {
         status: u16::from_le_bytes([buf[0], buf[1]]),
         change: u16::from_le_bytes([buf[2], buf[3]]),
+        hub_is_ss: hub_speed == 4,
     })
 }
 
@@ -223,8 +247,9 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
 
     // ---- Per-port: status check, reset if connected ----
     let mut connected = 0u8;
+    let hub_is_ss = speed == 4;
     for port in 1..=desc.b_nbr_ports {
-        let st = match get_port_status(slot_id, port) {
+        let st = match get_port_status(slot_id, port, speed) {
             Some(s) => s,
             None => {
                 println!("[xhci-hub] slot={} port={} GET_PORT_STATUS failed",
@@ -233,15 +258,71 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
             }
         };
         if !st.connected() {
-            // Empty port — log only at high verbosity. Skip silently for
-            // now; an empty 7-port dock would otherwise spam the serial.
             continue;
         }
-        println!("[xhci-hub] slot={} port={} CONNECTED before-reset status=0x{:04X} change=0x{:04X}",
-            slot_id, port, st.status, st.change);
+        println!("[xhci-hub] slot={} port={} CONNECTED status=0x{:04X} change=0x{:04X} powered={} enabled={}",
+            slot_id, port, st.status, st.change, st.powered(), st.enabled());
+
+        // USB 3.0 hub ports train their link automatically. We must wait
+        // for PORT_LINK_STATE == U0 (3) before the device will respond to
+        // requests. Checking only PORT_ENABLED is not enough — enabled=1
+        // just means the port is not disabled; the link could still be in
+        // Rx.Detect (0) or Polling (1).
+        let mut child_speed = st.xhci_speed();
+        if hub_is_ss {
+            let mut link_ok = false;
+            for _ in 0..100 {
+                if st.link_state() == 3 {
+                    link_ok = true;
+                    break;
+                }
+                spin_for(2_000_000); // ~2 ms per poll
+                if let Some(st2) = get_port_status(slot_id, port, speed) {
+                    if st2.link_state() == 3 {
+                        link_ok = true;
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            if !link_ok {
+                println!("[xhci-hub] slot={} port={} SS link did not reach U0 (link_state={}) — falling back to reset path",
+                    slot_id, port, st.link_state());
+                // fall through to the USB-2-style reset path below
+            } else {
+                println!("[xhci-hub] slot={} port={} SS link in U0 — skipping reset", slot_id, port);
+                let _ = clear_port_feature(slot_id, port, port_feature::C_PORT_CONNECTION);
+                spin_for(5_000_000);
+                if crate::usb::xhci::enumerate_child_of_hub(
+                    slot_id, port, root_hub_port, child_speed,
+                ) {
+                    println!("[xhci-hub] slot={} port={} child enumerated", slot_id, port);
+                    connected += 1;
+                } else {
+                    println!("[xhci-hub] slot={} port={} child enumeration FAILED", slot_id, port);
+                }
+                continue;
+            }
+        }
+
+        // ---- USB 2.0 / fallback path: power + reset ----
+        if !st.powered() {
+            println!("[xhci-hub] slot={} port={} not powered — retrying PORT_POWER", slot_id, port);
+            if !set_port_power(slot_id, port) {
+                println!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_POWER) failed, skipping",
+                    slot_id, port);
+                continue;
+            }
+            spin_for(50_000_000u64 * desc.b_pwr_on_2_pwr_good.max(1) as u64);
+        }
+
+        // Small delay before the next class request so the hub isn't back-to-back.
+        spin_for(5_000_000);
 
         // Clear the C_PORT_CONNECTION change bit before resetting.
         let _ = clear_port_feature(slot_id, port, port_feature::C_PORT_CONNECTION);
+        spin_for(5_000_000);
 
         if !set_port_reset(slot_id, port) {
             println!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_RESET) failed",
@@ -252,10 +333,9 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
         // Poll up to ~200 ms for C_PORT_RESET. USB 2.0 spec requires the
         // hub to report reset complete within 20 ms; we give a wider window.
         let mut reset_ok = false;
-        let mut child_speed = 0u8;
         for _ in 0..50 {
             spin_for(2_000_000);
-            if let Some(st2) = get_port_status(slot_id, port) {
+            if let Some(st2) = get_port_status(slot_id, port, speed) {
                 if (st2.change & (1 << 4)) != 0 /* C_PORT_RESET */ {
                     println!("[xhci-hub] slot={} port={} reset complete status=0x{:04X} change=0x{:04X} speed={}",
                         slot_id, port, st2.status, st2.change, st2.xhci_speed());
@@ -271,6 +351,10 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
                 slot_id, port);
             continue;
         }
+
+        // USB 2.0 spec §9.1.1.5: host must wait ≥10 ms after reset before
+        // the device will respond to data transfers. Give a generous margin.
+        spin_for(20_000_000);
 
         // Now actually enumerate the child: EnableSlot, build input ctx
         // with route string + TT info, AddressDevice, dispatch to class.
