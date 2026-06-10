@@ -1,5 +1,10 @@
 //! Reading of the rustc metadata for rlibs and dylibs
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 #[cfg(not(target_os = "none"))]
 use std::fs::File;
@@ -9,6 +14,10 @@ use std::path::Path;
 use semos_std::path::Path;
 
 use itertools::Itertools;
+// M27 §1.7: object's `write` feature was dropped on SemOS (it pulls
+// crc32fast); the metadata write-side fns below are all consumed only
+// from §1.7-gated back/{link,archive} paths.
+#[cfg(not(target_os = "none"))]
 use object::write::{self, StandardSegment, Symbol, SymbolSection};
 use object::{
     Architecture, BinaryFormat, Endianness, FileFlags, Object, ObjectSection, ObjectSymbol,
@@ -147,6 +156,7 @@ pub(super) fn search_for_section<'a>(
         .map_err(|e| format!("failed to read {} section in '{}': {}", section, path.display(), e))
 }
 
+#[cfg(not(target_os = "none"))]
 fn add_gnu_property_note(
     file: &mut write::Object<'static>,
     architecture: Architecture,
@@ -222,6 +232,7 @@ pub(super) fn get_metadata_xcoff<'a>(path: &Path, data: &'a [u8]) -> Result<&'a 
     }
 }
 
+#[cfg(not(target_os = "none"))]
 pub(crate) fn create_object_file(sess: &Session) -> Option<write::Object<'static>> {
     let endianness = match sess.target.options.endian {
         Endian::Little => Endianness::Little,
@@ -448,6 +459,7 @@ pub(super) fn elf_e_flags(architecture: Architecture, sess: &Session) -> u32 {
 /// Since Xcode 15, Apple's LD apparently requires object files to use this load command, so this
 /// returns the `MachOBuildVersion` for the target to do so.
 #[cfg(not(target_os = "none"))]
+#[cfg(not(target_os = "none"))]
 fn macho_object_build_version_for_target(sess: &Session) -> object::write::MachOBuildVersion {
     /// The `object` crate demands "X.Y.Z encoded in nibbles as xxxx.yy.zz"
     /// e.g. minOS 14.0 = 0x000E0000, or SDK 16.2 = 0x00100200
@@ -513,6 +525,7 @@ pub(crate) enum MetadataPosition {
 /// * ELF - All other targets are similar to Windows in that there's a
 ///   `SHF_EXCLUDE` flag we can set on sections in an object file to get
 ///   automatically removed from the final output.
+#[cfg(not(target_os = "none"))]
 pub(crate) fn create_wrapper_file(
     sess: &Session,
     section_name: String,
@@ -597,6 +610,7 @@ pub(crate) fn create_wrapper_file(
 // As a result, we choose a slightly shorter name! As to why
 // `.note.rustc` works on MinGW, see
 // https://github.com/llvm/llvm-project/blob/llvmorg-12.0.0/lld/COFF/Writer.cpp#L1190-L1197
+#[cfg(not(target_os = "none"))]
 pub fn create_compressed_metadata_file(
     sess: &Session,
     metadata: &EncodedMetadata,
@@ -660,6 +674,7 @@ pub fn create_compressed_metadata_file(
 ///   symbol created by (3) is a info symbol for the preceding csect. Thus
 ///   two symbols are preserved during linking and we can use the second symbol
 ///   to reference the metadata.
+#[cfg(not(target_os = "none"))]
 pub fn create_compressed_metadata_file_for_xcoff(
     mut file: write::Object<'_>,
     data: &[u8],
@@ -725,6 +740,10 @@ pub fn create_compressed_metadata_file_for_xcoff(
 /// As a further detail the object needs to have a 64-bit memory if `wasm64` is
 /// the target or otherwise it's interpreted as a 32-bit object which is
 /// incompatible with 64-bit ones.
+// M27 §1.7: wasm_encoder is host-only (SemOS is x86_64; we never emit
+// wasm). The function stays in the API but body is a stub on SemOS
+// — the wasm-metadata path is only reached for is_like_wasm targets.
+#[cfg(not(target_os = "none"))]
 pub fn create_metadata_file_for_wasm(sess: &Session, data: &[u8], section_name: &str) -> Vec<u8> {
     assert!(sess.target.is_like_wasm);
     let mut module = wasm_encoder::Module::new();
@@ -753,4 +772,10 @@ pub fn create_metadata_file_for_wasm(sess: &Session, data: &[u8], section_name: 
     });
     module.section(&wasm_encoder::CustomSection { name: section_name.into(), data: data.into() });
     module.finish()
+}
+
+#[cfg(target_os = "none")]
+pub fn create_metadata_file_for_wasm(_sess: &Session, _data: &[u8], _section_name: &str) -> Vec<u8> {
+    // SemOS doesn't target wasm; this path is unreachable.
+    panic!("create_metadata_file_for_wasm: wasm targets unsupported on SemOS")
 }

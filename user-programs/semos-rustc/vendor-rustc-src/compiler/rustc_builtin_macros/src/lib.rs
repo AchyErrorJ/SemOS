@@ -9,8 +9,8 @@
 #![feature(decl_macro)]
 #![feature(if_let_guard)]
 #![feature(iter_order_by)]
-#![feature(proc_macro_internals)]
-#![feature(proc_macro_quote)]
+#![cfg_attr(not(target_os = "none"), feature(proc_macro_internals))]
+#![cfg_attr(not(target_os = "none"), feature(proc_macro_quote))]
 #![feature(try_blocks)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
@@ -19,6 +19,9 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use rustc_expand::base::{MacroExpanderFn, ResolverExpand, SyntaxExtensionKind};
 use rustc_expand::proc_macro::BangProcMacro;
@@ -145,8 +148,19 @@ pub fn register_builtin_macros(resolver: &mut dyn ResolverExpand) {
         From: from::expand_deriving_from,
     }
 
-    let client = rustc_proc_macro::bridge::client::Client::expand1(rustc_proc_macro::quote);
-    register(sym::quote, SyntaxExtensionKind::Bang(Arc::new(BangProcMacro { client })));
+    // M27 §1.5: proc-macro server is host-only on SemOS. The quote! macro is
+    // a proc-macro built on top of bridge::client; on SemOS we register a
+    // stub that produces an empty token-stream so the BangProcMacro field
+    // gating compiles cleanly.
+    #[cfg(not(target_os = "none"))]
+    {
+        let client = rustc_proc_macro::bridge::client::Client::expand1(rustc_proc_macro::quote);
+        register(sym::quote, SyntaxExtensionKind::Bang(Arc::new(BangProcMacro { client })));
+    }
+    #[cfg(target_os = "none")]
+    {
+        register(sym::quote, SyntaxExtensionKind::Bang(Arc::new(BangProcMacro {})));
+    }
     let requires = SyntaxExtensionKind::Attr(Arc::new(contracts::ExpandRequires));
     register(sym::contracts_requires, requires);
     let ensures = SyntaxExtensionKind::Attr(Arc::new(contracts::ExpandEnsures));

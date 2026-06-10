@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 use core::fmt;
 
@@ -677,7 +680,7 @@ impl<'tcx> InferCtxt<'tcx> {
         vars
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub fn sub_regions(
         &self,
         origin: SubregionOrigin<'tcx>,
@@ -869,13 +872,13 @@ impl<'tcx> InferCtxt<'tcx> {
     }
 
     /// Just a convenient wrapper of `next_region_var` for using during NLL.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub fn next_nll_region_var(&self, origin: NllRegionVariableOrigin<'tcx>) -> ty::Region<'tcx> {
         self.next_region_var(RegionVariableOrigin::Nll(origin))
     }
 
     /// Just a convenient wrapper of `next_region_var` for using during NLL.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub fn next_nll_region_var_in_universe(
         &self,
         origin: NllRegionVariableOrigin<'tcx>,
@@ -969,12 +972,12 @@ impl<'tcx> InferCtxt<'tcx> {
         !self.inner.borrow().opaque_type_storage.is_empty()
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     pub fn take_opaque_types(&self) -> Vec<(OpaqueTypeKey<'tcx>, ProvisionalHiddenType<'tcx>)> {
         self.inner.borrow_mut().opaque_type_storage.take_opaque_types().collect()
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     pub fn clone_opaque_types(&self) -> Vec<(OpaqueTypeKey<'tcx>, ProvisionalHiddenType<'tcx>)> {
         self.inner.borrow_mut().opaque_type_storage.iter_opaque_types().collect()
     }

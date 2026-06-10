@@ -3,8 +3,13 @@
 //! The late lint pass Works on HIR nodes, towards the end of analysis (after
 //! borrow checking, etc.). These lints have full type information available.
 
-use std::any::Any;
-use std::cell::Cell;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::any::Any;
+use core::cell::Cell;
 
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_data_structures::sync::join;
@@ -372,7 +377,7 @@ pub fn late_lint_mod<'tcx, T: LateLintPass<'tcx> + 'tcx>(
             .late_module_passes
             .iter()
             .map(|mk_pass| (mk_pass)(tcx))
-            .chain(std::iter::once(builtin_lints))
+            .chain(core::iter::once(builtin_lints))
             .collect::<Vec<_>>();
 
         let pass = RuntimeCombinedLateLintPass { passes: binding.as_mut_slice() };

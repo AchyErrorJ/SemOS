@@ -5,7 +5,9 @@
 
 mod llvm_enzyme {
     use core::str::FromStr;
-    use alloc::string::String;
+    use alloc::boxed::Box;
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
 
     use rustc_ast::expand::autodiff_attrs::{
         AutoDiffAttrs, DiffActivity, DiffMode, valid_input_activity, valid_ret_activity,

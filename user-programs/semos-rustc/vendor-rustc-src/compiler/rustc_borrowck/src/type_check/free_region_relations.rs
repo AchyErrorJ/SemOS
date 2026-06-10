@@ -17,6 +17,7 @@ use type_op::TypeOpOutput;
 use crate::BorrowckInferCtxt;
 use crate::type_check::{Locations, MirTypeckRegionConstraints, constraint_conversion};
 use crate::universal_regions::UniversalRegions;
+use alloc::vec::Vec;
 
 #[derive(Debug)]
 #[derive(Clone)] // FIXME(#146079)
@@ -178,7 +179,7 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
         self.inverse_outlives.add(fr_b, fr_a);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn create(mut self) -> CreateResult<'tcx> {
         let tcx = self.infcx.tcx;
         let defining_ty_def_id = self.universal_regions.defining_ty.def_id().expect_local();
@@ -372,7 +373,7 @@ impl<'tcx> UniversalRegionRelationsBuilder<'_, 'tcx> {
     }
 
     /// Compute and add any implied bounds that come from a given type.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn add_implied_bounds(
         &mut self,
         ty: Ty<'tcx>,

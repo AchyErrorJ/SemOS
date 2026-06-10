@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt;
 
 use itertools::Either;
@@ -415,7 +420,7 @@ impl<'a, 'tcx, V: CodegenObject> OperandRef<'tcx, V> {
     }
 
     /// Obtain the actual discriminant of a value.
-    #[instrument(level = "trace", skip(fx, bx))]
+    // [stripped: #[instrument(...)]]
     pub fn codegen_get_discr<Bx: BuilderMethods<'a, 'tcx, Value = V>>(
         self,
         fx: &mut FunctionCx<'a, 'tcx, Bx>,

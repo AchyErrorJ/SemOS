@@ -12,6 +12,12 @@
 // Result<String, VarError> natively (commit c9f0b2d), so host and target
 // call sites share one shape.
 #[cfg(not(target_os = "none"))]
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+#[cfg(not(target_os = "none"))]
 use std::env::{self, VarError};
 #[cfg(target_os = "none")]
 use semos_std::env::{self, VarError};

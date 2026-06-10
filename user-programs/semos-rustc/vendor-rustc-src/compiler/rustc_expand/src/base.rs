@@ -1,6 +1,11 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::any::Any;
 use core::iter;
-use semos_std::path::Component::Prefix; // M27 R4 B5
+#[cfg(not(target_os = "none"))]
+use std::path::Component::Prefix; // M27 R4 B5: Prefix only exists on Windows host
 use semos_std::path::{Path, PathBuf};   // M27 R4 B5
 use alloc::rc::Rc;
 use alloc::sync::Arc;
@@ -1408,16 +1413,21 @@ pub fn resolve_path(sess: &Session, path: impl Into<PathBuf>, span: Span) -> PRe
     } else {
         // This ensures that Windows verbatim paths are fixed if mixed path separators are used,
         // which can happen when `concat!` is used to join paths.
+        #[cfg(not(target_os = "none"))]
         match path.components().next() {
             Some(Prefix(prefix)) if prefix.kind().is_verbatim() => Ok(path.components().collect()),
             _ => Ok(path),
         }
+        // SemOS has POSIX-only paths — no Windows verbatim prefix exists.
+        #[cfg(target_os = "none")]
+        Ok(path)
     }
 }
 
 /// If this item looks like a specific enums from `rental`, emit a fatal error.
 /// See #73345 and #83125 for more details.
 /// FIXME(#73933): Remove this eventually.
+#[cfg(not(target_os = "none"))]
 fn pretty_printing_compatibility_hack(item: &Item, psess: &ParseSess) {
     if let ast::ItemKind::Enum(ident, _, enum_def) = &item.kind
         && ident.name == sym::ProceduralMasqueradeDummyType
@@ -1458,7 +1468,10 @@ pub(crate) fn ann_pretty_printing_compatibility_hack(ann: &Annotatable, psess: &
         },
         _ => return,
     };
-    pretty_printing_compatibility_hack(item, psess)
+    #[cfg(not(target_os = "none"))]
+    pretty_printing_compatibility_hack(item, psess);
+    #[cfg(target_os = "none")]
+    let _ = (item, psess);
 }
 
 pub(crate) fn stream_pretty_printing_compatibility_hack(
@@ -1489,5 +1502,8 @@ pub(crate) fn stream_pretty_printing_compatibility_hack(
         }
         _ => return,
     };
-    pretty_printing_compatibility_hack(&item, psess)
+    #[cfg(not(target_os = "none"))]
+    pretty_printing_compatibility_hack(&item, psess);
+    #[cfg(target_os = "none")]
+    let _ = (item, psess);
 }

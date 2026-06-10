@@ -1,7 +1,12 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_data_structures::fx::FxHashMap;
 use rustc_span::Span;
 use rustc_span::def_id::DefId;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::error::ConstNotUsedTraitAlias;
 use crate::ty::{
@@ -93,7 +98,7 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for ReverseMapper<'tcx> {
         self.tcx
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
         match r.kind() {
             // Ignore bound regions and `'static` regions that appear in the
@@ -120,7 +125,7 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for ReverseMapper<'tcx> {
             }
         }
 
-        match self.map.get(&r.into()).map(|arg| arg.kind()) {
+        match self.map.get::<GenericArg<'tcx>>(&r.into()).map(|arg| arg.kind()) {
             Some(GenericArgKind::Lifetime(r1)) => r1,
             Some(u) => panic!("region mapped to unexpected kind: {u:?}"),
             None if self.do_not_error => self.tcx.lifetimes.re_static,
@@ -162,7 +167,7 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for ReverseMapper<'tcx> {
 
             ty::Param(param) => {
                 // Look it up in the generic parameters list.
-                match self.map.get(&ty.into()).map(|arg| arg.kind()) {
+                match self.map.get::<GenericArg<'tcx>>(&ty.into()).map(|arg| arg.kind()) {
                     // Found it in the generic parameters list; replace with the parameter from the
                     // opaque type.
                     Some(GenericArgKind::Type(t1)) => t1,
@@ -195,7 +200,7 @@ impl<'tcx> TypeFolder<TyCtxt<'tcx>> for ReverseMapper<'tcx> {
         match ct.kind() {
             ty::ConstKind::Param(..) => {
                 // Look it up in the generic parameters list.
-                match self.map.get(&ct.into()).map(|arg| arg.kind()) {
+                match self.map.get::<GenericArg<'tcx>>(&ct.into()).map(|arg| arg.kind()) {
                     // Found it in the generic parameters list, replace with the parameter from the
                     // opaque type.
                     Some(GenericArgKind::Const(c1)) => c1,

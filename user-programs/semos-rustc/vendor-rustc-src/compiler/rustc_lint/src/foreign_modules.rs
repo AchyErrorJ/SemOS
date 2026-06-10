@@ -118,7 +118,7 @@ impl ClashingExternDeclarations {
         }
     }
 
-    #[instrument(level = "trace", skip(self, tcx))]
+    // [stripped: #[instrument(...)]]
     fn check_foreign_item<'tcx>(&mut self, tcx: TyCtxt<'tcx>, this_fi: hir::ForeignItemId) {
         let DefKind::Fn = tcx.def_kind(this_fi.owner_id) else { return };
         let Some(existing_did) = self.insert(tcx, this_fi) else { return };

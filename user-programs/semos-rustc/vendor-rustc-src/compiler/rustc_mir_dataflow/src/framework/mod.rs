@@ -44,12 +44,14 @@ use rustc_middle::mir::{
 use rustc_middle::ty::TyCtxt;
 use tracing::error;
 
+#[cfg(not(target_os = "none"))]
 use self::graphviz::write_graphviz_results;
 use super::fmt::DebugWithContext;
 
 mod cursor;
 mod direction;
 pub mod fmt;
+#[cfg(not(target_os = "none"))]
 pub mod graphviz;
 pub mod lattice;
 mod results;
@@ -302,6 +304,7 @@ pub trait Analysis<'tcx> {
 
         let results = Results { analysis: self, entry_states };
 
+        #[cfg(not(target_os = "none"))]
         if tcx.sess.opts.unstable_opts.dump_mir_dataflow {
             let res = write_graphviz_results(tcx, body, &results, pass_name);
             if let Err(e) = res {

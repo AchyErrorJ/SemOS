@@ -1,5 +1,8 @@
 //! Various code related to computing outlives relations.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::undo_log::UndoLogs;
 use rustc_middle::traits::query::{NoSolution, OutlivesBound};
 use rustc_middle::ty;
@@ -18,7 +21,7 @@ pub mod obligations;
 pub mod test_type_match;
 pub(crate) mod verify;
 
-#[instrument(level = "debug", skip(param_env), ret)]
+    // [stripped: #[instrument(...)]]
 pub fn explicit_outlives_bounds<'tcx>(
     param_env: ty::ParamEnv<'tcx>,
 ) -> impl Iterator<Item = OutlivesBound<'tcx>> {

@@ -12,6 +12,7 @@ use tracing::debug;
 
 use crate::polonius::LiveLoans;
 use crate::{BorrowIndex, TyCtxt};
+use alloc::string::String;
 
 rustc_index::newtype_index! {
     /// A single integer representing a `ty::Placeholder`.

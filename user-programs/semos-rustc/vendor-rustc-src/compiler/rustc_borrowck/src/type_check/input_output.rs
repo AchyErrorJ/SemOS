@@ -23,7 +23,7 @@ use crate::universal_regions::DefiningTy;
 impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
     /// Check explicit closure signature annotation,
     /// e.g., `|x: FxIndexMap<_, &'static u32>| ...`.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn check_signature_annotation(&mut self) {
         let mir_def_id = self.body.source.def_id().expect_local();
 
@@ -126,7 +126,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         );
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn equate_inputs_and_outputs(&mut self, normalized_inputs_and_output: &[Ty<'tcx>]) {
         let (&normalized_output_ty, normalized_input_tys) =
             normalized_inputs_and_output.split_last().unwrap();
@@ -179,7 +179,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         self.equate_normalized_input_or_output(normalized_output_ty, mir_output_ty, output_span);
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn equate_normalized_input_or_output(&mut self, a: Ty<'tcx>, b: Ty<'tcx>, span: Span) {
         if let Err(_) =
             self.eq_types(a, b, Locations::All(span), ConstraintCategory::BoringNoLocation)

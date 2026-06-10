@@ -72,6 +72,9 @@ pub(crate) mod free_region_relations;
 mod input_output;
 pub(crate) mod liveness;
 mod relate_tys;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
 
 /// Type checks the given `mir` in the context of the inference
 /// context `infcx`. Returns any region constraints that have yet to
@@ -384,7 +387,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
     }
 
     /// Equate the inferred type and the annotated type for user type annotations
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn check_user_type_annotations(&mut self) {
         debug!(?self.user_type_annotations);
         for user_annotation in self.user_type_annotations {
@@ -394,7 +397,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, data), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn push_region_constraints(
         &mut self,
         locations: Locations,
@@ -429,7 +432,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         self.relate_types(sup, ty::Contravariant, sub, locations, category)
     }
 
-    #[instrument(skip(self, category), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn eq_types(
         &mut self,
         expected: Ty<'tcx>,
@@ -440,7 +443,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         self.relate_types(expected, ty::Invariant, found, locations, category)
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn relate_type_and_user_type(
         &mut self,
         a: Ty<'tcx>,
@@ -562,7 +565,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, body), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn visit_body(&mut self, body: &Body<'tcx>) {
         debug_assert!(core::ptr::eq(self.body, body));
 
@@ -582,7 +585,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn visit_statement(&mut self, stmt: &Statement<'tcx>, location: Location) {
         self.super_statement(stmt, location);
         let tcx = self.tcx();
@@ -716,7 +719,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn visit_terminator(&mut self, term: &Terminator<'tcx>, term_location: Location) {
         self.super_terminator(term, term_location);
         let tcx = self.tcx();
@@ -963,7 +966,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
         self.super_rvalue(rvalue, location);
         let tcx = self.tcx();
@@ -1678,7 +1681,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_operand(&mut self, op: &Operand<'tcx>, location: Location) {
         self.super_operand(op, location);
         if let Operand::Constant(constant) = op {
@@ -1705,7 +1708,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_const_operand(&mut self, constant: &ConstOperand<'tcx>, location: Location) {
         self.super_const_operand(constant, location);
         let ty = constant.const_.ty();
@@ -1977,7 +1980,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, term, func, term_location, call_source))]
+    // [stripped: #[instrument(...)]]
     fn check_call_inputs(
         &mut self,
         term: &Terminator<'tcx>,

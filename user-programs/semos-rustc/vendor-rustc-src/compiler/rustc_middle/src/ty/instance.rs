@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::fmt;
 
 use rustc_data_structures::assert_matches;
@@ -11,7 +16,7 @@ use rustc_index::bit_set::FiniteBitSet;
 use rustc_macros::{Decodable, Encodable, HashStable, Lift, TyDecodable, TyEncodable};
 use rustc_span::def_id::LOCAL_CRATE;
 use rustc_span::{DUMMY_SP, Span, Symbol};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::error;
 use crate::middle::codegen_fn_attrs::CodegenFnAttrFlags;
@@ -506,7 +511,7 @@ impl<'tcx> Instance<'tcx> {
     /// couldn't complete due to errors elsewhere - this is distinct
     /// from `Ok(None)` to avoid misleading diagnostics when an error
     /// has already been/will be emitted, for the original cause
-    #[instrument(level = "debug", skip(tcx), ret)]
+    // #[instrument(level = "debug", skip(tcx), ret)]
     pub fn try_resolve(
         tcx: TyCtxt<'tcx>,
         typing_env: ty::TypingEnv<'tcx>,
@@ -761,7 +766,7 @@ impl<'tcx> Instance<'tcx> {
         Instance::expect_resolve(tcx, ty::TypingEnv::fully_monomorphized(), def_id, args, DUMMY_SP)
     }
 
-    #[instrument(level = "debug", skip(tcx), ret)]
+    // #[instrument(level = "debug", skip(tcx), ret)]
     pub fn fn_once_adapter_instance(
         tcx: TyCtxt<'tcx>,
         closure_did: DefId,

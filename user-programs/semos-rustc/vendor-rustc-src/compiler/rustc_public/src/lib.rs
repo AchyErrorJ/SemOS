@@ -7,6 +7,7 @@
 //! This API is still completely unstable and subject to change.
 
 #![allow(rustc::usage_of_ty_tykind)]
+#![cfg_attr(target_os = "none", no_std)]
 #![doc(test(attr(allow(unused_variables), deny(warnings), allow(internal_features))))]
 #![feature(sized_hierarchy)]
 //!
@@ -16,9 +17,23 @@
 //! The goal is to eventually be published on
 //! [crates.io](https://crates.io).
 
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::{fmt, io};
+#[macro_use]
+extern crate alloc as crate_alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::fmt;
+#[cfg(not(target_os = "none"))]
+#[cfg(not(target_os = "none"))]
+use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
 
 pub(crate) use rustc_public_bridge::IndexedVal;
 use rustc_public_bridge::Tables;
@@ -176,9 +191,13 @@ impl CrateItem {
 
     /// Emit MIR for this item body.
     pub fn emit_mir<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
-        self.body()
-            .ok_or_else(|| io::Error::other(format!("No body found for `{}`", self.name())))?
-            .dump(w, &self.trimmed_name())
+        // M27 §1.5: io::Error::other on SemOS is a unit constructor (no
+        // payload); host accepts a Display. Drop the message on SemOS.
+        #[cfg(not(target_os = "none"))]
+        let err = || io::Error::other(format!("No body found for `{}`", self.name()));
+        #[cfg(target_os = "none")]
+        let err = || io::Error::other();
+        self.body().ok_or_else(err)?.dump(w, &self.trimmed_name())
     }
 }
 
@@ -221,14 +240,14 @@ pub fn all_trait_impls() -> ImplTraitDecls {
 #[derive(Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Opaque(String);
 
-impl std::fmt::Display for Opaque {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Opaque {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl std::fmt::Debug for Opaque {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Opaque {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.0)
     }
 }

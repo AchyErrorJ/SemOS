@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
 use rustc_data_structures::unord::{UnordMap, UnordSet};
 use rustc_hir::attrs::InstructionSetAttr;

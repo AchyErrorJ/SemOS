@@ -1,5 +1,13 @@
-use std::fmt::{Debug, Formatter};
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+use core::fmt::{Debug, Formatter};
+#[cfg(not(target_os = "none"))]
 use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
 
 use rustc_public_bridge::bridge;
 use serde::Serialize;
@@ -181,7 +189,7 @@ impl Instance {
 }
 
 impl Debug for Instance {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Instance")
             .field("kind", &self.kind)
             .field("def", &self.mangled_name())

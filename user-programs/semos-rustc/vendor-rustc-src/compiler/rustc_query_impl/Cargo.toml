@@ -21,3 +21,6 @@ tracing = { version = "0.1", default-features = false }
 # Self-profiling is dev-tool / debug; host-only.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 measureme = "12.0.1"
+
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

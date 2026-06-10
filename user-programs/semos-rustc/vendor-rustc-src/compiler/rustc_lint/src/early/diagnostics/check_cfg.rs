@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_middle::bug;
 use rustc_middle::ty::TyCtxt;
@@ -33,7 +38,7 @@ fn sort_and_truncate_possibilities(
             }
             FilterWellKnownNames::No => {}
         };
-        std::cmp::min(possibilities.len(), MAX_CHECK_CFG_NAMES_OR_VALUES)
+        core::cmp::min(possibilities.len(), MAX_CHECK_CFG_NAMES_OR_VALUES)
     };
 
     possibilities.sort_by(|s1, s2| s1.as_str().cmp(s2.as_str()));

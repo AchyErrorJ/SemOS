@@ -4,7 +4,9 @@
 //! These traits are really useful when programming
 //! in rustc_public-agnostic settings.
 
-use std::fmt::Debug;
+use core::fmt::Debug;
+use crate_alloc::string::String;
+use crate_alloc::vec::Vec;
 
 use super::context::CompilerCtxt;
 use super::{Bridge, Tables};

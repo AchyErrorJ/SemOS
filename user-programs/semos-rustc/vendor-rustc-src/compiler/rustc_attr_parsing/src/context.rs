@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::cell::RefCell;
 use alloc::collections::BTreeMap;
 use core::ops::{Deref, DerefMut};
@@ -150,7 +155,14 @@ macro_rules! attribute_parsers {
             let mut accepters = BTreeMap::<_, Vec<GroupTypeInnerAccept<$stage>>>::new();
             $(
                 {
-                    thread_local! {
+                    // Stage F11: thread_local! is std-only on host;
+                    // SemOS uses semos_std::thread_local! (single-thread).
+                    #[cfg(not(target_os = "none"))]
+                    std::thread_local! {
+                        static STATE_OBJECT: RefCell<$names> = RefCell::new(<$names>::default());
+                    };
+                    #[cfg(target_os = "none")]
+                    semos_std::thread_local! {
                         static STATE_OBJECT: RefCell<$names> = RefCell::new(<$names>::default());
                     };
 

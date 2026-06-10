@@ -11,6 +11,9 @@ use tracing::debug;
 
 use super::{ErrorConstraintInfo, RegionName, RegionNameSource};
 use crate::MirBorrowckCtxt;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
 
 /// The different things we could suggest.
 enum SuggestedConstraint {

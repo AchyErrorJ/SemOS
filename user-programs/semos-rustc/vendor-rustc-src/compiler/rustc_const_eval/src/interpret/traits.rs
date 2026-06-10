@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::{Align, Size};
 use rustc_middle::mir::interpret::{InterpResult, Pointer};
 use rustc_middle::ty::{self, ExistentialPredicateStableCmpExt, Ty, TyCtxt, VtblEntry};

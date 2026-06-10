@@ -2,6 +2,11 @@
 //! when specifying impls to be derived.
 
 pub(crate) use Ty::*;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::{self as ast, Expr, GenericArg, GenericParamKind, Generics, SelfKind, TyKind};
 use rustc_expand::base::ExtCtxt;
 use rustc_span::source_map::respan;

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::{self as ast, EnumDef, MetaItem, Safety};
 use rustc_expand::base::{Annotatable, ExtCtxt};
 use rustc_session::config::FmtDebug;

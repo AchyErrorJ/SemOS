@@ -2,7 +2,10 @@
 
 #![allow(rustc::usage_of_qualified_ty)]
 
-use std::iter;
+use core::iter;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
 
 use rustc_abi::{Endian, Layout, ReprOptions};
 use rustc_hir::def::DefKind;

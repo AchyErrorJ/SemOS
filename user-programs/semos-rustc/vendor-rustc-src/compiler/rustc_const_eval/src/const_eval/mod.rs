@@ -1,5 +1,10 @@
 // Not in interpret to make sure we do not use private implementation details
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_middle::{bug, mir};
@@ -26,7 +31,7 @@ pub(crate) use self::valtrees::{eval_to_valtree, valtree_to_const_value};
 // We forbid type-level constants that contain more than `VALTREE_MAX_NODES` nodes.
 const VALTREE_MAX_NODES: usize = 100000;
 
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn try_destructure_mir_constant_for_user_output<'tcx>(
     tcx: TyCtxt<'tcx>,
     val: mir::ConstValue,
@@ -64,7 +69,7 @@ pub(crate) fn try_destructure_mir_constant_for_user_output<'tcx>(
 }
 
 /// Computes the tag (if any) for a given type and variant.
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn tag_for_variant_provider<'tcx>(
     tcx: TyCtxt<'tcx>,
     key: ty::PseudoCanonicalInput<'tcx, (Ty<'tcx>, VariantIdx)>,

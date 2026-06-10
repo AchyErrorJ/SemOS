@@ -4,8 +4,16 @@
 //! - [CompilerError]: This represents errors that can be raised when invoking the compiler.
 //! - [Error]: Generic error that represents the reason why a request that could not be fulfilled.
 
-use std::fmt::{Debug, Display, Formatter};
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+use core::fmt::{Debug, Display, Formatter};
+#[cfg(not(target_os = "none"))]
 use std::{fmt, io};
+#[cfg(target_os = "none")]
+use {core::fmt, semos_std::io};
 
 use rustc_public_bridge::bridge;
 
@@ -80,9 +88,9 @@ where
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
-impl<T> std::error::Error for CompilerError<T> where T: Display + Debug {}
+impl<T> core::error::Error for CompilerError<T> where T: Display + Debug {}
 
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {

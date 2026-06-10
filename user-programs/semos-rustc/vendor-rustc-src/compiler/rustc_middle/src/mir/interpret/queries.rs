@@ -1,8 +1,13 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_session::lint;
 use rustc_span::{DUMMY_SP, Span};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::{
     ErrorHandled, EvalToAllocationRawResult, EvalToConstValueResult, GlobalId, ReportedErrorInfo,
@@ -15,7 +20,7 @@ impl<'tcx> TyCtxt<'tcx> {
     /// Evaluates a constant without providing any generic parameters. This is useful to evaluate consts
     /// that can't take any generic arguments like const items or enum discriminants. If a
     /// generic parameter is used within the constant `ErrorHandled::TooGeneric` will be returned.
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     pub fn const_eval_poly(self, def_id: DefId) -> EvalToConstValueResult<'tcx> {
         // In some situations def_id will have generic parameters within scope, but they aren't allowed
         // to be used. So we can't use `Instance::mono`, instead we feed unresolved generic parameters
@@ -31,7 +36,7 @@ impl<'tcx> TyCtxt<'tcx> {
     /// Evaluates a constant without providing any generic parameters. This is useful to evaluate consts
     /// that can't take any generic arguments like const items or enum discriminants. If a
     /// generic parameter is used within the constant `ErrorHandled::TooGeneric` will be returned.
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     pub fn const_eval_poly_to_alloc(self, def_id: DefId) -> EvalToAllocationRawResult<'tcx> {
         // In some situations def_id will have generic parameters within scope, but they aren't allowed
         // to be used. So we can't use `Instance::mono`, instead we feed unresolved generic parameters
@@ -54,7 +59,7 @@ impl<'tcx> TyCtxt<'tcx> {
     /// constant `bar::<T>()` requires a instantiation for `T`, if the instantiation for `T` is still
     /// too generic for the constant to be evaluated then `Err(ErrorHandled::TooGeneric)` is
     /// returned.
-    #[instrument(level = "debug", skip(self))]
+    // #[instrument(level = "debug", skip(self))]
     pub fn const_eval_resolve(
         self,
         typing_env: ty::TypingEnv<'tcx>,
@@ -86,7 +91,7 @@ impl<'tcx> TyCtxt<'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // #[instrument(level = "debug", skip(self))]
     pub fn const_eval_resolve_for_typeck(
         self,
         typing_env: ty::TypingEnv<'tcx>,
@@ -164,7 +169,7 @@ impl<'tcx> TyCtxt<'tcx> {
     }
 
     /// Evaluate a constant to a `ConstValue`.
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     pub fn const_eval_global_id(
         self,
         typing_env: ty::TypingEnv<'tcx>,
@@ -185,7 +190,7 @@ impl<'tcx> TyCtxt<'tcx> {
     }
 
     /// Evaluate a constant to a type-level constant.
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     pub fn const_eval_global_id_for_typeck(
         self,
         typing_env: ty::TypingEnv<'tcx>,

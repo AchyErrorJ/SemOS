@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use rustc_ast::{self as ast, DUMMY_NODE_ID, Expr, ExprKind};
@@ -135,6 +139,7 @@ pub(crate) fn update_macro_stats(
 
     // This code is useful for debugging `-Zmacro-stats`. For every
     // invocation it prints the full input and output.
+    #[cfg(not(target_os = "none"))]
     if false {
         let name = ExpnKind::Macro(macro_kind, name).descr();
         let crate_name = &ecx.ecfg.crate_name;

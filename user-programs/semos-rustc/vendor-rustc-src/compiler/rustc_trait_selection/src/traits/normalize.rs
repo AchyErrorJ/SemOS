@@ -1,5 +1,10 @@
 //! Deeply normalize types using the old trait solver.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_hir::def::DefKind;
 use rustc_infer::infer::at::At;
@@ -104,7 +109,7 @@ where
     Normalized { value, obligations }
 }
 
-#[instrument(level = "info", skip(selcx, param_env, cause, obligations))]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn normalize_with_depth_to<'a, 'b, 'tcx, T>(
     selcx: &'a mut SelectionContext<'b, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -178,7 +183,7 @@ impl<'a, 'b, 'tcx> AssocTypeNormalizer<'a, 'b, 'tcx> {
     }
 
     // FIXME(mgca): While this supports constants, it is only used for types by default right now
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn normalize_trait_projection(&mut self, proj: AliasTerm<'tcx>) -> Term<'tcx> {
         if !proj.has_escaping_bound_vars() {
             // When we don't have escaping bound vars we can normalize ambig aliases
@@ -238,7 +243,7 @@ impl<'a, 'b, 'tcx> AssocTypeNormalizer<'a, 'b, 'tcx> {
     }
 
     // FIXME(mgca): While this supports constants, it is only used for types by default right now
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn normalize_inherent_projection(&mut self, inherent: AliasTerm<'tcx>) -> Term<'tcx> {
         if !inherent.has_escaping_bound_vars() {
             // When we don't have escaping bound vars we can normalize ambig aliases
@@ -285,7 +290,7 @@ impl<'a, 'b, 'tcx> AssocTypeNormalizer<'a, 'b, 'tcx> {
     }
 
     // FIXME(mgca): While this supports constants, it is only used for types by default right now
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn normalize_free_alias(&mut self, free: AliasTerm<'tcx>) -> Term<'tcx> {
         let recursion_limit = self.cx().recursion_limit();
         if !recursion_limit.value_within_limit(self.depth) {
@@ -430,7 +435,7 @@ impl<'a, 'b, 'tcx> TypeFolder<TyCtxt<'tcx>> for AssocTypeNormalizer<'a, 'b, 'tcx
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn fold_const(&mut self, ct: ty::Const<'tcx>) -> ty::Const<'tcx> {
         let tcx = self.selcx.tcx();
 

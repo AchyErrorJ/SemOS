@@ -1,4 +1,7 @@
 //! Definition of `InferCtxtLike` from the librarified type layer.
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_hir::def_id::DefId;
 use rustc_middle::traits::ObligationCause;
 use rustc_middle::ty::relate::RelateResult;

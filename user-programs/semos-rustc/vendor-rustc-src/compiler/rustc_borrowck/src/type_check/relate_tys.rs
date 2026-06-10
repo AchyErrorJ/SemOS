@@ -31,7 +31,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
     ///
     /// N.B., the type `a` is permitted to have unresolved inference
     /// variables, but not the type `b`.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn relate_types(
         &mut self,
         a: Ty<'tcx>,
@@ -206,7 +206,7 @@ impl<'a, 'b, 'tcx> NllTypeRelating<'a, 'b, 'tcx> {
         f(self, value)
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn instantiate_binder_with_existentials<T>(&mut self, binder: ty::Binder<'tcx, T>) -> T
     where
         T: ty::TypeFoldable<TyCtxt<'tcx>> + Copy,
@@ -250,13 +250,13 @@ impl<'a, 'b, 'tcx> NllTypeRelating<'a, 'b, 'tcx> {
         universe
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn next_existential_region_var(&mut self, name: Option<Symbol>) -> ty::Region<'tcx> {
         let origin = NllRegionVariableOrigin::Existential { name };
         self.type_checker.infcx.next_nll_region_var(origin, || RegionCtxt::Existential(name))
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn next_placeholder_region(
         &mut self,
         placeholder: ty::PlaceholderRegion<'tcx>,
@@ -337,7 +337,7 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, info), level = "trace", ret)]
+    // [stripped: #[instrument(...)]]
     fn relate_with_variance<T: Relate<TyCtxt<'tcx>>>(
         &mut self,
         variance: ty::Variance,
@@ -358,7 +358,7 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
         r
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
         let infcx = self.type_checker.infcx;
 
@@ -415,7 +415,7 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
         Ok(a)
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn regions(
         &mut self,
         a: ty::Region<'tcx>,
@@ -448,7 +448,7 @@ impl<'b, 'tcx> TypeRelation<TyCtxt<'tcx>> for NllTypeRelating<'_, 'b, 'tcx> {
         super_combine_consts(&self.type_checker.infcx.infcx, self, a, b)
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn binders<T>(
         &mut self,
         a: ty::Binder<'tcx, T>,

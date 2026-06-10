@@ -6,6 +6,11 @@
 //! The functionality in here is shared between persisting to crate metadata and
 //! persisting to incr. comp. caches.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::hash::Hash;
 use core::intrinsics;
 use core::marker::{DiscriminantKind, PointeeSized};

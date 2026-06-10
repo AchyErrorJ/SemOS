@@ -353,6 +353,26 @@ impl<T> Drop for OnceLock<T> {
     }
 }
 
+// Stage F11: Clone / Debug for OnceLock — std has these (rustc derives
+// `Clone`/`Debug` on structs that embed OnceLock<T>).
+impl<T: Clone> Clone for OnceLock<T> {
+    fn clone(&self) -> Self {
+        let new = OnceLock::new();
+        if let Some(v) = self.get() {
+            let _ = new.set(v.clone());
+        }
+        new
+    }
+}
+impl<T: core::fmt::Debug> core::fmt::Debug for OnceLock<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.get() {
+            Some(v) => f.debug_tuple("OnceLock").field(v).finish(),
+            None => f.write_str("OnceLock(<uninit>)"),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------
 // LazyLock<T> — `std::sync::LazyLock` over OnceLock + fn() -> T
 // ---------------------------------------------------------------------

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use ast::HasAttrs;
 use rustc_ast::mut_visit::MutVisitor;
 use rustc_ast::visit::BoundKind;

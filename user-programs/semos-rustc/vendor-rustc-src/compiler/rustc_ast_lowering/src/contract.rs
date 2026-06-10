@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::sync::Arc;
 
 use thin_vec::thin_vec;

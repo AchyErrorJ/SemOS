@@ -26,7 +26,7 @@ struct NodeCollector<'a, 'hir> {
     owner: OwnerId,
 }
 
-#[instrument(level = "debug", skip(tcx, bodies))]
+    // [stripped: #[instrument(...)]]
 pub(super) fn index_hir<'hir>(
     tcx: TyCtxt<'hir>,
     item: hir::OwnerNode<'hir>,
@@ -71,7 +71,7 @@ pub(super) fn index_hir<'hir>(
 }
 
 impl<'a, 'hir> NodeCollector<'a, 'hir> {
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn insert(&mut self, span: Span, hir_id: HirId, node: Node<'hir>) {
         debug_assert_eq!(self.owner, hir_id.owner);
         debug_assert_ne!(hir_id.local_id.as_u32(), 0);
@@ -160,7 +160,7 @@ impl<'a, 'hir> Visitor<'hir> for NodeCollector<'a, 'hir> {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_item(&mut self, i: &'hir Item<'hir>) {
         debug_assert_eq!(i.owner_id, self.owner);
         self.with_parent(i.hir_id(), |this| {
@@ -174,7 +174,7 @@ impl<'a, 'hir> Visitor<'hir> for NodeCollector<'a, 'hir> {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_foreign_item(&mut self, fi: &'hir ForeignItem<'hir>) {
         debug_assert_eq!(fi.owner_id, self.owner);
         self.with_parent(fi.hir_id(), |this| {
@@ -193,7 +193,7 @@ impl<'a, 'hir> Visitor<'hir> for NodeCollector<'a, 'hir> {
         })
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_trait_item(&mut self, ti: &'hir TraitItem<'hir>) {
         debug_assert_eq!(ti.owner_id, self.owner);
         self.with_parent(ti.hir_id(), |this| {
@@ -201,7 +201,7 @@ impl<'a, 'hir> Visitor<'hir> for NodeCollector<'a, 'hir> {
         });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_impl_item(&mut self, ii: &'hir ImplItem<'hir>) {
         debug_assert_eq!(ii.owner_id, self.owner);
         self.with_parent(ii.hir_id(), |this| {

@@ -16,6 +16,7 @@ use crate::region_infer::opaque_types::{
     compute_definition_site_hidden_types, detect_opaque_types_added_while_handling_opaque_types,
 };
 use crate::type_check::{Locations, constraint_conversion};
+use alloc::vec::Vec;
 use crate::{
     ClosureRegionRequirements, CollectRegionConstraintsResult, PropagatedBorrowCheckResults,
     borrowck_check_region_constraints, borrowck_collect_region_constraints,

@@ -310,6 +310,15 @@ impl Platform for X86Platform {
         executable: bool,
         writable: bool,
     ) -> bool {
+        let pt_before = crate::paging::PT_POOL_DEBUG_count();
+        let log_at_end = |success: bool| {
+            let after = crate::paging::PT_POOL_DEBUG_count();
+            crate::serial::_print(format_args!(
+                "[elf-seg] virt=0x{:x} memsz={} {} PT_POOL: {} -> {} (used {})\n",
+                virt_addr, memsz,
+                if success { "OK " } else { "FAIL" },
+                pt_before, after, pt_before.saturating_sub(after)));
+        };
         let perm = match (executable, writable) {
             (true, false) => crate::paging::PagePermission::ReadExecute,
             (false, true) => crate::paging::PagePermission::ReadWrite,
@@ -339,7 +348,7 @@ impl Platform for X86Platform {
                 None => {
                     let f = match crate::paging::alloc_pt_frame() {
                         Some(f) => f,
-                        None => return false,
+                        None => { log_at_end(false); return false; },
                     };
                     (f, true)
                 }
@@ -378,12 +387,14 @@ impl Platform for X86Platform {
             // looser of R / RW is what the data needs anyway).
             if already.is_none() {
                 if !crate::context::map_page_in_space(space, page, frame, perm) {
+                    log_at_end(false);
                     return false;
                 }
             }
 
             page += page_size;
         }
+        log_at_end(true);
         true
     }
 

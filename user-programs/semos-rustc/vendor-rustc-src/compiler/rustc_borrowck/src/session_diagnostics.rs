@@ -5,6 +5,7 @@ use rustc_middle::ty::{GenericArg, Ty};
 use rustc_span::Span;
 
 use crate::diagnostics::RegionName;
+use alloc::string::String;
 
 #[derive(Diagnostic)]
 #[diag(borrowck_move_unsized, code = E0161)]

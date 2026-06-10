@@ -2,8 +2,8 @@
 //!
 //! [work products]: WorkProduct
 
-use std::fs as std_fs;
-use std::path::{Path, PathBuf};
+use semos_std::fs as std_fs;
+use semos_std::path::{Path, PathBuf};
 
 use rustc_data_structures::unord::UnordMap;
 use rustc_fs_util::link_or_copy;

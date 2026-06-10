@@ -2,6 +2,12 @@
 // (host: std::collections, target: hashbrown). Variants Occupied/Vacant
 // are identical on both sides.
 #[cfg(not(target_os = "none"))]
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+#[cfg(not(target_os = "none"))]
 use std::collections::hash_map::Entry::*;
 #[cfg(target_os = "none")]
 use hashbrown::hash_map::Entry::*;

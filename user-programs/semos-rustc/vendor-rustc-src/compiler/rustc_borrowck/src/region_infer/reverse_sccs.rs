@@ -8,6 +8,7 @@ use rustc_middle::ty::RegionVid;
 use crate::constraints::ConstraintSccIndex;
 use crate::region_infer::ConstraintSccs;
 use crate::universal_regions::UniversalRegions;
+use alloc::vec::Vec;
 
 pub(crate) struct ReverseSccGraph {
     graph: VecGraph<ConstraintSccIndex>,

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_infer::infer::at::At;
 use rustc_infer::traits::TraitEngine;
 use rustc_macros::extension;

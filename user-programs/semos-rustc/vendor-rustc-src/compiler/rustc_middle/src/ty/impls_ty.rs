@@ -1,6 +1,11 @@
 //! This module contains `HashStable` implementations for various data types
 //! from `rustc_middle::ty` in no particular order.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::cell::RefCell;
 use core::ptr;
 
@@ -20,7 +25,13 @@ where
     T: HashStable<StableHashingContext<'a>>,
 {
     fn hash_stable(&self, hcx: &mut StableHashingContext<'a>, hasher: &mut StableHasher) {
-        thread_local! {
+        #[cfg(target_os = "none")]
+        semos_std::thread_local! {
+            static CACHE: RefCell<FxHashMap<(*const (), HashingControls), Fingerprint>> =
+                RefCell::new(Default::default());
+        }
+        #[cfg(not(target_os = "none"))]
+        std::thread_local! {
             static CACHE: RefCell<FxHashMap<(*const (), HashingControls), Fingerprint>> =
                 RefCell::new(Default::default());
         }

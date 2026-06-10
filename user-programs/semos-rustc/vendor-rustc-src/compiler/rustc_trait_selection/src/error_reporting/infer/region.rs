@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use rustc_data_structures::fx::FxIndexSet;
@@ -1246,7 +1251,7 @@ fn label_msg_span(
     }
 }
 
-#[instrument(level = "trace", skip(infcx))]
+    // [stripped: #[instrument(...)]]
 pub fn unexpected_hidden_region_diagnostic<'a, 'tcx>(
     infcx: &'a InferCtxt<'tcx>,
     generic_param_scope: LocalDefId,

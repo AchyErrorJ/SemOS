@@ -10,6 +10,9 @@ use rustc_graphviz as dot;
 use rustc_middle::ty::UniverseIndex;
 
 use super::*;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
 
 fn render_outlives_constraint(constraint: &OutlivesConstraint<'_>) -> String {
     if let ConstraintCategory::OutlivesUnnameablePlaceholder(unnameable) = constraint.category {
@@ -164,6 +167,7 @@ impl<'a, 'this, 'tcx> dot::Labeller<'this> for SccConstraints<'a, 'tcx> {
         let nodes_str = self.nodes_per_scc[*n]
             .iter()
             .map(|n| render_region_vid(self.tcx, *n, self.regioncx))
+            .collect::<Vec<_>>()
             .join(", ");
         dot::LabelText::LabelStr(format!("SCC({n}) = {{{nodes_str}}}", n = n.as_usize()).into())
     }

@@ -7,7 +7,7 @@ edition = "2024"
 # tidy-alphabetical-start
 bitflags = "2.4.1"
 bstr = { version = "1.11.3", default-features = false }
-hashbrown = { version = "0.14", default-features = false, features = ["inline-more"] }
+hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "default-hasher"] }
 itertools = { version = "0.12", default-features = false }
 regex = { version = "1.4", default-features = false }
 rustc_abi = { path = "../rustc_abi" }
@@ -15,6 +15,7 @@ rustc_arena = { path = "../rustc_arena" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_attr_parsing = { path = "../rustc_attr_parsing" }
 rustc_data_structures = { path = "../rustc_data_structures" }
+rustc_error_messages = { path = "../rustc_error_messages" }
 rustc_errors = { path = "../rustc_errors" }
 rustc_fluent_macro = { path = "../rustc_fluent_macro" }
 rustc_fs_util = { path = "../rustc_fs_util" }

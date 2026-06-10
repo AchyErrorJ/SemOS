@@ -88,8 +88,19 @@
 //! DefPaths which are much more robust in the face of changes to the code base.
 
 // tidy-alphabetical-start
+#![cfg_attr(target_os = "none", no_std)]
 #![feature(assert_matches)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};

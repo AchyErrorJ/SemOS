@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::sync::Arc;
 
 use rustc_ast::{self as ast, *};
@@ -20,7 +23,7 @@ use super::{
 };
 
 impl<'a, 'hir> LoweringContext<'a, 'hir> {
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn lower_qpath(
         &mut self,
         id: NodeId,

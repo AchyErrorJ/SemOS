@@ -1,5 +1,7 @@
 //! Conversion of internal Rust compiler `mir` items to stable ones.
 
+use crate_alloc::string::ToString;
+
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::{bug, mir};
 use rustc_public_bridge::context::CompilerCtxt;

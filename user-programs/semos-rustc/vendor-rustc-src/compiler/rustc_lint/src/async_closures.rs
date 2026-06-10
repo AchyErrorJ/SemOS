@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_hir as hir;
 use rustc_macros::{LintDiagnostic, Subdiagnostic};
 use rustc_session::{declare_lint, declare_lint_pass};

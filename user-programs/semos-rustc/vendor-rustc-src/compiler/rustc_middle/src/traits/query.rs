@@ -5,6 +5,11 @@
 //! The providers for the queries defined here can be found in
 //! `rustc_traits`.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_macros::{HashStable, TypeFoldable, TypeVisitable};
 use rustc_span::Span;
 

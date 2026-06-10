@@ -1,6 +1,10 @@
 //! Errors emitted by symbol_mangling.
 
-use std::fmt;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 
 use rustc_errors::{Diag, DiagCtxtHandle, Diagnostic, EmissionGuarantee, Level};
 use rustc_span::Span;

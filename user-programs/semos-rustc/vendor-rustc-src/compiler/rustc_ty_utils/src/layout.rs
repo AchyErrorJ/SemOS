@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use hir::def_id::DefId;
 use rustc_abi::Integer::{I8, I32};
 use rustc_abi::Primitive::{self, Float, Int, Pointer};
@@ -33,7 +38,7 @@ pub(crate) fn provide(providers: &mut Providers) {
     *providers = Providers { layout_of, ..*providers };
 }
 
-#[instrument(skip(tcx, query), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn layout_of<'tcx>(
     tcx: TyCtxt<'tcx>,
     query: ty::PseudoCanonicalInput<'tcx, Ty<'tcx>>,

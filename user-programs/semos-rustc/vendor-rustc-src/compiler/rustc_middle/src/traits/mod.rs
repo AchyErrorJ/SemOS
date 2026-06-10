@@ -8,6 +8,11 @@ pub mod solve;
 pub mod specialization_graph;
 mod structural_impls;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use core::hash::{Hash, Hasher};

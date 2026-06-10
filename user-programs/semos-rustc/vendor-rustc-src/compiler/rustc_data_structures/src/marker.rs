@@ -207,13 +207,15 @@ mod imp_none {
     impls_dyn_send_neg!(
         [*const T where T: ?Sized + PointeeSized]
         [*mut T where T: ?Sized + PointeeSized]
-        [core::ptr::NonNull<T> where T: ?Sized + PointeeSized]
-        // `Rc`/`Weak` carry an allocator generic in current alloc;
-        // include it so the negimpl covers all instantiations (else
-        // the compiler treats `Rc<T>` as a partial impl → E0366).
+        // Stage F11: `NonNull<T>` removed from negimpl list — SemOS is
+        // single-threaded per §1.4, so the query system's cache cells
+        // (which embed NonNull) are safely sendable. A positive impl
+        // is added below.
         [alloc::rc::Rc<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
         [alloc::rc::Weak<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
     );
+    // Stage F11: positive DynSend for NonNull<T> on SemOS only.
+    unsafe impl<T: ?Sized> DynSend for core::ptr::NonNull<T> {}
 
     macro_rules! already_send {
         ($([$ty: ty])*) => {
@@ -254,14 +256,19 @@ mod imp_none {
     impls_dyn_sync_neg!(
         [*const T where T: ?Sized + PointeeSized]
         [*mut T where T: ?Sized + PointeeSized]
-        [core::cell::Cell<T> where T: ?Sized]
-        [core::cell::RefCell<T> where T: ?Sized]
-        [core::cell::UnsafeCell<T> where T: ?Sized]
-        [core::ptr::NonNull<T> where T: ?Sized + PointeeSized]
+        // Stage F11: Cell/RefCell/UnsafeCell/NonNull/OnceCell removed
+        // from negimpl on SemOS — single-threaded per §1.4, so any
+        // cell type is trivially DynSync (no other thread can ever
+        // observe it). Positive impls below.
         [alloc::rc::Rc<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
         [alloc::rc::Weak<T, A> where T: ?Sized, A: alloc::alloc::Allocator]
-        [core::cell::OnceCell<T> where T]
     );
+    // Stage F11: positive DynSync impls for cell types — see note above.
+    unsafe impl<T: ?Sized> DynSync for core::cell::Cell<T> {}
+    unsafe impl<T: ?Sized> DynSync for core::cell::RefCell<T> {}
+    unsafe impl<T: ?Sized> DynSync for core::cell::UnsafeCell<T> {}
+    unsafe impl<T: ?Sized> DynSync for core::ptr::NonNull<T> {}
+    unsafe impl<T> DynSync for core::cell::OnceCell<T> {}
 
     macro_rules! already_sync {
         ($([$ty: ty])*) => {

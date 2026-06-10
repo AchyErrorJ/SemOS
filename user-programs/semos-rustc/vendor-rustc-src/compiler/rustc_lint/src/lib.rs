@@ -21,7 +21,9 @@
 
 // tidy-alphabetical-start
 #![allow(internal_features)]
+#![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(bootstrap, feature(array_windows))]
+#![feature(array_windows)]
 #![feature(assert_matches)]
 #![feature(box_patterns)]
 #![feature(if_let_guard)]
@@ -29,6 +31,11 @@
 #![feature(rustc_attrs)]
 #![feature(try_blocks)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 mod async_closures;
 mod async_fn_in_trait;
@@ -82,6 +89,11 @@ mod unqualified_local_imports;
 mod unused;
 mod utils;
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use async_closures::AsyncClosureUsage;
 use async_fn_in_trait::AsyncFnInTrait;
 use autorefs::*;

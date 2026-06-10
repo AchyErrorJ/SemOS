@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir as hir;
 use rustc_hir::def::DefKind;
@@ -16,7 +21,7 @@ use tracing::instrument;
 
 /// If `ty` implements the given `sizedness` trait, returns `None`. Otherwise, returns the type
 /// that must implement the given `sizedness` for `ty` to implement it.
-#[instrument(level = "debug", skip(tcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn sizedness_constraint_for_ty<'tcx>(
     tcx: TyCtxt<'tcx>,
     sizedness: SizedTraitKind,
@@ -111,7 +116,7 @@ fn defaultness(tcx: TyCtxt<'_>, def_id: LocalDefId) -> hir::Defaultness {
 /// For `MetaSized`, there are only a few options for the types in the constraint:
 ///     - an pointee-sized type (extern types)
 ///     - a type parameter or projection whose sizedness can't be known
-#[instrument(level = "debug", skip(tcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn adt_sizedness_constraint<'tcx>(
     tcx: TyCtxt<'tcx>,
     (def_id, sizedness): (DefId, SizedTraitKind),

@@ -1,5 +1,11 @@
 // M27 R4 B5: cfg-split — std on host, semos_std on the SemOS target.
 #[cfg(not(target_os = "none"))]
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+#[cfg(not(target_os = "none"))]
 use std::io::Error;
 #[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
@@ -258,7 +264,14 @@ impl<'a> MissingNativeLibrary<'a> {
         // if it looks like the user has provided a complete filename rather just the bare lib name,
         // then provide a note that they might want to try trimming the name
         let suggested_name = if !verbatim {
-            if let Some(libname) = libname.strip_circumfix("lib", ".a") {
+            #[cfg(not(target_os = "none"))]
+            let circumfix_match = libname.strip_circumfix("lib", ".a");
+            // M27 §1.5: strip_circumfix is nightly-only; manual equivalent.
+            #[cfg(target_os = "none")]
+            let circumfix_match = libname
+                .strip_prefix("lib")
+                .and_then(|s| s.strip_suffix(".a"));
+            if let Some(libname) = circumfix_match {
                 // this is a unix style filename so trim prefix & suffix
                 Some(libname)
             } else if let Some(libname) = libname.strip_suffix(".lib") {

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::attr::AttributeExt;
 use rustc_ast_pretty::pprust;
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
@@ -156,7 +161,7 @@ fn lints_that_dont_need_to_run(tcx: TyCtxt<'_>, (): ()) -> UnordSet<LintId> {
     dont_need_to_run.into()
 }
 
-#[instrument(level = "trace", skip(tcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn shallow_lint_levels_on(tcx: TyCtxt<'_>, owner: hir::OwnerId) -> ShallowLintLevelMap {
     let store = unerased_lint_store(tcx.sess);
     let attrs = tcx.hir_attr_map(owner);
@@ -440,7 +445,7 @@ impl<'s> LintLevelsBuilder<'s, TopDown> {
     /// Called after `push` when the scope of a set of attributes are exited.
     pub(crate) fn pop(&mut self, push: BuilderPush) {
         self.provider.cur = push.prev;
-        std::mem::forget(push);
+        core::mem::forget(push);
     }
 }
 

@@ -2,6 +2,11 @@
 //! into a place.
 //! All high-level functions to write to memory work on places as destinations.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use either::{Either, Left, Right};
 use rustc_abi::{BackendRepr, HasDataLayout, Size};
 use rustc_data_structures::assert_matches;
@@ -451,7 +456,7 @@ where
 
     /// Take an operand, representing a pointer, and dereference it to a place.
     /// Corresponds to the `*` operator in Rust.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn deref_pointer(
         &self,
         src: &impl Projectable<'tcx, M::Provenance>,
@@ -526,7 +531,7 @@ where
 
     /// Computes a place. You should only use this if you intend to write into this
     /// place; for reading, a more efficient alternative is `eval_place_to_op`.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn eval_place(
         &self,
         mir_place: mir::Place<'tcx>,
@@ -604,7 +609,7 @@ where
 
     /// Write an immediate to a place
     #[inline(always)]
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn write_immediate(
         &mut self,
         src: Immediate<M::Provenance>,
@@ -824,7 +829,7 @@ where
     /// Copies the data from an operand to a place.
     /// `allow_transmute` indicates whether the layouts may disagree.
     #[inline(always)]
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn copy_op_inner(
         &mut self,
         src: &impl Projectable<'tcx, M::Provenance>,
@@ -865,7 +870,7 @@ where
     /// `allow_transmute` indicates whether the layouts may disagree.
     /// Also, if you use this you are responsible for validating that things get copied at the
     /// right type.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn copy_op_no_validate(
         &mut self,
         src: &impl Projectable<'tcx, M::Provenance>,
@@ -942,7 +947,7 @@ where
     /// If the place currently refers to a local that doesn't yet have a matching allocation,
     /// create such an allocation.
     /// This is essentially `force_to_memplace`.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn force_allocation(
         &mut self,
         place: &PlaceTy<'tcx, M::Provenance>,

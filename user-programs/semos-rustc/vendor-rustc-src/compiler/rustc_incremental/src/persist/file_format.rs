@@ -9,10 +9,10 @@
 //! compiler versions don't change frequently for the typical user, being
 //! conservative here practically has no downside.
 
-use std::borrow::Cow;
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
-use std::{env, fs};
+use alloc::borrow::Cow;
+use semos_std::io::{self, Read};
+use semos_std::path::{Path, PathBuf};
+use semos_std::{env, fs};
 
 use rustc_data_structures::memmap::Mmap;
 use rustc_serialize::Encoder;

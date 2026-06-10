@@ -14,6 +14,11 @@
 //!
 //! Attributes should be added to `crate::context::ATTRIBUTE_PARSERS` to be parsed.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::marker::PhantomData;
 
 use rustc_feature::{AttributeTemplate, template};

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_hir::intravisit::{self, Visitor};
 use rustc_hir::{self as hir, LifetimeSource};
@@ -75,7 +80,7 @@ declare_lint! {
 declare_lint_pass!(LifetimeSyntax => [MISMATCHED_LIFETIME_SYNTAXES]);
 
 impl<'tcx> LateLintPass<'tcx> for LifetimeSyntax {
-    #[instrument(skip_all)]
+    // [stripped: #[instrument(...)]]
     fn check_fn(
         &mut self,
         cx: &LateContext<'tcx>,
@@ -88,7 +93,7 @@ impl<'tcx> LateLintPass<'tcx> for LifetimeSyntax {
         check_fn_like(cx, fd);
     }
 
-    #[instrument(skip_all)]
+    // [stripped: #[instrument(...)]]
     fn check_trait_item(&mut self, cx: &LateContext<'tcx>, ti: &'tcx hir::TraitItem<'tcx>) {
         match ti.kind {
             hir::TraitItemKind::Const(..) => {}
@@ -97,7 +102,7 @@ impl<'tcx> LateLintPass<'tcx> for LifetimeSyntax {
         }
     }
 
-    #[instrument(skip_all)]
+    // [stripped: #[instrument(...)]]
     fn check_foreign_item(&mut self, cx: &LateContext<'tcx>, fi: &'tcx hir::ForeignItem<'tcx>) {
         match fi.kind {
             hir::ForeignItemKind::Fn(fn_sig, _idents, _generics) => check_fn_like(cx, fn_sig.decl),
@@ -225,11 +230,11 @@ impl<T> LifetimeSyntaxCategories<Vec<T>> {
 
     pub fn iter_unnamed(&self) -> impl Iterator<Item = &T> {
         let Self { hidden, elided, named: _ } = self;
-        std::iter::chain(hidden, elided)
+        core::iter::chain(hidden, elided)
     }
 }
 
-impl std::ops::Add for LifetimeSyntaxCategories<usize> {
+impl core::ops::Add for LifetimeSyntaxCategories<usize> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -243,7 +248,7 @@ impl std::ops::Add for LifetimeSyntaxCategories<usize> {
 
 fn lifetimes_use_matched_syntax(input_info: &[Info<'_>], output_info: &[Info<'_>]) -> bool {
     let (first, inputs) = input_info.split_first().unwrap();
-    std::iter::chain(inputs, output_info).all(|info| info.syntax_category == first.syntax_category)
+    core::iter::chain(inputs, output_info).all(|info| info.syntax_category == first.syntax_category)
 }
 
 fn emit_mismatch_diagnostic<'tcx>(
@@ -553,7 +558,7 @@ impl<'tcx, F> Visitor<'tcx> for LifetimeInfoCollector<'tcx, F>
 where
     F: FnMut(Info<'tcx>),
 {
-    #[instrument(skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_lifetime(&mut self, lifetime: &'tcx hir::Lifetime) {
         if let Some(syntax_category) = LifetimeSyntaxCategory::new(lifetime) {
             let info = Info { lifetime, syntax_category, ty: self.ty };
@@ -561,9 +566,9 @@ where
         }
     }
 
-    #[instrument(skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_ty(&mut self, ty: &'tcx hir::Ty<'tcx, hir::AmbigArg>) -> Self::Result {
-        let old_ty = std::mem::replace(&mut self.ty, ty.as_unambig_ty());
+        let old_ty = core::mem::replace(&mut self.ty, ty.as_unambig_ty());
         intravisit::walk_ty(self, ty);
         self.ty = old_ty;
     }

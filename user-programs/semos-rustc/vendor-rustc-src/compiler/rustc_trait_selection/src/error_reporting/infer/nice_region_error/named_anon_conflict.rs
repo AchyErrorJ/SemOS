@@ -1,6 +1,8 @@
 //! Error Reporting for Anonymous Region Lifetime Errors
 //! where one region is named and the other is anonymous.
 
+use alloc::string::ToString;
+
 use rustc_errors::Diag;
 use tracing::debug;
 

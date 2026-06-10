@@ -1,6 +1,11 @@
 //! Module that define a common trait for things that represent a crate definition,
 //! such as, a function, a trait, an enum, and any other definitions.
 
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
 use crate::ty::{GenericArgs, Span, Ty, index_impl};
 use crate::{AssocItems, Crate, Symbol, ThreadLocalIndex, with};
 

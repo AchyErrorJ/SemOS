@@ -1,8 +1,13 @@
 //! Functionality for statements, operands, places, and things that appear in them.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::ops;
 
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::interpret::GlobalAlloc;
 use super::*;
@@ -115,7 +120,7 @@ impl<'tcx> PlaceTy<'tcx> {
     /// do not carry a `Ty` for `T`.
     ///
     /// Note that the resulting type has not been normalized.
-    #[instrument(level = "debug", skip(tcx), ret)]
+    // #[instrument(level = "debug", skip(tcx), ret)]
     pub fn field_ty(
         tcx: TyCtxt<'tcx>,
         self_ty: Ty<'tcx>,

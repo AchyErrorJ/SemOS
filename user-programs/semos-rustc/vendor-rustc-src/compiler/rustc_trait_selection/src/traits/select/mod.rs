@@ -2,6 +2,11 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/traits/resolution.html#selection
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 use core::cmp;
 use core::fmt::{self, Display};
@@ -249,7 +254,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
 
     /// Attempts to satisfy the obligation. If successful, this will affect the surrounding
     /// type environment by performing unification.
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     pub fn poly_select(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -310,7 +315,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         self.candidate_from_obligation(&stack)
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn candidate_from_obligation<'o>(
         &mut self,
         stack: &TraitObligationStack<'o, 'tcx>,
@@ -559,7 +564,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     /// guide inference. If this is not desired, run it inside of a
     /// is run within an inference probe.
     /// `probe`.
-    #[instrument(skip(self, stack), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn evaluate_predicates_recursively<'o, I>(
         &mut self,
         stack: TraitObligationStackList<'o, 'tcx>,
@@ -583,12 +588,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         Ok(result)
     }
 
-    #[instrument(
-        level = "debug",
-        skip(self, previous_stack),
-        fields(previous_stack = ?previous_stack.head())
-        ret,
-    )]
+    // [stripped: #[instrument(...)]]
     fn evaluate_predicate_recursively<'o>(
         &mut self,
         previous_stack: TraitObligationStackList<'o, 'tcx>,
@@ -1008,7 +1008,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         })
     }
 
-    #[instrument(skip(self, previous_stack), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
     fn evaluate_trait_predicate_recursively<'o>(
         &mut self,
         previous_stack: TraitObligationStackList<'o, 'tcx>,
@@ -1266,12 +1266,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     /// Further evaluates `candidate` to decide whether all type parameters match and whether nested
     /// obligations are met. Returns whether `candidate` remains viable after this further
     /// scrutiny.
-    #[instrument(
-        level = "debug",
-        skip(self, stack),
-        fields(depth = stack.obligation.recursion_depth),
-        ret
-    )]
+    // [stripped: #[instrument(...)]]
     fn evaluate_candidate<'o>(
         &mut self,
         stack: &TraitObligationStack<'o, 'tcx>,
@@ -1404,7 +1399,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
 
     /// filter_impls filters candidates that have a positive impl for a negative
     /// goal and a negative impl for a positive goal
-    #[instrument(level = "debug", skip(self, candidates))]
+    // [stripped: #[instrument(...)]]
     fn filter_impls(
         &mut self,
         candidates: Vec<SelectionCandidate<'tcx>>,
@@ -1434,7 +1429,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     }
 
     /// filter_reservation_impls filter reservation impl for any goal as ambiguous
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn filter_reservation_impls(
         &mut self,
         candidate: SelectionCandidate<'tcx>,
@@ -1584,7 +1579,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, param_env, cache_fresh_trait_pred, dep_node), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn insert_candidate_cache(
         &mut self,
         param_env: ty::ParamEnv<'tcx>,
@@ -1829,7 +1824,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
     /// *fairly arbitrary* choices about which candidate is actually used.
     ///
     /// For more details, look at the implementation of this method :)
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn winnow_candidates(
         &mut self,
         has_non_region_infer: bool,
@@ -2289,7 +2284,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
     /// Bar<i32> where struct Bar<T> { x: T, y: u32 } -> [i32, u32]
     /// Zed<i32> where enum Zed { A(T), B(u32) } -> [i32, u32]
     /// ```
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn constituent_types_for_auto_trait(
         &self,
         t: Ty<'tcx>,
@@ -2499,7 +2494,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn match_impl(
         &mut self,
         impl_def_id: DefId,
@@ -2721,7 +2716,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
 
     /// Returns `Ok` if `poly_trait_ref` being true implies that the
     /// obligation is satisfied.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn match_poly_trait_ref(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -2771,7 +2766,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn closure_trait_ref_unnormalized(
         &mut self,
         self_ty: Ty<'tcx>,
@@ -2796,7 +2791,7 @@ impl<'tcx> SelectionContext<'_, 'tcx> {
     /// impl or trait. The obligations are instantiated and fully
     /// normalized. This is used when confirming an impl or default
     /// impl.
-    #[instrument(level = "debug", skip(self, cause, param_env))]
+    // [stripped: #[instrument(...)]]
     fn impl_or_trait_obligations(
         &mut self,
         cause: &ObligationCause<'tcx>,

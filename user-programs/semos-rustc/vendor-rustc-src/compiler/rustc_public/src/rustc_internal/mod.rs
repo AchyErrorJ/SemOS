@@ -3,7 +3,7 @@
 //! For that, we define APIs that will temporarily be public to 3P that exposes rustc internal APIs
 //! until rustc_public's IR is complete.
 
-use std::cell::RefCell;
+use core::cell::RefCell;
 
 use rustc_middle::ty::TyCtxt;
 use rustc_public_bridge::Tables;
@@ -92,7 +92,7 @@ where
 /// # extern crate rustc_public;
 /// #
 /// # fn main() {
-/// #   use std::ops::ControlFlow;
+/// #   use core::ops::ControlFlow;
 /// #   use rustc_public::CompilerError;
 ///     fn analyze_code() -> ControlFlow<(), ()> {
 ///         // Your code goes in here.
@@ -112,7 +112,7 @@ where
 /// # extern crate rustc_public;
 /// #
 /// # fn main() {
-/// #   use std::ops::ControlFlow;
+/// #   use core::ops::ControlFlow;
 /// #   use rustc_public::CompilerError;
 ///     fn analyze_code(extra_args: Vec<String>) -> ControlFlow<(), ()> {
 /// #       let _ = extra_args;
@@ -173,7 +173,7 @@ macro_rules! run_driver {
         use rustc_interface::interface;
         use rustc_public::rustc_internal;
         use rustc_public::CompilerError;
-        use std::ops::ControlFlow;
+        use core::ops::ControlFlow;
 
         pub struct RustcPublic<B = (), C = (), F = fn($($crate::optional!($with_tcx TyCtxt))?) -> ControlFlow<B, C>>
         where

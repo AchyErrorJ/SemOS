@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_middle::lint::LevelAndSource;
 use rustc_session::lint::builtin::NON_EXHAUSTIVE_OMITTED_PATTERNS;
 use rustc_span::ErrorGuaranteed;
@@ -11,7 +15,7 @@ use crate::rustc::{RevealedTy, RustcPatCtxt, WitnessPat};
 
 /// Traverse the patterns to collect any variants of a non_exhaustive enum that fail to be mentioned
 /// in a given column.
-#[instrument(level = "debug", skip(cx), ret)]
+    // [stripped: #[instrument(...)]]
 fn collect_nonexhaustive_missing_variants<'p, 'tcx>(
     cx: &RustcPatCtxt<'p, 'tcx>,
     column: &PatternColumn<'p, RustcPatCtxt<'p, 'tcx>>,

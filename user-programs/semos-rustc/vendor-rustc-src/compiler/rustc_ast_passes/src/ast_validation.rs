@@ -19,6 +19,9 @@
 use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::str::FromStr;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use itertools::{Either, Itertools};
 use rustc_abi::{CVariadicStatus, CanonAbi, ExternAbi, InterruptKind};

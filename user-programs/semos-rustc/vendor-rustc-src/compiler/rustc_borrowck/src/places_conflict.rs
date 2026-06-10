@@ -127,7 +127,7 @@ pub(super) fn borrow_conflicts_with_place<'tcx>(
     place_components_conflict(tcx, body, borrow_place, borrow_kind, access_place, access, bias)
 }
 
-#[instrument(level = "debug", skip(tcx, body))]
+    // [stripped: #[instrument(...)]]
 fn place_components_conflict<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,

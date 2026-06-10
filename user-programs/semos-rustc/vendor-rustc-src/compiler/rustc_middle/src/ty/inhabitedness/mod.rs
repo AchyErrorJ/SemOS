@@ -43,8 +43,13 @@
 //! This code should only compile in modules where the uninhabitedness of `Foo`
 //! is visible.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_type_ir::TyKind::*;
-use tracing::instrument;
+// instrument off
 
 use crate::query::Providers;
 use crate::ty::context::TyCtxt;
@@ -100,7 +105,7 @@ impl<'tcx> VariantDef {
 }
 
 impl<'tcx> Ty<'tcx> {
-    #[instrument(level = "debug", skip(tcx), ret)]
+    // #[instrument(level = "debug", skip(tcx), ret)]
     pub fn inhabited_predicate(self, tcx: TyCtxt<'tcx>) -> InhabitedPredicate<'tcx> {
         debug_assert!(!self.has_infer());
         match self.kind() {

@@ -62,6 +62,11 @@
 //! variant argument) that does not require visiting, as in
 //! `is_cleanup` above.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use crate::mir::*;
 use crate::ty::CanonicalUserTypeAnnotation;
 

@@ -10,6 +10,7 @@ use tracing::{debug, instrument};
 use super::DefiningUse;
 use super::region_ctxt::RegionCtxt;
 use crate::constraints::ConstraintSccIndex;
+use alloc::vec::Vec;
 
 pub(super) fn apply_member_constraints<'tcx>(
     rcx: &mut RegionCtxt<'_, 'tcx>,
@@ -55,7 +56,7 @@ pub(super) fn apply_member_constraints<'tcx>(
     }
 }
 
-#[instrument(level = "debug", skip(rcx))]
+    // [stripped: #[instrument(...)]]
 fn apply_member_constraint<'tcx>(
     rcx: &mut RegionCtxt<'_, 'tcx>,
     member: ConstraintSccIndex,

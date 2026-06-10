@@ -1,5 +1,10 @@
 //! Attributes injected into the crate root from command line using `-Z crate-attr`.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::{self as ast};
 use rustc_errors::Diag;
 use rustc_parse::parser::attr::InnerAttrPolicy;

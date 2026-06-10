@@ -11,6 +11,11 @@
 
 #![allow(rustc::usage_of_ty_tykind)]
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::fmt::Debug;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
@@ -65,7 +70,7 @@ pub use rustc_type_ir::solve::{CandidatePreferenceMode, SizedTraitKind};
 pub use rustc_type_ir::*;
 #[allow(hidden_glob_reexports, unused_imports)]
 use rustc_type_ir::{InferCtxtLike, Interner};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 pub use vtable::*;
 use {rustc_ast as ast, rustc_hir as hir};
 
@@ -820,7 +825,7 @@ impl<'tcx> ProvisionalHiddenType<'tcx> {
         }))
     }
 
-    #[instrument(level = "debug", skip(tcx), ret)]
+    // #[instrument(level = "debug", skip(tcx), ret)]
     pub fn remap_generic_params_to_declaration_params(
         self,
         opaque_type_key: OpaqueTypeKey<'tcx>,
@@ -1245,7 +1250,7 @@ impl VariantDef {
     ///
     /// If someone speeds up attribute loading to not be a performance concern, they can
     /// remove this hack and use the constructor `DefId` everywhere.
-    #[instrument(level = "debug")]
+    // #[instrument(level = "debug")]
     pub fn new(
         name: Symbol,
         variant_did: Option<DefId>,
@@ -1696,7 +1701,7 @@ impl<'tcx> TyCtxt<'tcx> {
 
     /// Returns `Some` if the impls are the same polarity and the trait either
     /// has no items or is annotated `#[marker]` and prevents item overrides.
-    #[instrument(level = "debug", skip(self), ret)]
+    // #[instrument(level = "debug", skip(self), ret)]
     pub fn impls_are_allowed_to_overlap(
         self,
         def_id1: DefId,
@@ -1761,7 +1766,7 @@ impl<'tcx> TyCtxt<'tcx> {
     }
 
     /// Returns the possibly-auto-generated MIR of a [`ty::InstanceKind`].
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     pub fn instance_mir(self, instance: ty::InstanceKind<'tcx>) -> &'tcx Body<'tcx> {
         match instance {
             ty::InstanceKind::Item(def) => {

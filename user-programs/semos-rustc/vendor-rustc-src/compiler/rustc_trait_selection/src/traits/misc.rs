@@ -1,5 +1,10 @@
 //! Miscellaneous type-system utilities that are too small to deserve their own modules.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use hir::LangItem;
 use rustc_ast::Mutability;
 use rustc_hir as hir;

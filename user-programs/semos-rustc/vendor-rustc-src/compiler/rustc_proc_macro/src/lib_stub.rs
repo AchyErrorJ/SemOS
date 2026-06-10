@@ -132,4 +132,38 @@ pub mod bridge {
     //! Empty stub — upstream contains the proc-macro runtime bridge.
     //! Per §1.5 we drop proc-macro expansion in v1; this module exists
     //! only so `use proc_macro::bridge::*;` resolves.
+
+    pub mod client {
+        //! Stub for `proc_macro::bridge::client::ProcMacro`. The rmeta
+        //! decoder's `load_proc_macro` matches on this enum — the field-
+        //! cfg-gated downstream code never reads `client` on SemOS, so an
+        //! empty unit variant payload is fine.
+        use alloc::string::String;
+        use alloc::vec::Vec;
+
+        #[derive(Copy, Clone, Debug)]
+        pub struct Client<I, O>(core::marker::PhantomData<(fn(I) -> O,)>);
+
+        pub enum ProcMacro {
+            CustomDerive {
+                trait_name: &'static str,
+                attributes: &'static [&'static str],
+                client: Client<crate::TokenStream, crate::TokenStream>,
+            },
+            Attr {
+                name: &'static str,
+                client: Client<(crate::TokenStream, crate::TokenStream), crate::TokenStream>,
+            },
+            Bang {
+                name: &'static str,
+                client: Client<crate::TokenStream, crate::TokenStream>,
+            },
+        }
+
+        // Silence unused-imports inside the stub module.
+        #[allow(dead_code)]
+        fn _unused() {
+            let _: Vec<String> = Vec::new();
+        }
+    }
 }

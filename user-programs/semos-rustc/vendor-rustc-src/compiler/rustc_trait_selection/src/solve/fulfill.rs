@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::ControlFlow;
@@ -154,7 +159,7 @@ impl<'tcx, E> TraitEngine<'tcx, E> for FulfillmentCtxt<'tcx, E>
 where
     E: FromSolverError<'tcx, NextSolverError<'tcx>>,
 {
-    #[instrument(level = "trace", skip(self, infcx))]
+    // [stripped: #[instrument(...)]]
     fn register_predicate_obligation(
         &mut self,
         infcx: &InferCtxt<'tcx>,

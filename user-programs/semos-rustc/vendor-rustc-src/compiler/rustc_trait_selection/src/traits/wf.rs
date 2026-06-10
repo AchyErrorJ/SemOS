@@ -3,6 +3,11 @@
 //! well formed is performed elsewhere (e.g. during type checking or item well formedness
 //! checking).
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use rustc_hir as hir;
@@ -151,7 +156,7 @@ pub fn trait_obligations<'tcx>(
 /// For example, if there is a trait `Set` defined like
 /// `trait Set<K: Eq>`, then the trait bound `Foo: Set<Bar>` is WF
 /// if `Bar: Eq`.
-#[instrument(skip(infcx), ret)]
+    // [stripped: #[instrument(...)]]
 pub fn clause_obligations<'tcx>(
     infcx: &InferCtxt<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -556,13 +561,13 @@ impl<'a, 'tcx> WfPredicates<'a, 'tcx> {
     }
 
     /// Pushes all the predicates needed to validate that `term` is WF into `out`.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn add_wf_preds_for_term(&mut self, term: Term<'tcx>) {
         term.visit_with(self);
         debug!(?self.out);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn nominal_obligations(
         &mut self,
         def_id: DefId,

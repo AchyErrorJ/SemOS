@@ -209,6 +209,8 @@ mod autodiff;
 
 use core::cell::OnceCell;
 use core::ops::ControlFlow;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::sync::{MTLock, par_for_each_in};
@@ -383,7 +385,7 @@ fn collect_items_root<'tcx>(
 ///
 /// `mode` determined whether we are scanning for [used items][CollectionMode::UsedItems]
 /// or [mentioned items][CollectionMode::MentionedItems].
-#[instrument(skip(tcx, state, recursion_depths, recursion_limit), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn collect_items_rec<'tcx>(
     tcx: TyCtxt<'tcx>,
     starting_item: Spanned<MonoItem<'tcx>>,
@@ -811,7 +813,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirUsedCollector<'a, 'tcx> {
 
     /// This does not walk the MIR of the constant as that is not needed for codegen, all we need is
     /// to ensure that the constant evaluates successfully and walk the result.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn visit_const_operand(&mut self, constant: &mir::ConstOperand<'tcx>, _location: Location) {
         // No `super_constant` as we don't care about `visit_ty`/`visit_ty_const`.
         let Some(val) = self.eval_constant(constant) else { return };
@@ -1191,7 +1193,7 @@ fn find_tails_for_unsizing<'tcx>(
     }
 }
 
-#[instrument(skip(tcx), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
 fn create_fn_mono_item<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
@@ -1303,7 +1305,7 @@ fn collect_alloc<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId, output: &mut MonoIt
 /// Scans the MIR in order to find function calls, closures, and drop-glue.
 ///
 /// Anything that's found is added to `output`. Furthermore the "mentioned items" of the MIR are returned.
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn collect_items_of_instance<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: Instance<'tcx>,
@@ -1385,7 +1387,7 @@ fn items_of_instance<'tcx>(
 }
 
 /// `item` must be already monomorphized.
-#[instrument(skip(tcx, span, output), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn visit_mentioned_item<'tcx>(
     tcx: TyCtxt<'tcx>,
     item: &MentionedItem<'tcx>,
@@ -1436,7 +1438,7 @@ fn visit_mentioned_item<'tcx>(
     }
 }
 
-#[instrument(skip(tcx, output), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn collect_const_value<'tcx>(
     tcx: TyCtxt<'tcx>,
     value: mir::ConstValue,
@@ -1458,7 +1460,7 @@ fn collect_const_value<'tcx>(
 
 // Find all non-generic items by walking the HIR. These items serve as roots to
 // start monomorphizing from.
-#[instrument(skip(tcx, mode), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn collect_roots(tcx: TyCtxt<'_>, mode: MonoItemCollectionStrategy) -> Vec<MonoItem<'_>> {
     debug!("collecting roots");
     let mut roots = MonoItems::new();
@@ -1657,7 +1659,7 @@ impl<'v> RootCollector<'_, 'v> {
 
     /// If `def_id` represents a root, pushes it onto the list of
     /// outputs. (Note that all roots must be monomorphic.)
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn push_if_root(&mut self, def_id: LocalDefId) {
         if self.is_root(def_id) {
             debug!("found root");
@@ -1713,7 +1715,7 @@ impl<'v> RootCollector<'_, 'v> {
     }
 }
 
-#[instrument(level = "debug", skip(tcx, output))]
+    // [stripped: #[instrument(...)]]
 fn create_mono_items_for_default_impls<'tcx>(
     tcx: TyCtxt<'tcx>,
     item: hir::ItemId,
@@ -1788,7 +1790,7 @@ fn create_mono_items_for_default_impls<'tcx>(
 // Top-level entry point, tying it all together
 //=-----------------------------------------------------------------------------
 
-#[instrument(skip(tcx, strategy), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn collect_crate_mono_items<'tcx>(
     tcx: TyCtxt<'tcx>,
     strategy: MonoItemCollectionStrategy,

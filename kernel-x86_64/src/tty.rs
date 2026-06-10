@@ -359,6 +359,48 @@ impl LineState {
         self.cursor = len;
     }
 
+    /// Erase whatever pend chars are currently visible on screen, then
+    /// load the next history entry and echo it. Called from the up/down
+    /// arrow handlers in `input_push_locked`. Without this the buffer
+    /// updates silently and the visible line doesn't match what would
+    /// be committed on Enter — confusing for the user.
+    ///
+    /// Repaint strategy (no prompt-knowledge required): move the
+    /// physical cursor to end-of-line via ANSI `\x1b[C`, BS+space+BS
+    /// each old char back to the prompt boundary, then print the new
+    /// pend chars. Works for grow/shrink without leaving residue.
+    fn redraw_on_history_change(&mut self) {
+        // Move cursor to end of currently-displayed line.
+        let right = self.pend_n.saturating_sub(self.cursor);
+        for _ in 0..right {
+            crate::serial::Serial::put_char('\x1b');
+            crate::serial::Serial::put_char('[');
+            crate::serial::Serial::put_char('C');
+            crate::framebuffer::write_str("\x1b[C");
+        }
+        // Erase every visible pend char (right-to-left).
+        for _ in 0..self.pend_n {
+            crate::serial::Serial::put_char('\u{8}');
+            crate::serial::Serial::put_char(' ');
+            crate::serial::Serial::put_char('\u{8}');
+            crate::framebuffer::write_str("\u{8} \u{8}");
+        }
+        // Swap in the new history entry.
+        self.load_from_history();
+        // Echo the new pend (printable ASCII only — history can't
+        // contain control chars by construction).
+        for i in 0..self.pend_n {
+            let c = self.pend[i];
+            if matches!(c, 0x20..=0x7E) {
+                crate::serial::Serial::put_char(c as char);
+                let one = [c];
+                if let Ok(slice) = core::str::from_utf8(&one) {
+                    crate::framebuffer::write_str(slice);
+                }
+            }
+        }
+    }
+
     /// Store the just-committed line into history (drops the oldest when full).
     fn store_history(&mut self) {
         if self.pend_n == 0 {
@@ -427,14 +469,14 @@ fn input_push_locked(b: u8) {
                     // Up — older history.
                     if s.hist_nav > 0 {
                         s.hist_nav -= 1;
-                        s.load_from_history();
+                        s.redraw_on_history_change();
                     }
                 }
                 b'B' => {
                     // Down — newer history (hist_count == fresh empty line).
                     if s.hist_nav < s.hist_count {
                         s.hist_nav += 1;
-                        s.load_from_history();
+                        s.redraw_on_history_change();
                     }
                 }
                 b'C' => {

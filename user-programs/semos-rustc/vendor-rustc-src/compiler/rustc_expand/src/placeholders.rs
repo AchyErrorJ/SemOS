@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::mut_visit::*;
 use rustc_ast::token::Delimiter;
 use rustc_ast::visit::AssocCtxt;

@@ -10,6 +10,7 @@ use rustc_middle::ty::TyCtxt;
 
 use super::{OutlivesConstraint, RegionInferenceContext};
 use crate::type_check::Locations;
+use alloc::vec::Vec;
 
 // Room for "'_#NNNNr" before things get misaligned.
 // Easy enough to fix if this ever doesn't seem like

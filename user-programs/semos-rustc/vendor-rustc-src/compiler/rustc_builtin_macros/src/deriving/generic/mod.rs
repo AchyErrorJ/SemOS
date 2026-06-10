@@ -174,6 +174,11 @@
 //! )
 //! ```
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::ops::Not;
 use core::iter;

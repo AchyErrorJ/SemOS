@@ -48,12 +48,58 @@ impl Callbacks for SemosCallbacks {
     }
 }
 
+/// Phase 5b iter 6: shell argv came from semos_std::env::args(). We
+/// intercept `--version`/`-V` and `--help`/`-h` BEFORE calling into
+/// rustc_driver_impl because the upstream diagnostic init
+/// (rustc_session::session::mk_emitter → AnnotateSnippetEmitter +
+/// Translator + stderr_destination) still pulls cfg-gated host
+/// surface that silently aborts before any rustc-side println fires.
+/// Intercepting here keeps `semos-rustc --version` working end-to-end
+/// (proves binary load + semos_std::io::stdout) while we grind through
+/// the rest of the rustc diag stack in later iters.
+fn intercept_short_circuit(args: &[String]) -> bool {
+    for a in args {
+        match a.as_str() {
+            "--version" | "-V" => {
+                println!("rustc 1.86.0-semos (M27 Phase 5b iter 6)");
+                println!("backend: cranelift (statically linked)");
+                return true;
+            }
+            "--help" | "-h" => {
+                println!("semos-rustc — SemOS-native Rust compiler (M27 port)");
+                println!("");
+                println!("USAGE: semos-rustc [OPTIONS] <INPUT>");
+                println!("");
+                println!("OPTIONS:");
+                println!("  -V, --version    Print version info and exit");
+                println!("  -h, --help       Print this help");
+                println!("  -o <PATH>        Write output executable to <PATH>");
+                println!("");
+                println!("EXAMPLE:");
+                println!("  semos-rustc /hello.rs -o /tmp/hello.elf");
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 semos_std::main!(fn main() {
-    println!("semos-rustc Phase 5b iter 2 — cg_clif statically wired as backend");
+    // Skip argv[0] like rustc_driver_impl::run_compiler does internally.
+    let argv: Vec<String> = semos_std::env::args().into_iter().skip(1).collect();
 
-    let args: Vec<String> = vec![String::from("rustc"), String::from("--version")];
+    if intercept_short_circuit(&argv) {
+        return;
+    }
 
-    println!("invoking rustc_driver_impl::run_compiler({:?})", args);
+    println!("semos-rustc Phase 5b iter 6 — invoking rustc_driver_impl::run_compiler");
+    println!("argv: {:?}", argv);
+
+    // Prepend the binary name back since run_compiler strips argv[0].
+    let mut args: Vec<String> = vec![String::from("semos-rustc")];
+    args.extend(argv);
+
     let mut cb = SemosCallbacks;
     rustc_driver_impl::run_compiler(&args, &mut cb);
     println!("run_compiler returned cleanly");

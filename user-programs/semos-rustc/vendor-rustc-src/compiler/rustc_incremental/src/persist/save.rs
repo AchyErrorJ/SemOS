@@ -1,5 +1,5 @@
-use std::fs;
-use std::sync::Arc;
+use semos_std::fs;
+use alloc::sync::Arc;
 
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::sync::join;

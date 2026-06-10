@@ -50,7 +50,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// This is *not* expected to be used anywhere except for an implementation of
     /// `TypeRelation`. Do not use this, and instead please use `At::eq`, for all
     /// other usecases (i.e. setting the value of a type var).
-    #[instrument(level = "debug", skip(self, relation))]
+    // [stripped: #[instrument(...)]]
     pub fn instantiate_ty_var<R: PredicateEmittingRelation<InferCtxt<'tcx>>>(
         &self,
         relation: &mut R,
@@ -194,7 +194,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// As `3 + 4` contains `N` in its args, this must not succeed.
     ///
     /// See `tests/ui/const-generics/occurs-check/` for more examples where this is relevant.
-    #[instrument(level = "debug", skip(self, relation))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn instantiate_const_var<R: PredicateEmittingRelation<InferCtxt<'tcx>>>(
         &self,
         relation: &mut R,
@@ -466,7 +466,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
         if args == a_args { Ok(a_ty) } else { Ok(mk(args)) }
     }
 
-    #[instrument(level = "debug", skip(self, variance, b), ret)]
+    // [stripped: #[instrument(...)]]
     fn relate_with_variance<T: Relate<TyCtxt<'tcx>>>(
         &mut self,
         variance: ty::Variance,
@@ -484,7 +484,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
         r
     }
 
-    #[instrument(level = "debug", skip(self, t2), ret)]
+    // [stripped: #[instrument(...)]]
     fn tys(&mut self, t: Ty<'tcx>, t2: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
         assert_eq!(t, t2); // we are misusing TypeRelation here; both LHS and RHS ought to be ==
 
@@ -596,7 +596,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
         Ok(g)
     }
 
-    #[instrument(level = "debug", skip(self, r2), ret)]
+    // [stripped: #[instrument(...)]]
     fn regions(
         &mut self,
         r: ty::Region<'tcx>,
@@ -641,7 +641,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
             .next_region_var_in_universe(RegionVariableOrigin::Misc(self.span), self.for_universe))
     }
 
-    #[instrument(level = "debug", skip(self, c2), ret)]
+    // [stripped: #[instrument(...)]]
     fn consts(
         &mut self,
         c: ty::Const<'tcx>,
@@ -721,7 +721,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for Generalizer<'_, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn binders<T>(
         &mut self,
         a: ty::Binder<'tcx, T>,

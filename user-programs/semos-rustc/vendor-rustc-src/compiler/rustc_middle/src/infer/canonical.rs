@@ -21,6 +21,11 @@
 //!
 //! [c]: https://rust-lang.github.io/chalk/book/canonical_queries/canonicalization.html
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_data_structures::fx::StdEntry as Entry;
 
 use rustc_data_structures::fx::FxHashMap;

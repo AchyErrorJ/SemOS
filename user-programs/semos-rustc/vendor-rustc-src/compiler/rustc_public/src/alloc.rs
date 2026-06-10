@@ -4,6 +4,11 @@
 //! All operations requiring rustc queries must be delegated
 //! to `rustc_public_bridge::alloc` to maintain stability guarantees.
 
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
 use rustc_abi::Align;
 use rustc_middle::mir::ConstValue;
 use rustc_middle::mir::interpret::AllocRange;

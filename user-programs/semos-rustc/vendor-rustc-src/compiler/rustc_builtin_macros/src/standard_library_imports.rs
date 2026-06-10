@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::{self as ast, attr};
 use rustc_expand::base::{ExtCtxt, ResolverExpand};
 use rustc_expand::expand::ExpansionConfig;

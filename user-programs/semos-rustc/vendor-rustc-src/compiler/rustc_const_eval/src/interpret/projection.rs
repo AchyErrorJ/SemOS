@@ -7,6 +7,11 @@
 //! but we still need to do bounds checking and adjust the layout. To not duplicate that with MPlaceTy, we actually
 //! implement the logic on OpTy, and MPlaceTy calls that.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 use core::ops::Range;
 
@@ -384,7 +389,7 @@ where
     }
 
     /// Applying a general projection
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn project<P>(&self, base: &P, proj_elem: mir::PlaceElem<'tcx>) -> InterpResult<'tcx, P>
     where
         P: Projectable<'tcx, M::Provenance> + From<MPlaceTy<'tcx, M::Provenance>> + core::fmt::Debug,

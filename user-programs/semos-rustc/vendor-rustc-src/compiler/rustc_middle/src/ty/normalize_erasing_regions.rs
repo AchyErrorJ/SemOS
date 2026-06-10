@@ -7,8 +7,13 @@
 //! `normalize_generic_arg_after_erasing_regions` query for each type
 //! or constant found within. (This underlying query is what is cached.)
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_macros::{HashStable, TyDecodable, TyEncodable};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::traits::query::NoSolution;
 use crate::ty::{
@@ -37,7 +42,7 @@ impl<'tcx> TyCtxt<'tcx> {
     ///
     /// This should only be used outside of type inference. For example,
     /// it assumes that normalization will succeed.
-    #[tracing::instrument(level = "debug", skip(self, typing_env), ret)]
+    // #[tracing::instrument(level = "debug", skip(self, typing_env), ret)]
     pub fn normalize_erasing_regions<T>(self, typing_env: ty::TypingEnv<'tcx>, value: T) -> T
     where
         T: TypeFoldable<TyCtxt<'tcx>>,
@@ -105,7 +110,7 @@ impl<'tcx> TyCtxt<'tcx> {
     // FIXME(@lcnr): This method should not be necessary, we now normalize
     // inside of binders. We should be able to only use
     // `tcx.instantiate_bound_regions_with_erased`.
-    #[tracing::instrument(level = "debug", skip(self, typing_env))]
+    // #[tracing::instrument(level = "debug", skip(self, typing_env))]
     pub fn normalize_erasing_late_bound_regions<T>(
         self,
         typing_env: ty::TypingEnv<'tcx>,
@@ -123,7 +128,7 @@ impl<'tcx> TyCtxt<'tcx> {
     /// types.
     /// Panics if normalization fails. In case normalization might fail
     /// use `try_instantiate_and_normalize_erasing_regions` instead.
-    #[instrument(level = "debug", skip(self))]
+    // #[instrument(level = "debug", skip(self))]
     pub fn instantiate_and_normalize_erasing_regions<T>(
         self,
         param_args: GenericArgsRef<'tcx>,
@@ -141,7 +146,7 @@ impl<'tcx> TyCtxt<'tcx> {
     /// in-scope instantiations and then trying to normalize any associated
     /// types. Contrary to `instantiate_and_normalize_erasing_regions` this does
     /// not assume that normalization succeeds.
-    #[instrument(level = "debug", skip(self))]
+    // #[instrument(level = "debug", skip(self))]
     pub fn try_instantiate_and_normalize_erasing_regions<T>(
         self,
         param_args: GenericArgsRef<'tcx>,
@@ -202,7 +207,7 @@ impl<'tcx> TryNormalizeAfterErasingRegionsFolder<'tcx> {
         TryNormalizeAfterErasingRegionsFolder { tcx, typing_env }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     fn try_normalize_generic_arg_after_erasing_regions(
         &self,
         arg: ty::GenericArg<'tcx>,

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 #[cfg(not(target_os = "none"))]
 use std::panic::AssertUnwindSafe;
@@ -36,6 +41,11 @@ mod mpsc_stub {
     }
     impl<T> Receiver<T> {
         pub fn recv(&self) -> Result<T, ()> {
+            semos_std::process::abort_with_code(101)
+        }
+        // std::sync::mpsc::TryRecvError shape; we don't bother with the
+        // variants — any call into the stub is fatal anyway.
+        pub fn try_recv(&self) -> Result<T, ()> {
             semos_std::process::abort_with_code(101)
         }
     }
@@ -2188,9 +2198,8 @@ impl Emitter for SharedEmitter {
         );
     }
 
-    fn source_map(&self) -> Option<&SourceMap> {
-        None
-    }
+    // M27 §1.8: Emitter trait no longer has `source_map` after our
+    // fluent-removal patch in rustc_errors. Drop the override entirely.
 
     fn translator(&self) -> &Translator {
         panic!("shared emitter attempted to translate a diagnostic");

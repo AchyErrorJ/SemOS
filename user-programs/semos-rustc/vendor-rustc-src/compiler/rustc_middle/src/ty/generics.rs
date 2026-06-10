@@ -1,9 +1,14 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_ast as ast;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_macros::{HashStable, TyDecodable, TyEncodable};
 use rustc_span::{Span, Symbol, kw};
-use tracing::instrument;
+// instrument off
 
 use super::{Clause, InstantiatedPredicates, ParamConst, ParamTy, Ty, TyCtxt};
 use crate::ty;
@@ -384,7 +389,7 @@ impl<'tcx> GenericPredicates<'tcx> {
         EarlyBinder::bind(self.predicates).iter_identity_copied()
     }
 
-    #[instrument(level = "debug", skip(self, tcx))]
+    // #[instrument(level = "debug", skip(self, tcx))]
     fn instantiate_into(
         self,
         tcx: TyCtxt<'tcx>,
@@ -456,7 +461,7 @@ impl<'tcx> ConstConditions<'tcx> {
         EarlyBinder::bind(self.predicates).iter_identity_copied()
     }
 
-    #[instrument(level = "debug", skip(self, tcx))]
+    // #[instrument(level = "debug", skip(self, tcx))]
     fn instantiate_into(
         self,
         tcx: TyCtxt<'tcx>,

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_infer::infer::InferOk;
 use rustc_infer::infer::resolve::OpportunisticRegionResolver;
 use rustc_infer::traits::query::type_op::ImpliedOutlivesBounds;
@@ -30,7 +35,7 @@ use crate::traits::ObligationCause;
 ///   Note that this may cause outlives obligations to be injected
 ///   into the inference context with this body-id.
 /// - `ty`, the type that we are supposed to assume is WF.
-#[instrument(level = "debug", skip(infcx, param_env, body_id), ret)]
+    // [stripped: #[instrument(...)]]
 fn implied_outlives_bounds<'a, 'tcx>(
     infcx: &'a InferCtxt<'tcx>,
     param_env: ty::ParamEnv<'tcx>,

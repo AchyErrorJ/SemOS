@@ -1,5 +1,10 @@
 //! Conditional compilation stripping.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use rustc_ast::token::{Delimiter, Token, TokenKind};
@@ -419,7 +424,7 @@ impl<'a> StripUnconfigured<'a> {
     }
 
     /// If attributes are not allowed on expressions, emit an error for `attr`
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn maybe_emit_expr_attr_err(&self, attr: &Attribute) {
         if self.features.is_some_and(|features| !features.stmt_expr_attributes())
             && !attr.span.allows_unstable(sym::stmt_expr_attributes)
@@ -443,7 +448,7 @@ impl<'a> StripUnconfigured<'a> {
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub fn configure_expr(&self, expr: &mut ast::Expr, method_receiver: bool) {
         if !method_receiver {
             for attr in expr.attrs.iter() {

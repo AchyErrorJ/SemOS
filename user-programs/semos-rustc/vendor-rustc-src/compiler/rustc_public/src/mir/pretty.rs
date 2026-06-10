@@ -1,7 +1,18 @@
 //! Implement methods to pretty print rustc_public's IR body.
-use std::fmt::Debug;
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+use core::fmt::Debug;
+#[cfg(not(target_os = "none"))]
 use std::io::Write;
+#[cfg(target_os = "none")]
+use semos_std::io::Write;
+#[cfg(not(target_os = "none"))]
 use std::{fmt, io, iter};
+#[cfg(target_os = "none")]
+use {core::fmt, semos_std::io, core::iter};
 
 use fmt::{Display, Formatter};
 

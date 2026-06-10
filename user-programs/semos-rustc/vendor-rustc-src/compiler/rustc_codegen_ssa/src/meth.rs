@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_middle::bug;
 use rustc_middle::ty::{self, GenericArgKind, Ty, TyCtxt};
 use rustc_session::config::Lto;
@@ -99,7 +104,7 @@ fn dyn_trait_in_self<'tcx>(
 /// The `trait_ref` encodes the erased self type. Hence if we are
 /// making an object `Foo<dyn Trait>` from a value of type `Foo<T>`, then
 /// `trait_ref` would map `T: Trait`.
-#[instrument(level = "debug", skip(cx))]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn get_vtable<'tcx, Cx: CodegenMethods<'tcx>>(
     cx: &Cx,
     ty: Ty<'tcx>,

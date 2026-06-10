@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use rustc_data_structures::obligation_forest::{
@@ -344,7 +349,7 @@ impl<'a, 'tcx> ObligationProcessor for FulfillProcessor<'a, 'tcx> {
     /// This is called much less often than `needs_process_obligation`, so we
     /// never inline it.
     #[inline(never)]
-    #[instrument(level = "debug", skip(self, pending_obligation))]
+    // [stripped: #[instrument(...)]]
     fn process_obligation(
         &mut self,
         pending_obligation: &mut PendingPredicateObligation<'tcx>,
@@ -829,7 +834,7 @@ impl<'a, 'tcx> ObligationProcessor for FulfillProcessor<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> FulfillProcessor<'a, 'tcx> {
-    #[instrument(level = "debug", skip(self, obligation, stalled_on))]
+    // [stripped: #[instrument(...)]]
     fn process_trait_obligation(
         &mut self,
         obligation: &PredicateObligation<'tcx>,

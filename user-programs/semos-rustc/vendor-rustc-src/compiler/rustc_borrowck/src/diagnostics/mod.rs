@@ -55,6 +55,10 @@ mod move_errors;
 mod mutability_errors;
 mod opaque_types;
 mod region_errors;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::borrow::ToOwned;
 
 pub(crate) use bound_region_errors::{ToUniverseInfo, UniverseInfo};
 pub(crate) use move_errors::{IllegalMoveOriginKind, MoveError};

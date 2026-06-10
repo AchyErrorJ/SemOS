@@ -2,6 +2,11 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/mir/index.html
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::borrow::Cow;
 use core::fmt::{self, Debug, Formatter};
 use core::iter;
@@ -9,6 +14,8 @@ use core::ops::{Index, IndexMut};
 
 pub use basic_blocks::{BasicBlocks, SwitchTargetValue};
 use either::Either;
+// Stage F11: polonius_engine is host-only (pulls datafrog + std).
+#[cfg(not(target_os = "none"))]
 use polonius_engine::Atom;
 use rustc_abi::{FieldIdx, VariantIdx};
 pub use rustc_ast::{Mutability, Pinnedness};
@@ -858,6 +865,8 @@ rustc_index::newtype_index! {
     }
 }
 
+// Stage F11: polonius_engine is host-only — gate the Atom impl too.
+#[cfg(not(target_os = "none"))]
 impl Atom for Local {
     fn index(self) -> usize {
         Idx::index(self)

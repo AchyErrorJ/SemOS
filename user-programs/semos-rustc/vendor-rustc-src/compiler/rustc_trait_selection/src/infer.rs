@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use rustc_hir::def_id::DefId;
@@ -84,7 +89,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// [`evaluate_obligation`]: crate::traits::query::evaluate_obligation::InferCtxtExt::evaluate_obligation
     /// [`predicate_must_hold_modulo_regions`]: crate::traits::query::evaluate_obligation::InferCtxtExt::predicate_must_hold_modulo_regions
     /// [`Binder`]: ty::Binder
-    #[instrument(level = "debug", skip(self, params), ret)]
+    // [stripped: #[instrument(...)]]
     fn type_implements_trait(
         &self,
         trait_def_id: DefId,

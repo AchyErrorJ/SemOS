@@ -4,7 +4,12 @@
 //! any sort of conversion and usage of internal rustc code. So we
 //! restrict the usage of internal items to be inside this module.
 
-use std::marker::PointeeSized;
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+use core::marker::PointeeSized;
 
 use rustc_hir::def::DefKind;
 use rustc_middle::ty::{List, Ty, TyCtxt};

@@ -1,3 +1,6 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
 use rustc_macros::{Diagnostic, LintDiagnostic};
 use rustc_middle::ty::{Instance, Ty};
 use rustc_span::{Span, Symbol};

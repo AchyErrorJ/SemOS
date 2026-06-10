@@ -61,7 +61,7 @@ pub fn type_op_ascribe_user_type_with_span<'tcx>(
     Ok(())
 }
 
-#[instrument(level = "debug", skip(ocx, param_env, span))]
+    // [stripped: #[instrument(...)]]
 fn relate_mir_and_user_ty<'tcx>(
     ocx: &ObligationCtxt<'_, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -83,7 +83,7 @@ fn relate_mir_and_user_ty<'tcx>(
     Ok(())
 }
 
-#[instrument(level = "debug", skip(ocx, param_env, span))]
+    // [stripped: #[instrument(...)]]
 fn relate_mir_and_user_args<'tcx>(
     ocx: &ObligationCtxt<'_, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,

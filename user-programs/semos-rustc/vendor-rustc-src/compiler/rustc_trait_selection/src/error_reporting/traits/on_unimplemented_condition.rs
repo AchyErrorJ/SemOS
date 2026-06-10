@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::{MetaItemInner, MetaItemKind, MetaItemLit};
 use rustc_parse_format::{ParseMode, Parser, Piece, Position};
 use rustc_span::{DesugaringKind, Ident, Span, Symbol, kw, sym};

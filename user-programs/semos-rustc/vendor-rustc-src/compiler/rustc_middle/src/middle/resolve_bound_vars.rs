@@ -1,5 +1,10 @@
 //! Name resolution for lifetimes and late-bound type and const variables: type declarations.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_data_structures::sorted_map::SortedMap;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::ItemLocalId;

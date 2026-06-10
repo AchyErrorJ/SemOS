@@ -17,6 +17,7 @@ use crate::universal_regions::UniversalRegions;
 
 mod local_use_map;
 mod trace;
+use alloc::vec::Vec;
 
 /// Combines liveness analysis with initialization analysis to
 /// determine which variables are live at which points, both due to

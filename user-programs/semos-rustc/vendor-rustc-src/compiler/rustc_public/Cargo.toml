@@ -17,6 +17,9 @@ serde = { version = "1.0.125", default-features = false, features = ["derive", "
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
 
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
+
 [dev-dependencies]
 # tidy-alphabetical-start
 serde_json = { version = "1.0.142", default-features = false, features = ["alloc"] }

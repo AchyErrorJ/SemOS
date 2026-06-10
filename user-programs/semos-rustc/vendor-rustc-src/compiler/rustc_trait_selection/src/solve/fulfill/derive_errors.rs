@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use rustc_hir::LangItem;
@@ -156,7 +161,7 @@ pub(super) fn fulfillment_error_for_overflow<'tcx>(
     }
 }
 
-#[instrument(level = "debug", skip(infcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn find_best_leaf_obligation<'tcx>(
     infcx: &InferCtxt<'tcx>,
     obligation: &PredicateObligation<'tcx>,
@@ -408,7 +413,7 @@ impl<'tcx> ProofTreeVisitor<'tcx> for BestObligation<'tcx> {
         self.obligation.cause.span
     }
 
-    #[instrument(level = "trace", skip(self, goal), fields(goal = ?goal.goal()))]
+    // [stripped: #[instrument(...)]]
     fn visit_goal(&mut self, goal: &inspect::InspectGoal<'_, 'tcx>) -> Self::Result {
         let tcx = goal.infcx().tcx;
         // Skip goals that aren't the *reason* for our goal's failure.

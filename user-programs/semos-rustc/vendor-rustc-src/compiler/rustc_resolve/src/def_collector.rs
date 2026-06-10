@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::mem;
 
 use rustc_ast::visit::FnKind;
@@ -100,7 +105,7 @@ impl<'a, 'ra, 'tcx> DefCollector<'a, 'ra, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_macro_invoc(&mut self, id: NodeId) {
         debug!(?self.invocation_parent);
 
@@ -389,7 +394,7 @@ impl<'a, 'ra, 'tcx> visit::Visitor<'a> for DefCollector<'a, 'ra, 'tcx> {
         };
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_expr(&mut self, expr: &'a Expr) {
         debug!(?self.invocation_parent);
 

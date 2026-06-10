@@ -1,3 +1,6 @@
+use alloc::string::ToString;
+use alloc::vec;
+
 use rustc_ast::LitKind;
 use rustc_errors::Applicability;
 use rustc_hir::def::{DefKind, Res};

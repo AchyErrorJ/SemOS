@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::fmt;
 
 #[cfg(not(target_os = "none"))]

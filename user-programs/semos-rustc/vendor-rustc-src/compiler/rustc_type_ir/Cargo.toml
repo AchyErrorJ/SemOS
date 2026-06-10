@@ -23,14 +23,11 @@ rustc_macros = { path = "../rustc_macros", optional = true }
 rustc_serialize = { path = "../rustc_serialize", optional = true }
 rustc_span = { path = "../rustc_span", optional = true }
 rustc_type_ir_macros = { path = "../rustc_type_ir_macros" }
+ena = "0.14.4"
 smallvec = { version = "1.8.1", default-features = false, features = ["const_generics"] }
 thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
-
-# Phase 5b Stage E iter 6: ena host-only — see comment above the ena line.
-[target.'cfg(not(target_os = "none"))'.dependencies]
-ena = "0.14.3"
 
 # Stage F4: ir_print.rs into_diag_arg signatures reference
 # `semos_std::path::PathBuf`.

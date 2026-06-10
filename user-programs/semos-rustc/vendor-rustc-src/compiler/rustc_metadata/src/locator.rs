@@ -218,6 +218,11 @@
 // but require `semos_std::path::Path::display()` and `PathBuf::display()` to
 // be added before the SemOS target build resolves. Phase 5 integration will
 // add the one-method `display()` shim (returns `impl Display`).
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use core::ops::Deref;
 use core::{cmp, fmt};
@@ -779,7 +784,11 @@ impl<'a> CrateLocator<'a> {
             // e.g. symbolic links. If we canonicalize too early, we resolve
             // the symlink, the file type is lost and we might treat rlibs and
             // rmetas as dylibs.
-            let Some(file) = loc_orig.file_name().and_then(|s| s.to_str()) else {
+            #[cfg(not(target_os = "none"))]
+            let file_opt: Option<&str> = loc_orig.file_name().and_then(|s| s.to_str());
+            #[cfg(target_os = "none")]
+            let file_opt: Option<&str> = loc_orig.file_name();
+            let Some(file) = file_opt else {
                 return Err(CrateError::ExternLocationNotFile(self.crate_name, loc_orig.clone()));
             };
             if file.starts_with("lib") {
@@ -1006,7 +1015,10 @@ pub fn list_file_metadata(
 }
 
 fn get_flavor_from_path(path: &Path) -> CrateFlavor {
+    #[cfg(not(target_os = "none"))]
     let filename = path.file_name().unwrap().to_str().unwrap();
+    #[cfg(target_os = "none")]
+    let filename = path.file_name().unwrap();
 
     if filename.ends_with(".rlib") {
         CrateFlavor::Rlib

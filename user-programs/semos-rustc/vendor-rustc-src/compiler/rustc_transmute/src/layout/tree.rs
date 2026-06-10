@@ -1,4 +1,5 @@
-use std::ops::{ControlFlow, RangeInclusive};
+use alloc::vec::Vec;
+use core::ops::{ControlFlow, RangeInclusive};
 
 use super::{Byte, Def, Reference, Region, Type};
 
@@ -326,7 +327,7 @@ pub(crate) mod rustc {
                     let inner_layout = layout_of(cx, *inner_ty)?;
                     assert_eq!(*stride, inner_layout.size);
                     let elt = Tree::from_ty(*inner_ty, cx)?;
-                    Ok(std::iter::repeat_n(elt, *count as usize)
+                    Ok(core::iter::repeat_n(elt, *count as usize)
                         .fold(Tree::unit(), |tree, elt| tree.then(elt)))
                 }
 

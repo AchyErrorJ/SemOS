@@ -2,7 +2,10 @@
 //! generate the actual methods on tcx which find and execute the provider,
 //! manage the caches, and so forth.
 
-use std::num::NonZero;
+use core::num::NonZero;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use rustc_data_structures::jobserver::Proxy;
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
@@ -47,7 +50,7 @@ impl<'tcx> QueryCtxt<'tcx> {
     }
 }
 
-impl<'tcx> std::ops::Deref for QueryCtxt<'tcx> {
+impl<'tcx> core::ops::Deref for QueryCtxt<'tcx> {
     type Target = TyCtxt<'tcx>;
 
     #[inline]
@@ -75,7 +78,7 @@ impl QueryContext for QueryCtxt<'_> {
     #[inline]
     fn next_job_id(self) -> QueryJobId {
         QueryJobId(
-            NonZero::new(self.query_system.jobs.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+            NonZero::new(self.query_system.jobs.fetch_add(1, core::sync::atomic::Ordering::Relaxed))
                 .unwrap(),
         )
     }
@@ -550,7 +553,7 @@ where
     F: FnOnce() -> T,
 {
     let result = f();
-    std::hint::black_box(());
+    core::hint::black_box(());
     result
 }
 
@@ -566,7 +569,7 @@ macro_rules! define_queries {
 
         pub(crate) mod query_impl { $(pub(crate) mod $name {
             use super::super::*;
-            use std::marker::PhantomData;
+            use core::marker::PhantomData;
 
             pub(crate) mod get_query_incr {
                 use super::*;
@@ -619,8 +622,8 @@ macro_rules! define_queries {
                     eval_always: is_eval_always!([$($modifiers)*]),
                     dep_kind: dep_graph::dep_kinds::$name,
                     handle_cycle_error: handle_cycle_error!([$($modifiers)*]),
-                    query_state: std::mem::offset_of!(QueryStates<'tcx>, $name),
-                    query_cache: std::mem::offset_of!(QueryCaches<'tcx>, $name),
+                    query_state: core::mem::offset_of!(QueryStates<'tcx>, $name),
+                    query_cache: core::mem::offset_of!(QueryCaches<'tcx>, $name),
                     cache_on_disk: |tcx, key| ::rustc_middle::query::cached::$name(tcx, key),
                     execute_query: |tcx, key| erase(tcx.$name(key)),
                     compute: |tcx, key| {
@@ -671,7 +674,7 @@ macro_rules! define_queries {
                         })
                     },
                     hash_result: hash_result!([$($modifiers)*][queries::$name::Value<'tcx>]),
-                    format_value: |value| format!("{:?}", restore::<queries::$name::Value<'tcx>>(*value)),
+                    format_value: |value| alloc::format!("{:?}", restore::<queries::$name::Value<'tcx>>(*value)),
                 }
             }
 

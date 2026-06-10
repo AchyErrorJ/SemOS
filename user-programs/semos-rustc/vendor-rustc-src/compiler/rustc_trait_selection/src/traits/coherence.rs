@@ -4,6 +4,11 @@
 //! [trait-resolution]: https://rustc-dev-guide.rust-lang.org/traits/resolution.html
 //! [trait-specialization]: https://rustc-dev-guide.rust-lang.org/traits/specialization.html
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
@@ -99,7 +104,7 @@ impl TrackAmbiguityCauses {
 /// If there are types that satisfy both impls, returns `Some`
 /// with a suitably-freshened `ImplHeader` with those types
 /// instantiated. Otherwise, returns `None`.
-#[instrument(skip(tcx, skip_leak_check), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn overlapping_inherent_impls(
     tcx: TyCtxt<'_>,
     impl1_def_id: DefId,
@@ -126,7 +131,7 @@ pub fn overlapping_inherent_impls(
 /// If there are types that satisfy both impls, returns `Some`
 /// with a suitably-freshened `ImplHeader` with those types
 /// instantiated. Otherwise, returns `None`.
-#[instrument(skip(tcx, skip_leak_check), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn overlapping_trait_impls(
     tcx: TyCtxt<'_>,
     impl1_def_id: DefId,
@@ -236,7 +241,7 @@ fn fresh_impl_header_normalized<'tcx>(
 
 /// Can both impl `a` and impl `b` be satisfied by a common type (including
 /// where-clauses)? If so, returns an `ImplHeader` that unifies the two impls.
-#[instrument(level = "debug", skip(tcx))]
+    // [stripped: #[instrument(...)]]
 fn overlap<'tcx>(
     tcx: TyCtxt<'tcx>,
     track_ambiguity_causes: TrackAmbiguityCauses,
@@ -342,7 +347,7 @@ fn overlap<'tcx>(
     })
 }
 
-#[instrument(level = "debug", skip(infcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn equate_impl_headers<'tcx>(
     infcx: &InferCtxt<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -397,7 +402,7 @@ enum IntersectionHasImpossibleObligations<'tcx> {
 /// of the two impls above to be empty.
 ///
 /// Importantly, this works even if there isn't a `impl !Error for MyLocalType`.
-#[instrument(level = "debug", skip(selcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn impl_intersection_has_impossible_obligation<'a, 'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligations: &'a [PredicateObligation<'tcx>],

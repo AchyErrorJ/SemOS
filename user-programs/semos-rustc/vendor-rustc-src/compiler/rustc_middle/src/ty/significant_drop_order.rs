@@ -1,9 +1,14 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::unord::UnordSet;
 use rustc_hir::def_id::DefId;
 use rustc_span::Span;
 use smallvec::{SmallVec, smallvec};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::ty::{self, Ty, TyCtxt};
 
@@ -72,7 +77,7 @@ fn true_significant_drop_ty<'tcx>(
 
 /// Returns the list of types with a "potentially significant" that may be dropped
 /// by dropping a value of type `ty`.
-#[instrument(level = "trace", skip(tcx, typing_env))]
+// #[instrument(level = "trace", skip(tcx, typing_env))]
 pub fn extract_component_raw<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,
@@ -102,7 +107,7 @@ pub fn extract_component_raw<'tcx>(
     out_tys
 }
 
-#[instrument(level = "trace", skip(tcx, typing_env))]
+// #[instrument(level = "trace", skip(tcx, typing_env))]
 pub fn extract_component_with_significant_dtor<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,
@@ -117,7 +122,7 @@ pub fn extract_component_with_significant_dtor<'tcx>(
 /// Extract the span of the custom destructor of a type
 /// especially the span of the `impl Drop` header or its entire block
 /// when we are working with current local crate.
-#[instrument(level = "trace", skip(tcx))]
+// #[instrument(level = "trace", skip(tcx))]
 pub fn ty_dtor_span<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Span> {
     match ty.kind() {
         ty::Bool

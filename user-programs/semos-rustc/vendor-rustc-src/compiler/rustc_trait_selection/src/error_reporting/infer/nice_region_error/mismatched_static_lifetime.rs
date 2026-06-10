@@ -1,6 +1,11 @@
 //! Error Reporting for when the lifetime for a type doesn't match the `impl` selected for a predicate
 //! to hold.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_errors::{ErrorGuaranteed, MultiSpan};
 use rustc_hir as hir;

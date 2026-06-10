@@ -2,6 +2,11 @@
 //! eliminated, and all its methods are now on `TyCtxt`. But the module name
 //! stays as `map` because there isn't an obviously better name for it.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_abi::ExternAbi;
 use rustc_ast::visit::{VisitorResult, walk_list};
 use rustc_data_structures::fingerprint::Fingerprint;

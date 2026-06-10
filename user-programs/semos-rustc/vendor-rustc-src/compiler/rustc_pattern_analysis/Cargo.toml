@@ -10,6 +10,7 @@ rustc_abi = { path = "../rustc_abi", optional = true }
 rustc_apfloat = "0.2.0"
 rustc_arena = { path = "../rustc_arena", optional = true }
 rustc_data_structures = { path = "../rustc_data_structures", optional = true }
+rustc_error_messages = { path = "../rustc_error_messages", optional = true }
 rustc_errors = { path = "../rustc_errors", optional = true }
 rustc_fluent_macro = { path = "../rustc_fluent_macro", optional = true }
 rustc_hir = { path = "../rustc_hir", optional = true }
@@ -35,6 +36,7 @@ rustc = [
     "dep:rustc_abi",
     "dep:rustc_arena",
     "dep:rustc_data_structures",
+    "dep:rustc_error_messages",
     "dep:rustc_errors",
     "dep:rustc_fluent_macro",
     "dep:rustc_hir",

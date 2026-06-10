@@ -1,6 +1,10 @@
-use std::cell::Cell;
-use std::fmt;
-use std::iter::once;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cell::Cell;
+use core::fmt;
+use core::iter::once;
 
 use rustc_abi::{FIRST_VARIANT, FieldIdx, Integer, VariantIdx};
 use rustc_arena::DroplessArena;
@@ -62,7 +66,7 @@ impl<'tcx> fmt::Debug for RevealedTy<'tcx> {
     }
 }
 
-impl<'tcx> std::ops::Deref for RevealedTy<'tcx> {
+impl<'tcx> core::ops::Deref for RevealedTy<'tcx> {
     type Target = Ty<'tcx>;
     fn deref(&self) -> &Self::Target {
         &self.0

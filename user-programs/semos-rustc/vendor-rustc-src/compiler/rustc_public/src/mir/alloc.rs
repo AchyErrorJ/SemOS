@@ -1,6 +1,14 @@
 //! This module provides methods to retrieve allocation information, such as static variables.
 
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+#[cfg(not(target_os = "none"))]
 use std::io::Read;
+#[cfg(target_os = "none")]
+use semos_std::io::Read;
 
 use serde::Serialize;
 

@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_errors::DiagArgFromDisplay;
 use rustc_errors::codes::*;
 use rustc_macros::{Diagnostic, Subdiagnostic};

@@ -1,5 +1,6 @@
 use rustc_middle::ty::RegionVid;
 use rustc_mir_dataflow::points::PointIndex;
+use alloc::vec::Vec;
 
 /// A localized outlives constraint reifies the CFG location where the outlives constraint holds,
 /// within the origins themselves as if they were different from point to point: from `a: b`

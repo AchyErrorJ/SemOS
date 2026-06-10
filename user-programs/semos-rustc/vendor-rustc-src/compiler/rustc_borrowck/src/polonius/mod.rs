@@ -45,7 +45,107 @@
 
 mod constraints;
 mod dump;
+#[cfg(not(target_os = "none"))]
 pub(crate) mod legacy;
+#[cfg(target_os = "none")]
+pub(crate) mod legacy {
+    use core::marker::PhantomData;
+    use rustc_middle::mir::{Body, Local, Location};
+    use rustc_middle::ty::{RegionVid, TyCtxt};
+    use rustc_mir_dataflow::move_paths::MovePathIndex;
+    use crate::dataflow::BorrowIndex;
+
+    #[derive(Copy, Clone)]
+    pub struct LocationIndex(pub usize);
+
+    pub struct PoloniusFacts {
+        pub loan_issued_at: alloc::vec::Vec<(PoloniusRegionVid, BorrowIndex, LocationIndex)>,
+        pub var_dropped_at: alloc::vec::Vec<(Local, LocationIndex)>,
+    }
+    #[derive(Clone)]
+    pub struct PoloniusOutput {
+        pub subset_errors: alloc::vec::Vec<(
+            LocationIndex,
+            alloc::vec::Vec<(rustc_middle::ty::RegionVid, rustc_middle::ty::RegionVid)>,
+        )>,
+    }
+    impl PoloniusOutput {
+        pub fn errors_at(
+            &self,
+            _location: LocationIndex,
+        ) -> &[BorrowIndex] {
+            &[]
+        }
+    }
+    pub struct RichLocation;
+    pub struct RustcFacts;
+
+    pub fn emit_facts<'tcx, C>(
+        _facts: &mut Option<PoloniusFacts>,
+        _tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        _location_table: &PoloniusLocationTable,
+        _body: &rustc_middle::mir::Body<'tcx>,
+        _borrow_set: &crate::BorrowSet<'tcx>,
+        _move_data: &rustc_mir_dataflow::move_paths::MoveData<'tcx>,
+        _universal_region_relations: &crate::type_check::free_region_relations::UniversalRegionRelations<'tcx>,
+        _constraints: &C,
+    ) {
+    }
+    pub fn emit_drop_facts<'tcx>(
+        _tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        _local: rustc_middle::mir::Local,
+        _kind: &rustc_middle::ty::GenericArg<'tcx>,
+        _universal_regions: &crate::universal_regions::UniversalRegions<'tcx>,
+        _facts: &mut Option<PoloniusFacts>,
+    ) {
+    }
+
+    pub struct PoloniusLocationTable {
+        _marker: PhantomData<()>,
+    }
+    impl PoloniusLocationTable {
+        pub(crate) fn new(_body: &Body<'_>) -> Self {
+            Self { _marker: PhantomData }
+        }
+        pub fn start_index(&self, _location: Location) -> LocationIndex {
+            LocationIndex(0)
+        }
+        pub fn mid_index(&self, _location: Location) -> LocationIndex {
+            LocationIndex(0)
+        }
+        pub fn to_location(&self, _index: LocationIndex) -> Location {
+            Location { block: rustc_middle::mir::BasicBlock::from_u32(0), statement_index: 0 }
+        }
+    }
+    #[derive(Copy, Clone)]
+    pub struct PoloniusRegionVid(pub usize);
+    impl From<RegionVid> for PoloniusRegionVid {
+        fn from(value: RegionVid) -> Self {
+            Self(value.as_usize())
+        }
+    }
+
+    pub trait PoloniusFactsExt {
+        fn enabled(_tcx: TyCtxt<'_>) -> bool { false }
+        fn write_to_dir(
+            &self,
+            _dir: impl core::convert::AsRef<semos_std::path::Path>,
+            _location_table: &PoloniusLocationTable,
+        ) -> Result<(), ()> {
+            Ok(())
+        }
+    }
+    impl PoloniusFactsExt for PoloniusFacts {}
+
+    impl Default for PoloniusFacts {
+        fn default() -> Self {
+            Self {
+                loan_issued_at: alloc::vec::Vec::new(),
+                var_dropped_at: alloc::vec::Vec::new(),
+            }
+        }
+    }
+}
 mod liveness_constraints;
 mod loan_liveness;
 mod typeck_constraints;

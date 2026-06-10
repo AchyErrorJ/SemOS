@@ -1,5 +1,10 @@
 //! Functions for reading and writing discriminants of multi-variant layouts (enums and coroutines).
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::{self as abi, FieldIdx, TagEncoding, VariantIdx, Variants};
 use rustc_middle::ty::layout::{PrimitiveExt, TyAndLayout};
 use rustc_middle::ty::{self, CoroutineArgsExt, ScalarInt, Ty};
@@ -15,7 +20,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     /// Writes the discriminant of the given variant.
     ///
     /// If the variant is uninhabited, this is UB.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn write_discriminant(
         &mut self,
         variant_index: VariantIdx,
@@ -48,7 +53,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     /// Can also legally be called on non-enums (e.g. through the discriminant_value intrinsic)!
     ///
     /// Will never return an uninhabited variant.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn read_discriminant(
         &self,
         op: &impl Projectable<'tcx, M::Provenance>,

@@ -1,5 +1,10 @@
 //! Diagnostics related methods for `Ty`.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::fmt::Write;
 use core::ops::ControlFlow;
 
@@ -119,7 +124,7 @@ impl<'tcx, T> IsSuggestable<'tcx> for T
 where
     T: TypeVisitable<TyCtxt<'tcx>> + TypeFoldable<TyCtxt<'tcx>>,
 {
-    #[tracing::instrument(level = "debug", skip(tcx))]
+    // #[tracing::instrument(level = "debug", skip(tcx))]
     fn is_suggestable(self, tcx: TyCtxt<'tcx>, infer_suggestable: bool) -> bool {
         self.visit_with(&mut IsSuggestableVisitor { tcx, infer_suggestable }).is_continue()
     }

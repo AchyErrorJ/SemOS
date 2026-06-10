@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::LocalDefId;
@@ -62,7 +67,7 @@ impl<'tcx> OpaqueTypeCollector<'tcx> {
         self.span = old;
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn collect_taits_declared_in_body(&mut self) {
         let Some(body) = self.tcx.hir_maybe_body_owned_by(self.item) else {
             return;
@@ -72,7 +77,7 @@ impl<'tcx> OpaqueTypeCollector<'tcx> {
             collector: &'a mut OpaqueTypeCollector<'tcx>,
         }
         impl<'v> intravisit::Visitor<'v> for TaitInBodyFinder<'_, '_> {
-            #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
             fn visit_nested_item(&mut self, id: rustc_hir::ItemId) {
                 let id = id.owner_id.def_id;
                 if let DefKind::TyAlias = self.collector.tcx.def_kind(id) {
@@ -80,7 +85,7 @@ impl<'tcx> OpaqueTypeCollector<'tcx> {
                     self.collector.opaques.extend(items);
                 }
             }
-            #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
             // Recurse into these, as they are type checked with their parent
             fn visit_nested_body(&mut self, id: rustc_hir::BodyId) {
                 let body = self.collector.tcx.hir_body(id);
@@ -90,7 +95,7 @@ impl<'tcx> OpaqueTypeCollector<'tcx> {
         TaitInBodyFinder { collector: self }.visit_expr(body);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_opaque_ty(&mut self, alias_ty: ty::AliasTy<'tcx>) {
         if !self.seen.insert(alias_ty.def_id.expect_local()) {
             return;
@@ -166,7 +171,7 @@ impl<'tcx> OpaqueTypeCollector<'tcx> {
 
     /// Checks the `#[define_opaque]` attributes on items and collects opaques to define
     /// from the referenced types.
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn collect_taits_from_defines_attr(&mut self) {
         let hir_id = self.tcx.local_def_id_to_hir_id(self.item);
         if !hir_id.is_owner() {
@@ -177,7 +182,7 @@ impl<'tcx> OpaqueTypeCollector<'tcx> {
         };
         for &(span, define) in defines {
             trace!(?define);
-            let mode = std::mem::replace(&mut self.mode, CollectionMode::Taits);
+            let mode = core::mem::replace(&mut self.mode, CollectionMode::Taits);
             let n = self.opaques.len();
             super::sig_types::walk_types(self.tcx, define, self);
             if n == self.opaques.len() {
@@ -192,14 +197,14 @@ impl<'tcx> OpaqueTypeCollector<'tcx> {
 }
 
 impl<'tcx> super::sig_types::SpannedTypeVisitor<'tcx> for OpaqueTypeCollector<'tcx> {
-    #[instrument(skip(self), ret, level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn visit(&mut self, span: Span, value: impl TypeVisitable<TyCtxt<'tcx>>) {
         self.visit_spanned(span, value);
     }
 }
 
 impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for OpaqueTypeCollector<'tcx> {
-    #[instrument(skip(self), ret, level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn visit_ty(&mut self, t: Ty<'tcx>) {
         t.super_visit_with(self);
         match *t.kind() {

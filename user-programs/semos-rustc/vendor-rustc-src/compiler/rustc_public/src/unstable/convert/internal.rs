@@ -5,6 +5,11 @@
 
 // Prefer importing rustc_public over internal rustc constructs to make this file more readable.
 
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
 use rustc_middle::ty::{self as rustc_ty, Const as InternalConst, Ty as InternalTy};
 use rustc_public_bridge::Tables;
 

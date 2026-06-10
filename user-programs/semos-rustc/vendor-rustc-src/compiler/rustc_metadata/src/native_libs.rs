@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 // M27 R4 B5: cfg-split host vs SemOS.
 #[cfg(not(target_os = "none"))]
@@ -170,10 +175,12 @@ fn find_bundled_library(
         && (sess.opts.unstable_opts.packed_bundled_libs || has_cfg || whole_archive == Some(true))
     {
         let verbatim = verbatim.unwrap_or(false);
-        return find_native_static_library(name.as_str(), verbatim, sess)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(Symbol::intern);
+        let lib_path = find_native_static_library(name.as_str(), verbatim, sess);
+        #[cfg(not(target_os = "none"))]
+        return lib_path.file_name().and_then(|s| s.to_str()).map(Symbol::intern);
+        // SemOS Path::file_name returns Option<&str> directly (OsStr ≡ str).
+        #[cfg(target_os = "none")]
+        return lib_path.file_name().map(Symbol::intern);
     }
     None
 }

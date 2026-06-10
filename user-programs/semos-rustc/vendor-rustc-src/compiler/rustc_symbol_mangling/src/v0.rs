@@ -1,7 +1,12 @@
-use std::fmt::Write;
-use std::hash::Hasher;
-use std::iter;
-use std::ops::Range;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt::Write;
+use core::hash::Hasher;
+use core::iter;
+use core::ops::Range;
 
 use rustc_abi::{ExternAbi, Integer};
 use rustc_data_structures::base_n::ToBaseN;
@@ -78,7 +83,7 @@ pub(super) fn mangle<'tcx>(
     if let Some(instantiating_crate) = instantiating_crate {
         p.print_def_path(instantiating_crate.as_def_id(), &[]).unwrap();
     }
-    std::mem::take(&mut p.out)
+    core::mem::take(&mut p.out)
 }
 
 pub fn mangle_internal_symbol<'tcx>(tcx: TyCtxt<'tcx>, item_name: &str) -> String {
@@ -127,7 +132,7 @@ pub fn mangle_internal_symbol<'tcx>(tcx: TyCtxt<'tcx>, item_name: &str) -> Strin
     )
     .unwrap();
 
-    std::mem::take(&mut p.out)
+    core::mem::take(&mut p.out)
 }
 
 pub(super) fn mangle_typeid_for_trait_ref<'tcx>(
@@ -146,7 +151,7 @@ pub(super) fn mangle_typeid_for_trait_ref<'tcx>(
         out: String::new(),
     };
     p.print_def_path(trait_ref.def_id, &[]).unwrap();
-    std::mem::take(&mut p.out)
+    core::mem::take(&mut p.out)
 }
 
 struct BinderLevel {
@@ -259,7 +264,7 @@ impl<'tcx> V0SymbolMangler<'tcx> {
         Ok(())
     }
 
-    fn print_pat(&mut self, pat: ty::Pattern<'tcx>) -> Result<(), std::fmt::Error> {
+    fn print_pat(&mut self, pat: ty::Pattern<'tcx>) -> Result<(), core::fmt::Error> {
         Ok(match *pat {
             ty::PatternKind::Range { start, end } => {
                 self.push("R");
@@ -728,7 +733,7 @@ impl<'tcx> Printer<'tcx> for V0SymbolMangler<'tcx> {
                 let slice = cv.try_to_raw_bytes(tcx).unwrap_or_else(|| {
                     bug!("expected to get raw bytes from valtree {:?} for type {:}", valtree, ct_ty)
                 });
-                let s = std::str::from_utf8(slice).expect("non utf8 str from MIR interpreter");
+                let s = core::str::from_utf8(slice).expect("non utf8 str from MIR interpreter");
 
                 // "e" for str as a basic type
                 self.push("e");
@@ -982,24 +987,33 @@ pub(crate) fn push_ident(ident: &str, output: &mut String) {
         }
     }
 
+    #[cfg(not(target_os = "none"))]
     let punycode_string;
     let ident = if use_punycode {
         output.push('u');
 
         // FIXME(eddyb) we should probably roll our own punycode implementation.
-        let mut punycode_bytes = match punycode::encode(ident) {
-            Ok(s) => s.into_bytes(),
-            Err(()) => bug!("symbol_names: punycode encoding failed for ident {:?}", ident),
-        };
+        #[cfg(not(target_os = "none"))]
+        {
+            let mut punycode_bytes = match punycode::encode(ident) {
+                Ok(s) => s.into_bytes(),
+                Err(()) => bug!("symbol_names: punycode encoding failed for ident {:?}", ident),
+            };
 
-        // Replace `-` with `_`.
-        if let Some(c) = punycode_bytes.iter_mut().rfind(|&&mut c| c == b'-') {
-            *c = b'_';
+            // Replace `-` with `_`.
+            if let Some(c) = punycode_bytes.iter_mut().rfind(|&&mut c| c == b'-') {
+                *c = b'_';
+            }
+
+            // FIXME(eddyb) avoid rechecking UTF-8 validity.
+            punycode_string = String::from_utf8(punycode_bytes).unwrap();
+            &punycode_string
         }
-
-        // FIXME(eddyb) avoid rechecking UTF-8 validity.
-        punycode_string = String::from_utf8(punycode_bytes).unwrap();
-        &punycode_string
+        // M27 §1.7: punycode encoder unavailable on SemOS — bug out for
+        // non-ASCII idents. Real-world Rust code rarely uses non-ASCII
+        // identifiers, and cg_clif is the only backend we target.
+        #[cfg(target_os = "none")]
+        bug!("symbol_names: punycode unavailable on SemOS for ident {:?}", ident)
     } else {
         ident
     };

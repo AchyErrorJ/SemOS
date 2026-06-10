@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::cmp;
 use core::marker::PhantomData;
 use core::ops::Range;

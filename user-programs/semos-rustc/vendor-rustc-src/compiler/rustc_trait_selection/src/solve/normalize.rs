@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use rustc_data_structures::stack::ensure_sufficient_stack;
@@ -185,7 +190,7 @@ where
         Ok(t)
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn try_fold_ty(&mut self, ty: Ty<'tcx>) -> Result<Ty<'tcx>, Self::Error> {
         let infcx = self.at.infcx;
         debug_assert_eq!(ty, infcx.shallow_resolve(ty));
@@ -213,7 +218,7 @@ where
         }
     }
 
-    #[instrument(level = "trace", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn try_fold_const(&mut self, ct: ty::Const<'tcx>) -> Result<ty::Const<'tcx>, Self::Error> {
         let infcx = self.at.infcx;
         debug_assert_eq!(ct, infcx.shallow_resolve_const(ct));

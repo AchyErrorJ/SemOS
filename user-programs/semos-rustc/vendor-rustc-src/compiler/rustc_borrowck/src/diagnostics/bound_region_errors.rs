@@ -25,6 +25,7 @@ use tracing::{debug, instrument};
 
 use crate::MirBorrowckCtxt;
 use crate::region_infer::values::RegionElement;
+use alloc::string::ToString;
 use crate::session_diagnostics::{
     HigherRankedErrorCause, HigherRankedLifetimeError, HigherRankedSubtypeError,
 };
@@ -148,7 +149,7 @@ pub(crate) trait TypeOpInfo<'tcx> {
     /// Constraints require that `error_element` appear in the
     ///  values of `placeholder`, but this cannot be proven to
     /// hold. Report an error.
-    #[instrument(level = "debug", skip(self, mbcx))]
+    // [stripped: #[instrument(...)]]
     fn report_erroneous_element(
         &self,
         mbcx: &mut MirBorrowckCtxt<'_, '_, 'tcx>,
@@ -409,7 +410,7 @@ impl<'tcx> TypeOpInfo<'tcx> for crate::type_check::InstantiateOpaqueType<'tcx> {
     }
 }
 
-#[instrument(skip(ocx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn try_extract_error_from_fulfill_cx<'a, 'tcx>(
     ocx: &ObligationCtxt<'a, 'tcx>,
     generic_param_scope: LocalDefId,
@@ -432,7 +433,7 @@ fn try_extract_error_from_fulfill_cx<'a, 'tcx>(
     )
 }
 
-#[instrument(level = "debug", skip(infcx, region_var_origin, universe_of_region))]
+    // [stripped: #[instrument(...)]]
 fn try_extract_error_from_region_constraints<'a, 'tcx>(
     infcx: &'a InferCtxt<'tcx>,
     generic_param_scope: LocalDefId,

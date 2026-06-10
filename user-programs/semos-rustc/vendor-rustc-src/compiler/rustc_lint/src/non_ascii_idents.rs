@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast as ast;
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::unord::UnordMap;
@@ -153,7 +158,7 @@ declare_lint_pass!(NonAsciiIdents => [NON_ASCII_IDENTS, UNCOMMON_CODEPOINTS, CON
 
 impl EarlyLintPass for NonAsciiIdents {
     fn check_crate(&mut self, cx: &EarlyContext<'_>, _: &ast::Crate) {
-        use std::collections::BTreeMap;
+        use alloc::collections::BTreeMap;
 
         use rustc_session::lint::Level;
         use rustc_span::Span;

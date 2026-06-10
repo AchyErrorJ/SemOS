@@ -60,7 +60,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstFreshVars<'tcx> {
         self.relate(a, b)
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn regions(
         &mut self,
         a: ty::Region<'tcx>,
@@ -69,7 +69,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstFreshVars<'tcx> {
         Ok(a)
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
         if a == b {
             return Ok(a);
@@ -93,7 +93,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstFreshVars<'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn consts(
         &mut self,
         a: ty::Const<'tcx>,

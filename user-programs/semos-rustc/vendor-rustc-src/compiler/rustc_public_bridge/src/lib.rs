@@ -13,14 +13,20 @@
 
 // tidy-alphabetical-start
 #![allow(rustc::usage_of_ty_tykind)]
+#![cfg_attr(target_os = "none", no_std)]
 #![doc(test(attr(allow(unused_variables), deny(warnings), allow(internal_features))))]
 #![feature(sized_hierarchy)]
 #![feature(trait_alias)]
 // tidy-alphabetical-end
 
-use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops::Index;
+extern crate alloc as crate_alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use core::fmt::Debug;
+use core::hash::Hash;
+use core::ops::Index;
+use crate_alloc::vec::Vec;
 
 use bridge::*;
 use context::CompilerCtxt;

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use hir::{ExprKind, Node};
 use rustc_abi::{Integer, Size};
 use rustc_hir::{HirId, attrs};

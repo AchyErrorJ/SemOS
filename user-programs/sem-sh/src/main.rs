@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_PONG, SYS_USBENUM, SYS_USBINFO,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_PONG, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -63,6 +63,11 @@ fn read_line() -> Option<String> {
 /// Interactive read-eval-print loop.
 fn repl() -> ! {
     loop {
+        // Defense-in-depth: ensure the cooked-mode line discipline accepts
+        // input. If any prior code path (an external command, a builtin)
+        // left SUPPRESS set, we'd be deaf at the prompt forever. Cheap
+        // syscall — clearing an already-cleared flag is harmless.
+        unsafe { syscall1(SYS_TTY_SUPPRESS, 0); }
         print!("sem-sh$ ");
         match read_line() {
             Some(line) => {

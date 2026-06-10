@@ -1,5 +1,10 @@
 //! Manages the low-level pushing and popping of stack frames and the (de)allocation of local variables.
 //! For handling of argument passing and return values, see the `call` module.
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::cell::Cell;
 use core::{fmt, mem};
 
@@ -351,7 +356,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     /// the arguments or local variables.
     ///
     /// The high-level version of this is `init_stack_frame`.
-    #[instrument(skip(self, body, return_place, return_cont), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn push_stack_frame_raw(
         &mut self,
         instance: ty::Instance<'tcx>,

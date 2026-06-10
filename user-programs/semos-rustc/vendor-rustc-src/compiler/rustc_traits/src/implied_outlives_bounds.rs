@@ -2,6 +2,8 @@
 //! Do not call this query directly. See
 //! [`rustc_trait_selection::traits::query::type_op::implied_outlives_bounds`].
 
+use alloc::vec::Vec;
+
 use rustc_infer::infer::TyCtxtInferExt;
 use rustc_infer::infer::canonical::{self, Canonical};
 use rustc_infer::traits::query::OutlivesBound;

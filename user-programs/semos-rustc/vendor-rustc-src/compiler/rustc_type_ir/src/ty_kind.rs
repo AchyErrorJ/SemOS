@@ -8,7 +8,6 @@ use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 #[cfg(feature = "nightly")]
 use rustc_macros::{Decodable_NoContext, Encodable_NoContext, HashStable_NoContext};
 // Stage F4: ena (NoError/UnifyKey/UnifyValue) is host-only.
-#[cfg(not(target_os = "none"))]
 use rustc_type_ir::data_structures::{NoError, UnifyKey, UnifyValue};
 use rustc_type_ir_macros::{
     GenericTypeVisitable, Lift_Generic, TypeFoldable_Generic, TypeVisitable_Generic,
@@ -606,7 +605,6 @@ pub enum InferTy {
     FreshFloatTy(u32),
 }
 
-#[cfg(not(target_os = "none"))]
 impl UnifyValue for IntVarValue {
     type Error = NoError;
 
@@ -626,7 +624,6 @@ impl UnifyValue for IntVarValue {
     }
 }
 
-#[cfg(not(target_os = "none"))]
 impl UnifyKey for IntVid {
     type Value = IntVarValue;
     #[inline] // make this function eligible for inlining - it is quite hot.
@@ -642,7 +639,6 @@ impl UnifyKey for IntVid {
     }
 }
 
-#[cfg(not(target_os = "none"))]
 impl UnifyValue for FloatVarValue {
     type Error = NoError;
 
@@ -660,7 +656,6 @@ impl UnifyValue for FloatVarValue {
     }
 }
 
-#[cfg(not(target_os = "none"))]
 impl UnifyKey for FloatVid {
     type Value = FloatVarValue;
     #[inline]

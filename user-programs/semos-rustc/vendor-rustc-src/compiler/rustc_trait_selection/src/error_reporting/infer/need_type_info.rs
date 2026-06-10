@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use core::iter;
 // M27 R4 B5: PathBuf carries through from semos_std on this target.
@@ -461,7 +466,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, error_code))]
+    // [stripped: #[instrument(...)]]
     pub fn emit_inference_failure_err(
         &self,
         body_def_id: LocalDefId,
@@ -878,7 +883,7 @@ impl<'a, 'tcx> FindInferSourceVisitor<'a, 'tcx> {
 
     /// Uses `fn source_cost` to determine whether this inference source is preferable to
     /// previous sources. We generally prefer earlier sources.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn update_infer_source(&mut self, mut new_source: InferSource<'tcx>) {
         if new_source.from_expansion() {
             return;
@@ -1235,7 +1240,7 @@ impl<'a, 'tcx> Visitor<'tcx> for FindInferSourceVisitor<'a, 'tcx> {
         intravisit::walk_body(self, body);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
         let tcx = self.tecx.tcx;
         match expr.kind {

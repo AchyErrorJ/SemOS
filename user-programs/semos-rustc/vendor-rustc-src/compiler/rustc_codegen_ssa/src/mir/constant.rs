@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::BackendRepr;
 use rustc_middle::mir::interpret::ErrorHandled;
 use rustc_middle::ty::layout::{HasTyCtxt, HasTypingEnv};

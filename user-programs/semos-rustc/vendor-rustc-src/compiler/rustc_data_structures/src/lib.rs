@@ -61,19 +61,54 @@ extern crate std;
 // from core (stable since 1.82 via assert_matches feature gate).
 #[cfg(not(target_os = "none"))]
 pub use std::assert_matches::{assert_matches, debug_assert_matches};
-// `core::assert_matches::*` exposes both macros behind
-// `feature(assert_matches)`.
+// M27 fix: nightly-2026-02-01 does NOT have `core::assert_matches`.
+// Provide local macros that delegate to `assert!(matches!(...))`.
 #[cfg(target_os = "none")]
-pub use core::assert_matches::{assert_matches, debug_assert_matches};
+mod assert_matches_stub {
+    /// Assert that an expression matches a pattern (simplified stub).
+    #[macro_export]
+    macro_rules! assert_matches {
+        // With custom message / format args
+        ($e:expr, $p:pat $(if $g:expr)?, $($fmt:tt)+) => {
+            match $e {
+                $p $(if $g)? => {},
+                ref __semos_val => {
+                    panic!($($fmt)+);
+                }
+            }
+        };
+        // Without custom message
+        ($e:expr, $p:pat $(if $g:expr)? $(,)?) => {
+            match $e {
+                $p $(if $g)? => {},
+                ref __semos_val => {
+                    panic!("assertion failed: {:?} does not match {}", __semos_val, stringify!($p));
+                }
+            }
+        };
+    }
+    /// Debug-only variant of `assert_matches`.
+    #[macro_export]
+    macro_rules! debug_assert_matches {
+        ($e:expr, $p:pat $(if $g:expr)?, $($fmt:tt)+) => {
+            if cfg!(debug_assertions) {
+                $crate::assert_matches!($e, $p $(if $g)?, $($fmt)+);
+            }
+        };
+        ($e:expr, $p:pat $(if $g:expr)? $(,)?) => {
+            if cfg!(debug_assertions) {
+                $crate::assert_matches!($e, $p $(if $g)?);
+            }
+        };
+    }
+}
 
 use core::fmt;
 
 pub use atomic_ref::AtomicRef;
-// Stage F1: ena is host-only (pulls log via std). On SemOS the
-// rustc_infer UnificationTable would need a no_std variant; for now
-// re-exports are host-only and target builds that touch them will
-// fail downstream (per §1.4 single-threaded acceptance).
-#[cfg(not(target_os = "none"))]
+// M27 Phase 5b Stage F: ena vendored + no_std-patched at
+// vendor-externals/ena (drops the `log` dep, blanket `#![no_std]`).
+// Available on both targets; rustc_infer consumes these re-exports.
 pub use ena::{snapshot_vec, undo_log, unify};
 pub use rustc_index::static_assert_size;
 // Re-export some data-structure crates which are part of our public API.
@@ -98,11 +133,8 @@ pub mod packed;
 pub mod profiling;
 pub mod sharded;
 pub mod small_c_str;
-// Stage F1: snapshot_map depends on ena's undo_log/snapshots types,
-// which we only have on host (ena is a host-only dep per Cargo.toml).
-// rustc_infer consumes it; the SemOS-target build path doesn't run
-// inference work in this v1 cut so we can host-gate it cleanly.
-#[cfg(not(target_os = "none"))]
+// M27 Phase 5b Stage F: ena now vendored no_std, so snapshot_map
+// (which builds on ena's snapshot_vec) is available on both targets.
 pub mod snapshot_map;
 pub mod sorted_map;
 pub mod sso;

@@ -1,4 +1,4 @@
-use std::iter;
+use core::iter;
 
 use rustc_abi::ExternAbi;
 use rustc_hir::attrs::AttributeKind;

@@ -1,5 +1,10 @@
 #![allow(non_camel_case_types)]
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_hir::LangItem;
 use rustc_hir::attrs::PeImportNameType;
 use rustc_middle::ty::layout::TyAndLayout;

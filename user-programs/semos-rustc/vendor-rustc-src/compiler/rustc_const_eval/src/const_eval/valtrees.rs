@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::{BackendRepr, FieldIdx, VariantIdx};
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_middle::mir::interpret::{EvalToValTreeResult, GlobalId, ValTreeCreationError};
@@ -17,7 +22,7 @@ use crate::interpret::{
     intern_const_alloc_recursive,
 };
 
-#[instrument(skip(ecx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn branches<'tcx>(
     ecx: &CompileTimeInterpCx<'tcx>,
     place: &MPlaceTy<'tcx>,
@@ -57,7 +62,7 @@ fn branches<'tcx>(
     Ok(ty::ValTree::from_branches(*ecx.tcx, branches))
 }
 
-#[instrument(skip(ecx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn slice_branches<'tcx>(
     ecx: &CompileTimeInterpCx<'tcx>,
     place: &MPlaceTy<'tcx>,
@@ -75,7 +80,7 @@ fn slice_branches<'tcx>(
     Ok(ty::ValTree::from_branches(*ecx.tcx, elems))
 }
 
-#[instrument(skip(ecx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn const_to_valtree_inner<'tcx>(
     ecx: &CompileTimeInterpCx<'tcx>,
     place: &MPlaceTy<'tcx>,
@@ -220,7 +225,7 @@ fn reconstruct_place_meta<'tcx>(
     MemPlaceMeta::Meta(Scalar::from_target_usize(num_elems as u64, &tcx))
 }
 
-#[instrument(skip(ecx), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
 fn create_valtree_place<'tcx>(
     ecx: &mut CompileTimeInterpCx<'tcx>,
     layout: TyAndLayout<'tcx>,
@@ -260,7 +265,7 @@ pub(crate) fn eval_to_valtree<'tcx>(
 /// Converts a `ValTree` to a `ConstValue`, which is needed after mir
 /// construction has finished.
 // FIXME(valtrees): Merge `valtree_to_const_value` and `valtree_into_mplace` into one function
-#[instrument(skip(tcx), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
 pub fn valtree_to_const_value<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,
@@ -370,7 +375,7 @@ fn valtree_to_ref<'tcx>(
     pointee_place.to_ref(&ecx.tcx)
 }
 
-#[instrument(skip(ecx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn valtree_into_mplace<'tcx>(
     ecx: &mut CompileTimeInterpCx<'tcx>,
     place: &MPlaceTy<'tcx>,

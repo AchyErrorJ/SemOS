@@ -12,7 +12,24 @@ use semos_std::path::Path;
 use alloc::boxed::Box;
 use alloc::string::String;
 
+#[cfg(not(target_os = "none"))]
 use polonius_engine::{AllFacts, Atom, Output};
+#[cfg(target_os = "none")]
+use self::polonius_engine::{AllFacts, Atom, Output};
+#[cfg(target_os = "none")]
+pub mod polonius_engine {
+    use core::marker::PhantomData;
+    pub struct AllFacts<F> { _marker: PhantomData<F> }
+    pub trait Atom: Copy { fn index(self) -> usize; }
+    pub struct Output<F> { _marker: PhantomData<F> }
+    pub trait FactTypes {
+        type Origin;
+        type Loan;
+        type Point;
+        type Variable;
+        type Path;
+    }
+}
 use rustc_macros::extension;
 use rustc_middle::mir::Local;
 use rustc_middle::ty::{RegionVid, TyCtxt};
@@ -114,15 +131,18 @@ impl PoloniusFacts {
         Ok(())
     }
 
-    // M27 §1.3 R4 facts dump deferred — needs FS surface we don't expose.
-    // SemOS target: -Znll-facts is not supported, returns Ok(()) as a no-op
-    // so callers don't blow up. R2 flagged this in polonius/legacy/facts.rs.
-    #[cfg(target_os = "none")]
+}
+
+// M27 §1.3 R4 facts dump deferred — needs FS surface we don't expose.
+// SemOS target: -Znll-facts is not supported, returns Ok(()) as a no-op
+// so callers don't blow up. R2 flagged this in polonius/legacy/facts.rs.
+#[cfg(target_os = "none")]
+impl PoloniusFacts {
     fn write_to_dir(
         &self,
         _dir: impl AsRef<Path>,
         _location_table: &PoloniusLocationTable,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), ()> {
         Ok(())
     }
 }

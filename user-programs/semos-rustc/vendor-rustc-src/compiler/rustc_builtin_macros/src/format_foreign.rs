@@ -1,4 +1,7 @@
 pub(crate) mod printf {
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+
     use rustc_span::InnerSpan;
 
     use super::strcursor::StrCursor as Cur;
@@ -618,6 +621,9 @@ pub(crate) mod printf {
 }
 
 pub(crate) mod shell {
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+
     use rustc_span::InnerSpan;
 
     use super::strcursor::StrCursor as Cur;

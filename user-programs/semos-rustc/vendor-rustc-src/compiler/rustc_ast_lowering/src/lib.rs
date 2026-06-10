@@ -47,6 +47,9 @@ extern crate alloc;
 
 use core::mem;
 use alloc::sync::Arc;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use rustc_ast::node_id::NodeMap;
 use rustc_ast::{self as ast, *};
@@ -634,7 +637,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     ///
     /// This function sets up `HirId` lowering infrastructure,
     /// and stashes the shared mutable state to avoid pollution by the closure.
-    #[instrument(level = "debug", skip(self, f))]
+    // [stripped: #[instrument(...)]]
     fn with_hir_id_owner(
         &mut self,
         owner: NodeId,
@@ -732,7 +735,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     /// actually used in the HIR, as that would trigger an assertion in the
     /// `HirIdValidator` later on, which makes sure that all `NodeId`s got mapped
     /// properly. Calling the method twice with the same `NodeId` is also forbidden.
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn lower_node_id(&mut self, ast_node_id: NodeId) -> HirId {
         assert_ne!(ast_node_id, DUMMY_NODE_ID);
 
@@ -761,7 +764,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     }
 
     /// Generate a new `HirId` without a backing `NodeId`.
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn next_id(&mut self) -> HirId {
         let owner = self.current_hir_id_owner;
         let local_id = self.item_local_id_counter;
@@ -770,7 +773,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         HirId { owner, local_id }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_res(&mut self, res: Res<NodeId>) -> Res {
         let res: Result<Res, ()> = res.apply_id(|id| {
             let owner = self.current_hir_id_owner;
@@ -865,7 +868,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     }
 
     /// Converts a lifetime into a new generic parameter.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lifetime_res_to_generic_param(
         &mut self,
         ident: Ident,
@@ -915,7 +918,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     /// name resolver owing to lifetime elision; this also populates the resolver's node-id->def-id
     /// map, so that later calls to `opt_node_id_to_def_id` that refer to these extra lifetime
     /// parameters will be successful.
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     #[inline]
     fn lower_lifetime_binder(
         &mut self,
@@ -1060,7 +1063,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     }
 
     /// Lower an associated item constraint.
-    #[instrument(level = "debug", skip_all)]
+    // [stripped: #[instrument(...)]]
     fn lower_assoc_item_constraint(
         &mut self,
         constraint: &AssocItemConstraint,
@@ -1213,7 +1216,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         self.dcx().emit_err(AssocTyParentheses { span: data.span, sub });
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_generic_arg(
         &mut self,
         arg: &ast::GenericArg,
@@ -1272,7 +1275,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_ty_alloc(&mut self, t: &Ty, itctx: ImplTraitContext) -> &'hir hir::Ty<'hir> {
         self.arena.alloc(self.lower_ty(t, itctx))
     }
@@ -1581,7 +1584,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     /// added explicitly in the HIR). But this includes all the lifetimes, and we only want to
     /// capture the lifetimes that are referenced in the bounds. Therefore, we add *extra* lifetime parameters
     /// for the lifetimes that get captured (`'x`, in our example above) and reference those.
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn lower_opaque_impl_trait(
         &mut self,
         span: Span,
@@ -1674,7 +1677,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     ///
     /// `transform_return_type`: if `Some`, applies some conversion to the return type, such as is
     /// needed for `async fn` and `gen fn`. See [`CoroutineKind`] for more details.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_fn_decl(
         &mut self,
         decl: &FnDecl,
@@ -1791,7 +1794,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     // `output`: unlowered output type (`T` in `-> T`)
     // `fn_node_id`: `NodeId` of the parent function (used to create child impl trait definition)
     // `opaque_ty_node_id`: `NodeId` of the opaque `impl Trait` type that should be created
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_coroutine_fn_ret_ty(
         &mut self,
         output: &FnRetTy,
@@ -1887,7 +1890,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         })
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_param_bound(
         &mut self,
         tpb: &GenericBound,
@@ -1934,7 +1937,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         )
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn new_named_lifetime(
         &mut self,
         id: NodeId,
@@ -1991,7 +1994,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         self.arena.alloc_from_iter(self.lower_generic_params_mut(params, source))
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_generic_param(
         &mut self,
         param: &GenericParam,
@@ -2114,7 +2117,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         hir::TraitRef { path, hir_ref_id: self.lower_node_id(p.ref_id) }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_poly_trait_ref(
         &mut self,
         PolyTraitRef { bound_generic_params, modifiers, trait_ref, span, parens: _ }: &PolyTraitRef,
@@ -2220,7 +2223,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         hir::MutTy { ty: self.lower_ty_alloc(&mt.ty, itctx), mutbl: mt.mutbl }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn lower_param_bounds(
         &mut self,
         bounds: &[GenericBound],
@@ -2239,7 +2242,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         bounds.iter().map(move |bound| self.lower_param_bound(bound, rbp, itctx))
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn lower_universal_param_and_bounds(
         &mut self,
         node_id: NodeId,
@@ -2316,7 +2319,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     /// Used when lowering a type argument that turned out to actually be a const argument.
     ///
     /// Only use for that purpose since otherwise it will create a duplicate def.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_const_path_to_const_arg(
         &mut self,
         path: &Path,
@@ -2411,7 +2414,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn lower_expr_to_const_arg_direct(&mut self, expr: &Expr) -> hir::ConstArg<'hir> {
         let span = self.lower_span(expr.span);
 
@@ -2599,7 +2602,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         self.arena.alloc(self.lower_anon_const_to_const_arg(anon))
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_anon_const_to_const_arg(&mut self, anon: &AnonConst) -> hir::ConstArg<'hir> {
         let tcx = self.tcx;
 

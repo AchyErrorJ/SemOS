@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use semos_std::path::{Path, PathBuf};
 
 use rustc_macros::Diagnostic;
 use rustc_span::{Ident, Span, Symbol};

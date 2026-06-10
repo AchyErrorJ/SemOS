@@ -6,6 +6,11 @@
 //! integer. It is crucial that these operations call `check_align` *before*
 //! short-circuiting the empty case!
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use core::borrow::Borrow;
 use core::cell::Cell;
@@ -360,7 +365,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
         interp_ok(())
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub fn deallocate_ptr(
         &mut self,
         ptr: Pointer<Option<M::Provenance>>,

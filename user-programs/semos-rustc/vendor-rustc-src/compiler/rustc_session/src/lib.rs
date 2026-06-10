@@ -44,38 +44,175 @@ pub(crate) use __semos_stub_println as println;
 #[cfg(target_os = "none")]
 pub(crate) use __semos_stub_print as print;
 
-// Stage F9: getopts is host-only (CLI option parsing). SemOS-target
-// rustc doesn't read argv via getopts, so we stub the surface used.
-// Stage H iter 4: pub so rustc_driver_impl can reach Matches.
+// Stage F9: getopts is host-only (CLI option parsing). Original stub
+// (F9 / H iter 4) was a no-op — parse() threw argv away, opt_present()
+// always returned false. Phase 5b iter 6 makes the stub actually parse:
+// it registers (short, long, has_arg) tuples through the builder methods
+// rustc uses (optopt/optmulti/optflag/optflagmulti), then walks argv at
+// parse() time matching `--long`, `--long=val`, `-short`, and `-short val`.
+// opt_present/opt_str/opt_strs return live results. Just enough surface
+// to let `rustc --version` and `rustc /file.rs -o /out` work end-to-end.
 #[cfg(target_os = "none")]
 pub mod getopts {
-    use alloc::string::String;
+    use alloc::string::{String, ToString};
     use alloc::vec::Vec;
+
+    #[derive(Clone)]
+    struct OptDef {
+        short: String,
+        long: String,
+        has_arg: bool,
+    }
+
     pub struct Matches {
         pub free: Vec<String>,
+        // (canonical_long, optional_value, position_in_argv)
+        // canonical_long is OptDef.long if non-empty, else short. Used so
+        // queries by EITHER short or long match the same entry.
+        present: Vec<(String, Option<String>, usize)>,
+        defs: Vec<OptDef>,
     }
+
     impl Matches {
-        pub fn opt_present(&self, _name: &str) -> bool { false }
-        pub fn opts_present(&self, _names: &[String]) -> bool { false }
-        pub fn opt_str(&self, _name: &str) -> Option<String> { None }
-        pub fn opt_strs(&self, _name: &str) -> Vec<String> { Vec::new() }
-        pub fn opt_strs_pos(&self, _name: &str) -> Vec<(usize, String)> { Vec::new() }
-        pub fn opt_count(&self, _name: &str) -> usize { 0 }
-        pub fn opt_positions(&self, _name: &str) -> Vec<usize> { Vec::new() }
-        pub fn opt_get<T: core::str::FromStr>(&self, _name: &str) -> core::result::Result<Option<T>, T::Err> { Ok(None) }
-        pub fn opt_default(&self, _name: &str, def: &str) -> Option<String> {
-            Some(String::from(def))
+        fn matches_name(&self, def_long: &str, query: &str) -> bool {
+            if def_long == query { return true; }
+            // query might be short form — check OptDef table.
+            self.defs.iter().any(|d| d.long == def_long && d.short == query)
+        }
+        pub fn opt_present(&self, name: &str) -> bool {
+            self.present.iter().any(|(n, _, _)| self.matches_name(n, name))
+        }
+        pub fn opts_present(&self, names: &[String]) -> bool {
+            names.iter().any(|n| self.opt_present(n.as_str()))
+        }
+        pub fn opt_str(&self, name: &str) -> Option<String> {
+            self.present.iter()
+                .find(|(n, _, _)| self.matches_name(n, name))
+                .and_then(|(_, v, _)| v.clone())
+        }
+        pub fn opt_strs(&self, name: &str) -> Vec<String> {
+            self.present.iter()
+                .filter(|(n, _, _)| self.matches_name(n, name))
+                .filter_map(|(_, v, _)| v.clone())
+                .collect()
+        }
+        pub fn opt_strs_pos(&self, name: &str) -> Vec<(usize, String)> {
+            self.present.iter()
+                .filter(|(n, _, _)| self.matches_name(n, name))
+                .filter_map(|(_, v, pos)| v.clone().map(|s| (*pos, s)))
+                .collect()
+        }
+        pub fn opt_count(&self, name: &str) -> usize {
+            self.present.iter().filter(|(n, _, _)| self.matches_name(n, name)).count()
+        }
+        pub fn opt_positions(&self, name: &str) -> Vec<usize> {
+            self.present.iter()
+                .filter(|(n, _, _)| self.matches_name(n, name))
+                .map(|(_, _, pos)| *pos)
+                .collect()
+        }
+        pub fn opt_get<T: core::str::FromStr>(&self, name: &str) -> core::result::Result<Option<T>, T::Err> {
+            match self.opt_str(name) {
+                Some(s) => s.parse::<T>().map(Some),
+                None => Ok(None),
+            }
+        }
+        pub fn opt_default(&self, name: &str, def: &str) -> Option<String> {
+            Some(self.opt_str(name).unwrap_or_else(|| String::from(def)))
         }
     }
-    pub struct Options;
+
+    pub struct Options {
+        opts: Vec<OptDef>,
+    }
     impl Options {
-        pub fn new() -> Self { Self }
-        pub fn optopt(&mut self, _: &str, _: &str, _: &str, _: &str) -> &mut Self { self }
-        pub fn optmulti(&mut self, _: &str, _: &str, _: &str, _: &str) -> &mut Self { self }
-        pub fn optflag(&mut self, _: &str, _: &str, _: &str) -> &mut Self { self }
-        pub fn optflagmulti(&mut self, _: &str, _: &str, _: &str) -> &mut Self { self }
-        pub fn parse(&self, _args: &[String]) -> Result<Matches, Fail> {
-            Ok(Matches { free: Vec::new() })
+        pub fn new() -> Self { Self { opts: Vec::new() } }
+        pub fn optopt(&mut self, short: &str, long: &str, _: &str, _: &str) -> &mut Self {
+            self.opts.push(OptDef { short: short.to_string(), long: long.to_string(), has_arg: true });
+            self
+        }
+        pub fn optmulti(&mut self, short: &str, long: &str, _: &str, _: &str) -> &mut Self {
+            self.opts.push(OptDef { short: short.to_string(), long: long.to_string(), has_arg: true });
+            self
+        }
+        pub fn optflag(&mut self, short: &str, long: &str, _: &str) -> &mut Self {
+            self.opts.push(OptDef { short: short.to_string(), long: long.to_string(), has_arg: false });
+            self
+        }
+        pub fn optflagmulti(&mut self, short: &str, long: &str, _: &str) -> &mut Self {
+            self.opts.push(OptDef { short: short.to_string(), long: long.to_string(), has_arg: false });
+            self
+        }
+        fn find_long(&self, name: &str) -> Option<&OptDef> {
+            self.opts.iter().find(|d| d.long == name)
+        }
+        fn find_short(&self, name: &str) -> Option<&OptDef> {
+            self.opts.iter().find(|d| d.short == name)
+        }
+        fn canonical(d: &OptDef) -> String {
+            if !d.long.is_empty() { d.long.clone() } else { d.short.clone() }
+        }
+        pub fn parse(&self, args: &[String]) -> Result<Matches, Fail> {
+            let mut free = Vec::new();
+            let mut present = Vec::new();
+            let mut i = 0;
+            while i < args.len() {
+                let arg = args[i].clone();
+                if arg == "--" {
+                    // remainder is positional
+                    for rest in &args[i+1..] { free.push(rest.clone()); }
+                    break;
+                }
+                if let Some(rest) = arg.strip_prefix("--") {
+                    // Long form: --name or --name=value
+                    let (name, inline_val) = if let Some(eq) = rest.find('=') {
+                        (&rest[..eq], Some(rest[eq+1..].to_string()))
+                    } else {
+                        (rest, None)
+                    };
+                    if let Some(def) = self.find_long(name) {
+                        let canon = Self::canonical(def);
+                        if def.has_arg {
+                            let val = match inline_val {
+                                Some(v) => Some(v),
+                                None => {
+                                    i += 1;
+                                    args.get(i).cloned()
+                                }
+                            };
+                            present.push((canon, val, i));
+                        } else {
+                            present.push((canon, None, i));
+                        }
+                    }
+                    // unrecognized long flag: silently ignore (lenient stub)
+                } else if arg.len() > 1 && arg.starts_with('-') {
+                    let rest = &arg[1..];
+                    if let Some(def) = self.find_short(rest) {
+                        let canon = Self::canonical(def);
+                        if def.has_arg {
+                            i += 1;
+                            let val = args.get(i).cloned();
+                            present.push((canon, val, i));
+                        } else {
+                            present.push((canon, None, i));
+                        }
+                    } else if let Some(def) = self.find_short(&rest[..1]) {
+                        // -Xvalue form (short flag with attached value)
+                        let canon = Self::canonical(def);
+                        if def.has_arg {
+                            present.push((canon, Some(rest[1..].to_string()), i));
+                        } else {
+                            present.push((canon, None, i));
+                        }
+                    }
+                    // unrecognized short flag: silently ignore
+                } else {
+                    free.push(arg);
+                }
+                i += 1;
+            }
+            Ok(Matches { free, present, defs: self.opts.clone() })
         }
         pub fn usage(&self, brief: &str) -> String { String::from(brief) }
         pub fn usage_with_format<F: FnOnce(&mut dyn Iterator<Item = String>) -> String>(
@@ -86,7 +223,8 @@ pub mod getopts {
         }
     }
     /// Stage H iter 4: parse-error variant used by rustc_driver_impl.
-    /// On SemOS the stub `parse` always succeeds so this variant is unreachable.
+    /// The lenient stub `parse` always succeeds so these variants are
+    /// constructed only on the host code path.
     #[derive(Debug)]
     pub enum Fail {
         ArgumentMissing(String),

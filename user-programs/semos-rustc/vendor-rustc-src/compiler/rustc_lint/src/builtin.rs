@@ -13,7 +13,12 @@
 //! If you define a new [`LateLintPass`], you will also need to add it to the
 //! [`crate::late_lint_methods!`] invocation in `lib.rs`.
 
-use std::fmt::Write;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt::Write;
 
 use ast::token::TokenKind;
 use rustc_abi::BackendRepr;

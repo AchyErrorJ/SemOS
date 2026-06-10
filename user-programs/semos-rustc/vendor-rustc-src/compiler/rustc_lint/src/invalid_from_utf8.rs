@@ -1,4 +1,9 @@
-use std::str::Utf8Error;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::str::Utf8Error;
 
 use rustc_ast::LitKind;
 use rustc_hir::{Expr, ExprKind};
@@ -11,7 +16,7 @@ use crate::{LateContext, LateLintPass, LintContext};
 
 declare_lint! {
     /// The `invalid_from_utf8_unchecked` lint checks for calls to
-    /// `std::str::from_utf8_unchecked` and `std::str::from_utf8_unchecked_mut`
+    /// `core::str::from_utf8_unchecked` and `core::str::from_utf8_unchecked_mut`
     /// with a known invalid UTF-8 value.
     ///
     /// ### Example
@@ -19,7 +24,7 @@ declare_lint! {
     /// ```rust,compile_fail
     /// # #[allow(unused)]
     /// unsafe {
-    ///     std::str::from_utf8_unchecked(b"Ru\x82st");
+    ///     core::str::from_utf8_unchecked(b"Ru\x82st");
     /// }
     /// ```
     ///
@@ -28,22 +33,22 @@ declare_lint! {
     /// ### Explanation
     ///
     /// Creating such a `str` would result in undefined behavior as per documentation
-    /// for `std::str::from_utf8_unchecked` and `std::str::from_utf8_unchecked_mut`.
+    /// for `core::str::from_utf8_unchecked` and `core::str::from_utf8_unchecked_mut`.
     pub INVALID_FROM_UTF8_UNCHECKED,
     Deny,
-    "using a non UTF-8 literal in `std::str::from_utf8_unchecked`"
+    "using a non UTF-8 literal in `core::str::from_utf8_unchecked`"
 }
 
 declare_lint! {
     /// The `invalid_from_utf8` lint checks for calls to
-    /// `std::str::from_utf8` and `std::str::from_utf8_mut`
+    /// `core::str::from_utf8` and `core::str::from_utf8_mut`
     /// with a known invalid UTF-8 value.
     ///
     /// ### Example
     ///
     /// ```rust
     /// # #[allow(unused)]
-    /// std::str::from_utf8(b"Ru\x82st");
+    /// core::str::from_utf8(b"Ru\x82st");
     /// ```
     ///
     /// {{produces}}
@@ -51,10 +56,10 @@ declare_lint! {
     /// ### Explanation
     ///
     /// Trying to create such a `str` would always return an error as per documentation
-    /// for `std::str::from_utf8` and `std::str::from_utf8_mut`.
+    /// for `core::str::from_utf8` and `core::str::from_utf8_mut`.
     pub INVALID_FROM_UTF8,
     Warn,
-    "using a non UTF-8 literal in `std::str::from_utf8`"
+    "using a non UTF-8 literal in `core::str::from_utf8`"
 }
 
 declare_lint_pass!(InvalidFromUtf8 => [INVALID_FROM_UTF8_UNCHECKED, INVALID_FROM_UTF8]);
@@ -109,7 +114,7 @@ impl<'tcx> LateLintPass<'tcx> for InvalidFromUtf8 {
             match init.kind {
                 ExprKind::Lit(Spanned { node: lit, .. }) => {
                     if let LitKind::ByteStr(byte_sym, _) = &lit
-                        && let Err(utf8_error) = std::str::from_utf8(byte_sym.as_byte_str())
+                        && let Err(utf8_error) = core::str::from_utf8(byte_sym.as_byte_str())
                     {
                         lint(init.span, utf8_error);
                     }
@@ -128,7 +133,7 @@ impl<'tcx> LateLintPass<'tcx> for InvalidFromUtf8 {
                         .collect::<Option<Vec<_>>>();
 
                     if let Some(elements) = elements
-                        && let Err(utf8_error) = std::str::from_utf8(&elements)
+                        && let Err(utf8_error) = core::str::from_utf8(&elements)
                     {
                         lint(init.span, utf8_error);
                     }

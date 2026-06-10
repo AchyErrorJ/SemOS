@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::cell::RefCell;
 use core::hash::{Hash, Hasher};
 use core::ops::Range;
@@ -148,7 +153,12 @@ impl Hash for AdtDefData {
 
 impl<'a> HashStable<StableHashingContext<'a>> for AdtDefData {
     fn hash_stable(&self, hcx: &mut StableHashingContext<'a>, hasher: &mut StableHasher) {
-        thread_local! {
+        #[cfg(target_os = "none")]
+        semos_std::thread_local! {
+            static CACHE: RefCell<FxHashMap<(usize, HashingControls), Fingerprint>> = Default::default();
+        }
+        #[cfg(not(target_os = "none"))]
+        std::thread_local! {
             static CACHE: RefCell<FxHashMap<(usize, HashingControls), Fingerprint>> = Default::default();
         }
 

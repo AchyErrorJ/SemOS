@@ -164,7 +164,13 @@ impl PageTable {
 /// via SYS_MMAP_ANON as Cranelift allocates during IR construction +
 /// codegen. Without enough headroom the user-heap mmap returns null and
 /// semos-cc panics inside the Cranelift compile path.
-const MAX_PT_FRAMES: usize = 32768;
+///
+/// M27 iter 7: 32768→131072 (512 MiB) for semos-rustc. The 88 MB ELF
+/// consumes 22.5K leaf PT_POOL frames per spawn; even with the iter 7
+/// reclaim walker, two concurrent ASes (parent sem-sh + child semos-rustc
+/// mid-spawn) plus the heap interior PTs blow through 32K. 131072 gives
+/// 4× the per-spawn working set as headroom.
+const MAX_PT_FRAMES: usize = 131072;
 
 /// Pool of pre-allocated 4KB frames for page table structures.
 /// These come from the kernel's usable memory, separate from the security pools.
@@ -222,6 +228,12 @@ static PT_POOL: Mutex<PageTableFramePool> = Mutex::new(PageTableFramePool::new()
 /// Allocate a page table frame
 pub fn alloc_pt_frame() -> Option<u64> {
     PT_POOL.lock().alloc()
+}
+
+/// Debug-only: read the current count of free frames in PT_POOL.
+#[allow(non_snake_case)]
+pub fn PT_POOL_DEBUG_count() -> usize {
+    PT_POOL.lock().count
 }
 
 /// Free a page table frame
@@ -456,8 +468,13 @@ pub enum PagePermission {
     KernelReadWrite,
 }
 
-/// Maximum page tables tracked per process (for cleanup)
-const MAX_SUBTABLES: usize = 32;
+/// Maximum page tables tracked per process (for cleanup). With the
+/// recursive `destroy()` walker (iter 7) the subtables[] fast-path is
+/// only used as a hint — anything that overflows the cap still gets
+/// freed via the tree walk. 32 is fine for small ELFs but kept here
+/// historically; bumped to 256 so the walker isn't load-bearing for
+/// every spawn.
+const MAX_SUBTABLES: usize = 256;
 
 /// Per-process address space.
 ///
@@ -668,16 +685,90 @@ impl AddressSpace {
     }
 
     /// Free all page table frames owned by this address space.
+    ///
+    /// Iter 7 (M27): walks the PML4 user-half (idx 0..256) and frees
+    /// every leaf data frame + interior PT frame back to PT_POOL. The
+    /// old version only freed `self.subtables[..32]` + PML4, leaking
+    /// 22.5K leaf frames per 88 MB ELF spawn — after one semos-rustc
+    /// invocation the pool was exhausted.
+    ///
+    /// Detection: a fresh AS COPIES boot_cr3's PML4 byte-for-byte
+    /// (paging.rs:510), so any user-half entry that differs from boot
+    /// is process-private. Identical entries are shared/inherited and
+    /// MUST NOT be freed (they back kernel mappings + the bootloader
+    /// scratch identity map).
     pub fn destroy(&mut self) {
-        // Free all subtables
-        for i in 0..self.subtable_count {
-            free_pt_frame(self.subtables[i]);
+        let mut stats = WalkStats::default();
+        unsafe {
+            let boot_pml4 = table_at_phys(boot_cr3());
+            let proc_pml4 = table_at_phys(self.cr3);
+            // User-half PML4 entries (0..256). Kernel half (256..512)
+            // is shared with boot and never freed.
+            for i in 0..256 {
+                let proc_e = proc_pml4.entry(i);
+                let boot_e = boot_pml4.entry(i);
+                if !proc_e.is_present() { continue; }
+                if proc_e.0 == boot_e.0 { continue; } // inherited
+                free_pdpt(proc_e.phys_addr(), &mut stats);
+            }
         }
-        // Free the PML4
+        // Free the PML4 itself last.
         free_pt_frame(self.cr3);
+        stats.pt_pool_frames += 1;
+        let after = PT_POOL.lock().count;
+        crate::serial::_print(format_args!(
+            "[destroy] freed: {} leaves to pools, {} pages to PT_POOL; PT_POOL now {}\n",
+            stats.leaf_to_pool, stats.pt_pool_frames, after));
         self.cr3 = 0;
         self.subtable_count = 0;
     }
+}
+
+#[derive(Default)]
+struct WalkStats {
+    leaf_to_pool: usize,    // leaf data frames returned to security pools
+    pt_pool_frames: usize,  // anything returned to PT_POOL (leaves + interior PTs)
+}
+
+unsafe fn free_pdpt(phys: u64, stats: &mut WalkStats) {
+    let tbl = table_at_phys(phys);
+    for i in 0..512 {
+        let e = tbl.entry(i);
+        if !e.is_present() { continue; }
+        if e.is_huge() { continue; }
+        free_pd(e.phys_addr(), stats);
+    }
+    free_pt_frame(phys);
+    stats.pt_pool_frames += 1;
+}
+
+unsafe fn free_pd(phys: u64, stats: &mut WalkStats) {
+    let tbl = table_at_phys(phys);
+    for i in 0..512 {
+        let e = tbl.entry(i);
+        if !e.is_present() { continue; }
+        if e.is_huge() { continue; }
+        free_pt(e.phys_addr(), stats);
+    }
+    free_pt_frame(phys);
+    stats.pt_pool_frames += 1;
+}
+
+unsafe fn free_pt(phys: u64, stats: &mut WalkStats) {
+    let tbl = table_at_phys(phys);
+    for i in 0..512 {
+        let e = tbl.entry(i);
+        if !e.is_present() { continue; }
+        let leaf = e.phys_addr();
+        if crate::memory::free(leaf) {
+            stats.leaf_to_pool += 1;
+        } else {
+            free_pt_frame(leaf);
+            stats.pt_pool_frames += 1;
+        }
+    }
+    free_pt_frame(phys);
+    stats.pt_pool_frames += 1;
 }
 
 // ============================================================================

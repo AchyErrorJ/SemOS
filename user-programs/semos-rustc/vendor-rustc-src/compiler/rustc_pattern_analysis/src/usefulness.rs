@@ -708,11 +708,15 @@
 //! I (Nadrieril) prefer to put new tests in `ui/pattern/usefulness` unless there's a specific
 //! reason not to, for example if they crucially depend on a particular feature like `or_patterns`.
 
-use std::fmt;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 
 #[cfg(feature = "rustc")]
 use rustc_data_structures::stack::ensure_sufficient_stack;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_index::bit_set::DenseBitSet;
 use smallvec::{SmallVec, smallvec};
 use tracing::{debug, instrument};
@@ -1578,7 +1582,7 @@ impl<Cx: PatCx> WitnessMatrix<Cx> {
             *self = ret;
         } else {
             // Any other constructor we unspecialize as expected.
-            for witness in std::mem::take(&mut self.0) {
+            for witness in core::mem::take(&mut self.0) {
                 self.0.extend(witness.apply_constructor(pcx, ctor));
             }
         }
@@ -1700,7 +1704,7 @@ fn collect_non_contiguous_range_endpoints<'p, Cx: PatCx>(
 /// - unspecialization, where we lift the results from the previous step into results for this step
 ///     (using `apply_constructor` and by updating `row.useful` for each parent row).
 /// This is all explained at the top of the file.
-#[instrument(level = "debug", skip(mcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn compute_exhaustiveness_and_usefulness<'a, 'p, Cx: PatCx>(
     mcx: &mut UsefulnessCtxt<'a, 'p, Cx>,
     matrix: &mut Matrix<'p, Cx>,
@@ -1831,7 +1835,7 @@ pub struct UsefulnessReport<'p, Cx: PatCx> {
 }
 
 /// Computes whether a match is exhaustive and which of its arms are useful.
-#[instrument(skip(tycx, arms), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn compute_match_usefulness<'p, Cx: PatCx>(
     tycx: &Cx,
     arms: &[MatchArm<'p, Cx>],

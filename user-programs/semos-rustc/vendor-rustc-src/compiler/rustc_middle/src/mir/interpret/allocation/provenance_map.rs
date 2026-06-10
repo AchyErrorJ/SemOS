@@ -1,6 +1,11 @@
 //! Store the provenance for each byte in the range, with a more efficient
 //! representation for the common case where PTR_SIZE consecutive bytes have the same provenance.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::cmp;
 use core::ops::{Range, RangeBounds};
 

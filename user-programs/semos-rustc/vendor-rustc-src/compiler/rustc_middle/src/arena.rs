@@ -56,7 +56,7 @@ macro_rules! arena_types {
             [] implied_outlives_bounds:
                 rustc_middle::infer::canonical::Canonical<'tcx,
                     rustc_middle::infer::canonical::QueryResponse<'tcx,
-                        Vec<rustc_middle::traits::query::OutlivesBound<'tcx>>
+                        alloc::vec::Vec<rustc_middle::traits::query::OutlivesBound<'tcx>>
                     >
                 >,
             [] dtorck_constraint: rustc_middle::traits::query::DropckConstraint<'tcx>,

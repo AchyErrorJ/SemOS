@@ -33,9 +33,9 @@
 //! fn baz() { foo(); }
 //! ```
 
-use std::env;
-use std::fs::{self, File};
-use std::io::Write;
+use semos_std::env;
+use semos_std::fs::{self, File};
+use semos_std::io::Write;
 
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_data_structures::graph::linked_graph::{Direction, INCOMING, NodeIndex, OUTGOING};

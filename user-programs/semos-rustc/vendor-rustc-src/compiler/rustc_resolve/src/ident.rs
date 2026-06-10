@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use Determinacy::*;
@@ -301,7 +306,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     ///
     /// Invariant: This must only be called during main resolution, not during
     /// import resolution.
-    #[instrument(level = "debug", skip(self, ribs))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn resolve_ident_in_lexical_scope(
         &mut self,
         mut ident: Ident,
@@ -388,7 +393,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     }
 
     /// Resolve an identifier in the specified set of scopes.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn resolve_ident_in_scope_set<'r>(
         self: CmResolver<'r, 'ra, 'tcx>,
         orig_ident: Ident,
@@ -696,7 +701,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                     None => Err(Determinacy::Determined),
                 }
             }
-            Scope::ToolPrelude => match self.registered_tool_decls.get(&ident) {
+            Scope::ToolPrelude => match self.registered_tool_decls.get(&ident.0) {
                 Some(decl) => Ok(*decl),
                 None => Err(Determinacy::Determined),
             },
@@ -875,7 +880,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         false
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn maybe_resolve_ident_in_module<'r>(
         self: CmResolver<'r, 'ra, 'tcx>,
         module: ModuleOrUniformRoot<'ra>,
@@ -887,7 +892,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         self.resolve_ident_in_module(module, ident, ns, parent_scope, None, None, ignore_import)
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn resolve_ident_in_module<'r>(
         self: CmResolver<'r, 'ra, 'tcx>,
         module: ModuleOrUniformRoot<'ra>,
@@ -927,7 +932,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     }
 
     /// Attempts to resolve `ident` in namespace `ns` of `module`.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn resolve_ident_in_virt_module_unadjusted<'r>(
         self: CmResolver<'r, 'ra, 'tcx>,
         module: ModuleOrUniformRoot<'ra>,
@@ -1334,7 +1339,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     }
 
     /// Validate a local resolution (from ribs).
-    #[instrument(level = "debug", skip(self, all_ribs))]
+    // [stripped: #[instrument(...)]]
     fn validate_res_from_ribs(
         &mut self,
         rib_index: usize,
@@ -1655,7 +1660,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         res
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn maybe_resolve_path<'r>(
         self: CmResolver<'r, 'ra, 'tcx>,
         path: &[Segment],
@@ -1675,7 +1680,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             None,
         )
     }
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn resolve_path<'r>(
         self: CmResolver<'r, 'ra, 'tcx>,
         path: &[Segment],

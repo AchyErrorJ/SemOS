@@ -3,6 +3,11 @@
 //!
 //! FIXME(jdonszelmann): delete `rustc_ast/attr/mod.rs`
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::borrow::Borrow;
 use core::fmt::{Debug, Display};
 

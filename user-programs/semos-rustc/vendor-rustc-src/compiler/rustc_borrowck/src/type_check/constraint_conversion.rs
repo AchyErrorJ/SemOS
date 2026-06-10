@@ -18,6 +18,7 @@ use crate::constraints::OutlivesConstraint;
 use crate::region_infer::TypeTest;
 use crate::type_check::{Locations, MirTypeckRegionConstraints};
 use crate::universal_regions::UniversalRegions;
+use alloc::vec::Vec;
 use crate::{
     BorrowckInferCtxt, ClosureOutlivesSubject, ClosureRegionRequirements, ConstraintCategory,
 };
@@ -68,7 +69,7 @@ impl<'a, 'tcx> ConstraintConversion<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn convert_all(&mut self, query_constraints: &QueryRegionConstraints<'tcx>) {
         let QueryRegionConstraints { outlives, assumptions } = query_constraints;
         let assumptions =
@@ -82,7 +83,7 @@ impl<'a, 'tcx> ConstraintConversion<'a, 'tcx> {
     /// Given an instance of the closure type, this method instantiates the "extra" requirements
     /// that we computed for the closure. This has the effect of adding new outlives obligations
     /// to existing region variables in `closure_args`.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn apply_closure_requirements(
         &mut self,
         closure_requirements: &ClosureRegionRequirements<'tcx>,

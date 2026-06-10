@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use itertools::Itertools as _;
 use rustc_abi::{self as abi, BackendRepr, FIRST_VARIANT};
 use rustc_middle::ty::adjustment::PointerCoercion;
@@ -15,7 +20,7 @@ use crate::traits::*;
 use crate::{MemFlags, base};
 
 impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
-    #[instrument(level = "trace", skip(self, bx))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn codegen_rvalue(
         &mut self,
         bx: &mut Bx,

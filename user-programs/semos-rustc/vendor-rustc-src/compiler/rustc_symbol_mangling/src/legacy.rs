@@ -1,5 +1,9 @@
-use std::fmt::{self, Write};
-use std::mem::{self, discriminant};
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt::{self, Write};
+use core::mem::{self, discriminant};
 
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_hashes::Hash64;

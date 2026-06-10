@@ -1,6 +1,11 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_macros::HashStable;
 use smallvec::SmallVec;
-use tracing::instrument;
+// instrument off
 
 use crate::ty::context::TyCtxt;
 use crate::ty::{self, DefId, OpaqueTypeKey, Ty, TypingEnv};
@@ -78,7 +83,7 @@ impl<'tcx> InhabitedPredicate<'tcx> {
         result
     }
 
-    #[instrument(level = "debug", skip(tcx, typing_env, in_module, reveal_opaque), ret)]
+    // #[instrument(level = "debug", skip(tcx, typing_env, in_module, reveal_opaque), ret)]
     fn apply_inner<E: core::fmt::Debug>(
         self,
         tcx: TyCtxt<'tcx>,

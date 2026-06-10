@@ -97,6 +97,13 @@ pub trait Platform: Send + Sync + 'static {
     /// Default: unavailable.
     fn run_pong(&self) -> u64 { 0 }
 
+    /// SYS_TTY_SUPPRESS: set/clear the cooked-mode line-discipline's
+    /// input-suppression flag. `on=true` drops keystrokes from feeding
+    /// the pend buffer (they're still mirrored to serial). sem-sh sets
+    /// this around external commands so keys typed during a child run
+    /// don't buffer into the next prompt. Returns 0. Default: no-op.
+    fn tty_suppress(&self, _on: bool) -> u64 { 0 }
+
     /// Map a segment of an ELF binary into a user address space.
     ///
     /// - `space`: the address space handle from `create_address_space`

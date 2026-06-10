@@ -21,6 +21,7 @@ use crate::type_check::free_region_relations::UniversalRegionRelations;
 use crate::type_check::{Locations, MirTypeckRegionConstraints};
 use crate::universal_regions::UniversalRegions;
 use crate::{BorrowckInferCtxt, NllRegionVariableOrigin};
+use alloc::vec::Vec;
 
 /// A set of outlives constraints after rewriting to remove
 /// higher-kinded constraints.

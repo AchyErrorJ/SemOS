@@ -5,7 +5,7 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![feature(assert_matches)]
 #![feature(box_patterns)]
-#![feature(file_buffered)]
+#![cfg_attr(not(target_os = "none"), feature(file_buffered))]
 #![feature(if_let_guard)]
 #![feature(negative_impls)]
 #![feature(never_type)]
@@ -27,7 +27,6 @@ use core::ops::{ControlFlow, Deref};
 use alloc::rc::Rc;
 
 use borrow_set::LocalsStateAtExit;
-use polonius_engine::AllFacts;
 use root_cx::BorrowCheckRootCtxt;
 use rustc_abi::FieldIdx;
 use rustc_data_structures::frozen::Frozen;
@@ -306,7 +305,7 @@ struct CollectRegionConstraintsResult<'tcx> {
     constraints: MirTypeckRegionConstraints<'tcx>,
     deferred_closure_requirements: DeferredClosureRequirements<'tcx>,
     deferred_opaque_type_errors: Vec<DeferredOpaqueTypeError<'tcx>>,
-    polonius_facts: Option<AllFacts<RustcFacts>>,
+    polonius_facts: Option<PoloniusFacts>,
     polonius_context: Option<PoloniusContext>,
 }
 
@@ -687,7 +686,7 @@ impl<'tcx> BorrowckInferCtxt<'tcx> {
         next_region
     }
 
-    #[instrument(skip(self, get_ctxt_fn), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn next_nll_region_var<F>(
         &self,
         origin: NllRegionVariableOrigin<'tcx>,
@@ -1043,6 +1042,8 @@ impl<'a, 'tcx> ResultsVisitor<'tcx, Borrowck<'a, 'tcx>> for MirBorrowckCtxt<'a, 
 
 use self::AccessDepth::{Deep, Shallow};
 use self::ReadOrWrite::{Activation, Read, Reservation, Write};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum ArtificialField {
@@ -1249,7 +1250,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, state))]
+    // [stripped: #[instrument(...)]]
     fn check_access_for_conflict(
         &mut self,
         location: Location,
@@ -1382,7 +1383,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
 
     /// Through #123739, `BackwardIncompatibleDropHint`s (BIDs) are introduced.
     /// We would like to emit lints whether borrow checking fails at these future drop locations.
-    #[instrument(level = "debug", skip(self, state))]
+    // [stripped: #[instrument(...)]]
     fn check_backward_incompatible_drop(
         &mut self,
         location: Location,
@@ -1759,7 +1760,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, '_, 'tcx> {
 
     /// Checks whether a borrow of this place is invalidated when the function
     /// exits
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn check_for_invalidation_at_exit(
         &mut self,
         location: Location,

@@ -10,6 +10,8 @@ extern crate alloc;
 
 mod errors;
 
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 use core::ops::ControlFlow;

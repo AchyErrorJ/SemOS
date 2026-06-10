@@ -3,8 +3,13 @@
 //! See <https://rustc-dev-guide.rust-lang.org/diagnostics.html> for an
 //! overview of how lints are implemented.
 
-use std::cell::Cell;
-use std::slice;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cell::Cell;
+use core::slice;
 
 use rustc_ast::BindingMode;
 use rustc_ast::util::parser::ExprPrecedence;

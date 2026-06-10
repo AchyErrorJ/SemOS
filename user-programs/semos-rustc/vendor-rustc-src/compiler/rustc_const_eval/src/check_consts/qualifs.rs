@@ -5,6 +5,11 @@
 // FIXME(const_trait_impl): This API should be really reworked. It's dangerously general for
 // having basically only two use-cases that act in different ways.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::LangItem;
 use rustc_infer::infer::TyCtxtInferExt;
@@ -168,7 +173,7 @@ impl Qualif for NeedsNonConstDrop {
         qualifs.needs_non_const_drop
     }
 
-    #[instrument(level = "trace", skip(cx), ret)]
+    // [stripped: #[instrument(...)]]
     fn in_any_value_of_ty<'tcx>(cx: &ConstCx<'_, 'tcx>, ty: Ty<'tcx>) -> bool {
         // If this doesn't need drop at all, then don't select `[const] Destruct`.
         if !ty.needs_drop(cx.tcx, cx.typing_env) {

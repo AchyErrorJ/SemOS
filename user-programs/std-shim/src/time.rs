@@ -29,6 +29,13 @@ impl Duration {
         Self { ticks: t }
     }
 
+    /// std-compat: `Duration::new(secs, nanos)`. Nanos rounded to the
+    /// nearest tick at our coarse 62 Hz resolution.
+    pub const fn new(secs: u64, nanos: u32) -> Self {
+        let nano_ticks = (nanos as u64 * TICKS_PER_SEC) / 1_000_000_000;
+        Self { ticks: secs.saturating_mul(TICKS_PER_SEC).saturating_add(nano_ticks) }
+    }
+
     pub const fn from_secs(s: u64) -> Self {
         Self { ticks: s.saturating_mul(TICKS_PER_SEC) }
     }
@@ -47,6 +54,13 @@ impl Duration {
         (self.ticks as u128) * MILLIS_PER_TICK
     }
 
+    /// std-compat: floating-point seconds. Used by rustc_data_structures::
+    /// profiling::duration_to_secs_str for human-readable -Ztime-passes
+    /// output.
+    pub fn as_secs_f64(&self) -> f64 {
+        (self.ticks as f64) / (TICKS_PER_SEC as f64)
+    }
+
     pub const fn as_ticks(&self) -> u64 {
         self.ticks
     }
@@ -60,6 +74,18 @@ impl core::ops::Add for Duration {
     type Output = Duration;
     fn add(self, rhs: Self) -> Duration {
         Duration { ticks: self.ticks.saturating_add(rhs.ticks) }
+    }
+}
+
+impl core::ops::AddAssign for Duration {
+    fn add_assign(&mut self, rhs: Self) {
+        self.ticks = self.ticks.saturating_add(rhs.ticks);
+    }
+}
+
+impl core::ops::SubAssign for Duration {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.ticks = self.ticks.saturating_sub(rhs.ticks);
     }
 }
 

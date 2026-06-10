@@ -20,7 +20,7 @@ use crate::diagnostics::ToUniverseInfo;
 use crate::type_check::{MirTypeckRegionConstraints, constraint_conversion};
 use crate::universal_regions::UniversalRegions;
 
-#[instrument(skip(infcx, constraints, op), level = "trace")]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn fully_perform_op_raw<'tcx, R: fmt::Debug, Op>(
     infcx: &BorrowckInferCtxt<'tcx>,
     body: &Body<'tcx>,
@@ -89,7 +89,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
     /// **Any `rustc_infer::infer` operations that might generate region
     /// constraints should occur within this method so that those
     /// constraints can be properly localized!**
-    #[instrument(skip(self, op), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn fully_perform_op<R: fmt::Debug, Op>(
         &mut self,
         locations: Locations,
@@ -125,7 +125,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         instantiated
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn prove_trait_ref(
         &mut self,
         trait_ref: ty::TraitRef<'tcx>,
@@ -141,7 +141,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         );
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(super) fn normalize_and_prove_instantiated_predicates(
         &mut self,
         // Keep this parameter for now, in case we start using
@@ -169,7 +169,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn prove_predicate(
         &mut self,
         predicate: impl Upcast<TyCtxt<'tcx>, ty::Predicate<'tcx>> + core::fmt::Debug,
@@ -204,7 +204,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         result.unwrap_or(value)
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn normalize_with_category<T>(
         &mut self,
         value: T,
@@ -223,7 +223,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         result.unwrap_or(value)
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn struct_tail(
         &mut self,
         ty: Ty<'tcx>,
@@ -274,7 +274,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn structurally_resolve(
         &mut self,
         ty: Ty<'tcx>,
@@ -308,7 +308,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn ascribe_user_type(
         &mut self,
         mir_ty: Ty<'tcx>,
@@ -327,7 +327,7 @@ impl<'a, 'tcx> TypeChecker<'a, 'tcx> {
     /// *Incorrectly* skips the WF checks we normally do in `ascribe_user_type`.
     ///
     /// FIXME(#104478, #104477): This is a hack for backward-compatibility.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn ascribe_user_type_skip_wf(
         &mut self,
         mir_ty: Ty<'tcx>,

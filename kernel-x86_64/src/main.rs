@@ -429,6 +429,26 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static SEM_SH_ELF: &[u8] = include_bytes!(
         "../../user-programs/sem-sh/target/x86_64-unknown-none/release/sem-sh"
     );
+    // M27 Phase 5b iter 5 — DEMO 80: rustc-on-SemOS. The 88 MB binary is
+    // the full rustc compiler infrastructure plus the Cranelift codegen
+    // stack statically linked into one Ring-3 ELF.
+    //
+    // Note (2026-06-10): the 88 MB include makes a 102 MB kernel that
+    // never reaches serial under QEMU's BIOS bootloader (size > legacy
+    // load-segment ceiling). It loads fine on real hardware (T540p
+    // validated) and under UEFI — but parallel EHCI-validation sessions
+    // running under QEMU-BIOS need to keep this stub'd. If you're a
+    // sub-agent reaching this comment: only flip the stub on if your
+    // tests run on hardware or UEFI; for QEMU-BIOS leave the &[] in.
+    static SEMOS_RUSTC_ELF: &[u8] = include_bytes!(
+        "../../user-programs/semos-rustc/target/x86_64-unknown-none/release/semos-rustc"
+    );
+    // DEMO 80 input source: a trivial no_std/no_main Rust program. The
+    // SemOS-resident semos-rustc compiles this to /tmp/hello.elf which
+    // SYS_SPAWN can then load.
+    static HELLO_RS_SOURCE: &[u8] = include_bytes!(
+        "../../user-programs/semos-rustc/test-sources/hello.rs"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -499,6 +519,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered sem-sh.elf ({} bytes, M20 native shell)", SEM_SH_ELF.len());
         } else {
             println!("    [WARN] failed to register sem-sh.elf");
+        }
+        if fs.add("semos-rustc.elf", kernel_core::fs::ramfs::FileType::Executable, SEMOS_RUSTC_ELF) {
+            println!("    Registered semos-rustc.elf ({} bytes, M27 Phase 5b iter 5: rustc-on-SemOS)", SEMOS_RUSTC_ELF.len());
+        } else {
+            println!("    [WARN] failed to register semos-rustc.elf");
+        }
+        if fs.add("hello.rs", kernel_core::fs::ramfs::FileType::Regular, HELLO_RS_SOURCE) {
+            println!("    Registered hello.rs ({} bytes, DEMO 80 source)", HELLO_RS_SOURCE.len());
+        } else {
+            println!("    [WARN] failed to register hello.rs");
         }
     }
 

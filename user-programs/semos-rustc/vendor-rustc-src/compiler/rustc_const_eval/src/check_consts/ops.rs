@@ -1,5 +1,10 @@
 //! Concrete error types for all operations which may be invalid in a certain const context.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use hir::{ConstContext, LangItem};
 use rustc_errors::codes::*;
 use rustc_errors::{Applicability, Diag, MultiSpan};

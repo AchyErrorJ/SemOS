@@ -4,6 +4,11 @@
 //! resolution, just before AST lowering. These lints are for purely
 //! syntactical lints.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::visit::{self as ast_visit, Visitor, walk_list};
 use rustc_ast::{self as ast, AttrVec, HasAttrs};
 use rustc_data_structures::stack::ensure_sufficient_stack;

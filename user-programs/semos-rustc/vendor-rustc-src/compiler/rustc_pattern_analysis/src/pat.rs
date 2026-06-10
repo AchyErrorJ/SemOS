@@ -1,7 +1,11 @@
 //! As explained in [`crate::usefulness`], values and patterns are made from constructors applied to
 //! fields. This file defines types that represent patterns in this way.
 
-use std::fmt;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 
 use smallvec::{SmallVec, smallvec};
 
@@ -14,7 +18,7 @@ use crate::{PatCx, PrivateUninhabitedField};
 pub(crate) struct PatId(u32);
 impl PatId {
     fn new() -> Self {
-        use std::sync::atomic::{AtomicU32, Ordering};
+        use core::sync::atomic::{AtomicU32, Ordering};
         static PAT_ID: AtomicU32 = AtomicU32::new(0);
         PatId(PAT_ID.fetch_add(1, Ordering::SeqCst))
     }
@@ -155,8 +159,8 @@ impl<Cx: PatCx> PartialEq for DeconstructedPat<Cx> {
 /// Delegate to `uid`.
 impl<Cx: PatCx> Eq for DeconstructedPat<Cx> {}
 /// Delegate to `uid`.
-impl<Cx: PatCx> std::hash::Hash for DeconstructedPat<Cx> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl<Cx: PatCx> core::hash::Hash for DeconstructedPat<Cx> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.uid.hash(state);
     }
 }

@@ -23,6 +23,11 @@
 //! allows for doing a more fine-grained check to see if pre- or post-lto data
 //! was re-used.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use core::fmt;
 
@@ -73,7 +78,10 @@ pub fn assert_module_sources(tcx: TyCtxt<'_>, set_reuse: &dyn Fn(&mut CguReuseTr
             && let Some(data) = &ams.cgu_reuse_tracker.data
         {
             data.actual_reuse.items().all(|(cgu, reuse)| {
+                #[cfg(not(target_os = "none"))]
                 println!("CGU_REUSE {cgu} {reuse}");
+                #[cfg(target_os = "none")]
+                let _ = (cgu, reuse);
                 true
             });
         }

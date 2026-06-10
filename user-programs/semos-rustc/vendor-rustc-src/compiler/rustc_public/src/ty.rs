@@ -1,5 +1,10 @@
-use std::fmt::{self, Debug, Display, Formatter};
-use std::ops::Range;
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+use core::fmt::{self, Debug, Display, Formatter};
+use core::ops::Range;
 
 use serde::Serialize;
 
@@ -1003,7 +1008,7 @@ crate_def! {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize)]
 pub struct GenericArgs(pub Vec<GenericArgKind>);
 
-impl std::ops::Index<ParamTy> for GenericArgs {
+impl core::ops::Index<ParamTy> for GenericArgs {
     type Output = Ty;
 
     fn index(&self, index: ParamTy) -> &Self::Output {
@@ -1011,7 +1016,7 @@ impl std::ops::Index<ParamTy> for GenericArgs {
     }
 }
 
-impl std::ops::Index<ParamConst> for GenericArgs {
+impl core::ops::Index<ParamConst> for GenericArgs {
     type Output = TyConst;
 
     fn index(&self, index: ParamConst) -> &Self::Output {

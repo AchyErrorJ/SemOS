@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use semos_std::path::PathBuf; // M27 R4 B5
 use alloc::rc::Rc;
 use alloc::sync::Arc;

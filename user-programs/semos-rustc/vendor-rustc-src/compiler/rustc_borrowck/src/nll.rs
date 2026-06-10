@@ -5,7 +5,31 @@ use semos_std::path::PathBuf;
 use alloc::rc::Rc;
 use core::str::FromStr;
 
+#[cfg(not(target_os = "none"))]
 use polonius_engine::{Algorithm, AllFacts, Output};
+#[cfg(target_os = "none")]
+use self::polonius_engine::{Algorithm, AllFacts, Output};
+#[cfg(target_os = "none")]
+mod polonius_engine {
+    use core::marker::PhantomData;
+    use core::str::FromStr;
+    #[derive(Clone, Copy, Debug)]
+    pub enum Algorithm { DatafrogOpt, Hybrid, LocationInsensitive }
+    impl FromStr for Algorithm {
+        type Err = ();
+        fn from_str(_s: &str) -> Result<Self, Self::Err> {
+            Ok(Algorithm::Hybrid)
+        }
+    }
+    pub struct AllFacts<F> { _marker: PhantomData<F> }
+    #[derive(Clone)]
+    pub struct Output<F> { _marker: PhantomData<F> }
+    impl<F> Output<F> {
+        pub fn compute(_facts: &AllFacts<F>, _algo: Algorithm, _pass: bool) -> Self {
+            Self { _marker: PhantomData }
+        }
+    }
+}
 use rustc_data_structures::frozen::Frozen;
 use rustc_index::IndexSlice;
 use rustc_middle::mir::pretty::PrettyPrintMirOptions;
@@ -30,6 +54,8 @@ use crate::region_infer::RegionInferenceContext;
 use crate::type_check::MirTypeckRegionConstraints;
 use crate::type_check::free_region_relations::UniversalRegionRelations;
 use crate::universal_regions::UniversalRegions;
+use alloc::string::String;
+use alloc::boxed::Box;
 use crate::{
     BorrowCheckRootCtxt, BorrowckInferCtxt, ClosureOutlivesSubject, ClosureRegionRequirements,
     polonius, renumber,
@@ -52,7 +78,7 @@ pub(crate) struct NllOutput<'tcx> {
 /// Rewrites the regions in the MIR to use NLL variables, also scraping out the set of universal
 /// regions (e.g., region parameters) declared on the function. That set will need to be given to
 /// `compute_regions`.
-#[instrument(skip(infcx, body, promoted), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn replace_regions_in_mir<'tcx>(
     infcx: &BorrowckInferCtxt<'tcx>,
     body: &mut Body<'tcx>,
@@ -120,7 +146,7 @@ pub(crate) fn compute_regions<'tcx>(
     location_map: Rc<DenseLocationMap>,
     universal_region_relations: Frozen<UniversalRegionRelations<'tcx>>,
     constraints: MirTypeckRegionConstraints<'tcx>,
-    mut polonius_facts: Option<AllFacts<RustcFacts>>,
+    mut polonius_facts: Option<PoloniusFacts>,
     polonius_context: Option<PoloniusContext>,
 ) -> NllOutput<'tcx> {
     let polonius_output = root_cx.consumer.as_ref().map_or(false, |c| c.polonius_output())
@@ -158,11 +184,12 @@ pub(crate) fn compute_regions<'tcx>(
     });
 
     // If requested: dump NLL facts, and run legacy polonius analysis.
+    #[cfg(not(target_os = "none"))]
     let polonius_output = polonius_facts.as_ref().and_then(|polonius_facts| {
         if infcx.tcx.sess.opts.unstable_opts.nll_facts {
             let def_id = body.source.def_id();
             let def_path = infcx.tcx.def_path(def_id);
-            let dir_path = PathBuf::from(&infcx.tcx.sess.opts.unstable_opts.nll_facts_dir)
+            let dir_path = PathBuf::from(infcx.tcx.sess.opts.unstable_opts.nll_facts_dir.as_str())
                 .join(def_path.to_filename_friendly_no_crate());
             polonius_facts.write_to_dir(dir_path, location_table).unwrap();
         }
@@ -177,6 +204,8 @@ pub(crate) fn compute_regions<'tcx>(
             None
         }
     });
+    #[cfg(target_os = "none")]
+    let polonius_output: Option<Box<PoloniusOutput>> = None;
 
     // Solve the region constraints.
     let (closure_region_requirements, nll_errors) =
@@ -184,7 +213,10 @@ pub(crate) fn compute_regions<'tcx>(
 
     NllOutput {
         regioncx,
+        #[cfg(not(target_os = "none"))]
         polonius_input: polonius_facts.map(Box::new),
+        #[cfg(target_os = "none")]
+        polonius_input: None,
         polonius_output,
         opt_closure_req: closure_region_requirements,
         nll_errors,

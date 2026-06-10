@@ -37,6 +37,8 @@ use crate::session_diagnostics::{
 };
 use crate::universal_regions::DefiningTy;
 use crate::{MirBorrowckCtxt, borrowck_errors, fluent_generated as fluent};
+use alloc::vec::Vec;
+use alloc::string::ToString;
 
 impl<'tcx> ConstraintDescription for ConstraintCategory<'tcx> {
     fn description(&self) -> &'static str {
@@ -645,7 +647,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
     /// LL |     ref_obj(x)
     ///    |     ^^^^^^^^^^ `x` escapes the function body here
     /// ```
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn report_escaping_data_error(&self, errci: &ErrorConstraintInfo<'tcx>) -> Diag<'infcx> {
         let ErrorConstraintInfo { span, category, .. } = errci;
 
@@ -949,7 +951,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
         self.suggest_constrain_dyn_trait_in_impl(diag, &visitor.0, ident, self_ty);
     }
 
-    #[instrument(skip(self, err), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn suggest_constrain_dyn_trait_in_impl(
         &self,
         err: &mut Diag<'_>,

@@ -1,3 +1,7 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use core::any::Any;

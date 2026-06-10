@@ -1,5 +1,8 @@
 //! Lexical region resolution.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt;
 
 use rustc_data_structures::fx::FxHashSet;
@@ -28,7 +31,7 @@ use crate::infer::{RegionRelations, RegionVariableOrigin, SubregionOrigin};
 /// iteration to find region values which satisfy all constraints,
 /// assuming such values can be found. It returns the final values of
 /// all the variables as well as a set of errors that must be reported.
-#[instrument(level = "debug", skip(region_rels, var_infos, data))]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn resolve<'tcx>(
     region_rels: &RegionRelations<'_, 'tcx>,
     var_infos: VarInfos<'tcx>,
@@ -169,7 +172,7 @@ impl<'cx, 'tcx> LexicalResolver<'cx, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn dump_constraints(&self) {
         for (idx, (constraint, _)) in self.data.constraints.iter().enumerate() {
             debug!("Constraint {} => {:?}", idx, constraint);
@@ -452,7 +455,7 @@ impl<'cx, 'tcx> LexicalResolver<'cx, 'tcx> {
     }
 
     /// True if `a <= b`, but not defined over inference variables.
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn sub_concrete_regions(&self, a: Region<'tcx>, b: Region<'tcx>) -> bool {
         let tcx = self.tcx();
         let sub_free_regions = |r1, r2| self.region_rels.free_regions.sub_free_regions(tcx, r1, r2);
@@ -482,7 +485,7 @@ impl<'cx, 'tcx> LexicalResolver<'cx, 'tcx> {
     ///
     /// Neither `a` nor `b` may be an inference variable (hence the
     /// term "concrete regions").
-    #[instrument(level = "trace", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn lub_concrete_regions(&self, a: Region<'tcx>, b: Region<'tcx>) -> Region<'tcx> {
         match (a.kind(), b.kind()) {
             (ReBound(..), _) | (_, ReBound(..)) | (ReErased, _) | (_, ReErased) => {
@@ -527,7 +530,7 @@ impl<'cx, 'tcx> LexicalResolver<'cx, 'tcx> {
     /// After expansion is complete, go and check upper bounds (i.e.,
     /// cases where the region cannot grow larger than a fixed point)
     /// and check that they are satisfied.
-    #[instrument(skip(self, var_data, errors))]
+    // [stripped: #[instrument(...)]]
     fn collect_errors(
         &self,
         var_data: &mut LexicalRegionResolutions<'tcx>,

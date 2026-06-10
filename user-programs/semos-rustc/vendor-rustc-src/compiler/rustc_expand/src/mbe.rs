@@ -12,6 +12,10 @@ mod metavar_expr;
 mod quoted;
 mod transcribe;
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use metavar_expr::MetaVarExpr;
 use rustc_ast::token::{Delimiter, NonterminalKind, Token, TokenKind};
 use rustc_ast::tokenstream::{DelimSpacing, DelimSpan};

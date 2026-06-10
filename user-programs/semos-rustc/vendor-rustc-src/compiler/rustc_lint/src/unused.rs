@@ -1,4 +1,9 @@
-use std::iter;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter;
 
 use rustc_ast::util::{classify, parser};
 use rustc_ast::{self as ast, ExprKind, FnRetTy, HasAttrs as _, StmtKind};
@@ -278,7 +283,7 @@ impl<'tcx> LateLintPass<'tcx> for UnusedResults {
             Coroutine(Span),
         }
 
-        #[instrument(skip(cx, expr), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
         fn is_ty_must_use<'tcx>(
             cx: &LateContext<'tcx>,
             ty: Ty<'tcx>,
@@ -436,7 +441,7 @@ impl<'tcx> LateLintPass<'tcx> for UnusedResults {
                 .is_some()
         }
 
-        #[instrument(skip(cx), level = "debug")]
+    // [stripped: #[instrument(...)]]
         fn emit_must_use_untranslated(
             cx: &LateContext<'_>,
             path: &MustUsePath,

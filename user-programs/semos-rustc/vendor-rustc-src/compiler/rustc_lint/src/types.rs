@@ -1,4 +1,9 @@
-use std::iter;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter;
 
 use rustc_abi::{BackendRepr, TagEncoding, Variants, WrappingRange};
 use rustc_hir::{Expr, ExprKind, HirId, LangItem};

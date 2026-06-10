@@ -25,6 +25,9 @@
 //! sometimes useful when the types of `c` and `d` are not traceable
 //! things. (That system should probably be refactored.)
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use relate::lattice::{LatticeOp, LatticeOpKind};
 use rustc_middle::bug;
 use rustc_middle::ty::relate::solver_relating::RelateExt as NextSolverRelate;

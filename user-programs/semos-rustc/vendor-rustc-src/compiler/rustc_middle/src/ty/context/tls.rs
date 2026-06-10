@@ -68,7 +68,7 @@ pub fn with_context_opt<F, R>(f: F) -> R
 where
     F: for<'a, 'tcx> FnOnce(Option<&ImplicitCtxt<'a, 'tcx>>) -> R,
 {
-    let context = TLV.get();
+    let context = TLV.with(|tlv| tlv.get());
     if context.is_null() {
         f(None)
     } else {

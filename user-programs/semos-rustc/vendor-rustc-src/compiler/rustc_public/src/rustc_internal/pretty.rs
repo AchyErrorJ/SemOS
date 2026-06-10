@@ -1,4 +1,8 @@
+use crate_alloc::vec::Vec;
+#[cfg(not(target_os = "none"))]
 use std::io;
+#[cfg(target_os = "none")]
+use semos_std::io;
 
 use rustc_middle::ty::TyCtxt;
 

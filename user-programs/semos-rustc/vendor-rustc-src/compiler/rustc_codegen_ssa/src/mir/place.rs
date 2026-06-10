@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::{
     Align, BackendRepr, FieldIdx, FieldsShape, Size, TagEncoding, VariantIdx, Variants,
 };
@@ -320,7 +325,7 @@ impl<'a, 'tcx, V: CodegenObject> PlaceRef<'tcx, V> {
 }
 
 impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
-    #[instrument(level = "trace", skip(self, bx))]
+    // [stripped: #[instrument(...)]]
     pub fn codegen_place(
         &mut self,
         bx: &mut Bx,

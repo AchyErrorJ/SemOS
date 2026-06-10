@@ -19,6 +19,8 @@ use crate::borrow_set::BorrowData;
 use crate::consumers::RegionInferenceContext;
 use crate::region_infer::opaque_types::DeferredOpaqueTypeError;
 use crate::type_check::Locations;
+use alloc::vec::Vec;
+use alloc::string::ToString;
 
 impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
     pub(crate) fn report_opaque_type_errors(&mut self, errors: Vec<DeferredOpaqueTypeError<'tcx>>) {
@@ -192,7 +194,8 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
                                 } else {
                                     captured_args
                                         .into_iter()
-                                        .map(|def_id| tcx.item_name(def_id))
+                                        .map(|def_id| tcx.item_name(def_id).to_string())
+                                        .collect::<Vec<_>>()
                                         .join(", ")
                                 }
                             ),

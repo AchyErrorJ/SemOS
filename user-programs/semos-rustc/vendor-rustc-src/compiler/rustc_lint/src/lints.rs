@@ -1,6 +1,11 @@
 // ignore-tidy-filelength
 
-use std::num::NonZero;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::num::NonZero;
 
 use rustc_errors::codes::*;
 use rustc_errors::{
@@ -2338,6 +2343,9 @@ pub(crate) struct UnexpectedCfgName {
 }
 
 pub(crate) mod unexpected_cfg_name {
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
     use rustc_errors::DiagSymbolList;
     use rustc_macros::Subdiagnostic;
     use rustc_span::{Ident, Span, Symbol};

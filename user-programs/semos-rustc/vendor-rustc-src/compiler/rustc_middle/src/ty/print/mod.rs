@@ -1,10 +1,15 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use hir::def::Namespace;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::sso::SsoHashSet;
 use rustc_hir as hir;
 use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_hir::definitions::{DefPathData, DisambiguatedDefPathData};
-use tracing::{debug, instrument, trace};
+use tracing::{debug, trace};
 
 use crate::ty::{self, GenericArg, Ty, TyCtxt};
 
@@ -135,7 +140,7 @@ pub trait Printer<'tcx>: Sized {
 
     // Defaults (should not be overridden):
 
-    #[instrument(skip(self), level = "debug")]
+    // #[instrument(skip(self), level = "debug")]
     fn default_print_def_path(
         &mut self,
         def_id: DefId,

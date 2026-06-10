@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_hir::{self as hir, LangItem};
 use rustc_middle::ty::{self, Ty};
 use rustc_session::lint::fcw;

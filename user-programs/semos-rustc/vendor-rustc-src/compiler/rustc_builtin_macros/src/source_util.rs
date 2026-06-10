@@ -1,5 +1,10 @@
 //! The implementation of built-in macros which relate to the file system.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 // M27 R4 B5: semos_std::path supplies Path/PathBuf in the SemOS build.
 #[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
@@ -292,7 +297,12 @@ fn load_binary_file(
                     .span_to_filename(macro_span.source_callsite())
                     .into_local_path()
                     .and_then(|src| find_path_suggestion(source_map, src.parent()?, original_path))
-                    .and_then(|path| path.into_os_string().into_string().ok());
+                    .and_then(|path| {
+                        #[cfg(not(target_os = "none"))]
+                        { path.into_os_string().into_string().ok() }
+                        #[cfg(target_os = "none")]
+                        { Some(path.into_os_string()) }
+                    });
 
                 if let Some(new_path) = new_path {
                     err.span_suggestion_verbose(
@@ -355,13 +365,13 @@ fn find_path_suggestion(
         let removed = components.next()?;
         trimmed_path = components.as_path();
         let _ = trimmed_path.file_name()?; // ensure there is a file name left
+        // M27 R4 B5: ParentDir variant mirrors std's on the SemOS path shim.
+        #[cfg(not(target_os = "none"))]
+        let parent_dir = std::path::Component::ParentDir;
+        #[cfg(target_os = "none")]
+        let parent_dir = semos_std::path::Component::ParentDir;
         Some([
             Some(trimmed_path.to_path_buf()),
-            // M27 R4 B5: semos_std::path::Component::ParentDir mirrors std's.
-            #[cfg(not(target_os = "none"))]
-            let parent_dir = std::path::Component::ParentDir;
-            #[cfg(target_os = "none")]
-            let parent_dir = semos_std::path::Component::ParentDir;
             (removed != parent_dir)
                 .then(|| Path::new("..").join(trimmed_path)),
         ])

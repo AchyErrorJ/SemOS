@@ -84,6 +84,12 @@ pub mod tlv {
     #[cfg(target_os = "none")]
     unsafe impl Send for TlvCell {}
     #[cfg(target_os = "none")]
+    impl TlvCell {
+        #[inline] pub fn get(&self) -> *const () { self.0.get() }
+        #[inline] pub fn set(&self, v: *const ()) { self.0.set(v) }
+        #[inline] pub fn replace(&self, v: *const ()) -> *const () { self.0.replace(v) }
+    }
+    #[cfg(target_os = "none")]
     semos_std::thread_local! { pub static TLV: TlvCell = TlvCell(Cell::new(core::ptr::null())); }
 
     #[derive(Copy, Clone)]

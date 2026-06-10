@@ -34,6 +34,8 @@ use tracing::{debug, instrument};
 
 use crate::BorrowckInferCtxt;
 use crate::renumber::RegionCtxt;
+use alloc::vec::Vec;
+use alloc::string::ToString;
 
 #[derive(Debug)]
 #[derive(Clone)] // FIXME(#146079)
@@ -852,7 +854,7 @@ impl<'cx, 'tcx> UniversalRegionsBuilder<'cx, 'tcx> {
 
 #[extension(trait InferCtxtExt<'tcx>)]
 impl<'tcx> BorrowckInferCtxt<'tcx> {
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn replace_free_regions_with_nll_infer_vars<T>(
         &self,
         origin: NllRegionVariableOrigin<'tcx>,
@@ -869,7 +871,7 @@ impl<'tcx> BorrowckInferCtxt<'tcx> {
         })
     }
 
-    #[instrument(level = "debug", skip(self, indices))]
+    // [stripped: #[instrument(...)]]
     fn replace_bound_regions_with_nll_infer_vars<T>(
         &self,
         all_outlive_scope: LocalDefId,

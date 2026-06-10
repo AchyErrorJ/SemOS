@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_ast::EarlyParsedAttribute;
 use rustc_ast::attr::data_structures::CfgEntry;
 use rustc_hir::Attribute;

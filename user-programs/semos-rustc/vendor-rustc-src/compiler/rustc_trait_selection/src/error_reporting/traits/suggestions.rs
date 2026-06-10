@@ -1,5 +1,10 @@
 // ignore-tidy-filelength
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use core::iter;
 // M27 R4 B5: PathBuf carries through from semos_std on this target.
@@ -2373,7 +2378,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
     /// ```
     ///
     /// Returns `true` if an async-await specific note was added to the diagnostic.
-    #[instrument(level = "debug", skip_all, fields(?obligation.predicate, ?obligation.cause.span))]
+    // [stripped: #[instrument(...)]]
     pub fn maybe_note_obligation_cause_for_async_await<G: EmissionGuarantee>(
         &self,
         err: &mut Diag<'_, G>,
@@ -2605,7 +2610,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
 
     /// Unconditionally adds the diagnostic note described in
     /// `maybe_note_obligation_cause_for_async_await`'s documentation comment.
-    #[instrument(level = "debug", skip_all)]
+    // [stripped: #[instrument(...)]]
     fn note_obligation_cause_for_async_await<G: EmissionGuarantee>(
         &self,
         err: &mut Diag<'_, G>,
@@ -3887,9 +3892,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(
-        level = "debug", skip(self, err), fields(trait_pred.self_ty = ?trait_pred.self_ty())
-    )]
+    // [stripped: #[instrument(level = "debug", skip(self, err), fields(...))]]
     pub(super) fn suggest_await_before_try(
         &self,
         err: &mut Diag<'_>,
@@ -5128,7 +5131,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip_all)]
+    // [stripped: #[instrument(...)]]
     pub(super) fn suggest_unsized_bound_if_applicable(
         &self,
         err: &mut Diag<'_>,

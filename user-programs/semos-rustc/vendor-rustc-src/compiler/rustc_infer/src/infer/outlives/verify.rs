@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::assert_matches;
 use rustc_middle::ty::outlives::{Component, compute_alias_components_recursive};
 use rustc_middle::ty::{self, OutlivesPredicate, Ty, TyCtxt};
@@ -36,7 +39,7 @@ impl<'cx, 'tcx> VerifyBoundCx<'cx, 'tcx> {
         Self { tcx, region_bound_pairs, implicit_region_bound, caller_bounds }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn param_or_placeholder_bound(&self, ty: Ty<'tcx>) -> VerifyBound<'tcx> {
         // Start with anything like `T: 'a` we can scrape from the
         // environment. If the environment contains something like
@@ -99,7 +102,7 @@ impl<'cx, 'tcx> VerifyBoundCx<'cx, 'tcx> {
         self.declared_generic_bounds_from_env_for_erased_ty(erased_alias_ty)
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn alias_bound(&self, alias_ty: ty::AliasTy<'tcx>) -> VerifyBound<'tcx> {
         // Search the env for where clauses like `P: 'a`.
         let env_bounds = self.approx_declared_bounds_from_env(alias_ty).into_iter().map(|binder| {
@@ -198,7 +201,7 @@ impl<'cx, 'tcx> VerifyBoundCx<'cx, 'tcx> {
     ///
     /// In some cases, such as when `erased_ty` represents a `ty::Param`, however,
     /// the result is precise.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn declared_generic_bounds_from_env_for_erased_ty(
         &self,
         erased_ty: Ty<'tcx>,

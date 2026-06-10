@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::cmp;
 
 use rustc_abi::{Align, BackendRepr, ExternAbi, HasDataLayout, Reg, Size, WrappingRange};
@@ -585,7 +590,7 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
         bx.ret(llval);
     }
 
-    #[tracing::instrument(level = "trace", skip(self, helper, bx))]
+    // [stripped: #[tracing::instrument(...)]]
     fn codegen_drop_terminator(
         &mut self,
         helper: TerminatorCodegenHelper<'tcx>,

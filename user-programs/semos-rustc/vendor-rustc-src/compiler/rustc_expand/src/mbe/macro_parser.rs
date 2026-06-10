@@ -70,6 +70,10 @@
 //! eof: [a $( a )* a b ·]
 //! ```
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use hashbrown::hash_map::Entry::{Occupied, Vacant};
 use core::fmt::Display;

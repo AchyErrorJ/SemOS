@@ -852,9 +852,21 @@ pub fn spawn_from_elf_with_args(
 ) -> Option<ProcessId> {
     use crate::process::elf::{self, Elf64Phdr, PT_LOAD, PF_X, PF_W};
 
+    // M27 iter 7: opportunistic reclaim of address spaces whose owning
+    // task has exited. handle_exit only flips the task state to Exited
+    // — it leaves the AS intact (CR3 may still be live at the time of
+    // the syscall). Without this nudge, every spawn leaks ~22.5K PT
+    // frames for an 88 MB ELF (semos-rustc), exhausting PT_POOL in 1-2
+    // invocations. Running reclaim FIRST means the new spawn benefits
+    // from the freshly-returned frames.
+    let platform = crate::platform::get();
+    let reclaimed = platform.reclaim_address_spaces();
+    crate::platform::log("[spawn] reclaimed ");
+    crate::platform::log_num(reclaimed as u64);
+    crate::platform::log(" dead AS\n");
+
     // 1. Parse and validate the ELF binary
     let elf_info = elf::load_elf(elf_data)?;
-    let platform = crate::platform::get();
 
     // (silenced — was "[process] Loading ELF: entry=... segments=..." debug log)
 
@@ -890,6 +902,7 @@ pub fn spawn_from_elf_with_args(
 
         if !platform.map_elf_segment(cr3, vaddr as u64, seg_data, memsz, executable, writable) {
             crate::platform::log("[process] Failed to map ELF segment\n");
+            crate::platform::log("[spawn-fail] map_elf_segment\n");
             platform.destroy_address_space(cr3);
             return None;
         }
@@ -916,6 +929,7 @@ pub fn spawn_from_elf_with_args(
         Some(rsp) => rsp,
         None => {
             crate::platform::log("[process] Failed to map user stack\n");
+            crate::platform::log("[spawn-fail] map_user_stack\n");
             platform.destroy_address_space(cr3);
             return None;
         }
@@ -931,6 +945,7 @@ pub fn spawn_from_elf_with_args(
         Some(rsp) => rsp,
         None => {
             crate::platform::log("[process] Failed to set up user argv/envp\n");
+            crate::platform::log("[spawn-fail] setup_user_argv\n");
             platform.destroy_address_space(cr3);
             return None;
         }
@@ -942,6 +957,7 @@ pub fn spawn_from_elf_with_args(
         Some(slot) => slot,
         None => {
             crate::platform::log("[process] Failed to spawn user task\n");
+            crate::platform::log("[spawn-fail] spawn_user_task\n");
             platform.destroy_address_space(cr3);
             return None;
         }

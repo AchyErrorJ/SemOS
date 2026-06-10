@@ -1,7 +1,7 @@
 //! Code to load the dep-graph from files.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use semos_std::path::{Path, PathBuf};
+use alloc::sync::Arc;
 
 use rustc_data_structures::memmap::Mmap;
 use rustc_data_structures::unord::UnordMap;

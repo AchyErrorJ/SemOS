@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Write;
 
 use rustc_ast::*;
@@ -462,7 +465,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                     overlapping_with.push(reg);
                 });
                 let output_used =
-                    overlapping_with.iter().any(|reg| used_output_regs.contains_key(&reg));
+                    overlapping_with.iter().any(|reg| used_output_regs.contains_key(reg));
 
                 if !output_used {
                     operands.push((

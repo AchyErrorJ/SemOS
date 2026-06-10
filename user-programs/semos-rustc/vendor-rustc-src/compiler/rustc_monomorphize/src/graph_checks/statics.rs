@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_data_structures::graph::scc::Sccs;
 use rustc_data_structures::graph::{DirectedGraph, Successors};

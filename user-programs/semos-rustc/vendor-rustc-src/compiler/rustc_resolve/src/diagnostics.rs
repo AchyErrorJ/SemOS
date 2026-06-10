@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use itertools::Itertools as _;
@@ -1678,7 +1683,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
         });
 
         if let Some((def_id, unused_ident)) = unused_macro {
-            let scope = self.local_macro_def_scopes[&def_id];
+            let scope = self.local_macro_def_scopes[def_id];
             let parent_nearest = parent_scope.module.nearest_parent_mod();
             let unused_macro_kinds = self.local_macro_map[def_id].ext.macro_kinds();
             if !unused_macro_kinds.contains(macro_kind.into()) {
@@ -2720,7 +2725,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     }
 
     /// Adds suggestions for a path that cannot be resolved.
-    #[instrument(level = "debug", skip(self, parent_scope))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn make_path_suggestion(
         &mut self,
         mut path: Vec<Segment>,
@@ -2755,7 +2760,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     /// LL | use foo::Bar;
     ///    |     ^^^ did you mean `self::foo`?
     /// ```
-    #[instrument(level = "debug", skip(self, parent_scope))]
+    // [stripped: #[instrument(...)]]
     fn make_missing_self_suggestion(
         &mut self,
         mut path: Vec<Segment>,
@@ -2775,7 +2780,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     /// LL | use foo::Bar;
     ///    |     ^^^ did you mean `crate::foo`?
     /// ```
-    #[instrument(level = "debug", skip(self, parent_scope))]
+    // [stripped: #[instrument(...)]]
     fn make_missing_crate_suggestion(
         &mut self,
         mut path: Vec<Segment>,
@@ -2807,7 +2812,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     /// LL | use foo::Bar;
     ///    |     ^^^ did you mean `super::foo`?
     /// ```
-    #[instrument(level = "debug", skip(self, parent_scope))]
+    // [stripped: #[instrument(...)]]
     fn make_missing_super_suggestion(
         &mut self,
         mut path: Vec<Segment>,
@@ -2830,7 +2835,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
     ///
     /// Used when importing a submodule of an external crate but missing that crate's
     /// name as the first part of path.
-    #[instrument(level = "debug", skip(self, parent_scope))]
+    // [stripped: #[instrument(...)]]
     fn make_external_crate_suggestion(
         &mut self,
         mut path: Vec<Segment>,
@@ -3197,7 +3202,7 @@ fn extend_span_to_previous_binding(sess: &Session, binding_span: Span) -> Option
 /// use foo::{a, b::{c, d}};
 /// //       ^^^^^^^^^^^^^^^ -- true
 /// ```
-#[instrument(level = "debug", skip(sess))]
+    // [stripped: #[instrument(...)]]
 fn find_span_immediately_after_crate_name(sess: &Session, use_span: Span) -> (bool, Span) {
     let source_map = sess.source_map();
 

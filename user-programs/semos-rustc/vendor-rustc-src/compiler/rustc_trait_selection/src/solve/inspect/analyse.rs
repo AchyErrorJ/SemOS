@@ -9,6 +9,11 @@
 //! coherence right now and was annoying to implement, so I am leaving it
 //! as is until we start using it for something else.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::assert_matches;
 use rustc_infer::infer::InferCtxt;
 use rustc_infer::traits::Obligation;
@@ -135,11 +140,7 @@ impl<'a, 'tcx> InspectCandidate<'a, 'tcx> {
     /// inference constraints. This function modifies the state of the `infcx`.
     ///
     /// See [`Self::instantiate_impl_args`] if you need the impl args too.
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(goal = ?self.goal.goal, steps = ?self.steps)
-    )]
+    // [stripped: #[instrument(level = "debug", skip_all, fields(goal = ..., steps = ...))]]
     pub fn instantiate_nested_goals(&self, span: Span) -> Vec<InspectGoal<'a, 'tcx>> {
         let infcx = self.goal.infcx;
         let param_env = self.goal.goal.param_env;
@@ -177,11 +178,7 @@ impl<'a, 'tcx> InspectCandidate<'a, 'tcx> {
     /// Instantiate the args of an impl if this candidate came from a
     /// `CandidateSource::Impl`. This function modifies the state of the
     /// `infcx`.
-    #[instrument(
-        level = "debug",
-        skip_all,
-        fields(goal = ?self.goal.goal, steps = ?self.steps)
-    )]
+    // [stripped: #[instrument(...)]]
     pub fn instantiate_impl_args(&self, span: Span) -> ty::GenericArgsRef<'tcx> {
         let infcx = self.goal.infcx;
         let param_env = self.goal.goal.param_env;

@@ -14,6 +14,8 @@ use tracing::{debug, instrument};
 
 use crate::MirBorrowckCtxt;
 use crate::universal_regions::DefiningTy;
+use alloc::vec::Vec;
+use alloc::string::ToString;
 
 /// A name for a particular region used in emitting diagnostics. This name could be a generated
 /// name like `'1`, a name used by the user like `'a`, or a name like `'static`.
@@ -278,7 +280,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
     /// *user* has a name for. In that case, we'll be able to map
     /// `fr` to a `Region<'tcx>`, and that region will be one of
     /// named variants.
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn give_name_from_error_region(&self, fr: RegionVid) -> Option<RegionName> {
         let error_region = self.to_error_region(fr)?;
 
@@ -380,7 +382,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
     ///  | fn foo(x: &u32) { .. }
     ///           ------- fully elaborated type of `x` is `&'1 u32`
     /// ```
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn give_name_if_anonymous_region_appears_in_arguments(
         &self,
         fr: RegionVid,
@@ -641,7 +643,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
     ///  | let x = Some(&22);
     ///        - fully elaborated type of `x` is `Option<&'1 u32>`
     /// ```
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn give_name_if_anonymous_region_appears_in_upvars(&self, fr: RegionVid) -> Option<RegionName> {
         let upvar_index = self.regioncx.get_upvar_index_for_region(self.infcx.tcx, fr)?;
         let (upvar_name, upvar_span) = self.regioncx.get_upvar_name_and_span_for_region(
@@ -661,7 +663,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
     /// must be a closure since, in a free fn, such an argument would
     /// have to either also appear in an argument (if using elision)
     /// or be early bound (named, not in argument).
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn give_name_if_anonymous_region_appears_in_output(&self, fr: RegionVid) -> Option<RegionName> {
         let tcx = self.infcx.tcx;
 
@@ -841,7 +843,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
         }
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn give_name_if_anonymous_region_appears_in_yield_ty(
         &self,
         fr: RegionVid,

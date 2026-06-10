@@ -1,6 +1,7 @@
-use std::fmt;
-use std::iter::Peekable;
-use std::sync::atomic::{AtomicU32, Ordering};
+use alloc::vec::Vec;
+use core::fmt;
+use core::iter::Peekable;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use super::{Byte, Reference, Region, Tree, Type, Uninhabited};
 use crate::{Map, Set};
@@ -448,7 +449,7 @@ impl<S: Copy, X: Iterator<Item = (Byte, S)>, Y: Iterator<Item = (Byte, S)>> Iter
     type Item = (Byte, (Option<S>, Option<S>));
 
     fn next(&mut self) -> Option<Self::Item> {
-        use std::cmp::{self, Ordering};
+        use core::cmp::{self, Ordering};
 
         let ret;
         match (self.xs.peek_mut(), self.ys.peek_mut()) {

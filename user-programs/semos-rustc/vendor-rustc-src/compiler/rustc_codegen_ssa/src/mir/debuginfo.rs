@@ -1,5 +1,10 @@
 // M27: route hash_map::Entry through rustc_data_structures::fx::StdEntry,
 // which is std/hashbrown-cfg-split inside the data-structures crate.
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::StdEntry as Entry;
 use core::marker::PhantomData;
 use core::ops::Range;

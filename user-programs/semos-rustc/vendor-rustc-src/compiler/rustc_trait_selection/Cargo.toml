@@ -5,10 +5,12 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
 itertools = { version = "0.12", default-features = false }
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_data_structures = { path = "../rustc_data_structures" }
+rustc_error_messages = { path = "../rustc_error_messages" }
 rustc_errors = { path = "../rustc_errors" }
 rustc_fluent_macro = { path = "../rustc_fluent_macro" }
 rustc_hir = { path = "../rustc_hir" }
@@ -24,3 +26,6 @@ smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 thin-vec = { version = "0.2", default-features = false }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

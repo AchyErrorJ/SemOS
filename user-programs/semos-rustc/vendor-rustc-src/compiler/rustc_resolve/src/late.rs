@@ -6,6 +6,11 @@
 //! If you wonder why there's no `early.rs`, that's because it's split into three files -
 //! `build_reduced_graph.rs`, `macros.rs` and `imports.rs`.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use hashbrown::hash_map::Entry;
 use core::mem::{replace, swap, take};
@@ -1691,7 +1696,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         })
     }
 
-    #[instrument(level = "debug", skip(self, work))]
+    // [stripped: #[instrument(...)]]
     fn with_lifetime_rib<T>(
         &mut self,
         kind: LifetimeRibKind,
@@ -1705,7 +1710,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         ret
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn resolve_lifetime(&mut self, lifetime: &'ast Lifetime, use_ctxt: visit::LifetimeCtxt) {
         let ident = lifetime.ident;
 
@@ -1816,7 +1821,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         self.record_lifetime_res(lifetime.id, LifetimeRes::Error, LifetimeElisionCandidate::Named);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn resolve_anonymous_lifetime(
         &mut self,
         lifetime: &Lifetime,
@@ -2066,7 +2071,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn resolve_elided_lifetime(&mut self, anchor_id: NodeId, span: Span) {
         let id = self.r.next_node_id();
         let lt = Lifetime { id, ident: Ident::new(kw::UnderscoreLifetime, span) };
@@ -2079,7 +2084,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         self.resolve_anonymous_lifetime(&lt, anchor_id, true);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn create_fresh_lifetime(
         &mut self,
         ident: Ident,
@@ -2103,7 +2108,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         res
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn resolve_elided_lifetimes_in_path(
         &mut self,
         partial_res: PartialRes,
@@ -2312,7 +2317,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn record_lifetime_res(
         &mut self,
         id: NodeId,
@@ -2333,7 +2338,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn record_lifetime_param(&mut self, id: NodeId, res: LifetimeRes) {
         if let Some(prev_res) = self.r.lifetimes_res_map.insert(id, res) {
             panic!(
@@ -2343,7 +2348,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
     }
 
     /// Perform resolution of a function signature, accounting for lifetime elision.
-    #[instrument(level = "debug", skip(self, inputs))]
+    // [stripped: #[instrument(...)]]
     fn resolve_fn_signature(
         &mut self,
         fn_id: NodeId,
@@ -3164,7 +3169,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
     // Note that we intentionally still forbid `[0; N + 1]` during
     // name resolution so that we don't extend the future
     // compat lint to new cases.
-    #[instrument(level = "debug", skip(self, f))]
+    // [stripped: #[instrument(...)]]
     fn with_constant_rib(
         &mut self,
         is_repeat: IsRepeatExpr,
@@ -4083,7 +4088,7 @@ impl<'a, 'ast, 'ra, 'tcx> LateResolutionVisitor<'a, 'ast, 'ra, 'tcx> {
     /// When a whole or-pattern has been dealt with, the thing happens.
     ///
     /// See the implementation and `fresh_binding` for more details.
-    #[tracing::instrument(skip(self, bindings), level = "debug")]
+    // [stripped: #[tracing::instrument(...)]]
     fn resolve_pattern_inner(
         &mut self,
         pat: &'ast Pat,

@@ -1,6 +1,11 @@
 //! This module contains helpers for walking all types of
 //! a signature, while preserving spans as much as possible
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::LocalDefId;
 use rustc_middle::span_bug;
@@ -13,7 +18,7 @@ pub trait SpannedTypeVisitor<'tcx> {
     fn visit(&mut self, span: Span, value: impl TypeVisitable<TyCtxt<'tcx>>) -> Self::Result;
 }
 
-#[instrument(level = "trace", skip(tcx, visitor))]
+    // [stripped: #[instrument(...)]]
 pub fn walk_types<'tcx, V: SpannedTypeVisitor<'tcx>>(
     tcx: TyCtxt<'tcx>,
     item: LocalDefId,

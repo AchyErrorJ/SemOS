@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::mem;
 
 use rustc_ast::token::{

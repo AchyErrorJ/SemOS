@@ -1,7 +1,15 @@
 // tidy-alphabetical-start
+#![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(test, feature(test))]
 #![feature(never_type)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use alloc::vec::Vec;
 
 pub(crate) use rustc_data_structures::fx::{FxIndexMap as Map, FxIndexSet as Set};
 

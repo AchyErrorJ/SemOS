@@ -2,6 +2,11 @@
 
 #![allow(rustc::usage_of_ty_tykind)]
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::borrow::Cow;
 use core::ops::{ControlFlow, Range};
 
@@ -18,7 +23,7 @@ use rustc_type_ir::TyKind::*;
 use rustc_type_ir::solve::SizedTraitKind;
 use rustc_type_ir::walk::TypeWalker;
 use rustc_type_ir::{self as ir, BoundVar, CollectAndApply, TypeVisitableExt, elaborate};
-use tracing::instrument;
+// instrument off
 use ty::util::IntTypeExt;
 
 use super::GenericParamDefKind;
@@ -347,7 +352,7 @@ impl ParamConst {
         ParamConst::new(def.index, def.name)
     }
 
-    #[instrument(level = "debug")]
+    // #[instrument(level = "debug")]
     pub fn find_const_ty_from_env<'tcx>(self, env: ParamEnv<'tcx>) -> Ty<'tcx> {
         let mut candidates = env.caller_bounds().iter().filter_map(|clause| {
             // `ConstArgHasType` are never desugared to be higher ranked.
@@ -534,7 +539,7 @@ impl<'tcx> Ty<'tcx> {
     }
 
     #[inline]
-    #[instrument(level = "debug", skip(tcx))]
+    // #[instrument(level = "debug", skip(tcx))]
     pub fn new_opaque(tcx: TyCtxt<'tcx>, def_id: DefId, args: GenericArgsRef<'tcx>) -> Ty<'tcx> {
         Ty::new_alias(tcx, ty::Opaque, AliasTy::new_from_args(tcx, def_id, args))
     }
@@ -1586,7 +1591,7 @@ impl<'tcx> Ty<'tcx> {
         }
     }
 
-    #[tracing::instrument(level = "trace", skip(tcx))]
+    // #[tracing::instrument(level = "trace", skip(tcx))]
     pub fn fn_sig(self, tcx: TyCtxt<'tcx>) -> PolyFnSig<'tcx> {
         self.kind().fn_sig(tcx)
     }
@@ -1903,7 +1908,7 @@ impl<'tcx> Ty<'tcx> {
     /// because we could be in a type environment with a bound such as `[_]: Copy`. A function with
     /// such a bound obviously never can be called, but that doesn't mean it shouldn't typecheck.
     /// This is why this method doesn't return `Option<bool>`.
-    #[instrument(skip(tcx), level = "debug")]
+    // #[instrument(skip(tcx), level = "debug")]
     pub fn has_trivial_sizedness(self, tcx: TyCtxt<'tcx>, sizedness: SizedTraitKind) -> bool {
         match self.kind() {
             ty::Infer(ty::IntVar(_) | ty::FloatVar(_))

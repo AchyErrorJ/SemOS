@@ -1,5 +1,10 @@
 //! Manages calling a concrete function (with known MIR body) with argument passing,
 //! and returning the return value to the caller.
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 
 use either::{Left, Right};
@@ -336,7 +341,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
 
     /// The main entry point for creating a new stack frame: performs ABI checks and initializes
     /// arguments.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn init_stack_frame(
         &mut self,
         instance: Instance<'tcx>,
@@ -868,7 +873,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     /// `Drop` impls for any locals that have been initialized at this point.
     /// The cleanup block ends with a special `Resume` terminator, which will
     /// cause us to continue unwinding.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn return_from_current_stack_frame(
         &mut self,
         unwinding: bool,

@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::ExternAbi;
 use rustc_ast::visit::AssocCtxt;
 use rustc_ast::*;
@@ -580,7 +583,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
         Some(did)
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn lower_use_tree(
         &mut self,
         tree: &UseTree,
@@ -1743,7 +1746,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
 
     /// Return the pair of the lowered `generics` as `hir::Generics` and the evaluation of `f` with
     /// the carried impl trait definitions and bounds.
-    #[instrument(level = "debug", skip(self, f))]
+    // [stripped: #[instrument(...)]]
     fn lower_generics<T>(
         &mut self,
         generics: &Generics,

@@ -1,5 +1,7 @@
 //! Conversion of internal Rust compiler items to stable ones.
 
+use crate_alloc::string::ToString;
+
 use rustc_abi::FieldIdx;
 use rustc_public_bridge::Tables;
 use rustc_public_bridge::context::CompilerCtxt;

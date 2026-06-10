@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::cell::Cell;
 use core::fmt::{self, Write as _};
 use core::iter;
@@ -29,7 +34,21 @@ use crate::ty::{
     TypeFoldable, TypeSuperFoldable, TypeSuperVisitable, TypeVisitable, TypeVisitableExt,
 };
 
-thread_local! {
+// Stage F11: thread_local! is std-only; SemOS uses semos_std's macro.
+#[cfg(target_os = "none")]
+semos_std::thread_local! {
+    static FORCE_IMPL_FILENAME_LINE: Cell<bool> = const { Cell::new(false) };
+    static SHOULD_PREFIX_WITH_CRATE_NAME: Cell<bool> = const { Cell::new(false) };
+    static SHOULD_PREFIX_WITH_CRATE: Cell<bool> = const { Cell::new(false) };
+    static NO_TRIMMED_PATH: Cell<bool> = const { Cell::new(false) };
+    static FORCE_TRIMMED_PATH: Cell<bool> = const { Cell::new(false) };
+    static REDUCED_QUERIES: Cell<bool> = const { Cell::new(false) };
+    static NO_VISIBLE_PATH: Cell<bool> = const { Cell::new(false) };
+    static NO_VISIBLE_PATH_IF_DOC_HIDDEN: Cell<bool> = const { Cell::new(false) };
+    static RTN_MODE: Cell<RtnMode> = const { Cell::new(RtnMode::ForDiagnostic) };
+}
+#[cfg(not(target_os = "none"))]
+std::thread_local! {
     static FORCE_IMPL_FILENAME_LINE: Cell<bool> = const { Cell::new(false) };
     static SHOULD_PREFIX_WITH_CRATE_NAME: Cell<bool> = const { Cell::new(false) };
     static SHOULD_PREFIX_WITH_CRATE: Cell<bool> = const { Cell::new(false) };
@@ -3499,7 +3518,8 @@ pub fn trimmed_def_paths(tcx: TyCtxt<'_>, (): ()) -> DefIdMap<Symbol> {
         #[cfg(not(target_os = "none"))]
         use std::collections::hash_map::Entry::{Occupied, Vacant};
         #[cfg(target_os = "none")]
-        use hashbrown::hash_map::Entry::{Occupied, Vacant};
+        #[cfg(not(target_os = "none"))] use std::collections::hash_map::Entry::{Occupied, Vacant};
+#[cfg(target_os = "none")] use hashbrown::hash_map::Entry::{Occupied, Vacant};
 
         if let Some(def_id) = opt_def_id {
             match map.entry(def_id) {

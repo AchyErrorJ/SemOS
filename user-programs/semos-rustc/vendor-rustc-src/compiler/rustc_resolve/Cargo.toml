@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 # tidy-alphabetical-start
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
 indexmap = { version = "2.4.0", default-features = false }
 itertools = { version = "0.12", default-features = false }
 rustc_arena = { path = "../rustc_arena" }
@@ -12,6 +13,7 @@ rustc_ast = { path = "../rustc_ast" }
 rustc_ast_pretty = { path = "../rustc_ast_pretty" }
 rustc_attr_parsing = { path = "../rustc_attr_parsing" }
 rustc_data_structures = { path = "../rustc_data_structures" }
+rustc_error_messages = { path = "../rustc_error_messages" }
 rustc_errors = { path = "../rustc_errors" }
 rustc_expand = { path = "../rustc_expand" }
 rustc_feature = { path = "../rustc_feature" }
@@ -31,3 +33,6 @@ tracing = { version = "0.1", default-features = false }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
 pulldown-cmark = { version = "0.11", features = ["html"], default-features = false }
+
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

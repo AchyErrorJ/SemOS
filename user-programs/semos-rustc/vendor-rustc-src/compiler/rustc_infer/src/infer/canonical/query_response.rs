@@ -7,6 +7,9 @@
 //!
 //! [c]: https://rust-lang.github.io/chalk/book/canonical_queries/canonicalization.html
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::iter;
 
@@ -49,7 +52,7 @@ impl<'tcx> InferCtxt<'tcx> {
     ///   the same thing happens, but the resulting query is marked as ambiguous.
     /// - Finally, if any of the obligations result in a hard error,
     ///   then `Err(NoSolution)` is returned.
-    #[instrument(skip(self, inference_vars, answer, fulfill_cx), level = "trace")]
+    // [stripped: #[instrument(...)]]
     pub fn make_canonicalized_query_response<T>(
         &self,
         inference_vars: CanonicalVarValues<'tcx>,
@@ -114,7 +117,7 @@ impl<'tcx> InferCtxt<'tcx> {
 
     /// Helper for `make_canonicalized_query_response` that does
     /// everything up until the final canonicalization.
-    #[instrument(skip(self, fulfill_cx), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn make_query_response<T>(
         &self,
         inference_vars: CanonicalVarValues<'tcx>,
@@ -392,7 +395,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// will instantiate fresh inference variables for each canonical
     /// variable instead. Therefore, the result of this method must be
     /// properly unified
-    #[instrument(level = "debug", skip(self, param_env))]
+    // [stripped: #[instrument(...)]]
     fn query_response_instantiation_guess<R>(
         &self,
         cause: &ObligationCause<'tcx>,

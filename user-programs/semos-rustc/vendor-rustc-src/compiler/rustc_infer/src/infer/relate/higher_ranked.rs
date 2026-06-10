@@ -20,7 +20,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// `fn enter_forall` should be preferred over this method.
     ///
     /// [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/traits/hrtb.html
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     pub fn enter_forall_and_leak_universe<T>(&self, binder: ty::Binder<'tcx, T>) -> T
     where
         T: TypeFoldable<TyCtxt<'tcx>>,
@@ -62,7 +62,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// This method should be preferred over `fn enter_forall_and_leak_universe`.
     ///
     /// [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/traits/hrtb.html
-    #[instrument(level = "debug", skip(self, f))]
+    // [stripped: #[instrument(...)]]
     pub fn enter_forall<T, U>(&self, forall: ty::Binder<'tcx, T>, f: impl FnOnce(T) -> U) -> U
     where
         T: TypeFoldable<TyCtxt<'tcx>>,

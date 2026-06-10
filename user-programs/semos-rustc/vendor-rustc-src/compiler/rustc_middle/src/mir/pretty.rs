@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::collections::BTreeSet;
 use core::fmt::{Display, Write as _};
 
@@ -15,6 +20,7 @@ use rustc_ast::InlineAsmTemplatePiece;
 use tracing::trace;
 use ty::print::PrettyPrinter;
 
+#[cfg(not(target_os = "none"))]
 use super::graphviz::write_mir_fn_graphviz;
 use crate::mir::interpret::{
     AllocBytes, AllocId, Allocation, ConstAllocation, GlobalAlloc, Pointer, Provenance,
@@ -169,6 +175,7 @@ impl<'dis, 'de, 'tcx> MirDumper<'dis, 'de, 'tcx> {
             self.dump_mir_to_writer(body, &mut file)?;
         };
 
+        #[cfg(not(target_os = "none"))]
         if self.tcx().sess.opts.unstable_opts.dump_mir_graphviz {
             let _: io::Result<()> = try {
                 let mut file = self.create_dump_file("dot", body)?;

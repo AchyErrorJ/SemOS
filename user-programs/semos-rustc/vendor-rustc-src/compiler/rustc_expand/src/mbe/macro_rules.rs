@@ -1,5 +1,9 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
-use hashbrown::hash_map::Entry;
+use rustc_data_structures::fx::StdEntry as Entry;
 use alloc::sync::Arc;
 use core::{mem, slice};
 
@@ -101,7 +105,7 @@ impl<'a> ParserAnyMacro<'a> {
         fragment
     }
 
-    #[instrument(skip(cx, tts))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn from_tts<'cx>(
         cx: &'cx mut ExtCtxt<'a>,
         tts: TokenStream,
@@ -337,7 +341,7 @@ impl<'matcher> Tracker<'matcher> for NoopTracker {
 }
 
 /// Expands the rules based macro defined by `rules` for a given input `arg`.
-#[instrument(skip(cx, transparency, arg, rules))]
+    // [stripped: #[instrument(...)]]
 fn expand_macro<'cx>(
     cx: &'cx mut ExtCtxt<'_>,
     sp: Span,
@@ -413,7 +417,7 @@ fn expand_macro<'cx>(
 }
 
 /// Expands the rules based macro defined by `rules` for a given attribute `args` and `body`.
-#[instrument(skip(cx, transparency, args, body, rules))]
+    // [stripped: #[instrument(...)]]
 fn expand_macro_attr(
     cx: &mut ExtCtxt<'_>,
     sp: Span,
@@ -505,7 +509,7 @@ pub(super) enum CanRetry {
 /// Try expanding the macro. Returns the index of the successful arm and its named_matches if it was successful,
 /// and nothing if it failed. On failure, it's the callers job to use `track` accordingly to record all errors
 /// correctly.
-#[instrument(level = "debug", skip(psess, arg, rules, track), fields(tracking = %T::description()))]
+    // [stripped: #[instrument(...)]]
 pub(super) fn try_match_macro<'matcher, T: Tracker<'matcher>>(
     psess: &ParseSess,
     name: Ident,
@@ -585,7 +589,7 @@ pub(super) fn try_match_macro<'matcher, T: Tracker<'matcher>>(
 /// Try expanding the macro attribute. Returns the index of the successful arm and its
 /// named_matches if it was successful, and nothing if it failed. On failure, it's the caller's job
 /// to use `track` accordingly to record all errors correctly.
-#[instrument(level = "debug", skip(psess, attr_args, attr_body, rules, track), fields(tracking = %T::description()))]
+    // [stripped: #[instrument(...)]]
 pub(super) fn try_match_macro_attr<'matcher, T: Tracker<'matcher>>(
     psess: &ParseSess,
     name: Ident,
@@ -640,7 +644,7 @@ pub(super) fn try_match_macro_attr<'matcher, T: Tracker<'matcher>>(
 /// Try expanding the macro derive. Returns the index of the successful arm and its
 /// named_matches if it was successful, and nothing if it failed. On failure, it's the caller's job
 /// to use `track` accordingly to record all errors correctly.
-#[instrument(level = "debug", skip(psess, body, rules, track), fields(tracking = %T::description()))]
+    // [stripped: #[instrument(...)]]
 pub(super) fn try_match_macro_derive<'matcher, T: Tracker<'matcher>>(
     psess: &ParseSess,
     name: Ident,

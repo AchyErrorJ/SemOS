@@ -12,6 +12,7 @@ use tracing::debug;
 
 use crate::BorrowIndex;
 use crate::place_ext::PlaceExt;
+use alloc::vec::Vec;
 
 pub struct BorrowSet<'tcx> {
     /// The fundamental map relating bitvector indexes to the borrows

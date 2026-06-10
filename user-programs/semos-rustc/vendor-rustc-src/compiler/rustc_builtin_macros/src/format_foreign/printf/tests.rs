@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use super::{Format as F, Num as N, Substitution as S, iter_subs, parse_next_substitution as pns};
 
 macro_rules! assert_eq_pnsat {

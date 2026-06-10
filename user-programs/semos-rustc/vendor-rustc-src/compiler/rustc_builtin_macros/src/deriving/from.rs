@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast as ast;
 use rustc_ast::{ItemKind, Safety, VariantData};
 use rustc_errors::MultiSpan;

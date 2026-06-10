@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use rustc_abi::Size;
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_hir::def_id::DefId;

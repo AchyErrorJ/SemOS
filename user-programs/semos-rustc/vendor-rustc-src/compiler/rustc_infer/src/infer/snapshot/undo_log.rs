@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use rustc_data_structures::undo_log::{Rollback, UndoLogs};

@@ -2,6 +2,7 @@
 
 use core::fmt;
 use core::ops::{Index, IndexMut};
+use alloc::vec::Vec;
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::fx::FxHashMap;
@@ -19,6 +20,7 @@ rustc_index::newtype_index! {
     pub struct MovePathIndex {}
 }
 
+#[cfg(not(target_os = "none"))]
 impl polonius_engine::Atom for MovePathIndex {
     fn index(self) -> usize {
         rustc_index::Idx::index(self)

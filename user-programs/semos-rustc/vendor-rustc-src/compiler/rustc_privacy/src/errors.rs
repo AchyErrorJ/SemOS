@@ -1,3 +1,5 @@
+use alloc::string::String;
+use alloc::vec::Vec;
 use rustc_errors::codes::*;
 use rustc_errors::{DiagArgFromDisplay, MultiSpan};
 use rustc_macros::{Diagnostic, LintDiagnostic, Subdiagnostic};

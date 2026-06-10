@@ -1,5 +1,10 @@
 // Decoding metadata from a single crate's metadata
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter::TrustedLen;
 use core::ops::{Deref, DerefMut};
 // M27 R4 B5: cfg-split host vs SemOS.
@@ -1048,6 +1053,7 @@ impl<'a> CrateMetadataRef<'a> {
     }
 
     fn load_proc_macro<'tcx>(self, tcx: TyCtxt<'tcx>, id: DefIndex) -> SyntaxExtension {
+        #[cfg(not(target_os = "none"))]
         let (name, kind, helper_attrs) = match *self.raw_proc_macro(tcx, id) {
             ProcMacro::CustomDerive { trait_name, attributes, client } => {
                 let helper_attrs =
@@ -1063,6 +1069,28 @@ impl<'a> CrateMetadataRef<'a> {
             }
             ProcMacro::Bang { name, client } => {
                 (name, SyntaxExtensionKind::Bang(Arc::new(BangProcMacro { client })), Vec::new())
+            }
+        };
+        // M27 §1.5: proc-macros not supported on SemOS — load_proc_macro
+        // should never be called at runtime, but rmeta decoder still has the
+        // dispatch arms. Provide a stub that constructs the same ADT shape
+        // with field-cfg-gated extensions so the compile goes through.
+        #[cfg(target_os = "none")]
+        let (name, kind, helper_attrs) = match *self.raw_proc_macro(tcx, id) {
+            ProcMacro::CustomDerive { trait_name, attributes, .. } => {
+                let helper_attrs =
+                    attributes.iter().cloned().map(Symbol::intern).collect::<Vec<_>>();
+                (
+                    trait_name,
+                    SyntaxExtensionKind::Derive(Arc::new(DeriveProcMacro {})),
+                    helper_attrs,
+                )
+            }
+            ProcMacro::Attr { name, .. } => {
+                (name, SyntaxExtensionKind::Attr(Arc::new(AttrProcMacro {})), Vec::new())
+            }
+            ProcMacro::Bang { name, .. } => {
+                (name, SyntaxExtensionKind::Bang(Arc::new(BangProcMacro {})), Vec::new())
             }
         };
 
@@ -1661,7 +1689,7 @@ impl<'a> CrateMetadataRef<'a> {
                 // Don't translate away `/rustc/$hash` if we're still remapping to it,
                 // since that means we're still building `std`/`rustc` that need it,
                 // and we don't want the real path to leak into codegen/debuginfo.
-                !tcx.sess.opts.remap_path_prefix.iter().any(|(_from, to)| to == virtual_dir)
+                !tcx.sess.opts.remap_path_prefix.iter().any(|(_from, to)| to.as_path() == *virtual_dir)
             })
         }
 

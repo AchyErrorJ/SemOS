@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use rustc_ast as ast;
@@ -150,13 +155,13 @@ impl CfgEval<'_> {
 }
 
 impl MutVisitor for CfgEval<'_> {
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_expr(&mut self, expr: &mut ast::Expr) {
         self.0.configure_expr(expr, false);
         mut_visit::walk_expr(self, expr);
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_method_receiver_expr(&mut self, expr: &mut ast::Expr) {
         self.0.configure_expr(expr, true);
         mut_visit::walk_expr(self, expr);

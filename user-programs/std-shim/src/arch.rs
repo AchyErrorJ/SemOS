@@ -65,6 +65,7 @@ pub const SYS_EDIT:         u64 = 113; // (path_ptr, path_len) -> 0/err; runs th
 pub const SYS_USBINFO:      u64 = 114; // () -> 0; dumps every USB port + enum'd slot to the TTY
 pub const SYS_USBENUM:      u64 = 115; // () -> port_count; re-runs xHCI port enumeration
 pub const SYS_PONG:         u64 = 116; // () -> 0/err; runs the fullscreen pong game
+pub const SYS_TTY_SUPPRESS: u64 = 117; // (on: u64) -> 0; toggles kbd input drop for cooked-mode
 
 /// SYS_TCP_READ/WRITE return this when the socket isn't ready yet (retry
 /// after yielding). Distinct from 0 (EOF) and u64::MAX (hard error).

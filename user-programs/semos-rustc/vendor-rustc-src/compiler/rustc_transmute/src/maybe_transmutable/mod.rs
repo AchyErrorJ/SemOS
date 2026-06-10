@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use tracing::{debug, instrument, trace};
 
@@ -40,7 +41,7 @@ mod rustc {
     impl<'tcx> MaybeTransmutableQuery<Ty<'tcx>, TyCtxt<'tcx>> {
         /// This method begins by converting `src` and `dst` from `Ty`s to `Tree`s,
         /// then computes an answer using those trees.
-        #[instrument(level = "debug", skip(self), fields(src = ?self.src, dst = ?self.dst))]
+    // [stripped: #[instrument(...)]]
         pub(crate) fn answer(
             self,
         ) -> Answer<<TyCtxt<'tcx> as QueryContext>::Region, <TyCtxt<'tcx> as QueryContext>::Type>
@@ -83,7 +84,7 @@ where
     /// This method begins by de-def'ing `src` and `dst`, and prunes private paths from `dst`,
     /// then converts `src` and `dst` to `Dfa`s, and computes an answer using those DFAs.
     #[inline(always)]
-    #[instrument(level = "debug", skip(self), fields(src = ?self.src, dst = ?self.dst))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn answer(self) -> Answer<<C as QueryContext>::Region, <C as QueryContext>::Type> {
         let Self { src, dst, assume, context } = self;
 
@@ -147,7 +148,7 @@ where
     }
 
     #[inline(always)]
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn answer_memo(
         &self,
         cache: &mut Map<
@@ -386,7 +387,7 @@ impl Quantifier {
         T: layout::Type,
         I: IntoIterator<Item = Answer<R, T>>,
     {
-        use std::ops::ControlFlow::{Break, Continue};
+        use core::ops::ControlFlow::{Break, Continue};
 
         let (init, try_fold_f): (_, fn(_, _) -> _) = match self {
             Self::ThereExists => {

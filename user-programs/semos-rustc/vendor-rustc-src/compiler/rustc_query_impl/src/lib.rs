@@ -2,9 +2,16 @@
 
 // tidy-alphabetical-start
 #![allow(internal_features)]
+#![cfg_attr(target_os = "none", no_std)]
 #![feature(min_specialization)]
 #![feature(rustc_attrs)]
 // tidy-alphabetical-end
+
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use alloc::string::String;
 
 use rustc_data_structures::stable_hasher::HashStable;
 use rustc_data_structures::sync::AtomicU64;

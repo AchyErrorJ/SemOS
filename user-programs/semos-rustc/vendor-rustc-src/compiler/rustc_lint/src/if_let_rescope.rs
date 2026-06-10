@@ -1,5 +1,10 @@
-use std::iter::repeat_n;
-use std::ops::ControlFlow;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter::repeat_n;
+use core::ops::ControlFlow;
 
 use hir::intravisit::{self, Visitor};
 use rustc_ast::Recovered;

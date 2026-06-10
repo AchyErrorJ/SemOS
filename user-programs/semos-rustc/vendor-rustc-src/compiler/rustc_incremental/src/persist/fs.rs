@@ -103,10 +103,10 @@
 //! unsupported file system and emit a warning in that case. This is not yet
 //! implemented.
 
-use std::fs as std_fs;
-use std::io::{self, ErrorKind};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use semos_std::fs as std_fs;
+use semos_std::io::{self, ErrorKind};
+use semos_std::path::{Path, PathBuf};
+use semos_std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rand::{RngCore, rng};
 use rustc_data_structures::base_n::{BaseNString, CASE_INSENSITIVE, ToBaseN};

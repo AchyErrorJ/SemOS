@@ -23,8 +23,20 @@ pub const MAGIC_END_BYTES: &[u8] = b"rust-end-file";
 // check. The actual incremental cache writer is dead per §1.3; these
 // stubs return Err/no-op if any method is invoked at runtime.
 pub struct FileEncoder;
-pub type FileEncodeResult = core::result::Result<usize, alloc::boxed::Box<dyn core::fmt::Debug + Send + Sync>>;
+// Matches the upstream shape `Result<usize, (PathBuf, io::Error)>`, so
+// callers like `if let Err((path, error)) = ...` type-check on SemOS.
+#[cfg(not(target_os = "none"))]
+pub type FileEncodeResult = core::result::Result<usize, (std::path::PathBuf, std::io::Error)>;
+#[cfg(target_os = "none")]
+pub type FileEncodeResult = core::result::Result<usize, (semos_std::path::PathBuf, semos_std::io::Error)>;
 impl FileEncoder {
+    /// std-compat constructor. Path is ignored on SemOS — the stub
+    /// never opens a file (rmeta-to-disk dropped per M27 §1.3) but
+    /// callers in rustc_codegen_ssa expect the io::Result<Self> shape.
+    #[cfg(not(target_os = "none"))]
+    pub fn new(_path: impl AsRef<std::path::Path>) -> std::io::Result<Self> { Ok(Self) }
+    #[cfg(target_os = "none")]
+    pub fn new(_path: impl AsRef<semos_std::path::Path>) -> semos_std::io::Result<Self> { Ok(Self) }
     pub fn finish(&mut self) -> FileEncodeResult { Ok(0) }
     pub fn position(&self) -> usize { 0 }
     pub fn flush(&mut self) {}

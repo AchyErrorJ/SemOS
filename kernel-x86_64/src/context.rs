@@ -825,15 +825,40 @@ pub fn reclaim_dead_address_spaces() -> usize {
     unsafe {
         let spaces = &raw mut ADDRESS_SPACES;
         let mut freed = 0;
+        let mut total = 0;
+        let mut live = 0;
         for slot in (*spaces).iter_mut() {
+            if slot.is_some() { total += 1; }
             let dead = matches!(slot, Some(s) if !cr3_has_live_task(s.cr3));
             if dead {
                 if let Some(mut victim) = slot.take() {
+                    let dying_cr3 = victim.cr3;
                     victim.destroy(); // PT frames back to the pool
+                    // CRITICAL: a later spawn's create_address_space may
+                    // get the SAME physical PML4 frame back from PT_POOL,
+                    // so the new AS has cr3 == dying_cr3. If we leave any
+                    // stale CONTEXTS[i].cr3 pointing at dying_cr3, the
+                    // scheduler's reap_slot path (alloc_task_slot →
+                    // reap_slot) will later call destroy_address_space on
+                    // that cr3 — and now ADDRESS_SPACES has the NEW spawn's
+                    // AS registered under that cr3, so destroy walks and
+                    // tears it down mid-spawn. Symptom: ELF maps fine, then
+                    // map_user_region fails because the AS is gone.
+                    let contexts = &raw mut CONTEXTS;
+                    for i in 0..kernel_core::scheduler::MAX_TASKS {
+                        if (*contexts)[i].cr3 == dying_cr3 {
+                            (*contexts)[i].cr3 = 0;
+                        }
+                    }
                     freed += 1;
                 }
+            } else if slot.is_some() {
+                live += 1;
             }
         }
+        crate::serial::_print(format_args!(
+            "[reclaim] scanned: {} total, {} freed, {} still live\n",
+            total, freed, live));
         freed
     }
 }

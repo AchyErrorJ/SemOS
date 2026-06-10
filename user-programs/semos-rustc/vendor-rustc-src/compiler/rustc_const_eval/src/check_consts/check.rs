@@ -1,5 +1,10 @@
 //! The `Visitor` responsible for actually checking a `mir::Body` for invalid operations.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use core::mem;
 use core::num::NonZero;
@@ -738,7 +743,7 @@ impl<'tcx> Visitor<'tcx> for Checker<'_, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         self.super_terminator(terminator, location);
 

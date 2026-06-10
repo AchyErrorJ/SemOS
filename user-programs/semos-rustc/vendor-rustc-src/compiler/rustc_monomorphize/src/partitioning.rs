@@ -93,6 +93,8 @@
 //! inlining, even when they are not marked `#[inline]`.
 
 use core::cmp;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use rustc_data_structures::fx::StdEntry as Entry;
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};

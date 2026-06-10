@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_middle::mir::{self, NonDivergingIntrinsic, StmtDebugInfo};
 use rustc_middle::span_bug;
 use tracing::instrument;
@@ -6,7 +11,7 @@ use super::{FunctionCx, LocalRef};
 use crate::traits::*;
 
 impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
-    #[instrument(level = "debug", skip(self, bx))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn codegen_statement(&mut self, bx: &mut Bx, statement: &mir::Statement<'tcx>) {
         self.codegen_stmt_debuginfos(bx, &statement.debuginfos);
         self.set_debug_loc(bx, statement.source_info);

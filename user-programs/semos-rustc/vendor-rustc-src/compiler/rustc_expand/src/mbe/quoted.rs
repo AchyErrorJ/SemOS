@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::token::{self, Delimiter, IdentIsRaw, NonterminalKind, Token};
 use rustc_ast::tokenstream::TokenStreamIter;
 use rustc_ast::{NodeId, tokenstream};

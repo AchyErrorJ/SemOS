@@ -1,5 +1,10 @@
 //! Miscellaneous type-system utilities that are too small to deserve their own modules.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::{fmt, iter};
 
 use rustc_abi::{Float, Integer, IntegerType, Size};
@@ -20,7 +25,7 @@ use rustc_macros::{HashStable, TyDecodable, TyEncodable, extension};
 use rustc_span::sym;
 use rustc_type_ir::solve::SizedTraitKind;
 use smallvec::{SmallVec, smallvec};
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use super::TypingEnv;
 use crate::middle::codegen_fn_attrs::CodegenFnAttrFlags;
@@ -746,7 +751,7 @@ impl<'tcx> TyCtxt<'tcx> {
     }
 
     /// Expands the given impl trait type, stopping if the type is recursive.
-    #[instrument(skip(self), level = "debug", ret)]
+    // #[instrument(skip(self), level = "debug", ret)]
     pub fn try_expand_impl_trait_type(
         self,
         def_id: DefId,

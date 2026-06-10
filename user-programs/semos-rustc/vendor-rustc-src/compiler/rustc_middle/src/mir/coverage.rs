@@ -1,5 +1,10 @@
 //! Metadata from source code coverage analysis and instrumentation.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::fmt::{self, Debug, Formatter};
 
 use rustc_data_structures::fx::FxIndexMap;

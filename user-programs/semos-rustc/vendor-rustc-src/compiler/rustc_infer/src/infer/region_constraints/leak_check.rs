@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxIndexMap;
 use rustc_data_structures::graph::scc::Sccs;
 use rustc_data_structures::graph::vec_graph::VecGraph;
@@ -71,7 +74,7 @@ impl<'tcx> RegionConstraintCollector<'_, 'tcx> {
     ///
     /// * R: P1, even if R cannot name P1, because R = 'static is a valid sol'n
     /// * R: P1, R: P2, as above
-    #[instrument(level = "debug", skip(self, tcx, only_consider_snapshot), ret)]
+    // [stripped: #[instrument(...)]]
     pub fn leak_check(
         self,
         tcx: TyCtxt<'tcx>,

@@ -22,7 +22,7 @@ use super::EvaluateConstErr;
 use crate::traits::ObligationCtxt;
 
 /// Check if a given constant can be evaluated.
-#[instrument(skip(infcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn is_const_evaluatable<'tcx>(
     infcx: &InferCtxt<'tcx>,
     unexpanded_ct: ty::Const<'tcx>,
@@ -152,7 +152,7 @@ pub fn is_const_evaluatable<'tcx>(
     }
 }
 
-#[instrument(skip(infcx, tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn satisfied_from_param_env<'tcx>(
     tcx: TyCtxt<'tcx>,
     infcx: &InferCtxt<'tcx>,

@@ -35,7 +35,7 @@ pub struct AnonymousParamInfo<'tcx> {
 // i32, which is the type of y but with the anonymous region replaced
 // with 'a, the corresponding bound region and is_first which is true if
 // the hir::Param is the first parameter in the function declaration.
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn find_param_with_region<'tcx>(
     tcx: TyCtxt<'tcx>,
     generic_param_scope: LocalDefId,

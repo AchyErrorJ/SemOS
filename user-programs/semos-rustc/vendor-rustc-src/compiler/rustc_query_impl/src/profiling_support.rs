@@ -1,7 +1,16 @@
-use std::fmt::Debug;
+use core::fmt::Debug;
+#[cfg(not(target_os = "none"))]
 use std::io::Write;
+#[cfg(target_os = "none")]
+use semos_std::io::Write;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
+#[cfg(not(target_os = "none"))]
 use measureme::{StringComponent, StringId};
+#[cfg(target_os = "none")]
+use rustc_data_structures::profiling::{StringComponent, StringId};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::profiling::SelfProfiler;
 use rustc_hir::def_id::{CrateNum, DefId, DefIndex, LOCAL_CRATE, LocalDefId};
@@ -74,10 +83,16 @@ impl<'a, 'tcx> QueryKeyStringBuilder<'a, 'tcx> {
                     dis = "";
                     end_index = 3;
                 } else {
-                    write!(&mut dis_buffer[..], "[{}]", def_key.disambiguated_data.disambiguator)
+                    {
+                        let mut buf: &mut [u8] = &mut dis_buffer[..];
+                        Write::write_fmt(
+                            &mut buf,
+                            format_args!("[{}]", def_key.disambiguated_data.disambiguator),
+                        )
                         .unwrap();
+                    }
                     let end_of_dis = dis_buffer.iter().position(|&c| c == b']').unwrap();
-                    dis = std::str::from_utf8(&dis_buffer[..end_of_dis + 1]).unwrap();
+                    dis = core::str::from_utf8(&dis_buffer[..end_of_dis + 1]).unwrap();
                     end_index = 4;
                 }
             }
@@ -227,7 +242,7 @@ pub(crate) fn alloc_self_profile_query_strings_for_query_cache<'tcx, C>(
             // FIXME(eddyb) make this O(1) by using a pre-cached query name `EventId`,
             // instead of passing the `DepNodeIndex` to `finish_with_query_invocation_id`,
             // when recording the event in the first place.
-            let mut query_invocation_ids = Vec::new();
+            let mut query_invocation_ids: Vec<rustc_data_structures::profiling::QueryInvocationId> = Vec::new();
             query_cache.iter(&mut |_, _, i| {
                 query_invocation_ids.push(i.into());
             });

@@ -22,6 +22,7 @@ use crate::polonius;
 use crate::region_infer::values;
 use crate::type_check::liveness::local_use_map::LocalUseMap;
 use crate::type_check::{NormalizeLocation, TypeChecker};
+use alloc::vec::Vec;
 
 /// This is the heart of the liveness computation. For each variable X
 /// that requires a liveness computation, it walks over all the uses

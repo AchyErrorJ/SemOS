@@ -23,6 +23,11 @@ mod util;
 pub mod vtable;
 pub mod wf;
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::ops::ControlFlow;
 
@@ -177,7 +182,7 @@ pub enum TraitQueryMode {
 }
 
 /// Creates predicate obligations from the generic bounds.
-#[instrument(level = "debug", skip(cause, param_env))]
+    // [stripped: #[instrument(...)]]
 pub fn predicates_for_generics<'tcx>(
     cause: impl Fn(usize, Span) -> ObligationCause<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -210,7 +215,7 @@ pub fn type_known_to_meet_bound_modulo_regions<'tcx>(
 ///
 /// Ping me on zulip if you want to use this method and need help with finding
 /// an appropriate replacement.
-#[instrument(level = "debug", skip(infcx, param_env, pred), ret)]
+    // [stripped: #[instrument(...)]]
 fn pred_known_to_hold_modulo_regions<'tcx>(
     infcx: &InferCtxt<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -249,7 +254,7 @@ fn pred_known_to_hold_modulo_regions<'tcx>(
     }
 }
 
-#[instrument(level = "debug", skip(tcx, elaborated_env))]
+    // [stripped: #[instrument(...)]]
 fn do_normalize_predicates<'tcx>(
     tcx: TyCtxt<'tcx>,
     cause: ObligationCause<'tcx>,
@@ -319,7 +324,7 @@ fn do_normalize_predicates<'tcx>(
 
 // FIXME: this is gonna need to be removed ...
 /// Normalizes the parameter environment, reporting errors if they occur.
-#[instrument(level = "debug", skip(tcx))]
+    // [stripped: #[instrument(...)]]
 pub fn normalize_param_env_or_error<'tcx>(
     tcx: TyCtxt<'tcx>,
     unnormalized_env: ty::ParamEnv<'tcx>,
@@ -485,7 +490,7 @@ pub fn normalize_param_env_or_error<'tcx>(
 /// and is necessary for `compare_method_predicate_entailment`, see the
 /// use of this function for more info. We should remove this once we
 /// have proper support for implied bounds on binders.
-#[instrument(level = "debug", skip(tcx))]
+    // [stripped: #[instrument(...)]]
 pub fn deeply_normalize_param_env_ignoring_regions<'tcx>(
     tcx: TyCtxt<'tcx>,
     unnormalized_env: ty::ParamEnv<'tcx>,
@@ -586,7 +591,7 @@ pub fn evaluate_const<'tcx>(
 ///
 /// You should not call this function unless you are implementing normalization itself. Prefer to use
 /// `normalize_erasing_regions` or the `normalize` functions on `ObligationCtxt`/`FnCtxt`/`InferCtxt`.
-#[instrument(level = "debug", skip(infcx), ret)]
+    // [stripped: #[instrument(...)]]
 pub fn try_evaluate_const<'tcx>(
     infcx: &InferCtxt<'tcx>,
     ct: ty::Const<'tcx>,

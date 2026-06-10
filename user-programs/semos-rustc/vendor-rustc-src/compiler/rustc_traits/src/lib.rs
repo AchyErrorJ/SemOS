@@ -1,8 +1,14 @@
 //! Queries that are independent from the main solver code.
 
 // tidy-alphabetical-start
+#![cfg_attr(target_os = "none", no_std)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 mod codegen;
 mod coroutine_witnesses;

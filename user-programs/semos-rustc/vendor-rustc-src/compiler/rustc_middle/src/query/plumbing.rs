@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::ops::Deref;
 
 use rustc_data_structures::sync::{AtomicU64, WorkerLocal};

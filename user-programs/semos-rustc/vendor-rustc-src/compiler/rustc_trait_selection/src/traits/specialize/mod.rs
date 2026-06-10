@@ -11,6 +11,11 @@
 
 pub mod specialization_graph;
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxIndexSet;
 use rustc_errors::codes::*;
 use rustc_errors::{Diag, EmissionGuarantee};
@@ -232,7 +237,7 @@ pub(super) fn specialization_enabled_in(tcx: TyCtxt<'_>, _: LocalCrate) -> bool 
 /// `parent_impl_def_id` is a const impl (conditionally based off of some `[const]`
 /// bounds), then `specializing_impl_def_id` must also be const for the same
 /// set of types.
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub(super) fn specializes(
     tcx: TyCtxt<'_>,
     (specializing_impl_def_id, parent_impl_def_id): (DefId, DefId),

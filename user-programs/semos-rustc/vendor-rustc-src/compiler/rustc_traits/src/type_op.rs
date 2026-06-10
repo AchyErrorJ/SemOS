@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use rustc_infer::infer::TyCtxtInferExt;
 use rustc_infer::infer::canonical::{Canonical, CanonicalQueryInput, QueryResponse};

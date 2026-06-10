@@ -5,6 +5,7 @@ pub mod dependency_format;
 pub mod exported_symbols;
 pub mod lang_items;
 pub mod lib_features {
+    use alloc::vec::Vec;
     use rustc_data_structures::unord::UnordMap;
     use rustc_macros::{BlobDecodable, Encodable, HashStable};
     use rustc_span::{Span, Symbol};

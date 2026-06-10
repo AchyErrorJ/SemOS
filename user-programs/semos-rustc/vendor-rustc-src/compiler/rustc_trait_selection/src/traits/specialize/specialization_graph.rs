@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::def_id::DefId;
 use rustc_macros::extension;
@@ -72,7 +77,7 @@ impl<'tcx> Children {
 
     /// Attempt to insert an impl into this set of children, while comparing for
     /// specialization relationships.
-    #[instrument(level = "debug", skip(self, tcx), ret)]
+    // [stripped: #[instrument(...)]]
     fn insert(
         &mut self,
         tcx: TyCtxt<'tcx>,

@@ -1,9 +1,16 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::mem;
 use core::ops::Range;
 
 use itertools::Itertools;
 /// Re-export the markdown parser used by rustdoc.
+#[cfg(not(target_os = "none"))]
 pub use pulldown_cmark;
+#[cfg(not(target_os = "none"))]
 use pulldown_cmark::{
     BrokenLink, BrokenLinkCallback, CowStr, Event, LinkType, Options, Parser, Tag,
 };

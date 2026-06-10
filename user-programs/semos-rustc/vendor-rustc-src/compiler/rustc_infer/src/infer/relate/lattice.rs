@@ -17,6 +17,9 @@
 //!
 //! [lattices]: https://en.wikipedia.org/wiki/Lattice_(order)
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_hir::def_id::DefId;
 use rustc_middle::traits::solve::Goal;
 use rustc_middle::ty::relate::combine::{combine_ty_args, super_combine_consts, super_combine_tys};
@@ -119,7 +122,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for LatticeOp<'_, 'tcx> {
     }
 
     /// Relates two types using a given lattice.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn tys(&mut self, a: Ty<'tcx>, b: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
         if a == b {
             return Ok(a);
@@ -182,7 +185,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for LatticeOp<'_, 'tcx> {
         }
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn regions(
         &mut self,
         a: ty::Region<'tcx>,
@@ -200,7 +203,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for LatticeOp<'_, 'tcx> {
         })
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn consts(
         &mut self,
         a: ty::Const<'tcx>,

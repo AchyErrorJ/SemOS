@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::Deref;
 
 use rustc_data_structures::fx::FxIndexMap;
@@ -31,7 +34,7 @@ impl rustc_type_ir::inherent::OpaqueTypeStorageEntries for OpaqueTypeStorageEntr
 }
 
 impl<'tcx> OpaqueTypeStorage<'tcx> {
-    #[instrument(level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn remove(
         &mut self,
         key: OpaqueTypeKey<'tcx>,
@@ -142,7 +145,7 @@ impl<'tcx> Deref for OpaqueTypeTable<'_, 'tcx> {
 }
 
 impl<'a, 'tcx> OpaqueTypeTable<'a, 'tcx> {
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub fn register(
         &mut self,
         key: OpaqueTypeKey<'tcx>,

@@ -171,6 +171,12 @@ pub struct LocalKey<T: 'static> {
     init: fn() -> T,
 }
 
+// Stage F11: SemOS is single-threaded per §1.4, so a `LocalKey<T>`
+// can never be observed from another thread. std's `thread_local!`
+// uses internal magic to avoid the `T: Sync` requirement on the
+// generated `static`; we do the same by asserting Sync unsafely.
+unsafe impl<T: 'static> Sync for LocalKey<T> {}
+
 impl<T: 'static> LocalKey<T> {
     /// Build a LocalKey from an init function. Usually invoked by the
     /// `thread_local!` macro rather than directly.
@@ -239,6 +245,24 @@ impl<T: 'static> LocalKey<core::cell::RefCell<T>> {
     /// Run `f` with an exclusive borrow of the inner RefCell.
     pub fn with_borrow_mut<R, F: FnOnce(&mut T) -> R>(&'static self, f: F) -> R {
         self.with(|cell| f(&mut cell.borrow_mut()))
+    }
+
+    /// Replace the contained value, returning the previous one.
+    pub fn replace(&'static self, value: T) -> T {
+        self.with(|cell| cell.replace(value))
+    }
+
+    /// Replace contained value with `value`.
+    pub fn set(&'static self, value: T) {
+        self.with(|cell| *cell.borrow_mut() = value);
+    }
+}
+
+impl<T: Default + 'static> LocalKey<core::cell::RefCell<T>> {
+    /// Take the contained value, leaving `T::default()` behind.
+    /// Mirrors `std::thread::LocalKey<RefCell<T>>::take` when T: Default.
+    pub fn take(&'static self) -> T {
+        self.with(|cell| cell.take())
     }
 }
 

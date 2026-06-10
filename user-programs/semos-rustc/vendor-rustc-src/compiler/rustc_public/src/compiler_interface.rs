@@ -3,7 +3,12 @@
 //! rustc_public users should not use any of the items in this module directly.
 //! These APIs have no stability guarantee.
 
-use std::cell::{Cell, RefCell};
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+use core::cell::{Cell, RefCell};
 
 use rustc_hir::def::DefKind;
 use rustc_public_bridge::context::CompilerCtxt;

@@ -562,6 +562,9 @@ fn link_staticlib(
 
 /// Use `thorin` (rust implementation of a dwarf packaging utility) to link DWARF objects into a
 /// DWARF package.
+// M27 §1.7: thorin is host-only (DWARF package builder); SemOS skips
+// the .dwp side-emit path entirely (cg_clif emits ET_EXEC directly).
+#[cfg(not(target_os = "none"))]
 fn link_dwarf_object(sess: &Session, cg_results: &CodegenResults, executable_out_filename: &Path) {
     let mut dwp_out_filename = executable_out_filename.to_path_buf().into_os_string();
     dwp_out_filename.push(".dwp");
@@ -1014,7 +1017,10 @@ fn link_natively(
         // We cannot rely on the .o paths in the executable because they may have been
         // remapped by --remap-path-prefix and therefore invalid, so we need to provide
         // the .o/.dwo paths explicitly.
+        #[cfg(not(target_os = "none"))]
         SplitDebuginfo::Packed => link_dwarf_object(sess, codegen_results, out_filename),
+        #[cfg(target_os = "none")]
+        SplitDebuginfo::Packed => {} // M27 §1.7: .dwp emit dropped on SemOS (host-only thorin).
     }
 
     let strip = sess.opts.cg.strip;

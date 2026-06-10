@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt;
 
 use rustc_data_structures::intern::Interned;
@@ -228,7 +233,7 @@ impl<'tcx> NiceRegionError<'_, 'tcx> {
     //    = note: Due to a where-clause on the function `all`,
     //    = note: `T` must implement `...` for any two lifetimes `'1` and `'2`.
     //    = note: However, the type `T` only implements `...` for some specific lifetime `'2`.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn report_trait_placeholder_mismatch(
         &self,
         vid: Option<Region<'tcx>>,

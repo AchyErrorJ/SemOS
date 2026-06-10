@@ -1,4 +1,9 @@
-use std::iter;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter;
 
 use rustc_abi::Primitive::Pointer;
 use rustc_abi::{BackendRepr, ExternAbi, PointerKind, Scalar, Size};
@@ -29,7 +34,7 @@ pub(crate) fn provide(providers: &mut Providers) {
 // for `Instance` (e.g. typeck would use `Ty::fn_sig` instead),
 // or should go through `FnAbi` instead, to avoid losing any
 // adjustments `fn_abi_of_instance` might be performing.
-#[tracing::instrument(level = "debug", skip(tcx, typing_env))]
+    // [stripped: #[tracing::instrument(...)]]
 fn fn_sig_for_fn_abi<'tcx>(
     tcx: TyCtxt<'tcx>,
     instance: ty::Instance<'tcx>,
@@ -479,7 +484,7 @@ fn fn_abi_sanity_check<'tcx>(
     fn_arg_sanity_check(cx, fn_abi, spec_abi, &fn_abi.ret);
 }
 
-#[tracing::instrument(level = "debug", skip(cx, instance))]
+    // [stripped: #[tracing::instrument(...)]]
 fn fn_abi_new_uncached<'tcx>(
     cx: &LayoutCx<'tcx>,
     sig: ty::FnSig<'tcx>,
@@ -590,7 +595,7 @@ fn fn_abi_new_uncached<'tcx>(
     Ok(tcx.arena.alloc(fn_abi))
 }
 
-#[tracing::instrument(level = "trace", skip(cx))]
+    // [stripped: #[tracing::instrument(...)]]
 fn fn_abi_adjust_for_abi<'tcx>(
     cx: &LayoutCx<'tcx>,
     fn_abi: &mut FnAbi<'tcx, Ty<'tcx>>,
@@ -671,7 +676,7 @@ fn apply_deduced_attributes<'tcx>(
     }
 }
 
-#[tracing::instrument(level = "debug", skip(cx))]
+    // [stripped: #[tracing::instrument(...)]]
 fn make_thin_self_ptr<'tcx>(
     cx: &(impl HasTyCtxt<'tcx> + HasTypingEnv<'tcx>),
     layout: TyAndLayout<'tcx>,

@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use rustc_abi::VariantIdx;
 use rustc_data_structures::assert_matches;
 use rustc_index::Idx;
@@ -624,7 +626,7 @@ impl<'tcx> Analysis<'tcx> for EverInitializedPlaces<'_, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, state), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn apply_primary_statement_effect(
         &self,
         state: &mut Self::Domain,
@@ -649,7 +651,7 @@ impl<'tcx> Analysis<'tcx> for EverInitializedPlaces<'_, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, state, terminator), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn apply_primary_terminator_effect<'mir>(
         &self,
         state: &mut Self::Domain,

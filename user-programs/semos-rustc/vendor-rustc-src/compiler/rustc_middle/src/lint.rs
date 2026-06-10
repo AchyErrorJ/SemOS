@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::cmp;
 
 use rustc_data_structures::fx::FxIndexMap;
@@ -10,7 +15,7 @@ use rustc_session::Session;
 use rustc_session::lint::builtin::{self, FORBIDDEN_LINT_GROUPS};
 use rustc_session::lint::{FutureIncompatibilityReason, Level, Lint, LintExpectationId, LintId};
 use rustc_span::{DUMMY_SP, Span, Symbol, kw};
-use tracing::instrument;
+// instrument off
 
 use crate::ty::TyCtxt;
 
@@ -126,7 +131,7 @@ impl ShallowLintLevelMap {
     /// Perform a deep probe in the HIR tree looking for the actual level for the lint.
     /// This lint level is not usable for diagnostics, it needs to be corrected by
     /// `reveal_actual_level` beforehand.
-    #[instrument(level = "trace", skip(self, tcx), ret)]
+    // #[instrument(level = "trace", skip(self, tcx), ret)]
     fn probe_for_lint_level(
         &self,
         tcx: TyCtxt<'_>,
@@ -158,7 +163,7 @@ impl ShallowLintLevelMap {
     }
 
     /// Fetch and return the user-visible lint level for the given lint at the given HirId.
-    #[instrument(level = "trace", skip(self, tcx), ret)]
+    // #[instrument(level = "trace", skip(self, tcx), ret)]
     pub fn lint_level_id_at_node(
         &self,
         tcx: TyCtxt<'_>,

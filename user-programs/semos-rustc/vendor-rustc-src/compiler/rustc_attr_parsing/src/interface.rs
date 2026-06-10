@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::convert::identity;
 
 use rustc_ast as ast;
@@ -115,7 +120,7 @@ impl<'sess> AttributeParser<'sess, Early> {
             target_span,
             target,
             OmitDoc::Skip,
-            std::convert::identity,
+            core::convert::identity,
             |lint_id, span, kind| {
                 sess.psess.buffer_lint(
                     lint_id.lint,

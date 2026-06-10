@@ -4,6 +4,11 @@
 
 pub mod tls;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
 use core::borrow::Borrow;
@@ -70,7 +75,7 @@ pub use rustc_type_ir::lift::Lift;
 use rustc_type_ir::{
     CollectAndApply, Interner, TypeFlags, TypeFoldable, WithCachedTypeInfo, elaborate, search_graph,
 };
-use tracing::{debug, instrument};
+use tracing::{debug};
 
 use crate::arena::Arena;
 use crate::dep_graph::{DepGraph, DepKindStruct};
@@ -2125,7 +2130,10 @@ impl<'tcx> TyCtxt<'tcx> {
     /// UTF-8 like [`std::env::var`].
     pub fn env_var<K: ?Sized + AsRef<OsStr>>(self, key: &'tcx K) -> Result<&'tcx str, VarError> {
         match self.env_var_os(key.as_ref()) {
+            #[cfg(not(target_os = "none"))]
             Some(value) => value.to_str().ok_or_else(|| VarError::NotUnicode(value.to_os_string())),
+            #[cfg(target_os = "none")]
+            Some(value) => Ok(value),
             None => Err(VarError::NotPresent),
         }
     }
@@ -2454,7 +2462,7 @@ impl<'tcx> TyCtxt<'tcx> {
     }
 
     /// Returns the origin of the opaque type `def_id`.
-    #[instrument(skip(self), level = "trace", ret)]
+    // #[instrument(skip(self), level = "trace", ret)]
     pub fn local_opaque_ty_origin(self, def_id: LocalDefId) -> hir::OpaqueTyOrigin<LocalDefId> {
         self.hir_expect_opaque_ty(def_id).origin
     }

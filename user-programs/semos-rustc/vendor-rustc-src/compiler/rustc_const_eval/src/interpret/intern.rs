@@ -13,6 +13,11 @@
 //! but that would require relying on type information, and given how many ways Rust has to lie
 //! about type information, we want to avoid doing that.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use hir::def::DefKind;
 use rustc_ast::Mutability;
 use rustc_data_structures::fx::{FxHashSet, FxIndexMap};
@@ -199,7 +204,7 @@ pub enum InternError {
 /// tracks where in the value we are and thus can show much better error messages.
 ///
 /// For `InternKind::Static` the root allocation will not be interned, but must be handled by the caller.
-#[instrument(level = "debug", skip(ecx))]
+    // [stripped: #[instrument(...)]]
 pub fn intern_const_alloc_recursive<'tcx, M: CompileTimeMachine<'tcx>>(
     ecx: &mut InterpCx<'tcx, M>,
     intern_kind: InternKind,
@@ -352,7 +357,7 @@ pub fn intern_const_alloc_recursive<'tcx, M: CompileTimeMachine<'tcx>>(
 }
 
 /// Intern `ret`. This function assumes that `ret` references no other allocation.
-#[instrument(level = "debug", skip(ecx))]
+    // [stripped: #[instrument(...)]]
 pub fn intern_const_alloc_for_constprop<'tcx, M: CompileTimeMachine<'tcx>>(
     ecx: &mut InterpCx<'tcx, M>,
     alloc_id: AllocId,

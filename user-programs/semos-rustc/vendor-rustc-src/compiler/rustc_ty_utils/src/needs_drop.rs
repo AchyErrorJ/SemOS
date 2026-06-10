@@ -1,5 +1,10 @@
 //! Check whether a type has (potentially) non-trivial drop glue.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_hir::limit::Limit;
@@ -161,7 +166,7 @@ where
 {
     type Item = NeedsDropResult<Ty<'tcx>>;
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn next(&mut self) -> Option<NeedsDropResult<Ty<'tcx>>> {
         let tcx = self.tcx;
 
@@ -475,7 +480,7 @@ fn adt_significant_drop_tys(
     .map(|components| tcx.mk_type_list(&components))
 }
 
-#[instrument(level = "debug", skip(tcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn list_significant_drop_tys<'tcx>(
     tcx: TyCtxt<'tcx>,
     key: ty::PseudoCanonicalInput<'tcx, Ty<'tcx>>,

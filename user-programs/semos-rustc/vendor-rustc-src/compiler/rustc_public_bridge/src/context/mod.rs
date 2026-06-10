@@ -2,7 +2,9 @@
 
 #![allow(rustc::usage_of_qualified_ty)]
 
-use std::marker::PhantomData;
+use core::marker::PhantomData;
+use crate_alloc::format;
+use crate_alloc::vec::Vec;
 
 use rustc_abi::HasDataLayout;
 use rustc_middle::ty;

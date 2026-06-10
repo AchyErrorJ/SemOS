@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::tokenstream::TokenStream;
 use rustc_ast::{CoroutineKind, DUMMY_NODE_ID, Expr, ast, token};
 use rustc_errors::PResult;

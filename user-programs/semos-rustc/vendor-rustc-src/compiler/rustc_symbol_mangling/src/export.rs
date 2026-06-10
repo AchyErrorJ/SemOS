@@ -1,3 +1,7 @@
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_abi::IntegerType;
 use rustc_data_structures::debug_assert_matches;
 use rustc_data_structures::stable_hasher::StableHasher;
@@ -14,7 +18,7 @@ macro_rules! default_hash_impl {
         $(impl<'tcx> AbiHashStable<'tcx> for $t {
             #[inline]
             fn abi_hash(&self, _tcx: TyCtxt<'tcx>, hasher: &mut StableHasher) {
-                ::std::hash::Hash::hash(self, hasher);
+                ::core::hash::Hash::hash(self, hasher);
             }
         })*
     };

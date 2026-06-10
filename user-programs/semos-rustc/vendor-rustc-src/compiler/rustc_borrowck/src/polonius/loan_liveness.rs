@@ -7,6 +7,7 @@ use crate::BorrowSet;
 use crate::constraints::OutlivesConstraint;
 use crate::region_infer::values::LivenessValues;
 use crate::type_check::Locations;
+use alloc::vec::Vec;
 
 /// Compute loan reachability to approximately trace loan liveness throughout the CFG, by
 /// traversing the full graph of constraints that combines:

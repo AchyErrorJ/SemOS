@@ -1,4 +1,9 @@
-use std::cell::LazyCell;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cell::LazyCell;
 
 use rustc_data_structures::debug_assert_matches;
 use rustc_data_structures::fx::{FxHashMap, FxIndexMap, FxIndexSet};

@@ -15,6 +15,9 @@ use tracing::debug;
 use crate::MirBorrowckCtxt;
 use crate::diagnostics::{CapturedMessageOpt, DescribePlaceOpt, UseSpans};
 use crate::prefixes::PrefixSet;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
 
 #[derive(Debug)]
 pub(crate) enum IllegalMoveOriginKind<'tcx> {

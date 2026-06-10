@@ -5,6 +5,7 @@
 //! This API is completely unstable and subject to change.
 
 // tidy-alphabetical-start
+#![cfg_attr(target_os = "none", no_std)]
 #![feature(assert_matches)]
 #![feature(associated_type_defaults)]
 #![feature(box_patterns)]
@@ -13,6 +14,16 @@
 #![feature(never_type)]
 // tidy-alphabetical-end
 
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
+
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_middle::query::Providers;
 
 mod abi;

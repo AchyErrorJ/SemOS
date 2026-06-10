@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::mir::*;
 

@@ -6,7 +6,12 @@
 //! For contributors, please make sure to avoid calling rustc's internal functions and queries.
 //! These should be done via `rustc_public_bridge` APIs, but it's possible to access ADT fields directly.
 
-use std::ops::RangeInclusive;
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
+use core::ops::RangeInclusive;
 
 use rustc_public_bridge::Tables;
 use rustc_public_bridge::context::CompilerCtxt;

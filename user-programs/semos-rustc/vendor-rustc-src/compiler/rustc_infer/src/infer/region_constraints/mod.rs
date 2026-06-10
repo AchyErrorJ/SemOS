@@ -1,5 +1,8 @@
 //! See `README.md`.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::Range;
 use core::{cmp, fmt, mem};
 
@@ -459,7 +462,7 @@ impl<'tcx> RegionConstraintCollector<'_, 'tcx> {
         }
     }
 
-    #[instrument(skip(self, origin), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn make_subregion(
         &mut self,
         origin: SubregionOrigin<'tcx>,

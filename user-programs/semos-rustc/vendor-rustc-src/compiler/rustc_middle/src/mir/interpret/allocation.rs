@@ -3,6 +3,11 @@
 mod init_mask;
 mod provenance_map;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::borrow::Cow;
 use core::hash::Hash;
 use core::ops::{Deref, DerefMut, Range};

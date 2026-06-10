@@ -18,6 +18,7 @@ pub use super::polonius::legacy::{
 };
 pub use super::region_infer::RegionInferenceContext;
 use crate::BorrowCheckRootCtxt;
+use alloc::boxed::Box;
 
 /// Struct used during mir borrowck to collect bodies with facts for a typeck root and all
 /// its nested bodies.

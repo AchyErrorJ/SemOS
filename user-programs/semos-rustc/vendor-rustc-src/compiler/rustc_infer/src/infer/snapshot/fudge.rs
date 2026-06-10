@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::ops::Range;
 
@@ -85,7 +88,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// the actual types (`?T`, `Option<?T>`) -- and remember that
     /// after the snapshot is popped, the variable `?T` is no longer
     /// unified.
-    #[instrument(skip(self, f), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
     pub fn fudge_inference_if_ok<T, E, F>(&self, f: F) -> Result<T, E>
     where
         F: FnOnce() -> Result<T, E>,

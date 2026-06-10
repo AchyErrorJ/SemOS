@@ -2,7 +2,7 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![feature(assert_matches)]
 #![feature(box_patterns)]
-#![feature(file_buffered)]
+#![cfg_attr(not(target_os = "none"), feature(file_buffered))]
 #![feature(if_let_guard)]
 #![feature(negative_impls)]
 #![feature(string_from_utf8_lossy_owned)]
@@ -21,6 +21,11 @@ extern crate alloc;
 #[cfg(not(target_os = "none"))]
 extern crate std;
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 #[cfg(not(target_os = "none"))]
@@ -287,14 +292,22 @@ pub fn provide(providers: &mut Providers) {
 /// uses for the object files it generates.
 pub fn looks_like_rust_object_file(filename: &str) -> bool {
     let path = Path::new(filename);
-    let ext = path.extension().and_then(|s| s.to_str());
+    // semos_std::path::Path::extension() returns Option<&str> directly
+    // (OsStr ≡ str on SemOS); std::path returns Option<&OsStr>.
+    #[cfg(not(target_os = "none"))]
+    let ext: Option<&str> = path.extension().and_then(|s| s.to_str());
+    #[cfg(target_os = "none")]
+    let ext: Option<&str> = path.extension();
     if ext != Some(OutputType::Object.extension()) {
         // The file name does not end with ".o", so it can't be an object file.
         return false;
     }
 
     // Strip the ".o" at the end
-    let ext2 = path.file_stem().and_then(|s| Path::new(s).extension()).and_then(|s| s.to_str());
+    #[cfg(not(target_os = "none"))]
+    let ext2: Option<&str> = path.file_stem().and_then(|s| Path::new(s).extension()).and_then(|s| s.to_str());
+    #[cfg(target_os = "none")]
+    let ext2: Option<&str> = path.file_stem().and_then(|s| Path::new(s).extension());
 
     // Check if the "inner" extension
     ext2 == Some(RUST_CGU_EXT)
@@ -304,6 +317,11 @@ const RLINK_VERSION: u32 = 1;
 const RLINK_MAGIC: &[u8] = b"rustlink";
 
 impl CodegenResults {
+    // M27 §1.7: -Zcompile-link-mode=rlink is a rustc-distribution build
+    // feature (writes a side .rlink for the dist tooling). cg_clif on
+    // SemOS skips rlink entirely; FileEncoder's SpanEncoder impl is
+    // also gated out, so this path won't type-check on the SemOS target.
+    #[cfg(not(target_os = "none"))]
     pub fn serialize_rlink(
         sess: &Session,
         rlink_file: &Path,

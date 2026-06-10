@@ -1,4 +1,6 @@
 use core::fmt;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 use rustc_abi::ExternAbi;
 use rustc_feature::Features;

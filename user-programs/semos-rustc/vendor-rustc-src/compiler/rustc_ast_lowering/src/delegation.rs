@@ -36,6 +36,9 @@
 //! In case of discrepancy with callee function the `UnsupportedDelegation` error will
 //! also be emitted during HIR ty lowering.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use ast::visit::Visitor;

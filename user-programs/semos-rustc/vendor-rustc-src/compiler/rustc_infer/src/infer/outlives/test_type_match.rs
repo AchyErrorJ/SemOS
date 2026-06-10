@@ -35,7 +35,7 @@ use crate::infer::relate::{self as relate, Relate, RelateResult, TypeRelation};
 /// like are used. This is a particular challenge since this function is invoked
 /// very late in inference and hence cannot make use of the normal inference
 /// machinery.
-#[instrument(level = "debug", skip(tcx))]
+    // [stripped: #[instrument(...)]]
 pub fn extract_verify_if_eq<'tcx>(
     tcx: TyCtxt<'tcx>,
     verify_if_eq_b: &ty::Binder<'tcx, VerifyIfEq<'tcx>>,
@@ -71,7 +71,7 @@ pub fn extract_verify_if_eq<'tcx>(
 }
 
 /// True if a (potentially higher-ranked) outlives
-#[instrument(level = "debug", skip(tcx))]
+    // [stripped: #[instrument(...)]]
 pub(super) fn can_match_erased_ty<'tcx>(
     tcx: TyCtxt<'tcx>,
     outlives_predicate: ty::Binder<'tcx, ty::TypeOutlivesPredicate<'tcx>>,
@@ -112,7 +112,7 @@ impl<'tcx> MatchAgainstHigherRankedOutlives<'tcx> {
 
     /// Binds the pattern variable `br` to `value`; returns an `Err` if the pattern
     /// is already bound to a different value.
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn bind(
         &mut self,
         br: ty::BoundRegion,
@@ -153,7 +153,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstHigherRankedOutlives<'tcx>
         Ok(a_ty)
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn relate_with_variance<T: Relate<TyCtxt<'tcx>>>(
         &mut self,
         variance: ty::Variance,
@@ -170,7 +170,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstHigherRankedOutlives<'tcx>
         if variance != ty::Bivariant { self.relate(a, b) } else { Ok(a) }
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn regions(
         &mut self,
         pattern: ty::Region<'tcx>,
@@ -187,7 +187,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstHigherRankedOutlives<'tcx>
         }
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn tys(&mut self, pattern: Ty<'tcx>, value: Ty<'tcx>) -> RelateResult<'tcx, Ty<'tcx>> {
         // FIXME(non_lifetime_binders): What to do here?
         if matches!(pattern.kind(), ty::Error(_) | ty::Bound(..)) {
@@ -200,7 +200,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstHigherRankedOutlives<'tcx>
         }
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn consts(
         &mut self,
         pattern: ty::Const<'tcx>,
@@ -213,7 +213,7 @@ impl<'tcx> TypeRelation<TyCtxt<'tcx>> for MatchAgainstHigherRankedOutlives<'tcx>
         }
     }
 
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn binders<T>(
         &mut self,
         pattern: ty::Binder<'tcx, T>,

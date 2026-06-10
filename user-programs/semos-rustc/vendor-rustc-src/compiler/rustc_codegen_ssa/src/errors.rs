@@ -1,5 +1,10 @@
 //! Errors emitted by codegen_ssa
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 #[cfg(not(target_os = "none"))]
 use std::ffi::OsString;
@@ -242,8 +247,13 @@ pub enum LinkRlibError {
     IncompatibleDependencyFormats { ty1: String, ty2: String, list1: String, list2: String },
 }
 
+// M27 §1.7: thorin (DWARF supplementary file builder, host-only).
+// The whole error-wrapper is consumed only by back::link.rs paths
+// which are already cfg-gated host-only per §1.7.
+#[cfg(not(target_os = "none"))]
 pub(crate) struct ThorinErrorWrapper(pub thorin::Error);
 
+#[cfg(not(target_os = "none"))]
 impl<G: EmissionGuarantee> Diagnostic<'_, G> for ThorinErrorWrapper {
     fn into_diag(self, dcx: DiagCtxtHandle<'_>, level: Level) -> Diag<'_, G> {
         let build = |msg| Diag::new(dcx, level, msg);

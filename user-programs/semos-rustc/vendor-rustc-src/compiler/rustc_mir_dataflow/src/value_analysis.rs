@@ -1,5 +1,6 @@
 use core::fmt::{Debug, Formatter};
 use core::ops::Range;
+use alloc::vec::Vec;
 
 use rustc_abi::{FieldIdx, VariantIdx};
 use rustc_data_structures::debug_assert_matches;
@@ -369,7 +370,7 @@ impl<'tcx> Map<'tcx> {
     /// This is currently the only way to create a [`Map`]. The way in which the tracked places are
     /// chosen is an implementation detail and may not be relied upon (other than that their type
     /// are scalars).
-    #[tracing::instrument(level = "trace", skip(tcx, body))]
+    // [stripped: #[tracing::instrument(...)]]
     pub fn new(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, mode: PlaceCollectionMode) -> Self {
         tracing::trace!(def_id=?body.source.def_id());
         let capacity = 4 * body.local_decls.len();
@@ -397,7 +398,7 @@ impl<'tcx> Map<'tcx> {
     }
 
     /// Register all non-excluded places that have scalar layout.
-    #[tracing::instrument(level = "trace", skip(self, tcx, body))]
+    // [stripped: #[tracing::instrument(...)]]
     fn register_locals(&mut self, tcx: TyCtxt<'tcx>, body: &Body<'tcx>) {
         let exclude = excluded_locals(body);
 
@@ -418,7 +419,7 @@ impl<'tcx> Map<'tcx> {
     }
 
     /// Collect syntactic places from body, and create `PlaceIndex` for them.
-    #[tracing::instrument(level = "trace", skip(self, tcx, body))]
+    // [stripped: #[tracing::instrument(...)]]
     fn collect_places(&mut self, tcx: TyCtxt<'tcx>, body: &Body<'tcx>) {
         let mut collector = PlaceCollector { tcx, body, map: self };
         collector.visit_body(body);
@@ -432,7 +433,7 @@ impl<'tcx> Map<'tcx> {
     /// `_1.0` does not appear, but we still need to track it. This is achieved by propagating
     /// projections from assignments. We recorded an assignment between `_2` and `_1`, so we
     /// want `_1` and `_2` to have the same sub-places.
-    #[tracing::instrument(level = "trace", skip(self, tcx, body))]
+    // [stripped: #[tracing::instrument(...)]]
     fn propagate_assignments(&mut self, tcx: TyCtxt<'tcx>, body: &Body<'tcx>) {
         // Collect syntactic places and assignments between them.
         let mut assignments = FxIndexSet::default();
@@ -532,7 +533,7 @@ impl<'tcx> Map<'tcx> {
     }
 
     /// Create values for places whose type have scalar layout.
-    #[tracing::instrument(level = "trace", skip(self, tcx, body))]
+    // [stripped: #[tracing::instrument(...)]]
     fn create_values(&mut self, tcx: TyCtxt<'tcx>, body: &Body<'tcx>, value_limit: Option<usize>) {
         debug_assert_matches!(self.mode, PlaceCollectionMode::Full { .. });
         let typing_env = body.typing_env(tcx);
@@ -571,7 +572,7 @@ impl<'tcx> Map<'tcx> {
     }
 
     /// Trim useless places.
-    #[tracing::instrument(level = "trace", skip(self))]
+    // [stripped: #[tracing::instrument(...)]]
     fn trim_useless_places(&mut self) {
         debug_assert_matches!(self.mode, PlaceCollectionMode::Full { .. });
         for opt_place in self.locals.iter_mut() {
@@ -585,7 +586,7 @@ impl<'tcx> Map<'tcx> {
         self.projections.retain(|_, child| !self.inner_values[*child].is_empty());
     }
 
-    #[tracing::instrument(level = "trace", skip(self), ret)]
+    // [stripped: #[tracing::instrument(...)]]
     pub fn register_place_index(
         &mut self,
         ty: Ty<'tcx>,
@@ -600,7 +601,7 @@ impl<'tcx> Map<'tcx> {
         })
     }
 
-    #[tracing::instrument(level = "trace", skip(self, tcx, body), ret)]
+    // [stripped: #[tracing::instrument(...)]]
     pub fn register_place(
         &mut self,
         tcx: TyCtxt<'tcx>,
@@ -632,7 +633,7 @@ impl<'tcx> Map<'tcx> {
         Some(place_index)
     }
 
-    #[tracing::instrument(level = "trace", skip(self, tcx, body), ret)]
+    // [stripped: #[tracing::instrument(...)]]
     fn register_place_and_discr(
         &mut self,
         tcx: TyCtxt<'tcx>,
@@ -654,7 +655,7 @@ impl<'tcx> Map<'tcx> {
         Some(place)
     }
 
-    #[tracing::instrument(level = "trace", skip(self, tcx, typing_env), ret)]
+    // [stripped: #[tracing::instrument(...)]]
     pub fn register_value(
         &mut self,
         tcx: TyCtxt<'tcx>,
@@ -681,7 +682,7 @@ impl<'tcx> Map<'tcx> {
         place_info.value_index
     }
 
-    #[tracing::instrument(level = "trace", skip(self, f))]
+    // [stripped: #[tracing::instrument(...)]]
     pub fn register_copy_tree(
         &mut self,
         // Tree to copy.
@@ -715,7 +716,7 @@ impl<'tcx> Map<'tcx> {
 
     /// Precompute the list of values inside `root` and store it inside
     /// as a slice within `inner_values_buffer`.
-    #[tracing::instrument(level = "trace", skip(self))]
+    // [stripped: #[tracing::instrument(...)]]
     fn cache_preorder_invoke(&mut self, root: PlaceIndex) {
         debug_assert_matches!(self.mode, PlaceCollectionMode::Full { .. });
         let start = self.inner_values_buffer.len();
@@ -742,7 +743,7 @@ struct PlaceCollector<'a, 'tcx> {
 }
 
 impl<'tcx> Visitor<'tcx> for PlaceCollector<'_, 'tcx> {
-    #[tracing::instrument(level = "trace", skip(self))]
+    // [stripped: #[tracing::instrument(...)]]
     fn visit_place(&mut self, place: &Place<'tcx>, ctxt: PlaceContext, _: Location) {
         if !ctxt.is_use() {
             return;
@@ -823,7 +824,7 @@ impl<'tcx> Map<'tcx> {
     ///
     /// `tail_elem` allows to support discriminants that are not a place in MIR, but that we track
     /// as such.
-    #[tracing::instrument(level = "trace", skip(self, f))]
+    // [stripped: #[tracing::instrument(...)]]
     pub fn for_each_aliasing_place(
         &self,
         place: PlaceRef<'_>,
@@ -858,7 +859,7 @@ impl<'tcx> Map<'tcx> {
     }
 
     /// Invoke the given function on all the descendants of the given place, except one branch.
-    #[tracing::instrument(level = "trace", skip(self, f))]
+    // [stripped: #[tracing::instrument(...)]]
     fn for_each_variant_sibling(
         &self,
         parent: PlaceIndex,
@@ -885,7 +886,7 @@ impl<'tcx> Map<'tcx> {
     }
 
     /// Invoke a function on each value in the given place and all descendants.
-    #[tracing::instrument(level = "trace", skip(self, f))]
+    // [stripped: #[tracing::instrument(...)]]
     fn for_each_value_inside(&self, root: PlaceIndex, f: &mut impl FnMut(ValueIndex)) {
         if let Some(range) = self.inner_values.get(root) {
             // Optimized path: we have cached the inner values.

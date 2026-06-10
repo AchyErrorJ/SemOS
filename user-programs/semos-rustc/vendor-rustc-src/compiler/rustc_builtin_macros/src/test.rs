@@ -1,6 +1,11 @@
 //! The expansion from a test function to the appropriate test struct for libtest
 //! Ideally, this code would be in libtest but for efficiency and error messages it lives here.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use rustc_ast::{self as ast, GenericParamKind, HasNodeId, attr, join_path_idents};

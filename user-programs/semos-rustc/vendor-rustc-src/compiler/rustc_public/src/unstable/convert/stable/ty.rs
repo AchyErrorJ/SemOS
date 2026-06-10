@@ -1,5 +1,10 @@
 //! Conversion of internal Rust compiler `ty` items to stable ones.
 
+use crate_alloc::borrow::ToOwned;
+use crate_alloc::boxed::Box;
+use crate_alloc::format;
+use crate_alloc::string::{String, ToString};
+use crate_alloc::vec::Vec;
 use rustc_middle::ty::Ty;
 use rustc_middle::{bug, mir, ty};
 use rustc_public_bridge::Tables;

@@ -23,7 +23,7 @@ pub type FxHashSet<V> = hashbrown::HashSet<V, FxBuildHasher>;
 #[cfg(not(target_os = "none"))]
 pub type StdEntry<'a, K, V> = std::collections::hash_map::Entry<'a, K, V>;
 #[cfg(target_os = "none")]
-pub type StdEntry<'a, K, V> = hashbrown::hash_map::Entry<'a, K, V, BuildHasherDefault<FxHasher>>;
+pub type StdEntry<'a, K, V> = hashbrown::hash_map::Entry<'a, K, V, FxBuildHasher>;
 
 pub type FxIndexMap<K, V> = indexmap::IndexMap<K, V, BuildHasherDefault<FxHasher>>;
 pub type FxIndexSet<V> = indexmap::IndexSet<V, BuildHasherDefault<FxHasher>>;

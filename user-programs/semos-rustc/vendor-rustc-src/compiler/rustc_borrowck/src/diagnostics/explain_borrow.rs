@@ -23,6 +23,10 @@ use crate::constraints::OutlivesConstraint;
 use crate::nll::ConstraintDescription;
 use crate::region_infer::{BlameConstraint, Cause};
 use crate::{MirBorrowckCtxt, WriteKind};
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::borrow::ToOwned;
 
 #[derive(Debug)]
 pub(crate) enum BorrowExplanation<'tcx> {
@@ -604,7 +608,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
     ///   - second half is the place being accessed
     ///
     /// [d]: https://rust-lang.github.io/rfcs/2094-nll.html#leveraging-intuition-framing-errors-in-terms-of-points
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn explain_why_borrow_contains_point(
         &self,
         location: Location,
@@ -734,7 +738,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
     /// First span returned points to the location of the conflicting use
     /// Second span if `Some` is returned in the case of closures and points
     /// to the use of the path
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn later_use_kind(
         &self,
         borrow: &BorrowData<'tcx>,

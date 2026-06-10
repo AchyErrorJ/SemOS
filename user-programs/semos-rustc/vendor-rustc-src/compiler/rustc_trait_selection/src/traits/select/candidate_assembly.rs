@@ -6,6 +6,11 @@
 //!
 //! [rustc dev guide]:https://rustc-dev-guide.rust-lang.org/traits/resolution.html#candidate-assembly
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use hir::LangItem;
@@ -23,7 +28,7 @@ use super::{SelectionCandidateSet, SelectionContext, TraitObligationStack};
 use crate::traits::util;
 
 impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
-    #[instrument(skip(self, stack), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn assemble_candidates<'o>(
         &mut self,
         stack: &TraitObligationStack<'o, 'tcx>,
@@ -177,7 +182,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         Ok(candidates)
     }
 
-    #[instrument(level = "debug", skip(self, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_candidates_from_projected_tys(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -257,7 +262,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     /// supplied to find out whether it is listed among them.
     ///
     /// Never affects the inference environment.
-    #[instrument(level = "debug", skip(self, stack, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_candidates_from_caller_bounds<'o>(
         &mut self,
         stack: &TraitObligationStack<'o, 'tcx>,
@@ -464,7 +469,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_async_closure_candidates(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -589,7 +594,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     }
 
     /// Searches for impls that might apply to `obligation`.
-    #[instrument(level = "debug", skip(self, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_candidates_from_impls(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -639,7 +644,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     /// and function pointers and less like blanket impls. Rejecting them when they can't possibly apply (because
     /// the obligation's self-type does not implement `FnPtr`) avoids reporting that the self type does not implement
     /// `FnPtr`, when we wanted to report that it doesn't implement `Trait`.
-    #[instrument(level = "trace", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn reject_fn_ptr_impls(
         &mut self,
         impl_def_id: DefId,
@@ -1088,7 +1093,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         };
     }
 
-    #[instrument(level = "debug", skip(self, obligation, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_candidates_for_transmutability(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -1106,7 +1111,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         candidates.vec.push(TransmutabilityCandidate);
     }
 
-    #[instrument(level = "debug", skip(self, obligation, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_candidates_for_trait_alias(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -1125,7 +1130,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
 
     /// Assembles `Copy` and `Clone` candidates for built-in types with no libcore-defined
     /// `Copy` or `Clone` impls.
-    #[instrument(level = "debug", skip(self, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_builtin_copy_clone_candidate(
         &mut self,
         self_ty: Ty<'tcx>,
@@ -1226,7 +1231,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     }
 
     /// Assembles the `Sized` and `MetaSized` traits which are built-in to the language itself.
-    #[instrument(level = "debug", skip(self, candidates))]
+    // [stripped: #[instrument(...)]]
     fn assemble_builtin_sized_candidate(
         &mut self,
         self_ty: Ty<'tcx>,

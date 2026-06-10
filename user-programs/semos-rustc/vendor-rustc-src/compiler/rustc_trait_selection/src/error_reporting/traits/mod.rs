@@ -7,6 +7,11 @@ pub mod on_unimplemented_format;
 mod overflow;
 pub mod suggestions;
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::{fmt, iter};
 
 use rustc_data_structures::fx::{FxIndexMap, FxIndexSet};
@@ -286,7 +291,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
         reported.unwrap_or_else(|| self.dcx().delayed_bug("failed to report fulfillment errors"))
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn report_fulfillment_error(&self, error: &FulfillmentError<'tcx>) -> ErrorGuaranteed {
         let mut error = FulfillmentError {
             obligation: error.obligation.clone(),

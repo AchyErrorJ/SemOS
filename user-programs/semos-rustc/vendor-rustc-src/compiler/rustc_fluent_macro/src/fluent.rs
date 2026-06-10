@@ -93,15 +93,34 @@ pub(crate) fn fluent_messages(input: TokenStream) -> TokenStream {
             }
         }
     }
-    // Stage F9 ext: rustc Diagnostic derive lets authors reference a
-    // sibling sub-message via `#[note(<crate_prefix>_<attr>)]` even
-    // when the attr is defined nested under another message. We
-    // flatten by emitting top-level consts `<crate_prefix>_<attr>`
-    // for each attr seen, using the FIRST underscore-separated token
-    // of any parent as the crate prefix.
-    let crate_prefix: Option<String> = parents
-        .first()
-        .and_then(|p| p.split('_').next().map(|s| s.to_string()));
+    // Stage F11: extract crate prefix by longest-common-prefix of all
+    // parent names (split on `_`). For example, if every parent
+    // begins `attr_parsing_*`, the crate prefix is `attr_parsing`.
+    // Falls back to the first token if LCP is empty. This emits
+    // `<crate_prefix>_<attr>` flattened constants for every subdiag
+    // attr seen — rustc Diagnostic derive references those via
+    // `#[note(<crate_prefix>_<attr>)]`.
+    fn longest_common_prefix(names: &[String]) -> String {
+        if names.is_empty() { return String::new(); }
+        let split: Vec<Vec<&str>> = names.iter().map(|n| n.split('_').collect()).collect();
+        let min_len = split.iter().map(|v| v.len()).min().unwrap_or(0);
+        let mut out: Vec<&str> = Vec::new();
+        for i in 0..min_len {
+            let token = split[0][i];
+            if split.iter().all(|v| v[i] == token) {
+                out.push(token);
+            } else {
+                break;
+            }
+        }
+        out.join("_")
+    }
+    let lcp = longest_common_prefix(&parents);
+    let crate_prefix: Option<String> = if !lcp.is_empty() {
+        Some(lcp)
+    } else {
+        parents.first().and_then(|p| p.split('_').next().map(|s| s.to_string()))
+    };
     if let Some(prefix) = &crate_prefix {
         let mut flat: Vec<String> = Vec::new();
         for (_, attrs) in &subdiags {

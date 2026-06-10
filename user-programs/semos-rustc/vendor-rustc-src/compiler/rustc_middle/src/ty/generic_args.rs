@@ -1,5 +1,10 @@
 // Generic arguments.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::intrinsics;
 use core::marker::PhantomData;
 use core::num::NonZero;

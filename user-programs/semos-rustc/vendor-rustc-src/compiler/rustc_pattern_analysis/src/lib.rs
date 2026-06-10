@@ -4,7 +4,13 @@
 
 // tidy-alphabetical-start
 #![allow(unused_crate_dependencies)]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-end
+
+#[macro_use]
+extern crate alloc;
+#[cfg(not(target_os = "none"))]
+extern crate std;
 
 pub(crate) mod checks;
 pub mod constructor;
@@ -21,7 +27,11 @@ pub mod usefulness;
 #[cfg(feature = "rustc")]
 rustc_fluent_macro::fluent_messages! { "../messages.ftl" }
 
-use std::fmt;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 
 pub use rustc_index::{Idx, IndexVec}; // re-exported to avoid rustc_index version issues
 

@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use rustc_errors::{Applicability, Diag, E0283, E0284, E0790, MultiSpan, struct_span_code_err};
@@ -156,7 +161,7 @@ pub fn compute_applicable_impls_for_diagnostics<'tcx>(
 }
 
 impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn maybe_report_ambiguity(
         &self,
         obligation: &PredicateObligation<'tcx>,

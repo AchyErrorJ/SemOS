@@ -1,6 +1,11 @@
 #[cfg(test)]
 mod tests;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::ops::Range;
 use core::{hash, iter};
 

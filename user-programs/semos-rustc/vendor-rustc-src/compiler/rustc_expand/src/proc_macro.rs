@@ -7,6 +7,10 @@
 // Resolution: once a kernel-side proc-macro sandbox lands (out-of-scope
 // for M27), restore the upstream body. See PLAN §1.5 for rationale.
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::tokenstream::TokenStream;
 use rustc_errors::ErrorGuaranteed;
 use rustc_middle::ty::{self, TyCtxt};
@@ -58,6 +62,7 @@ fn exec_strategy(sess: &Session) -> impl pm::bridge::server::ExecutionStrategy +
 }
 
 pub struct BangProcMacro {
+    #[cfg(not(target_os = "none"))]
     pub client: pm::bridge::client::Client<pm::TokenStream, pm::TokenStream>,
 }
 
@@ -95,7 +100,7 @@ impl base::BangProcMacro for BangProcMacro {
         span: Span,
         _input: TokenStream,
     ) -> Result<TokenStream, ErrorGuaranteed> {
-        let _ = &self.client;
+        // (client field cfg-gated on SemOS)
         Err(ecx.dcx().emit_err(errors::ProcMacroPanicked {
             span,
             message: Some(errors::ProcMacroPanickedHelp {
@@ -108,6 +113,7 @@ impl base::BangProcMacro for BangProcMacro {
 }
 
 pub struct AttrProcMacro {
+    #[cfg(not(target_os = "none"))]
     pub client: pm::bridge::client::Client<(pm::TokenStream, pm::TokenStream), pm::TokenStream>,
 }
 
@@ -148,7 +154,7 @@ impl base::AttrProcMacro for AttrProcMacro {
         _annotation: TokenStream,
         _annotated: TokenStream,
     ) -> Result<TokenStream, ErrorGuaranteed> {
-        let _ = &self.client;
+        // (client field cfg-gated on SemOS)
         Err(ecx.dcx().emit_err(errors::CustomAttributePanicked {
             span,
             message: Some(errors::CustomAttributePanickedHelp {
@@ -161,6 +167,7 @@ impl base::AttrProcMacro for AttrProcMacro {
 }
 
 pub struct DeriveProcMacro {
+    #[cfg(not(target_os = "none"))]
     pub client: DeriveClient,
 }
 
@@ -252,7 +259,7 @@ impl MultiItemModifier for DeriveProcMacro {
         _item: Annotatable,
         _is_derive_const: bool,
     ) -> ExpandResult<Vec<Annotatable>, Annotatable> {
-        let _ = &self.client;
+        // (client field cfg-gated on SemOS)
         ecx.dcx().emit_err(errors::ProcMacroDeriveTokens { span });
         ExpandResult::Ready(vec![])
     }
@@ -283,6 +290,7 @@ pub(super) fn provide_derive_macro_expansion<'tcx>(
     Err(())
 }
 
+#[cfg(not(target_os = "none"))]
 type DeriveClient = pm::bridge::client::Client<pm::TokenStream, pm::TokenStream>;
 
 #[cfg(not(target_os = "none"))]

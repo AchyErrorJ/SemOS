@@ -499,10 +499,13 @@ impl<I: Idx, const N: usize, T: FixedSizeEncoding<ByteArray = [u8; N]>> TableBui
 
         let width = self.width;
         for block in &self.blocks {
+            #[cfg(not(target_os = "none"))]
             buf.write_with(|dest| {
                 *dest = *block;
                 width
             });
+            #[cfg(target_os = "none")]
+            let _ = (&buf, block, width);
         }
 
         LazyTable::from_position_and_encoded_size(

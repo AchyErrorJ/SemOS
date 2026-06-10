@@ -22,7 +22,7 @@ mod loan_invalidations;
 mod loan_kills;
 mod location;
 pub use self::location::*;
-mod facts;
+pub(crate) mod facts;
 pub use self::facts::*;
 
 /// When requested, emit most of the facts needed by polonius:

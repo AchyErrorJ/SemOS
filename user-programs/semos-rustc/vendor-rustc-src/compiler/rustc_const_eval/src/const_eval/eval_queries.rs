@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::sync::atomic::Ordering::Relaxed;
 
 use either::{Left, Right};
@@ -64,7 +69,7 @@ fn setup_for_eval<'tcx>(
     return_place.map(|ret| (intern_kind, ret))
 }
 
-#[instrument(level = "trace", skip(ecx, body))]
+    // [stripped: #[instrument(...)]]
 fn eval_body_using_ecx<'tcx, R: InterpretationResult<'tcx>>(
     ecx: &mut CompileTimeInterpCx<'tcx>,
     cid: GlobalId<'tcx>,
@@ -100,7 +105,7 @@ fn eval_body_using_ecx<'tcx, R: InterpretationResult<'tcx>>(
     intern_and_validate(ecx, cid, intern_kind, ret)
 }
 
-#[instrument(level = "trace", skip(ecx))]
+    // [stripped: #[instrument(...)]]
 fn eval_trivial_const_using_ecx<'tcx, R: InterpretationResult<'tcx>>(
     ecx: &mut CompileTimeInterpCx<'tcx>,
     cid: GlobalId<'tcx>,
@@ -209,7 +214,7 @@ pub fn mk_eval_cx_for_const_val<'tcx>(
 /// best-effort attempt. This is not okay for use in const-eval sine it breaks invariants rustc
 /// relies on, but it is okay for diagnostics which will just give up gracefully when they
 /// encounter an `Indirect` they cannot handle.
-#[instrument(skip(ecx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub(super) fn op_to_const<'tcx>(
     ecx: &CompileTimeInterpCx<'tcx>,
     op: &OpTy<'tcx>,
@@ -292,7 +297,7 @@ pub(super) fn op_to_const<'tcx>(
     }
 }
 
-#[instrument(skip(tcx), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
 pub(crate) fn turn_into_const_value<'tcx>(
     tcx: TyCtxt<'tcx>,
     constant: ConstAlloc<'tcx>,
@@ -322,7 +327,7 @@ pub(crate) fn turn_into_const_value<'tcx>(
     op_to_const(&ecx, &mplace.into(), /* for diagnostics */ false)
 }
 
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn eval_to_const_value_raw_provider<'tcx>(
     tcx: TyCtxt<'tcx>,
     key: ty::PseudoCanonicalInput<'tcx, GlobalId<'tcx>>,
@@ -333,7 +338,7 @@ pub fn eval_to_const_value_raw_provider<'tcx>(
     tcx.eval_to_allocation_raw(key).map(|val| turn_into_const_value(tcx, val, key))
 }
 
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn eval_static_initializer_provider<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: LocalDefId,
@@ -364,7 +369,7 @@ impl<'tcx> InterpretationResult<'tcx> for ConstAlloc<'tcx> {
     }
 }
 
-#[instrument(skip(tcx), level = "debug")]
+    // [stripped: #[instrument(...)]]
 pub fn eval_to_allocation_raw_provider<'tcx>(
     tcx: TyCtxt<'tcx>,
     key: ty::PseudoCanonicalInput<'tcx, GlobalId<'tcx>>,

@@ -23,6 +23,10 @@ use tracing::{debug, trace};
 
 use crate::diagnostics::BorrowedContentSource;
 use crate::{MirBorrowckCtxt, session_diagnostics};
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::borrow::ToOwned;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AccessKind {

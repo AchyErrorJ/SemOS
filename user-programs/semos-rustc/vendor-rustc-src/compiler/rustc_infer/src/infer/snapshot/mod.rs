@@ -57,7 +57,7 @@ impl<'tcx> InferCtxt<'tcx> {
         }
     }
 
-    #[instrument(skip(self, snapshot), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn rollback_to(&self, snapshot: CombinedSnapshot<'tcx>) {
         let CombinedSnapshot { undo_snapshot, region_constraints_snapshot, universe } = snapshot;
 
@@ -68,7 +68,7 @@ impl<'tcx> InferCtxt<'tcx> {
         inner.unwrap_region_constraints().rollback_to(region_constraints_snapshot);
     }
 
-    #[instrument(skip(self, snapshot), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn commit_from(&self, snapshot: CombinedSnapshot<'tcx>) {
         let CombinedSnapshot { undo_snapshot, region_constraints_snapshot: _, universe: _ } =
             snapshot;
@@ -77,7 +77,7 @@ impl<'tcx> InferCtxt<'tcx> {
     }
 
     /// Execute `f` and commit the bindings if closure `f` returns `Ok(_)`.
-    #[instrument(skip(self, f), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub fn commit_if_ok<T, E, F>(&self, f: F) -> Result<T, E>
     where
         F: FnOnce(&CombinedSnapshot<'tcx>) -> Result<T, E>,
@@ -97,7 +97,7 @@ impl<'tcx> InferCtxt<'tcx> {
     }
 
     /// Execute `f` then unroll any bindings it creates.
-    #[instrument(skip(self, f), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub fn probe<R, F>(&self, f: F) -> R
     where
         F: FnOnce(&CombinedSnapshot<'tcx>) -> R,

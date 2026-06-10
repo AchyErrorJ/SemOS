@@ -1,4 +1,4 @@
-use core::iter;
+﻿use core::iter;
 use alloc::rc::Rc;
 
 use rustc_data_structures::frozen::Frozen;
@@ -37,6 +37,7 @@ mod region_ctxt;
 
 use member_constraints::apply_member_constraints;
 use region_ctxt::RegionCtxt;
+use alloc::vec::Vec;
 
 /// We defer errors from [fn handle_opaque_type_uses] and only report them
 /// if there are no `RegionErrors`. If there are region errors, it's likely
@@ -98,18 +99,18 @@ fn nll_var_to_universal_region<'tcx>(
     r: RegionVid,
 ) -> Option<Region<'tcx>> {
     // Use the SCC representative instead of directly using `region`.
-    // See [rustc-dev-guide chapter] § "Strict lifetime equality".
+    // See [rustc-dev-guide chapter] Â§ "Strict lifetime equality".
     let vid = rcx.representative(r).rvid();
     match rcx.definitions[vid].origin {
         // Iterate over all universal regions in a consistent order and find the
         // *first* equal region. This makes sure that equal lifetimes will have
         // the same name and simplifies subsequent handling.
-        // See [rustc-dev-guide chapter] § "Semantic lifetime equality".
+        // See [rustc-dev-guide chapter] Â§ "Semantic lifetime equality".
         NllRegionVariableOrigin::FreeRegion => rcx
             .universal_regions()
             .universal_regions_iter()
             .filter(|&ur| {
-                // See [rustc-dev-guide chapter] § "Closure restrictions".
+                // See [rustc-dev-guide chapter] Â§ "Closure restrictions".
                 !matches!(
                     rcx.universal_regions().region_classification(ur),
                     Some(RegionClassification::External)
@@ -211,8 +212,6 @@ pub(crate) fn compute_definition_site_hidden_types<'tcx>(
     );
     errors
 }
-
-#[instrument(level = "debug", skip_all, ret)]
 fn collect_defining_uses<'tcx>(
     rcx: &mut RegionCtxt<'_, 'tcx>,
     hidden_types: &mut FxIndexMap<LocalDefId, ty::DefinitionSiteHiddenType<'tcx>>,
@@ -272,7 +271,7 @@ fn collect_defining_uses<'tcx>(
     defining_uses
 }
 
-#[instrument(level = "debug", skip(rcx, hidden_types, defining_uses, errors))]
+    // [stripped: #[instrument(...)]]
 fn compute_definition_site_hidden_types_from_defining_uses<'tcx>(
     rcx: &RegionCtxt<'_, 'tcx>,
     hidden_types: &mut FxIndexMap<LocalDefId, ty::DefinitionSiteHiddenType<'tcx>>,
@@ -675,7 +674,7 @@ impl<'tcx> InferCtxt<'tcx> {
     ///
     /// (*) C1 and C2 were introduced in the comments on
     /// `register_member_constraints`. Read that comment for more context.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn infer_opaque_definition_from_instantiation(
         &self,
         opaque_type_key: OpaqueTypeKey<'tcx>,

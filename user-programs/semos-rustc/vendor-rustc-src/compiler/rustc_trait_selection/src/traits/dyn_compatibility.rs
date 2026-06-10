@@ -4,6 +4,11 @@
 //!
 //! [^1]: Formerly known as "object safety".
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use rustc_errors::FatalError;
@@ -32,7 +37,7 @@ use crate::traits::{
 /// Currently that is `Self` in supertraits. This is needed
 /// because `dyn_compatibility_violations` can't be used during
 /// type collection, as type collection is needed for `dyn_compatibility_violations` itself.
-#[instrument(level = "debug", skip(tcx), ret)]
+    // [stripped: #[instrument(...)]]
 pub fn hir_ty_lowering_dyn_compatibility_violations(
     tcx: TyCtxt<'_>,
     trait_def_id: DefId,
@@ -76,7 +81,7 @@ pub fn is_vtable_safe_method(tcx: TyCtxt<'_>, trait_def_id: DefId, method: ty::A
     virtual_call_violations_for_method(tcx, trait_def_id, method).is_empty()
 }
 
-#[instrument(level = "debug", skip(tcx), ret)]
+    // [stripped: #[instrument(...)]]
 fn dyn_compatibility_violations_for_trait(
     tcx: TyCtxt<'_>,
     trait_def_id: DefId,
@@ -307,7 +312,7 @@ fn generics_require_sized_self(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 }
 
 /// Returns `Some(_)` if this item makes the containing trait dyn-incompatible.
-#[instrument(level = "debug", skip(tcx), ret)]
+    // [stripped: #[instrument(...)]]
 pub fn dyn_compatibility_violations_for_assoc_item(
     tcx: TyCtxt<'_>,
     trait_def_id: DefId,

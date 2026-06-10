@@ -1,6 +1,7 @@
 //! Code for projecting associated types out of trait references.
 
 use core::ops::ControlFlow;
+use alloc::string::ToString;
 
 use rustc_data_structures::sso::SsoHashSet;
 use rustc_data_structures::stack::ensure_sufficient_stack;
@@ -171,7 +172,7 @@ pub(super) enum ProjectAndUnifyResult<'tcx> {
 /// If successful, this may result in additional obligations. Also returns
 /// the projection cache key used to track these additional obligations.
 // FIXME(mgca): While this supports constants, it is only used for types by default right now
-#[instrument(level = "debug", skip(selcx))]
+    // [stripped: #[instrument(...)]]
 pub(super) fn poly_project_and_unify_term<'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligation: &PolyProjectionObligation<'tcx>,
@@ -201,7 +202,7 @@ pub(super) fn poly_project_and_unify_term<'cx, 'tcx>(
 ///
 /// See [poly_project_and_unify_term] for an explanation of the return value.
 // FIXME(mgca): While this supports constants, it is only used for types by default right now
-#[instrument(level = "debug", skip(selcx))]
+    // [stripped: #[instrument(...)]]
 fn project_and_unify_term<'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligation: &ProjectionObligation<'tcx>,
@@ -293,7 +294,7 @@ pub fn normalize_projection_term<'a, 'b, 'tcx>(
 /// function takes an obligations vector and appends to it directly, which is
 /// slightly uglier but avoids the need for an extra short-lived allocation.
 // FIXME(mgca): While this supports constants, it is only used for types by default right now
-#[instrument(level = "debug", skip(selcx, param_env, cause, obligations))]
+    // [stripped: #[instrument(...)]]
 pub(super) fn opt_normalize_projection_term<'a, 'b, 'tcx>(
     selcx: &'a mut SelectionContext<'b, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -484,7 +485,7 @@ fn normalize_to_error<'a, 'tcx>(
 
 /// Confirm and normalize the given inherent projection.
 // FIXME(mgca): While this supports constants, it is only used for types by default right now
-#[instrument(level = "debug", skip(selcx, param_env, cause, obligations))]
+    // [stripped: #[instrument(...)]]
 pub fn normalize_inherent_projection<'a, 'b, 'tcx>(
     selcx: &'a mut SelectionContext<'b, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
@@ -646,7 +647,7 @@ impl<'tcx> Progress<'tcx> {
 /// IMPORTANT:
 /// - `obligation` must be fully normalized
 // FIXME(mgca): While this supports constants, it is only used for types by default right now
-#[instrument(level = "info", skip(selcx))]
+    // [stripped: #[instrument(...)]]
 fn project<'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligation: &ProjectionTermObligation<'tcx>,
@@ -826,10 +827,7 @@ fn assemble_candidates_from_object_ty<'cx, 'tcx>(
     );
 }
 
-#[instrument(
-    level = "debug",
-    skip(selcx, candidate_set, ctor, env_predicates, potentially_unnormalized_candidates)
-)]
+    // [stripped: #[instrument(...)]]
 fn assemble_candidates_from_predicates<'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligation: &ProjectionTermObligation<'tcx>,
@@ -884,7 +882,7 @@ fn assemble_candidates_from_predicates<'cx, 'tcx>(
     }
 }
 
-#[instrument(level = "debug", skip(selcx, obligation, candidate_set))]
+    // [stripped: #[instrument(...)]]
 fn assemble_candidates_from_impls<'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligation: &ProjectionTermObligation<'tcx>,

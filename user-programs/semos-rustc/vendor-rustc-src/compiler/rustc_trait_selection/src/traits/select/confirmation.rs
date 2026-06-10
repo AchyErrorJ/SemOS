@@ -7,6 +7,11 @@
 //! [rustc dev guide]:
 //! https://rustc-dev-guide.rust-lang.org/traits/resolution.html#confirmation
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 
 use rustc_data_structures::stack::ensure_sufficient_stack;
@@ -30,7 +35,7 @@ use crate::traits::{
 };
 
 impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(super) fn confirm_candidate(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -230,7 +235,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     fn confirm_builtin_candidate(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -281,7 +286,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         )
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn confirm_transmutability_candidate(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -289,7 +294,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         use rustc_transmute::{Answer, Assume, Condition};
 
         /// Flatten the `Condition` tree into a conjunction of obligations.
-        #[instrument(level = "debug", skip(tcx, obligation))]
+    // [stripped: #[instrument(...)]]
         fn flatten_answer_tree<'tcx>(
             tcx: TyCtxt<'tcx>,
             obligation: &PolyTraitObligation<'tcx>,
@@ -801,7 +806,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         Ok(nested)
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn confirm_closure_candidate(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -830,7 +835,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
         self.equate_trait_refs(obligation.with(self.tcx(), placeholder_predicate), trait_ref)
     }
 
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn confirm_async_closure_candidate(
         &mut self,
         obligation: &PolyTraitObligation<'tcx>,
@@ -976,7 +981,7 @@ impl<'cx, 'tcx> SelectionContext<'cx, 'tcx> {
     /// because these output type parameters should not affect the
     /// selection of the impl. Therefore, if there is a mismatch, we
     /// report an error to the user.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn equate_trait_refs(
         &mut self,
         obligation: TraitObligation<'tcx>,

@@ -8,6 +8,11 @@
 //!
 //! [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/thir.html
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use alloc::sync::Arc;
 use core::cmp::Ordering;
 use core::fmt;
@@ -23,7 +28,7 @@ use rustc_macros::{HashStable, TyDecodable, TyEncodable, TypeVisitable};
 use rustc_span::def_id::LocalDefId;
 use rustc_span::{ErrorGuaranteed, Span, Symbol};
 use rustc_target::asm::InlineAsmRegOrRegClass;
-use tracing::instrument;
+// instrument off
 
 use crate::middle::region;
 use crate::mir::interpret::AllocId;
@@ -1030,7 +1035,7 @@ impl<'tcx> PatRangeBoundary<'tcx> {
         }
     }
 
-    #[instrument(skip(tcx), level = "debug", ret)]
+    // #[instrument(skip(tcx), level = "debug", ret)]
     pub fn compare_with(self, other: Self, ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Ordering> {
         use PatRangeBoundary::*;
         match (self, other) {

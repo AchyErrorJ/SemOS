@@ -1,5 +1,10 @@
 //! A bunch of methods and structures more or less related to resolving imports.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::mem;
 
 use rustc_ast::NodeId;

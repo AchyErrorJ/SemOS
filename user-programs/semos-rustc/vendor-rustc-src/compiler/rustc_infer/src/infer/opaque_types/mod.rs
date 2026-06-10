@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use hir::def_id::{DefId, LocalDefId};
 use rustc_hir as hir;
 use rustc_middle::bug;
@@ -169,7 +172,7 @@ impl<'tcx> InferCtxt<'tcx> {
 }
 
 impl<'tcx> InferCtxt<'tcx> {
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn register_hidden_type(
         &self,
         opaque_type_key: OpaqueTypeKey<'tcx>,

@@ -3,6 +3,11 @@
 //! written by hand, though we've recently added some macros and proc-macros
 //! to help with the tedium.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::fmt::{self, Debug};
 use core::marker::PhantomData;
 

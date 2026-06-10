@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 use core::cmp;
@@ -7,6 +12,7 @@ use std::time::{Duration, Instant};
 use semos_std::time::{Duration, Instant};
 
 use itertools::Itertools;
+use rustc_data_structures::fx::FxIndexMap;
 use rustc_abi::FIRST_VARIANT;
 use rustc_ast::expand::allocator::{
     ALLOC_ERROR_HANDLER, ALLOCATOR_METHODS, AllocatorKind, AllocatorMethod, AllocatorMethodInput,

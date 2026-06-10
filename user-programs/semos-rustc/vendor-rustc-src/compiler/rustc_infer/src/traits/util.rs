@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::FxHashSet;
 pub use rustc_middle::ty::elaborate::*;
 use rustc_middle::ty::{self, TyCtxt};

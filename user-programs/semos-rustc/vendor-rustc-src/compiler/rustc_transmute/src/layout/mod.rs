@@ -1,6 +1,6 @@
-use std::fmt::{self, Debug};
-use std::hash::Hash;
-use std::ops::RangeInclusive;
+use core::fmt::{self, Debug};
+use core::hash::Hash;
+use core::ops::RangeInclusive;
 
 pub(crate) mod tree;
 pub(crate) use tree::Tree;

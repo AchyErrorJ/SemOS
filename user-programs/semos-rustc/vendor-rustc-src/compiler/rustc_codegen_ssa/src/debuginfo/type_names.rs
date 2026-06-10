@@ -11,6 +11,11 @@
 //   within the brackets).
 // * `"` is treated as the start of a string.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::Write;
 
 use rustc_abi::Integer;

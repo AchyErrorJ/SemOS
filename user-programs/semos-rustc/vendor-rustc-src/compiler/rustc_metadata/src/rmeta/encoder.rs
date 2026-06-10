@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::borrow::Borrow;
 use hashbrown::hash_map::Entry;
 use alloc::sync::Arc;
@@ -197,6 +202,7 @@ impl<'a, 'tcx> SpanEncoder for EncodeContext<'a, 'tcx> {
                 if offset < last_location {
                     let needed = bytes_needed(offset);
                     SpanTag::indirect(true, needed as u8).encode(self);
+                    #[cfg(not(target_os = "none"))]
                     self.opaque.write_with(|dest| {
                         *dest = offset.to_le_bytes();
                         needed
@@ -204,6 +210,7 @@ impl<'a, 'tcx> SpanEncoder for EncodeContext<'a, 'tcx> {
                 } else {
                     let needed = bytes_needed(last_location);
                     SpanTag::indirect(false, needed as u8).encode(self);
+                    #[cfg(not(target_os = "none"))]
                     self.opaque.write_with(|dest| {
                         *dest = last_location.to_le_bytes();
                         needed
@@ -1687,7 +1694,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         ))
     }
 
-    #[instrument(level = "trace", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_info_for_adt(&mut self, local_def_id: LocalDefId) {
         let def_id = local_def_id.to_def_id();
         let tcx = self.tcx;
@@ -1742,7 +1749,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_info_for_mod(&mut self, local_def_id: LocalDefId) {
         let tcx = self.tcx;
         let def_id = local_def_id.to_def_id();
@@ -1787,7 +1794,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         record_defaulted_array!(self.tables.explicit_item_self_bounds[def_id] <- bounds);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_info_for_assoc_item(&mut self, def_id: DefId) {
         let tcx = self.tcx;
         let item = tcx.associated_item(def_id);
@@ -1911,7 +1918,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_stability(&mut self, def_id: DefId) {
         // The query lookup can take a measurable amount of time in crates with many items. Check if
         // the stability attributes are even enabled before using their queries.
@@ -1922,7 +1929,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_const_stability(&mut self, def_id: DefId) {
         // The query lookup can take a measurable amount of time in crates with many items. Check if
         // the stability attributes are even enabled before using their queries.
@@ -1933,7 +1940,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_default_body_stability(&mut self, def_id: DefId) {
         // The query lookup can take a measurable amount of time in crates with many items. Check if
         // the stability attributes are even enabled before using their queries.
@@ -1944,14 +1951,14 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_deprecation(&mut self, def_id: DefId) {
         if let Some(depr) = self.tcx.lookup_deprecation(def_id) {
             record!(self.tables.lookup_deprecation_entry[def_id] <- depr);
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_info_for_macro(&mut self, def_id: LocalDefId) {
         let tcx = self.tcx;
 
@@ -2178,7 +2185,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
     }
 
     /// Encodes an index, mapping each trait to its (local) implementations.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_impls(&mut self) -> LazyArray<TraitImpls> {
         empty_proc_macro!(self);
         let tcx = self.tcx;
@@ -2235,7 +2242,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         self.lazy_array(&trait_impls)
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn encode_incoherent_impls(&mut self) -> LazyArray<IncoherentImpls> {
         empty_proc_macro!(self);
         let tcx = self.tcx;
@@ -2450,7 +2457,7 @@ impl<D: Decoder> Decodable<D> for EncodedMetadata {
     }
 }
 
-#[instrument(level = "trace", skip(tcx))]
+    // [stripped: #[instrument(...)]]
 pub fn encode_metadata(tcx: TyCtxt<'_>, path: &Path, ref_path: Option<&Path>) {
     // Since encoding metadata is not in a query, and nothing is cached,
     // there's no need to do dep-graph tracking for any of it.
@@ -2521,6 +2528,7 @@ pub fn encode_metadata(tcx: TyCtxt<'_>, path: &Path, ref_path: Option<&Path>) {
                 // Flush buffer to ensure backing file has the correct size.
                 ecx.opaque.flush();
                 // Record metadata size for self-profiling
+                #[cfg(not(target_os = "none"))]
                 tcx.prof.artifact_size(
                     "crate_metadata",
                     "crate_metadata",
@@ -2534,6 +2542,20 @@ pub fn encode_metadata(tcx: TyCtxt<'_>, path: &Path, ref_path: Option<&Path>) {
     );
 }
 
+#[cfg(target_os = "none")]
+fn with_encode_metadata_header(
+    _tcx: TyCtxt<'_>,
+    _path: &Path,
+    _f: impl FnOnce(&mut EncodeContext<'_, '_>) -> usize,
+) {
+    // M27 §1.3: rmeta-to-disk dropped on SemOS — we use MemEncoder
+    // (mem_encoder.rs) and hand the rmeta blob to the kernel directly.
+    // The FileEncoder-backed `with_encode_metadata_header` body is dead
+    // code on this target; gating it keeps the FileEncoder stub surface
+    // small.
+}
+
+#[cfg(not(target_os = "none"))]
 fn with_encode_metadata_header(
     tcx: TyCtxt<'_>,
     path: &Path,

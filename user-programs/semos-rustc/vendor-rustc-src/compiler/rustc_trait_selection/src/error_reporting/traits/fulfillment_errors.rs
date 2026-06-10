@@ -1,4 +1,9 @@
 // ignore-tidy-filelength
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ops::ControlFlow;
 use alloc::borrow::Cow;
 use hashbrown::hash_set;
@@ -1486,7 +1491,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
 
     // returns if `cond` not occurring implies that `error` does not occur - i.e., that
     // `error` occurring implies that `cond` occurs.
-    #[instrument(level = "debug", skip(self), ret)]
+    // [stripped: #[instrument(...)]]
     pub(super) fn error_implies(
         &self,
         cond: Goal<'tcx, ty::Predicate<'tcx>>,
@@ -1527,7 +1532,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip_all)]
+    // [stripped: #[instrument(...)]]
     pub(super) fn report_projection_error(
         &self,
         obligation: &PredicateObligation<'tcx>,

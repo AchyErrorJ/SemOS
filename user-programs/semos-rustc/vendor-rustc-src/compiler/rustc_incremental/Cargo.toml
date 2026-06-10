@@ -8,6 +8,7 @@ edition = "2024"
 rand = { version = "0.9.0", default-features = false }
 rustc_ast = { path = "../rustc_ast" }
 rustc_data_structures = { path = "../rustc_data_structures" }
+rustc_error_messages = { path = "../rustc_error_messages" }
 rustc_errors = { path = "../rustc_errors" }
 rustc_fluent_macro = { path = "../rustc_fluent_macro" }
 rustc_fs_util = { path = "../rustc_fs_util" }
@@ -22,3 +23,6 @@ rustc_span = { path = "../rustc_span" }
 thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
 # tidy-alphabetical-end
+
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

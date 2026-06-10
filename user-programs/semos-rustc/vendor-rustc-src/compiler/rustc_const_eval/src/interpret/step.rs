@@ -2,6 +2,11 @@
 //!
 //! The main entry point is the `step` method.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use either::Either;
@@ -283,7 +288,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
     }
 
     /// Writes the aggregate to the destination.
-    #[instrument(skip(self), level = "trace")]
+    // [stripped: #[instrument(...)]]
     fn write_aggregate(
         &mut self,
         kind: &mir::AggregateKind<'tcx>,

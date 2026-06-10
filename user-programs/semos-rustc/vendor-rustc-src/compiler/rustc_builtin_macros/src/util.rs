@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_ast::tokenstream::TokenStream;
 use rustc_ast::{self as ast, AttrStyle, Attribute, MetaItem, attr, token};
 use rustc_attr_parsing::validate_attr;

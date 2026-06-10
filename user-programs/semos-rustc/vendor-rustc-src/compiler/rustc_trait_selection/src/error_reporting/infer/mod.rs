@@ -45,6 +45,11 @@
 //! ported to this system, and which relies on string concatenation at the
 //! time of error detection.
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use alloc::borrow::Cow;
 use core::ops::ControlFlow;
 // M27 R4 B5: PathBuf carries through from semos_std on this target.
@@ -1228,7 +1233,7 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
     /// the message in `secondary_span` as the primary label, and apply the message that would
     /// otherwise be used for the primary label on the `secondary_span` `Span`. This applies on
     /// E0271, like `tests/ui/issues/issue-39970.stderr`.
-    #[instrument(level = "debug", skip(self, diag, secondary_span, prefer_label))]
+    // [stripped: #[instrument(...)]]
     pub fn note_type_err(
         &self,
         diag: &mut Diag<'_>,
@@ -1758,12 +1763,15 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
                 // containing a single ASCII character, perhaps the user meant to write `b'c'` to
                 // specify a byte literal
                 (ty::Uint(ty::UintTy::U8), ty::Char) => {
+                    // M27 §1.5: strip_circumfix is nightly-only; portable equivalent below.
                     if let Ok(code) = self.tcx.sess().source_map().span_to_snippet(span)
-                        && let Some(code) = code.strip_circumfix('\'', '\'')
+                        && let Some(code) = code
+                            .strip_prefix('\'')
+                            .and_then(|s| s.strip_suffix('\''))
                         // forbid all Unicode escapes
                         && !code.starts_with("\\u")
                         // forbids literal Unicode characters beyond ASCII
-                        && code.chars().next().is_some_and(|c| c.is_ascii())
+                        && code.chars().next().is_some_and(|c: char| c.is_ascii())
                     {
                         suggestions.push(TypeErrorAdditionalDiags::MeantByteLiteral {
                             span,
@@ -1776,7 +1784,9 @@ impl<'a, 'tcx> TypeErrCtxt<'a, 'tcx> {
                 // specify a character literal (issue #92479)
                 (ty::Char, ty::Ref(_, r, _)) if r.is_str() => {
                     if let Ok(code) = self.tcx.sess().source_map().span_to_snippet(span)
-                        && let Some(code) = code.strip_circumfix('"', '"')
+                        && let Some(code) = code
+                            .strip_prefix('"')
+                            .and_then(|s| s.strip_suffix('"'))
                         && code.chars().count() == 1
                     {
                         suggestions.push(TypeErrorAdditionalDiags::MeantCharLiteral {

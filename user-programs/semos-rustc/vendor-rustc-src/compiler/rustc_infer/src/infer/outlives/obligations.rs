@@ -59,6 +59,9 @@
 //! might later infer `?U` to something like `&'b u32`, which would
 //! imply that `'b: 'a`.
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::undo_log::UndoLogs;
 use rustc_middle::bug;
 use rustc_middle::mir::ConstraintCategory;
@@ -115,7 +118,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// and later processed by regionck, when full type information is
     /// available (see `region_obligations` field for more
     /// information).
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub fn register_type_outlives_constraint_inner(
         &self,
         obligation: TypeOutlivesConstraint<'tcx>,
@@ -194,7 +197,7 @@ impl<'tcx> InferCtxt<'tcx> {
     /// flow of the inferencer. The key point is that it is
     /// invoked after all type-inference variables have been bound --
     /// right before lexical region resolution.
-    #[instrument(level = "debug", skip(self, outlives_env, deeply_normalize_ty))]
+    // [stripped: #[instrument(...)]]
     pub fn process_registered_region_obligations(
         &self,
         outlives_env: &OutlivesEnvironment<'tcx>,
@@ -327,7 +330,7 @@ where
     /// - `origin`, the reason we need this constraint
     /// - `ty`, the type `T`
     /// - `region`, the region `'a`
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub fn type_must_outlive(
         &mut self,
         origin: infer::SubregionOrigin<'tcx>,
@@ -378,7 +381,7 @@ where
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn param_ty_must_outlive(
         &mut self,
         origin: infer::SubregionOrigin<'tcx>,
@@ -389,7 +392,7 @@ where
         self.delegate.push_verify(origin, GenericKind::Param(param_ty), region, verify_bound);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn placeholder_ty_must_outlive(
         &mut self,
         origin: infer::SubregionOrigin<'tcx>,
@@ -407,7 +410,7 @@ where
         );
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn alias_ty_must_outlive(
         &mut self,
         origin: infer::SubregionOrigin<'tcx>,
@@ -521,7 +524,7 @@ where
         self.delegate.push_verify(origin, GenericKind::Alias(alias_ty), region, verify_bound);
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn args_must_outlive(
         &mut self,
         args: GenericArgsRef<'tcx>,

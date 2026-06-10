@@ -8,6 +8,11 @@ mod pointer;
 mod queries;
 mod value;
 
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use core::fmt;
 use core::num::NonZero;
 

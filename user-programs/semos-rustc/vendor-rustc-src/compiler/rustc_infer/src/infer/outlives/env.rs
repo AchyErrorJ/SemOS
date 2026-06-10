@@ -1,3 +1,6 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
 use rustc_data_structures::transitive_relation::TransitiveRelationBuilder;
 use rustc_middle::{bug, ty};

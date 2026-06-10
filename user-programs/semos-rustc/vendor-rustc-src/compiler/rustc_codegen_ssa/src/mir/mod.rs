@@ -1,3 +1,8 @@
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::iter;
 
 use rustc_index::IndexVec;
@@ -169,7 +174,7 @@ impl<'tcx, V: CodegenObject> LocalRef<'tcx, V> {
 
 ///////////////////////////////////////////////////////////////////////////
 
-#[instrument(level = "debug", skip(cx))]
+    // [stripped: #[instrument(...)]]
 pub fn codegen_mir<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>>(
     cx: &'a Bx::CodegenCx,
     instance: Instance<'tcx>,

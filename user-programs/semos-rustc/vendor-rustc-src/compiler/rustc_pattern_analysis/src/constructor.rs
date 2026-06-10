@@ -176,9 +176,13 @@
 //! we assume they never cover each other. In order to respect the invariants of
 //! [`SplitConstructorSet`], we give each `Opaque` constructor a unique id so we can recognize it.
 
-use std::cmp::{self, Ordering, max, min};
-use std::fmt;
-use std::iter::once;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cmp::{self, Ordering, max, min};
+use core::fmt;
+use core::iter::once;
 
 use rustc_apfloat::ieee::{DoubleS, HalfS, IeeeFloat, QuadS, SingleS};
 use rustc_index::IndexVec;
@@ -661,7 +665,7 @@ pub struct OpaqueId(u32);
 
 impl OpaqueId {
     pub fn new() -> Self {
-        use std::sync::atomic::{AtomicU32, Ordering};
+        use core::sync::atomic::{AtomicU32, Ordering};
         static OPAQUE_ID: AtomicU32 = AtomicU32::new(0);
         OpaqueId(OPAQUE_ID.fetch_add(1, Ordering::SeqCst))
     }

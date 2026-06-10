@@ -815,9 +815,28 @@ mod imp_none {
     use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::borrow::Borrow;
-    use core::time::Duration;
+    // M27: align with semos_std's Duration so call sites in
+    // rustc_codegen_ssa::base that use semos_std::time::Duration can
+    // pass it directly. The no-op body doesn't read the value.
+    use semos_std::time::Duration;
 
     pub struct QueryInvocationId(pub u32);
+
+    /// Stub StringId: opaque interned-string handle in upstream measureme.
+    /// All measureme operations are no-ops on SemOS, so the stub is unit-shaped.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+    pub struct StringId;
+    impl StringId {
+        pub const INVALID: StringId = StringId;
+        pub fn new_virtual(_id: u64) -> Self { StringId }
+    }
+
+    /// Stub StringComponent: enum used by measureme to build interned strings.
+    #[derive(Clone, Copy, Debug)]
+    pub enum StringComponent<'a> {
+        Ref(StringId),
+        Value(&'a str),
+    }
 
     #[derive(Clone, Copy, PartialEq, Hash, Debug)]
     pub enum TimePassesFormat {
@@ -858,6 +877,23 @@ mod imp_none {
         pub fn query_key_recording_enabled(&self) -> bool {
             false
         }
+
+        // No-op stubs used by rustc_query_impl::profiling_support.
+        pub fn alloc_string<T: ?Sized>(&self, _: &T) -> StringId { StringId }
+        pub fn event_id_builder(&self) -> EventIdBuilder<'_> { EventIdBuilder(core::marker::PhantomData) }
+        pub fn get_or_alloc_cached_string<A>(&self, _: A) -> StringId { StringId }
+        pub fn map_query_invocation_id_to_string(&self, _: QueryInvocationId, _: StringId) {}
+        pub fn bulk_map_query_invocation_id_to_single_string<I>(&self, _: I, _: StringId) {}
+    }
+
+    /// Stub EventIdBuilder. Returns no-op EventIds.
+    pub struct EventIdBuilder<'a>(core::marker::PhantomData<&'a ()>);
+    impl<'a> EventIdBuilder<'a> {
+        pub fn from_label(&self, _: StringId) -> EventId { EventId::INVALID }
+        pub fn from_label_and_arg(&self, _: StringId, _: StringId) -> EventId { EventId::INVALID }
+    }
+    impl EventId {
+        pub fn to_string_id(self) -> StringId { StringId }
     }
 
     #[derive(Clone, Default)]

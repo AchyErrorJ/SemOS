@@ -42,6 +42,10 @@ mod dump_mir;
 mod graphviz;
 pub(crate) mod opaque_types;
 mod reverse_sccs;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::boxed::Box;
+use alloc::string::ToString;
 
 pub(crate) mod values;
 
@@ -215,7 +219,7 @@ enum Trace<'a, 'tcx> {
     NotVisited,
 }
 
-#[instrument(skip(infcx, sccs), level = "debug")]
+    // [stripped: #[instrument(...)]]
 fn sccs_info<'tcx>(infcx: &BorrowckInferCtxt<'tcx>, sccs: &ConstraintSccs) {
     use crate::renumber::RegionCtxt;
 
@@ -489,7 +493,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// Performs region inference and report errors if we see any
     /// unsatisfiable constraints. If this is a closure, returns the
     /// region requirements to propagate to our creator, if any.
-    #[instrument(skip(self, infcx, body, polonius_output), level = "debug")]
+    // [stripped: #[instrument(...)]]
     pub(super) fn solve(
         &mut self,
         infcx: &InferCtxt<'tcx>,
@@ -547,7 +551,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// for each region variable until all the constraints are
     /// satisfied. Note that some values may grow **too** large to be
     /// feasible, but we check this later.
-    #[instrument(skip(self), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn propagate_constraints(&mut self) {
         debug!("constraints={:#?}", {
             let mut constraints: Vec<_> = self.outlives_constraints().collect();
@@ -663,7 +667,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// The idea then is to lower the `T: 'X` constraint into multiple
     /// bounds -- e.g., if `'X` is the union of two free lifetimes,
     /// `'1` and `'2`, then we would create `T: '1` and `T: '2`.
-    #[instrument(level = "debug", skip(self, infcx, propagated_outlives_requirements))]
+    // [stripped: #[instrument(...)]]
     fn try_promote_type_test(
         &self,
         infcx: &InferCtxt<'tcx>,
@@ -746,7 +750,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// variables in the type `T` with an equal universal region from the
     /// closure signature.
     /// This is not always possible, so this is a fallible process.
-    #[instrument(level = "debug", skip(self, infcx), ret)]
+    // [stripped: #[instrument(...)]]
     fn try_promote_type_test_subject(
         &self,
         infcx: &InferCtxt<'tcx>,
@@ -797,7 +801,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// Therefore, this method should only be used in diagnostic code,
     /// where displaying *some* named universal region is better than
     /// falling back to 'static.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn approx_universal_upper_bound(&self, r: RegionVid) -> RegionVid {
         debug!("{}", self.region_value_str(r));
 
@@ -947,7 +951,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     ///
     /// Panics if called before `solve()` executes,
     // This is `pub` because it's used by unstable external borrowck data users, see `consumers.rs`.
-    #[instrument(skip(self), level = "debug", ret)]
+    // [stripped: #[instrument(...)]]
     pub fn eval_outlives(&self, sup_region: RegionVid, sub_region: RegionVid) -> bool {
         debug!(
             "sup_region's value = {:?} universal={:?}",
@@ -1180,7 +1184,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     ///
     /// Things that are to be propagated are accumulated into the
     /// `outlives_requirements` vector.
-    #[instrument(skip(self, propagated_outlives_requirements, errors_buffer), level = "debug")]
+    // [stripped: #[instrument(...)]]
     fn check_universal_region(
         &self,
         longer_fr: RegionVid,
@@ -1410,7 +1414,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// If `include_static_outlives_all` is `true`, then the synthetic
     /// outlives constraints `'static -> a` for every region `a` are
     /// considered in the search, otherwise they are ignored.
-    #[instrument(skip(self, target_test), ret)]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn constraint_path_to(
         &self,
         from_region: RegionVid,
@@ -1561,7 +1565,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     }
 
     /// Finds some region R such that `fr1: R` and `R` is live at `location`.
-    #[instrument(skip(self), level = "trace", ret)]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn find_sub_region_live_at(&self, fr1: RegionVid, location: Location) -> RegionVid {
         trace!(scc = ?self.constraint_sccs.scc(fr1));
         trace!(universe = ?self.max_nameable_universe(self.constraint_sccs.scc(fr1)));
@@ -1612,7 +1616,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// creating a constraint path that forces `R` to outlive
     /// `from_region`, and then finding the best choices within that
     /// path to blame.
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn best_blame_constraint(
         &self,
         from_region: RegionVid,

@@ -27,6 +27,11 @@ mod errors;
 pub mod interpret;
 pub mod util;
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::sync::atomic::AtomicBool;
 
 use rustc_middle::ty;

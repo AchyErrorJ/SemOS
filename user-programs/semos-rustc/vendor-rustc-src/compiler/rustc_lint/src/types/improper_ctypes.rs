@@ -1,5 +1,10 @@
-use std::iter;
-use std::ops::ControlFlow;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::iter;
+use core::ops::ControlFlow;
 
 use bitflags::bitflags;
 use rustc_abi::VariantIdx;

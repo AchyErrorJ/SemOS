@@ -46,6 +46,10 @@ use crate::diagnostics::conflict_errors::StorageDeadOrDrop::LocalStorageDead;
 use crate::diagnostics::{CapturedMessageOpt, call_kind, find_all_local_uses};
 use crate::prefixes::IsPrefixOf;
 use crate::{InitializationRequiringAction, MirBorrowckCtxt, WriteKind, borrowck_errors};
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::borrow::ToOwned;
 
 #[derive(Debug)]
 struct MoveSite {
@@ -2036,7 +2040,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, err))]
+    // [stripped: #[instrument(...)]]
     fn suggest_using_local_if_applicable(
         &self,
         err: &mut Diag<'_>,
@@ -2850,7 +2854,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
     /// short a lifetime. (But sometimes it is more useful to report
     /// it as a more direct conflict between the execution of a
     /// `Drop::drop` with an aliasing borrow.)
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     pub(crate) fn report_borrowed_value_does_not_live_long_enough(
         &mut self,
         location: Location,
@@ -2989,7 +2993,6 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
         self.buffer_error(err);
     }
 
-    #[tracing::instrument(level = "debug", skip(self, explanation))]
     fn report_local_value_does_not_live_long_enough(
         &self,
         location: Location,
@@ -3203,7 +3206,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
             .with_span_label(end_of_function, "end of enclosing function is here")
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn report_temporary_value_does_not_live_long_enough(
         &self,
         location: Location,
@@ -3455,7 +3458,7 @@ impl<'infcx, 'tcx> MirBorrowckCtxt<'_, 'infcx, 'tcx> {
         Err(err)
     }
 
-    #[instrument(level = "debug", skip(self))]
+    // [stripped: #[instrument(...)]]
     fn report_escaping_closure_capture(
         &self,
         use_span: UseSpans<'tcx>,

@@ -1,5 +1,10 @@
 //! Validates all used crates and extern libraries and loads their metadata
 
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::error::Error;
 use core::str::FromStr;
 use core::time::Duration;

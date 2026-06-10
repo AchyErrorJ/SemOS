@@ -1,5 +1,6 @@
 use core::ops::Bound;
 use core::{cmp, fmt};
+use alloc::string::ToString;
 
 use rustc_abi::{
     AddressSpace, Align, ExternAbi, FieldIdx, FieldsShape, HasDataLayout, LayoutData, PointeeInfo,
@@ -1229,7 +1230,7 @@ where
 /// * This affects whether functions have the LLVM `nounwind` attribute, which
 ///   affects various optimizations and codegen.
 #[inline]
-#[tracing::instrument(level = "debug", skip(tcx))]
+// #[tracing::instrument(level = "debug", skip(tcx))]
 pub fn fn_can_unwind(tcx: TyCtxt<'_>, fn_def_id: Option<DefId>, abi: ExternAbi) -> bool {
     if let Some(did) = fn_def_id {
         // Special attribute for functions which can't unwind.
@@ -1366,7 +1367,7 @@ pub trait FnAbiOf<'tcx>: FnAbiOfHelpers<'tcx> {
     /// NB: that includes virtual calls, which are represented by "direct calls"
     /// to an `InstanceKind::Virtual` instance (of `<dyn Trait as Trait>::fn`).
     #[inline]
-    #[tracing::instrument(level = "debug", skip(self))]
+    // #[tracing::instrument(level = "debug", skip(self))]
     fn fn_abi_of_instance(
         &self,
         instance: ty::Instance<'tcx>,

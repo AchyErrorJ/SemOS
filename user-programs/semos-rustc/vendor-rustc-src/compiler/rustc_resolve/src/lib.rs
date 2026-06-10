@@ -29,7 +29,12 @@
 extern crate alloc;
 
 use core::cell::Ref;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt::{self};
 use core::ops::ControlFlow;
 use alloc::sync::Arc;
@@ -95,7 +100,20 @@ mod ident;
 mod imports;
 mod late;
 mod macros;
+#[cfg(not(target_os = "none"))]
 pub mod rustdoc;
+// M27 §1.5: rustdoc's markdown-link-resolution pass uses pulldown-cmark
+// (host-only dep). On SemOS we never run rustdoc; supply a minimal stub
+// satisfying the three call sites in `late.rs`.
+#[cfg(target_os = "none")]
+pub mod rustdoc {
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+    use rustc_ast::attr::AttributeExt;
+    pub fn inner_docs<A: AttributeExt>(_attrs: &[A]) -> bool { true }
+    pub fn has_primitive_or_keyword_or_attribute_docs<A: AttributeExt>(_attrs: &[A]) -> bool { false }
+    pub(crate) fn attrs_to_preprocessed_links<A: AttributeExt + Clone>(_attrs: &[A]) -> Vec<Box<str>> { Vec::new() }
+}
 
 pub use macros::registered_tools_ast;
 

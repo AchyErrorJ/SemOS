@@ -1,3 +1,8 @@
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use alloc::borrow::ToOwned;
+
 use rustc_ast::{LitIntType, LitKind, MetaItemLit};
 use rustc_session::errors;
 

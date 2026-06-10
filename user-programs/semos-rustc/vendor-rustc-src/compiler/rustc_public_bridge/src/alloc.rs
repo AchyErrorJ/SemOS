@@ -4,6 +4,8 @@
 //! the actual memory allocations. The stable interface in `rustc_public::alloc`
 //! delegates all query-related operations to this implementation.
 
+use crate_alloc::vec::Vec;
+
 use rustc_abi::{Size, TyAndLayout};
 use rustc_middle::mir::interpret::{
     AllocId, AllocInit, AllocRange, Allocation, ConstAllocation, Pointer, Scalar, alloc_range,
