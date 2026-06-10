@@ -26,6 +26,7 @@ pub mod hid_report;
 pub mod cdc_ecm;
 pub mod cdc_ecm_net;
 pub mod cdc_ncm;
+pub mod ehci;
 pub mod hub;
 pub mod iphone;
 pub mod mass_storage;
@@ -34,9 +35,15 @@ pub mod xhci;
 /// One-shot bring-up. Returns true if at least the controller came up.
 /// Whether a device was enumerated is reported via `xhci::enumerated_device()`.
 pub fn init_and_enumerate() -> bool {
-    if !xhci::init() {
-        return false;
+    let xhci_ok = xhci::init();
+    if xhci_ok {
+        let _ = xhci::enumerate_ports();
     }
-    let _ = xhci::enumerate_ports();
-    true
+    // EHCI second, so it ends up owning the USB-2 ports on chipsets that
+    // still have a companion EHCI (W540 / Lynx Point). On such machines
+    // intel_pch_port_routing leaves XUSB2PR=0 (USB-2 stays on EHCI) and
+    // ehci::init sets CONFIGFLAG=1 last, winning ownership. Machines
+    // without EHCI (modern PCH, QEMU default) skip this in one PCI scan.
+    let _ = ehci::init_and_enumerate();
+    xhci_ok
 }

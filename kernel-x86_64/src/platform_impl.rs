@@ -233,6 +233,12 @@ impl Platform for X86Platform {
         crate::context::reclaim_dead_address_spaces()
     }
 
+    fn tty_suppress(&self, on: bool) -> u64 {
+        crate::tty::SUPPRESS_TTY_INPUT
+            .store(on, core::sync::atomic::Ordering::Release);
+        0
+    }
+
     fn enable_interrupts(&self) {
         x86_64::instructions::interrupts::enable();
     }
@@ -282,7 +288,9 @@ impl Platform for X86Platform {
         // return, so this only enables interrupts for the duration of
         // enumerate_ports.
         x86_64::instructions::interrupts::enable();
-        crate::usb::xhci::enumerate_ports() as u64
+        let n = crate::usb::xhci::enumerate_ports() as u64;
+        // Companion-EHCI bus too (W540 USB-2 jacks; iPhone hot-plug).
+        n + crate::usb::ehci::enumerate_all() as u64
     }
 
     fn run_pong(&self) -> u64 {
@@ -457,6 +465,9 @@ impl Platform for X86Platform {
                 cr3, page, frame,
                 crate::paging::PagePermission::ReadWrite,
             ) {
+                crate::serial::_print(format_args!(
+                    "[map_user_region] PT_POOL exhausted in map_page_in_space at 0x{:x}\n",
+                    page));
                 return false;
             }
             page += page_size;
