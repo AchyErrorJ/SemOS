@@ -645,5 +645,9 @@ struct TargetSpecJson {
 
 #[cfg(not(target_os = "none"))]
 pub fn json_schema() -> schemars::Schema {
-    schemars::schema_for!(TargetSpecJson)
+    // M27 option B: the SemOS port dropped the JsonSchema derive on TargetSpecJson
+    // and its field types. `--print target-spec-json-schema` isn't needed to
+    // compile core, so return an empty schema rather than re-deriving the whole
+    // type tree. Restore `schema_for!(TargetSpecJson)` if the print is ever needed.
+    schemars::json_schema!({})
 }
