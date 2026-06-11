@@ -47,6 +47,13 @@ const EHCI_CLASS: u8 = 0x0C;
 const EHCI_SUBCLASS: u8 = 0x03;
 const EHCI_PROG_IF: u8 = 0x20;
 
+/// Verbose enumeration logging. Off by default: gates the per-interface
+/// config dumps for non-Apple devices and the per-attempt GET_DESCRIPTOR
+/// retry prints — pure debugging surface that floods the boot log on a
+/// dock full of devices. Apple-device config dumps (the ipheth debugging
+/// surface) stay unconditional. Flip to `true` to debug usbenum.
+const VERBOSE_ENUM: bool = false;
+
 // Capability registers (relative to BAR0).
 mod cap {
     pub const CAPLENGTH: u64 = 0x00; // u8
@@ -212,6 +219,7 @@ pub struct DevCtx {
 pub struct EhciDevice {
     pub ctl: u8,
     pub addr: u8,
+    pub mps0: u16,
     pub vendor: u16,
     pub product: u16,
     pub class: u8,
@@ -832,104 +840,127 @@ fn bring_up_hub(ctl_idx: usize, hub: &DevCtx, depth: u8) -> usize {
 
     let mut enumerated = 0usize;
     for port in 1..=n_ports {
-        let (status, change) = match hub_get_port_status(ctl_idx, hub, port) {
-            Some(s) => s,
-            None => {
-                println!("[ehci] hub addr={} port {}: GET_PORT_STATUS failed", hub.addr, port);
-                continue;
-            }
-        };
-        if status & 0x0001 == 0 {
-            continue; // nothing connected
-        }
-        println!("[ehci] hub addr={} port {}: connected (status=0x{:04X} change=0x{:04X})",
-            hub.addr, port, status, change);
-        let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_CONNECTION);
-
-        // Reset the port; wait for C_PORT_RESET.
-        if !hub_set_port_feature(ctl_idx, hub, port, hub_feature::PORT_RESET) {
-            println!("[ehci] hub addr={} port {}: SET_FEATURE(PORT_RESET) failed", hub.addr, port);
-            continue;
-        }
-        let mut reset_done = false;
-        for _ in 0..50 {
-            sleep_ms(20);
-            if let Some((_s, c)) = hub_get_port_status(ctl_idx, hub, port) {
-                if c & 0x0010 != 0 { // C_PORT_RESET
-                    reset_done = true;
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-        if !reset_done {
-            println!("[ehci] hub addr={} port {}: reset never completed", hub.addr, port);
-            continue;
-        }
-        let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
-        sleep_ms(30); // reset recovery (spec: 10 ms minimum)
-
-        let (mut status2, _c2) = match hub_get_port_status(ctl_idx, hub, port) {
-            Some(s) => s,
-            None => continue,
-        };
-        if status2 & 0x0001 == 0 {
-            // Device dropped off the bus during reset (seen on W540 RMH
-            // port 6). Give it a long debounce and one more try — some
-            // devices disconnect/reconnect on their first reset.
-            println!("[ehci] hub addr={} port {}: device vanished during reset (status=0x{:04X}) — re-checking",
-                hub.addr, port, status2);
-            sleep_ms(300);
-            match hub_get_port_status(ctl_idx, hub, port) {
-                Some((s, _)) if s & 0x0001 != 0 => {
-                    let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_CONNECTION);
-                    if hub_set_port_feature(ctl_idx, hub, port, hub_feature::PORT_RESET) {
-                        let mut ok = false;
-                        for _ in 0..50 {
-                            sleep_ms(20);
-                            if let Some((_s, c)) = hub_get_port_status(ctl_idx, hub, port) {
-                                if c & 0x0010 != 0 { ok = true; break; }
-                            } else { break; }
-                        }
-                        if ok {
-                            let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
-                            sleep_ms(30);
-                            if let Some((s2, _)) = hub_get_port_status(ctl_idx, hub, port) {
-                                status2 = s2;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        if status2 & 0x0002 == 0 {
-            println!("[ehci] hub addr={} port {}: not enabled after reset (status=0x{:04X})",
-                hub.addr, port, status2);
-            continue;
-        }
-        let child_eps = if status2 & 0x0400 != 0 {
-            EPS_HS
-        } else if status2 & 0x0200 != 0 {
-            EPS_LS
-        } else {
-            EPS_FS
-        };
-        // LS/FS children use split transactions through the nearest
-        // HIGH-SPEED hub. If this hub is itself HS, that's it; if this
-        // hub is LS/FS (it can't legally be LS, but FS hubs exist),
-        // splits keep routing through the hub's own TT ancestor.
-        let (tt_addr, tt_port) = if hub.eps == EPS_HS {
-            (hub.addr, port)
-        } else {
-            (hub.hub_addr, hub.hub_port)
-        };
-        if enumerate_device(ctl_idx, child_eps, tt_addr, tt_port, depth) {
+        if bring_up_hub_port(ctl_idx, hub, port, depth) {
             enumerated += 1;
         }
     }
     enumerated
+}
+
+/// Reset one downstream port of `hub` and enumerate whatever is attached.
+/// Shared by the full-scan path (`bring_up_hub`) and the incremental
+/// hot-plug path (`enumerate_incremental`). Returns true if a device was
+/// enumerated on this port.
+///
+/// `depth` is the hub's own depth; children enumerate at the same `depth`
+/// (matching the original inline code — `bring_up_hub` is entered with
+/// `depth + 1`, so a second-tier hub recursing through `enumerate_device`
+/// → `bring_up_hub` still gets its own +1, preserving the descent guard).
+fn bring_up_hub_port(ctl_idx: usize, hub: &DevCtx, port: u8, depth: u8) -> bool {
+    let (status, change) = match hub_get_port_status(ctl_idx, hub, port) {
+        Some(s) => s,
+        None => {
+            println!("[ehci] hub addr={} port {}: GET_PORT_STATUS failed", hub.addr, port);
+            return false;
+        }
+    };
+    if status & 0x0001 == 0 {
+        return false; // nothing connected
+    }
+    println!("[ehci] hub addr={} port {}: connected (status=0x{:04X} change=0x{:04X})",
+        hub.addr, port, status, change);
+    let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_CONNECTION);
+
+    let child_eps = match hub_reset_port(ctl_idx, hub, port) {
+        Some(eps) => eps,
+        None => return false,
+    };
+    // LS/FS children use split transactions through the nearest
+    // HIGH-SPEED hub. If this hub is itself HS, that's it; if this
+    // hub is LS/FS (it can't legally be LS, but FS hubs exist),
+    // splits keep routing through the hub's own TT ancestor.
+    let (tt_addr, tt_port) = if hub.eps == EPS_HS {
+        (hub.addr, port)
+    } else {
+        (hub.hub_addr, hub.hub_port)
+    };
+    enumerate_device(ctl_idx, child_eps, tt_addr, tt_port, depth)
+}
+
+/// Reset a downstream hub port and return the attached child's EPS speed
+/// encoding, or None if the port never enabled. Issues SET_FEATURE
+/// PORT_RESET, waits for C_PORT_RESET, and — if the device dropped off
+/// the bus during reset — debounces and retries the reset once. Assumes
+/// the caller already cleared C_PORT_CONNECTION.
+fn hub_reset_port(ctl_idx: usize, hub: &DevCtx, port: u8) -> Option<u32> {
+    // Reset the port; wait for C_PORT_RESET.
+    if !hub_set_port_feature(ctl_idx, hub, port, hub_feature::PORT_RESET) {
+        println!("[ehci] hub addr={} port {}: SET_FEATURE(PORT_RESET) failed", hub.addr, port);
+        return None;
+    }
+    let mut reset_done = false;
+    for _ in 0..50 {
+        sleep_ms(20);
+        if let Some((_s, c)) = hub_get_port_status(ctl_idx, hub, port) {
+            if c & 0x0010 != 0 { // C_PORT_RESET
+                reset_done = true;
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    if !reset_done {
+        println!("[ehci] hub addr={} port {}: reset never completed", hub.addr, port);
+        return None;
+    }
+    let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
+    sleep_ms(30); // reset recovery (spec: 10 ms minimum)
+
+    let (mut status2, _c2) = hub_get_port_status(ctl_idx, hub, port)?;
+    if status2 & 0x0001 == 0 {
+        // Device dropped off the bus during reset (seen on W540 RMH
+        // port 6). Give it a long debounce and one more try — some
+        // devices disconnect/reconnect on their first reset.
+        println!("[ehci] hub addr={} port {}: device vanished during reset (status=0x{:04X}) — re-checking",
+            hub.addr, port, status2);
+        sleep_ms(300);
+        match hub_get_port_status(ctl_idx, hub, port) {
+            Some((s, _)) if s & 0x0001 != 0 => {
+                let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_CONNECTION);
+                if hub_set_port_feature(ctl_idx, hub, port, hub_feature::PORT_RESET) {
+                    let mut ok = false;
+                    for _ in 0..50 {
+                        sleep_ms(20);
+                        if let Some((_s, c)) = hub_get_port_status(ctl_idx, hub, port) {
+                            if c & 0x0010 != 0 { ok = true; break; }
+                        } else { break; }
+                    }
+                    if ok {
+                        let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
+                        sleep_ms(30);
+                        if let Some((s2, _)) = hub_get_port_status(ctl_idx, hub, port) {
+                            status2 = s2;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if status2 & 0x0002 == 0 {
+        println!("[ehci] hub addr={} port {}: not enabled after reset (status=0x{:04X})",
+            hub.addr, port, status2);
+        return None;
+    }
+    let child_eps = if status2 & 0x0400 != 0 {
+        EPS_HS
+    } else if status2 & 0x0200 != 0 {
+        EPS_LS
+    } else {
+        EPS_FS
+    };
+    Some(child_eps)
 }
 
 /// iPhone (ipheth) bring-up over EHCI: SET_CONFIGURATION, SET_INTERFACE
@@ -1018,12 +1049,15 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
         match control(ctl_idx, &dev, 0x80, 6, 0x0100, 0, Some(&mut first8)) {
             Some(n) if n >= 8 => { got_first8 = true; break; }
             other => {
-                println!("[ehci] GET_DESCRIPTOR(8) at addr 0 attempt {} failed ({:?})", attempt, other);
+                if VERBOSE_ENUM {
+                    println!("[ehci] GET_DESCRIPTOR(8) at addr 0 attempt {} failed ({:?})", attempt, other);
+                }
                 sleep_ms(50);
             }
         }
     }
     if !got_first8 {
+        println!("[ehci] GET_DESCRIPTOR(8) at addr 0 failed after 3 attempts — giving up on this port");
         return false;
     }
     dev.mps0 = first8[7] as u16;
@@ -1082,6 +1116,7 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
     record_device(EhciDevice {
         ctl: ctl_idx as u8,
         addr: new_addr,
+        mps0: dev.mps0,
         vendor, product, class, eps,
         hub_addr, hub_port,
         is_iphone: vendor == iphone::APPLE_VENDOR_ID,
@@ -1149,14 +1184,20 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
 
     // Anything else: enumeration itself is the win (this is the path
     // the W540 could never complete through xHCI). Log the interfaces
-    // so usbinfo readers can see what's there.
-    iphone::dump_config_interfaces(blob);
+    // so usbinfo readers can see what's there — verbose only, since a
+    // dock full of devices floods the boot log otherwise.
+    if VERBOSE_ENUM {
+        iphone::dump_config_interfaces(blob);
+    }
     true
 }
 
-/// Scan all root ports on all controllers and enumerate what's there.
+/// Full scan: tear down ipheth, clear the device table + addresses, and
+/// re-reset + enumerate every connected root port on every controller.
 /// Returns total devices enumerated (hubs count, their children too).
-pub fn enumerate_all() -> usize {
+/// Used at boot from `init_and_enumerate` and as the incremental path's
+/// conservative fallback.
+pub fn enumerate_all_full() -> usize {
     // Port resets invalidate device addresses — the live ipheth RX QH
     // must be unlinked first or the HC keeps polling a stale address.
     ipheth_net_teardown();
@@ -1193,12 +1234,236 @@ pub fn enumerate_all() -> usize {
             if sc & portsc::CCS == 0 { continue; }
             println!("[ehci] ctl{} root port {}: connected (PORTSC=0x{:08X})", ctl_idx, port, sc);
             if let Some(eps) = reset_root_port(&ctl, port) {
-                if enumerate_device(ctl_idx, eps, 0, 0, 0) {
+                // Record the root port in `hub_port` (hub_addr stays 0, so
+                // split-transaction routing + usbinfo "behind hub" logic
+                // are unaffected) — lets the incremental path match a
+                // recorded device to its root port.
+                if enumerate_device(ctl_idx, eps, 0, port, 0) {
                     total += 1;
                 }
             }
         }
     }
+    total
+}
+
+/// Backwards-compatible alias for the full scan.
+pub fn enumerate_all() -> usize {
+    enumerate_all_full()
+}
+
+// ----------------------------------------------------------------------
+// Incremental enumeration (hot-plug). Conservative: any uncertainty
+// falls back to a full scan. Correctness over speed.
+// ----------------------------------------------------------------------
+
+/// Is the device table empty (nothing enumerated yet)?
+fn devices_empty() -> bool {
+    unsafe { DEVICES.iter().all(|d| d.is_none()) }
+}
+
+/// Does a root-level device exist for this (controller, root port)?
+/// Root devices are recorded with `hub_addr == 0` and `hub_port == port`.
+fn root_device_present(ctl_idx: usize, port: u8) -> bool {
+    unsafe {
+        DEVICES.iter().flatten().any(|d|
+            d.ctl as usize == ctl_idx && d.hub_addr == 0 && d.hub_port == port)
+    }
+}
+
+/// True if the live ipheth device lives on this controller.
+fn ipheth_on_ctl(ctl_idx: usize) -> bool {
+    match unsafe { IPHETH_LINK } {
+        Some(l) => l.ctl_idx == ctl_idx,
+        None => false,
+    }
+}
+
+/// Remove the device recorded at (ctl, addr) and, recursively, every
+/// device sitting behind it (matching `hub_addr == addr`). If any removed
+/// device was the live iPhone, tear down its data path.
+fn remove_subtree(ctl_idx: usize, addr: u8) {
+    // Collect child hub addresses first (children of `addr`), then recurse.
+    let mut child_addrs: [u8; MAX_DEVICES] = [0; MAX_DEVICES];
+    let mut n_children = 0usize;
+    unsafe {
+        for d in DEVICES.iter().flatten() {
+            if d.ctl as usize == ctl_idx && d.hub_addr == addr {
+                child_addrs[n_children] = d.addr;
+                n_children += 1;
+            }
+        }
+    }
+    for i in 0..n_children {
+        remove_subtree(ctl_idx, child_addrs[i]);
+    }
+    unsafe {
+        for slot in DEVICES.iter_mut() {
+            if let Some(d) = slot {
+                if d.ctl as usize == ctl_idx && d.addr == addr {
+                    if d.is_iphone && ipheth_on_ctl(ctl_idx) {
+                        ipheth_net_teardown();
+                    }
+                    *slot = None;
+                }
+            }
+        }
+    }
+}
+
+/// Snapshot the recorded hub devices (class 0x09) into a fixed array so we
+/// can iterate them without holding a borrow on DEVICES across the control
+/// transfers that re-scan each hub's ports.
+fn collect_hubs() -> ([Option<EhciDevice>; MAX_DEVICES], usize) {
+    let mut out: [Option<EhciDevice>; MAX_DEVICES] = [None; MAX_DEVICES];
+    let mut n = 0usize;
+    unsafe {
+        for d in DEVICES.iter().flatten() {
+            if d.class == 0x09 {
+                out[n] = Some(*d);
+                n += 1;
+            }
+        }
+    }
+    (out, n)
+}
+
+/// Incremental hot-plug enumeration: re-scan only what changed since the
+/// last enumeration, leaving untouched devices (and the live ipheth data
+/// path) alone. Falls back to a full scan whenever the picture is unclear.
+/// Returns the number of devices newly enumerated this pass.
+pub fn enumerate_incremental() -> usize {
+    // Nothing recorded yet (cold boot, or a prior teardown wiped it) →
+    // there's nothing to do incrementally; do the full bring-up.
+    if devices_empty() {
+        return enumerate_all_full();
+    }
+
+    let mut total = 0usize;
+
+    // -- Root ports -----------------------------------------------------
+    for ctl_idx in 0..MAX_CTLS {
+        let ctl = match unsafe { CTLS[ctl_idx] } {
+            Some(c) => c,
+            None => continue,
+        };
+        for port in 1..=ctl.n_ports {
+            let addr = ctl.op_base + op::PORTSC_BASE + ((port - 1) as u64) * 4;
+            let sc = unsafe { read_u32(addr) };
+            let csc = sc & portsc::CSC != 0;
+            let connected = sc & portsc::CCS != 0;
+            let known = root_device_present(ctl_idx, port);
+            // Re-enumerate when the connect-change latched, or something is
+            // plugged in that we have no record of on this root port.
+            if csc || (connected && !known) {
+                // Clear the latched change bits (W1C) so we don't loop on
+                // a stale CSC next pass.
+                if sc & portsc::RW1C != 0 {
+                    unsafe { write_u32(addr, sc); }
+                }
+                if !connected {
+                    // Disconnect on the root port: drop whatever lived here.
+                    // (Root devices carry hub_addr==0/hub_port==port.)
+                    let victim = unsafe {
+                        DEVICES.iter().flatten()
+                            .find(|d| d.ctl as usize == ctl_idx
+                                && d.hub_addr == 0 && d.hub_port == port)
+                            .map(|d| d.addr)
+                    };
+                    if let Some(a) = victim {
+                        println!("[ehci] ctl{} root port {}: disconnected — removing addr={}", ctl_idx, port, a);
+                        remove_subtree(ctl_idx, a);
+                    }
+                    continue;
+                }
+                println!("[ehci] ctl{} root port {}: change/new (PORTSC=0x{:08X}) — re-enumerating", ctl_idx, port, sc);
+                // A port reset invalidates addresses on this controller's
+                // bus — if the ipheth device lives here, tear it down first.
+                if ipheth_on_ctl(ctl_idx) {
+                    ipheth_net_teardown();
+                }
+                // Drop any stale record for this root port before re-adding.
+                let stale = unsafe {
+                    DEVICES.iter().flatten()
+                        .find(|d| d.ctl as usize == ctl_idx
+                            && d.hub_addr == 0 && d.hub_port == port)
+                        .map(|d| d.addr)
+                };
+                if let Some(a) = stale {
+                    remove_subtree(ctl_idx, a);
+                }
+                if let Some(eps) = reset_root_port(&ctl, port) {
+                    if enumerate_device(ctl_idx, eps, 0, port, 0) {
+                        total += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // -- Recorded hubs --------------------------------------------------
+    // Re-scan each known hub's downstream ports for connect-change.
+    let (hubs, n_hubs) = collect_hubs();
+    for hub_dev in hubs.iter().flatten().take(n_hubs) {
+        let ctl_idx = hub_dev.ctl as usize;
+        let hub = DevCtx {
+            addr: hub_dev.addr,
+            mps0: hub_dev.mps0,
+            eps: hub_dev.eps,
+            hub_addr: hub_dev.hub_addr,
+            hub_port: hub_dev.hub_port,
+        };
+        // Re-read the hub descriptor for its port count (one cheap control
+        // transfer). If it fails the hub may be gone — leave it for a
+        // future full scan rather than guess.
+        let mut desc = [0u8; 16];
+        let n_ports = match control(ctl_idx, &hub, 0xA0, 6 /*GET_DESCRIPTOR*/, 0x2900, 0, Some(&mut desc)) {
+            Some(n) if n >= 5 => desc[2],
+            _ => {
+                println!("[ehci] hub addr={}: descriptor re-read failed in incremental scan", hub.addr);
+                continue;
+            }
+        };
+        // The hub's depth = its own depth. Children enumerate at that depth
+        // (bring_up_hub_port / enumerate_device → bring_up_hub adds +1).
+        // We don't track per-device depth, so derive it conservatively:
+        // root-attached hub (hub_addr==0) is depth 1, else depth 2. The
+        // descent guard (>3) still protects against runaway recursion.
+        let hub_depth: u8 = if hub.hub_addr == 0 { 1 } else { 2 };
+        for port in 1..=n_ports {
+            let (status, change) = match hub_get_port_status(ctl_idx, &hub, port) {
+                Some(s) => s,
+                None => continue,
+            };
+            // C_PORT_CONNECTION (bit 0 of the change word).
+            if change & 0x0001 == 0 {
+                continue; // no connect-change on this port
+            }
+            let _ = hub_clear_port_feature(ctl_idx, &hub, port, hub_feature::C_PORT_CONNECTION);
+            let now_connected = status & 0x0001 != 0;
+            // Find any recorded child on this (hub, port).
+            let existing = unsafe {
+                DEVICES.iter().flatten()
+                    .find(|d| d.ctl as usize == ctl_idx
+                        && d.hub_addr == hub.addr && d.hub_port == port)
+                    .map(|d| d.addr)
+            };
+            if now_connected {
+                println!("[ehci] hub addr={} port {}: connect-change, now connected — enumerating", hub.addr, port);
+                // Replace any stale record first.
+                if let Some(a) = existing {
+                    remove_subtree(ctl_idx, a);
+                }
+                if bring_up_hub_port(ctl_idx, &hub, port, hub_depth) {
+                    total += 1;
+                }
+            } else if let Some(a) = existing {
+                println!("[ehci] hub addr={} port {}: disconnected — removing addr={}", hub.addr, port, a);
+                remove_subtree(ctl_idx, a);
+            }
+        }
+    }
+
     total
 }
 

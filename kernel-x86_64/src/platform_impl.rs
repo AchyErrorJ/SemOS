@@ -290,7 +290,10 @@ impl Platform for X86Platform {
         x86_64::instructions::interrupts::enable();
         let n = crate::usb::xhci::enumerate_ports() as u64;
         // Companion-EHCI bus too (W540 USB-2 jacks; iPhone hot-plug).
-        n + crate::usb::ehci::enumerate_all() as u64
+        // Incremental: re-scan only what changed, preserving the live
+        // ipheth data path + untouched devices. Falls back to a full
+        // scan when the device table is empty or anything is unclear.
+        n + crate::usb::ehci::enumerate_incremental() as u64
     }
 
     fn run_pong(&self) -> u64 {
