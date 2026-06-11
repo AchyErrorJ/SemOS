@@ -459,7 +459,8 @@ pub fn init() -> usize {
 static mut LAST_ERR_TOKEN: u32 = 0;
 
 fn err_token_name(tok: u32) -> &'static str {
-    if tok & token::XACTERR != 0 { "XactErr/no-response" }
+    if tok & token::ACTIVE != 0 { "never-completed (device NAKed whole window)" }
+    else if tok & token::XACTERR != 0 { "XactErr/no-response" }
     else if tok & token::BABBLE != 0 { "babble" }
     else if tok & token::BUFERR != 0 { "buffer-error" }
     else if tok & token::MISSED_UF != 0 { "missed-uframe" }
@@ -540,6 +541,7 @@ unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: 
     fence(Ordering::SeqCst);
 
     // Wait for the last qTD to retire (Active clears) or any error.
+    LAST_ERR_TOKEN = 0; // make failure tokens trustworthy (no stale reads)
     let deadline = kernel_core::platform::ticks() + (timeout_ms * 62).div_ceil(1000) + 2;
     let mut result: Result<(), &'static str> = Err("timeout");
     'wait: while kernel_core::platform::ticks() < deadline {
@@ -564,6 +566,12 @@ unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: 
             }
         }
         core::hint::spin_loop();
+    }
+    if matches!(result, Err("timeout")) {
+        // Capture the final token: ACTIVE still set = the device NAKed
+        // us for the whole window (vs. a protocol error, which retires
+        // the qTD with error bits).
+        LAST_ERR_TOKEN = read_volatile(&raw const ASYNCPS[pg].qtds[last_qtd_idx].0[2]);
     }
 
     // Unlink: restore head's previous link, then ring the IAA doorbell
@@ -1726,6 +1734,42 @@ pub fn ipheth_send_frame(frame: &[u8]) -> bool {
         }
     }
     ok
+}
+
+/// Keepalive cadence state for `ipheth_tick`.
+static mut IPHETH_TICK_LAST: u64 = 0;
+static mut IPHETH_TICK_FAILS: u32 = 0;
+
+/// Periodic tether keepalive + self-heal. Called from the console pump
+/// loop (runs whenever the shell is waiting for input); rate-limited
+/// internally to ~1 s — the cadence Linux's ipheth polls carrier at.
+/// iPhones drop/re-negotiate the USB link when the host goes silent;
+/// when that happens every transfer to the stale address XactErrs. Two
+/// consecutive carrier failures ⇒ tear down and re-enumerate (the
+/// incremental scan finds the re-attached phone via connect-change and
+/// rebuilds the whole ipheth + RX path).
+pub fn ipheth_tick() {
+    if unsafe { IPHETH_LINK.is_none() } { return; }
+    let now = kernel_core::platform::ticks();
+    unsafe {
+        if now.wrapping_sub(IPHETH_TICK_LAST) < 62 { return; }
+        IPHETH_TICK_LAST = now;
+    }
+    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return };
+    let iface = iphone::iphone_device().map(|d| d.ipheth_iface).unwrap_or(2);
+    let mut carrier = [0u8; 1];
+    match control(l.ctl_idx, &l.dev, 0xC0, iphone::IPHETH_CMD_CARRIER_CHECK, 0, iface as u16, Some(&mut carrier)) {
+        Some(_) => unsafe { IPHETH_TICK_FAILS = 0; },
+        None => unsafe {
+            IPHETH_TICK_FAILS += 1;
+            if IPHETH_TICK_FAILS >= 2 {
+                IPHETH_TICK_FAILS = 0;
+                println!("[ehci-ipheth] phone stopped responding — re-enumerating");
+                ipheth_net_teardown();
+                let _ = enumerate_incremental();
+            }
+        },
+    }
 }
 
 /// usbinfo: tether data-path state — counters + a LIVE carrier check

@@ -1547,6 +1547,11 @@ fn interactive_session() {
 /// for that instead). Arrow keys become `ESC [ A/B/C/D` for the line editor.
 #[cfg(feature = "interactive")]
 fn pump_console_input(prev: &mut [u8; 6]) {
+    // Tether keepalive piggybacks on the console pump (runs while the
+    // shell idles; internally rate-limited to ~1 s). iPhones drop the
+    // link when the host goes silent — this is the Linux-parity carrier
+    // poll plus self-healing re-enumeration.
+    usb::ehci::ipheth_tick();
     usb::xhci::poll_hid(|rep| {
         let shift = rep.shift_held();
         for &k in rep.keys.iter() {
