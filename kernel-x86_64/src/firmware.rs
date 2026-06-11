@@ -39,6 +39,15 @@ pub fn dmi_system_info() {
     // boundary in 0x000F0000–0x000FFFFF on BIOS systems.
     let mut table_addr: u64 = 0;
     let mut table_len: u64 = 0;
+    // Readability check: if the legacy BIOS segment reads all-0xFF the
+    // region isn't shadowed/mapped (common on UEFI/CSM) and a legacy scan
+    // can't work — SMBIOS would then need the EFI config table instead.
+    let probe0 = unsafe { rd32(0xF_0000) };
+    let probe1 = unsafe { rd32(0xF_8000) };
+    if probe0 == 0xFFFF_FFFF && probe1 == 0xFFFF_FFFF {
+        println!("[dmi] BIOS segment 0xF0000 reads all-0xFF (not shadowed; likely UEFI/CSM) — SMBIOS via legacy scan unavailable");
+        return;
+    }
     'scan: for off in (0xF_0000u64..0x10_0000u64).step_by(16) {
         let sig0 = unsafe { rd32(off) };
         if sig0 == u32::from_le_bytes(*b"_SM_") {
@@ -142,16 +151,22 @@ pub fn acpi_find_dmar(rsdp_phys: u64) -> Option<u64> {
         let xsdt = unsafe { rd64(rsdp_phys + 24) };
         let len = unsafe { rd32(xsdt + 4) } as u64;
         let count = (len.saturating_sub(36)) / 8;
+        println!("[acpi] RSDP@0x{:X} rev={} → XSDT@0x{:X} ({} tables)", rsdp_phys, revision, xsdt, count);
         (xsdt + 36, 8u64, count)
     } else {
         let rsdt = unsafe { rd32(rsdp_phys + 16) } as u64;
         let len = unsafe { rd32(rsdt + 4) } as u64;
         let count = (len.saturating_sub(36)) / 4;
+        println!("[acpi] RSDP@0x{:X} rev={} → RSDT@0x{:X} ({} tables)", rsdp_phys, revision, rsdt, count);
         (rsdt + 36, 4u64, count)
     };
 
+    // Dump every table signature so we can confirm the walk works on real
+    // hardware (and see whether DMAR is simply absent vs. the walk broken).
     let mut dmar_phys = 0u64;
-    for i in 0..count {
+    let mut line = [0u8; 5 * 24];
+    let mut n = 0usize;
+    for i in 0..count.min(48) {
         let entry = entries_phys + i * entry_size;
         let table_phys = if entry_size == 8 {
             unsafe { rd64(entry) }
@@ -159,10 +174,17 @@ pub fn acpi_find_dmar(rsdp_phys: u64) -> Option<u64> {
             unsafe { rd32(entry) as u64 }
         };
         let sig = unsafe { rd32(table_phys) };
+        let b = sig.to_le_bytes();
+        for &c in &b {
+            if n < line.len() { line[n] = if c.is_ascii_graphic() { c } else { b'?' }; n += 1; }
+        }
+        if n < line.len() { line[n] = b' '; n += 1; }
         if sig == u32::from_le_bytes(*b"DMAR") {
             dmar_phys = table_phys;
-            break;
         }
+    }
+    if let Ok(s) = core::str::from_utf8(&line[..n]) {
+        println!("[acpi] tables: {}", s);
     }
 
     if dmar_phys == 0 {
