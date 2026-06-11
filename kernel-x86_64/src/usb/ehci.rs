@@ -1095,8 +1095,49 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
     }
 
     if vendor == iphone::APPLE_VENDOR_ID {
-        println!("[ehci] *** APPLE DEVICE on EHCI — attempting ipheth ***");
-        return try_ipheth(ctl_idx, &dev, blob, cfg_value);
+        // iPhones hide the tether interface in a HIGHER configuration:
+        // config 1 is PTP-only; with Personal Hotspot on, the ipheth
+        // interface (0xFF/0xFD/0x01) appears in the last configuration
+        // (Linux/usbmuxd switch configs to reach it). Iterate every
+        // configuration, not just the one already in `blob`. Mirrors
+        // the xHCI-side lesson from commit 4dd07c2.
+        let num_configs = dd[17].max(1);
+        println!("[ehci] *** APPLE DEVICE on EHCI — {} configuration(s), searching for ipheth ***",
+            num_configs);
+        for cfg_idx in 0..num_configs {
+            let mut h9 = [0u8; 9];
+            match control(ctl_idx, &dev, 0x80, 6, 0x0200 | cfg_idx as u16, 0, Some(&mut h9)) {
+                Some(n) if n >= 9 => {}
+                other => {
+                    println!("[ehci-ipheth] config[{}] header failed ({:?})", cfg_idx, other);
+                    continue;
+                }
+            }
+            let c_total = u16::from_le_bytes([h9[2], h9[3]]) as usize;
+            let c_value = h9[5];
+            // iPhone tether configs (PTP + usbmux + ipheth alts) run
+            // larger than typical; 2 KiB covers them comfortably.
+            let mut c_blob = [0u8; 2048];
+            let c_want = c_total.min(c_blob.len());
+            let c_got = match control(ctl_idx, &dev, 0x80, 6, 0x0200 | cfg_idx as u16, 0, Some(&mut c_blob[..c_want])) {
+                Some(n) => n,
+                None => {
+                    println!("[ehci-ipheth] config[{}] full read failed", cfg_idx);
+                    continue;
+                }
+            };
+            let c_blob = &c_blob[..c_got];
+            if iphone::find_ipheth_interface(c_blob).is_some() {
+                println!("[ehci-ipheth] ipheth found in config[{}] (bConfigurationValue={})",
+                    cfg_idx, c_value);
+                return try_ipheth(ctl_idx, &dev, c_blob, c_value);
+            }
+            println!("[ehci-ipheth] config[{}] value={} ({} bytes): no ipheth; interfaces:",
+                cfg_idx, c_value, c_got);
+            iphone::dump_config_interfaces(c_blob);
+        }
+        println!("[ehci-ipheth] no ipheth in ANY config — hotspot truly off, or iOS needs usbmux pairing first");
+        return true; // enumeration itself succeeded
     }
 
     // Anything else: enumeration itself is the win (this is the path
