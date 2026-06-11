@@ -1041,10 +1041,6 @@ fn try_ipheth(ctl_idx: usize, dev: &DevCtx, cfg_blob: &[u8], cfg_value: u8) -> b
         println!("[ehci-ipheth] SET_CONFIGURATION({}) failed", cfg_value);
         return false;
     }
-    if control(ctl_idx, dev, 0x01, 11 /*SET_INTERFACE*/, iphone::IPHETH_ALT as u16, iface as u16, None).is_none() {
-        println!("[ehci-ipheth] SET_INTERFACE(alt=1) failed");
-        return false;
-    }
     // The "Trust This Computer?" prompt fires on the first vendor
     // control transfer. GET_MACADDR may fail until the user taps Trust.
     let mut mac = [0u8; 6];
@@ -1057,6 +1053,17 @@ fn try_ipheth(ctl_idx: usize, dev: &DevCtx, cfg_blob: &[u8], cfg_value: u8) -> b
             println!("[ehci-ipheth] GET_MACADDR returned {:?} — tap Trust on the iPhone and re-run usbenum", other);
             return false;
         }
+    }
+    // ENABLE_NCM — Linux sends this unconditionally at probe (before the
+    // alt-setting switch). On modern iOS it activates the data plane and
+    // switches RX framing to NCM NTBs; failure means an older phone →
+    // legacy framing. Our pure-legacy path saw the phone NAK bulk OUT
+    // forever, consistent with the data plane never activating.
+    let ncm = control(ctl_idx, dev, 0x41, iphone::IPHETH_CMD_ENABLE_NCM, 0, iface as u16, None).is_some();
+    println!("[ehci-ipheth] ENABLE_NCM: {}", if ncm { "accepted (NCM framing)" } else { "rejected (legacy framing)" });
+    if control(ctl_idx, dev, 0x01, 11 /*SET_INTERFACE*/, iphone::IPHETH_ALT as u16, iface as u16, None).is_none() {
+        println!("[ehci-ipheth] SET_INTERFACE(alt=1) failed");
+        return false;
     }
     let mut carrier = [0u8; 2];
     match control(ctl_idx, dev, 0xC0, iphone::IPHETH_CMD_CARRIER_CHECK, 0, iface as u16, Some(&mut carrier[..1])) {
@@ -1081,7 +1088,7 @@ fn try_ipheth(ctl_idx: usize, dev: &DevCtx, cfg_blob: &[u8], cfg_value: u8) -> b
         confirmed_pairing: false,
     });
     // Bring up the bulk data path (persistent RX QH + first receive).
-    ipheth_net_setup(ctl_idx, dev, in_ep, out_ep, in_mps, out_mps);
+    ipheth_net_setup(ctl_idx, dev, in_ep, out_ep, in_mps, out_mps, ncm);
     true
 }
 
@@ -1570,17 +1577,36 @@ pub fn init_and_enumerate() -> usize {
 // prefixed with 2 alignment bytes (IPHETH_IP_ALIGN). We never send
 // ENABLE_NCM, so the iPhone stays in legacy framing.
 
+/// RX schedule structures. The receive buffer is 64 KiB (Linux's
+/// IPHETH_RX_BUF_SIZE_NCM): in NCM mode the phone delivers NTBs up to
+/// that size as ONE bulk transfer, so undersizing risks babble. One
+/// transfer spans 4 chained qTDs (5 pages + 5 + 5 + 1 = 16 pages); each
+/// qTD covers an even number of 512-byte packets, so every qTD in the
+/// chain starts on the same data toggle (DTC=1 software tracking works
+/// unchanged).
+const RX_BUF_SIZE: usize = 65536;
+const RX_PAGES: usize = RX_BUF_SIZE / 4096; // 16
+const NUM_RX_QTDS: usize = 4;
+/// Bytes covered by each chain position: 5,5,5,1 pages.
+const RX_QTD_SPAN: [usize; NUM_RX_QTDS] = [20480, 20480, 20480, 4096];
+
 #[repr(C, align(4096))]
 struct IphethPage {
     rx_qh: Qh,
-    rx_qtd: Qtd,
-    rx_buf: [u8; 2048],
+    rx_qtds: [Qtd; NUM_RX_QTDS],
 }
 static mut IPHETH_PAGE: IphethPage = IphethPage {
     rx_qh: Qh([0; 32]),
-    rx_qtd: Qtd([0; 16]),
-    rx_buf: [0; 2048],
+    rx_qtds: [const { Qtd([0; 16]) }; NUM_RX_QTDS],
 };
+
+#[repr(C, align(4096))]
+struct IphethRxBuf([u8; RX_BUF_SIZE]);
+static mut IPHETH_RX_BUF: IphethRxBuf = IphethRxBuf([0; RX_BUF_SIZE]);
+/// Physical address of each RX buffer page (filled at setup; the kernel
+/// BSS isn't guaranteed physically contiguous across pages, and qTD
+/// buffer pointers don't need it to be).
+static mut IPHETH_RX_PAGE_PHYS: [u32; RX_PAGES] = [0; RX_PAGES];
 
 #[derive(Copy, Clone)]
 struct IphethLink {
@@ -1591,9 +1617,17 @@ struct IphethLink {
     in_mps: u16,
     out_mps: u16,
     rx_qh_phys: u32,
-    rx_qtd_phys: u32,
-    rx_buf_phys: u32,
+    rx_qtd_phys: [u32; NUM_RX_QTDS],
+    /// NCM framing active (ENABLE_NCM accepted — modern iOS). False =
+    /// legacy framing (2-byte IP_ALIGN prefix, one frame per transfer).
+    ncm: bool,
 }
+
+/// NCM parse state: when a received NTB is being drained, recv() hands
+/// out one datagram per call and only re-arms RX once exhausted.
+static mut NTB_PENDING_LEN: usize = 0; // 0 = no NTB being drained
+static mut NTB_NDP_OFF: usize = 0;     // current NDP16 offset (0 = start at NTH16)
+static mut NTB_DPE_IDX: usize = 0;     // datagram pointer entry cursor
 static mut IPHETH_LINK: Option<IphethLink> = None;
 static mut IPHETH_RX_TOGGLE: bool = false;
 static mut IPHETH_TX_TOGGLE: bool = false;
@@ -1609,25 +1643,34 @@ static mut IPHETH_TX_ERR: u32 = 0;
 static mut IPHETH_RX_FRAMES: u32 = 0;
 static mut IPHETH_RX_BYTES: u64 = 0;
 
-/// Arm (or re-arm) the single outstanding bulk-IN receive.
+/// Arm (or re-arm) the single outstanding bulk-IN receive: a 64 KiB
+/// transfer across NUM_RX_QTDS chained qTDs. A short packet (or ZLP)
+/// anywhere ends the transfer (alt-next = T stops the queue).
 fn ipheth_arm_rx() {
     let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return };
     unsafe {
-        let q = &raw mut IPHETH_PAGE.rx_qtd.0;
-        (*q)[0] = LINK_T;
-        (*q)[1] = LINK_T;
+        NTB_PENDING_LEN = 0;
         let dt = if IPHETH_RX_TOGGLE { token::DT } else { 0 };
-        (*q)[2] = token::ACTIVE | token::CERR_3 | token::PID_IN | token::IOC | dt
-            | ((2048u32) << token::TOTAL_SHIFT);
-        (*q)[3] = l.rx_buf_phys;
-        (*q)[4] = (l.rx_buf_phys & !0xFFF).wrapping_add(0x1000);
-        (*q)[5] = 0; (*q)[6] = 0; (*q)[7] = 0;
+        let mut page = 0usize;
+        for i in 0..NUM_RX_QTDS {
+            let q = &raw mut IPHETH_PAGE.rx_qtds[i].0;
+            (*q)[0] = if i + 1 < NUM_RX_QTDS { l.rx_qtd_phys[i + 1] } else { LINK_T };
+            (*q)[1] = LINK_T; // short packet ⇒ stop the queue
+            (*q)[2] = token::ACTIVE | token::CERR_3 | token::PID_IN | dt
+                | (if i == NUM_RX_QTDS - 1 { token::IOC } else { 0 })
+                | ((RX_QTD_SPAN[i] as u32) << token::TOTAL_SHIFT);
+            let n_pages = RX_QTD_SPAN[i] / 4096;
+            for p in 0..5 {
+                (*q)[3 + p] = if p < n_pages { IPHETH_RX_PAGE_PHYS[page + p] } else { 0 };
+            }
+            page += n_pages;
+        }
         fence(Ordering::SeqCst);
-        // Hand it to the (idle) RX QH via the overlay: next-qTD pointer
-        // first, then a zeroed token (Active=0, Halted=0) which makes
-        // the HC advance to and fetch our qTD.
+        // Hand the chain to the (idle) RX QH via the overlay: next-qTD
+        // pointer first, then a zeroed token (Active=0, Halted=0) which
+        // makes the HC advance to and fetch the first qTD.
         let h = &raw mut IPHETH_PAGE.rx_qh.0;
-        write_volatile(&raw mut (*h)[4], l.rx_qtd_phys);
+        write_volatile(&raw mut (*h)[4], l.rx_qtd_phys[0]);
         write_volatile(&raw mut (*h)[5], LINK_T);
         fence(Ordering::SeqCst);
         write_volatile(&raw mut (*h)[6], 0);
@@ -1635,15 +1678,119 @@ fn ipheth_arm_rx() {
     }
 }
 
+/// If the outstanding receive finished, return Some(total bytes) and
+/// update the RX data toggle; None while still in flight. Errors count,
+/// log (rate-limited), re-arm, and report None.
+fn ipheth_rx_complete() -> Option<usize> {
+    let first = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtds[0].0[2]) };
+    if first & token::ACTIVE != 0 {
+        return None;
+    }
+    let mut total = 0usize;
+    let mut err = false;
+    for i in 0..NUM_RX_QTDS {
+        let tok = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtds[i].0[2]) };
+        if tok & token::ACTIVE != 0 {
+            break; // queue stopped at the previous (short) qTD
+        }
+        if tok & token::ERR_MASK != 0 {
+            err = true;
+            unsafe { LAST_ERR_TOKEN = tok; }
+            break;
+        }
+        let residual = ((tok & token::TOTAL_MASK) >> token::TOTAL_SHIFT) as usize;
+        total += RX_QTD_SPAN[i] - residual;
+        unsafe { IPHETH_RX_TOGGLE = tok & token::DT != 0; }
+        if residual > 0 {
+            break; // short packet ended the transfer here
+        }
+    }
+    if err {
+        unsafe {
+            IPHETH_RX_ERRS += 1;
+            if IPHETH_RX_ERRS <= 3 || IPHETH_RX_ERRS.is_power_of_two() {
+                println!("[ehci-ipheth] RX error #{} tok=0x{:08X} ({})",
+                    IPHETH_RX_ERRS, LAST_ERR_TOKEN, err_token_name(LAST_ERR_TOKEN));
+            }
+        }
+        ipheth_arm_rx();
+        return None;
+    }
+    Some(total)
+}
+
+/// Walk the pending NTB and return the next datagram as (offset, len),
+/// advancing the NDP/DPE cursors. NTH16 sig "NCMH", NDP16 sig "NCM0"
+/// (no-CRC variant). Bounds-checked against the received length.
+fn ncm_next_datagram() -> Option<(usize, usize)> {
+    unsafe {
+        let total = NTB_PENDING_LEN;
+        let buf = &IPHETH_RX_BUF.0;
+        let rd16 = |off: usize| -> usize {
+            u16::from_le_bytes([buf[off], buf[off + 1]]) as usize
+        };
+        if NTB_NDP_OFF == 0 {
+            // Validate NTH16, locate the first NDP16.
+            if total < 12 { return None; }
+            if &buf[0..4] != b"NCMH" { return None; }
+            let ndp = rd16(10);
+            if ndp == 0 || ndp + 8 > total { return None; }
+            NTB_NDP_OFF = ndp;
+            NTB_DPE_IDX = 0;
+        }
+        loop {
+            let ndp = NTB_NDP_OFF;
+            if ndp == 0 || ndp + 8 > total { return None; }
+            if &buf[ndp..ndp + 4] != b"NCM0" { return None; }
+            let ndp_len = rd16(ndp + 4);
+            // DPEs start at ndp+8; each is 4 bytes (index, length).
+            let dpe = ndp + 8 + NTB_DPE_IDX * 4;
+            if dpe + 4 <= ndp + ndp_len && dpe + 4 <= total {
+                let dg_off = rd16(dpe);
+                let dg_len = rd16(dpe + 2);
+                NTB_DPE_IDX += 1;
+                if dg_off == 0 || dg_len == 0 {
+                    // Null terminator — chain to the next NDP if any.
+                    let next = rd16(ndp + 6);
+                    if next == 0 || next == ndp { return None; }
+                    NTB_NDP_OFF = next;
+                    NTB_DPE_IDX = 0;
+                    continue;
+                }
+                if dg_off + dg_len > total { return None; }
+                return Some((dg_off, dg_len));
+            }
+            // Ran off the NDP — chain or finish.
+            let next = rd16(ndp + 6);
+            if next == 0 || next == ndp { return None; }
+            NTB_NDP_OFF = next;
+            NTB_DPE_IDX = 0;
+        }
+    }
+}
+
 /// Called from `try_ipheth` after GET_MACADDR succeeds: build the RX QH,
 /// splice it into this controller's async schedule, and arm the first
 /// receive. Idempotent via teardown-first.
-fn ipheth_net_setup(ctl_idx: usize, dev: &DevCtx, in_ep: u8, out_ep: u8, in_mps: u16, out_mps: u16) -> bool {
+fn ipheth_net_setup(ctl_idx: usize, dev: &DevCtx, in_ep: u8, out_ep: u8, in_mps: u16, out_mps: u16, ncm: bool) -> bool {
     ipheth_net_teardown();
     let ctl = match unsafe { CTLS[ctl_idx] } { Some(c) => c, None => return false };
     let rx_qh_phys = match phys32_of(unsafe { &raw const IPHETH_PAGE.rx_qh } as u64) { Some(p) => p, None => return false };
-    let rx_qtd_phys = match phys32_of(unsafe { &raw const IPHETH_PAGE.rx_qtd } as u64) { Some(p) => p, None => return false };
-    let rx_buf_phys = match phys32_of(unsafe { &raw const IPHETH_PAGE.rx_buf } as u64) { Some(p) => p, None => return false };
+    let mut rx_qtd_phys = [0u32; NUM_RX_QTDS];
+    for (i, item) in rx_qtd_phys.iter_mut().enumerate() {
+        *item = match phys32_of(unsafe { &raw const IPHETH_PAGE.rx_qtds[i] } as u64) {
+            Some(p) => p,
+            None => return false,
+        };
+    }
+    // Per-page physical addresses of the 64 KiB RX buffer.
+    for page in 0..RX_PAGES {
+        let virt = unsafe { &raw const IPHETH_RX_BUF.0[page * 4096] } as u64;
+        match phys32_of(virt) {
+            Some(p) => unsafe { IPHETH_RX_PAGE_PHYS[page] = p; },
+            None => return false,
+        }
+    }
 
     unsafe {
         let h = &raw mut IPHETH_PAGE.rx_qh.0;
@@ -1661,14 +1808,16 @@ fn ipheth_net_setup(ctl_idx: usize, dev: &DevCtx, in_ep: u8, out_ep: u8, in_mps:
 
         IPHETH_LINK = Some(IphethLink {
             ctl_idx, dev: *dev, in_ep, out_ep, in_mps, out_mps,
-            rx_qh_phys, rx_qtd_phys, rx_buf_phys,
+            rx_qh_phys, rx_qtd_phys, ncm,
         });
         IPHETH_RX_TOGGLE = false;
         IPHETH_TX_TOGGLE = false;
         IPHETH_RX_ERRS = 0;
+        NTB_PENDING_LEN = 0;
     }
     ipheth_arm_rx();
-    println!("[ehci-ipheth] RX armed: IN=0x{:02X} OUT=0x{:02X} (bulk data path live)", in_ep, out_ep);
+    println!("[ehci-ipheth] RX armed: IN=0x{:02X} OUT=0x{:02X} framing={} (bulk data path live)",
+        in_ep, out_ep, if ncm { "NCM" } else { "legacy" });
     true
 }
 
@@ -1702,10 +1851,12 @@ pub fn ipheth_active() -> bool {
     unsafe { IPHETH_LINK.is_some() }
 }
 
-/// Non-consuming check: has the outstanding receive retired?
+/// Non-consuming check: a parsed NTB is being drained, or the
+/// outstanding receive has retired.
 pub fn ipheth_has_frame() -> bool {
     if unsafe { IPHETH_LINK.is_none() } { return false; }
-    let tok = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtd.0[2]) };
+    if unsafe { NTB_PENDING_LEN } > 0 { return true; }
+    let tok = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtds[0].0[2]) };
     tok & token::ACTIVE == 0
 }
 
@@ -1720,44 +1871,73 @@ pub fn ipheth_recv_frame(buf: &mut [u8]) -> usize {
 }
 
 fn ipheth_recv_frame_inner(buf: &mut [u8]) -> usize {
-    if unsafe { IPHETH_LINK.is_none() } { return 0; }
-    let tok = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtd.0[2]) };
-    if tok & token::ACTIVE != 0 {
+    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return 0 };
+
+    // Draining a previously received NCM NTB: hand out the next datagram.
+    if unsafe { NTB_PENDING_LEN } > 0 {
+        match ncm_next_datagram() {
+            Some((off, len)) => {
+                return deliver_rx(buf, off, len);
+            }
+            None => {
+                // NTB exhausted — re-arm for the next one.
+                ipheth_arm_rx();
+                return 0;
+            }
+        }
+    }
+
+    // Otherwise: did the outstanding receive finish?
+    let total = match ipheth_rx_complete() {
+        Some(t) => t,
+        None => return 0,
+    };
+    if total == 0 {
+        ipheth_arm_rx();
         return 0;
     }
-    let mut got = 0usize;
-    if tok & token::ERR_MASK == 0 {
-        let residual = ((tok & token::TOTAL_MASK) >> token::TOTAL_SHIFT) as usize;
-        let n = 2048usize.saturating_sub(residual);
-        if n > iphone::IPHETH_IP_ALIGN {
-            let payload = n - iphone::IPHETH_IP_ALIGN;
-            let copy = payload.min(buf.len());
-            unsafe {
-                buf[..copy].copy_from_slice(
-                    &IPHETH_PAGE.rx_buf[iphone::IPHETH_IP_ALIGN..iphone::IPHETH_IP_ALIGN + copy]);
+
+    if l.ncm {
+        unsafe {
+            NTB_PENDING_LEN = total;
+            NTB_NDP_OFF = 0;
+            NTB_DPE_IDX = 0;
+        }
+        match ncm_next_datagram() {
+            Some((off, len)) => deliver_rx(buf, off, len),
+            None => {
+                // Malformed/empty NTB — drop it and re-arm.
+                ipheth_arm_rx();
+                0
             }
-            got = copy;
-            unsafe {
-                IPHETH_RX_FRAMES += 1;
-                IPHETH_RX_BYTES += copy as u64;
-                if IPHETH_RX_FRAMES == 1 {
-                    println!("[ehci-ipheth] first RX frame ({} bytes)", copy);
-                }
-            }
-            iphone::mark_paired(); // first frame = pairing confirmed
         }
     } else {
-        unsafe {
-            IPHETH_RX_ERRS += 1;
-            if IPHETH_RX_ERRS <= 3 || IPHETH_RX_ERRS.is_power_of_two() {
-                println!("[ehci-ipheth] RX error #{} tok=0x{:08X} ({})",
-                    IPHETH_RX_ERRS, tok, err_token_name(tok));
-            }
+        // Legacy framing: one frame per transfer, 2-byte alignment pad.
+        if total <= iphone::IPHETH_IP_ALIGN {
+            ipheth_arm_rx();
+            return 0;
+        }
+        let off = iphone::IPHETH_IP_ALIGN;
+        let len = total - iphone::IPHETH_IP_ALIGN;
+        let got = deliver_rx(buf, off, len);
+        ipheth_arm_rx();
+        got
+    }
+}
+
+/// Copy one received frame out of the RX buffer + bump counters.
+fn deliver_rx(buf: &mut [u8], off: usize, len: usize) -> usize {
+    let copy = len.min(buf.len());
+    unsafe {
+        buf[..copy].copy_from_slice(&IPHETH_RX_BUF.0[off..off + copy]);
+        IPHETH_RX_FRAMES += 1;
+        IPHETH_RX_BYTES += copy as u64;
+        if IPHETH_RX_FRAMES == 1 {
+            println!("[ehci-ipheth] first RX frame ({} bytes)", copy);
         }
     }
-    unsafe { IPHETH_RX_TOGGLE = tok & token::DT != 0; }
-    ipheth_arm_rx();
-    got
+    iphone::mark_paired(); // first frame = pairing confirmed
+    copy
 }
 
 /// Transmit one Ethernet frame (legacy framing: raw frame, no padding).
@@ -1866,9 +2046,10 @@ fn print_tether_status_inner(l: IphethLink) {
     unsafe {
         println!("usbinfo: ipheth0 — TX ok={} err={}  RX frames={} bytes={} errs={}",
             IPHETH_TX_OK, IPHETH_TX_ERR, IPHETH_RX_FRAMES, IPHETH_RX_BYTES, IPHETH_RX_ERRS);
-        let rx_tok = read_volatile(&raw const IPHETH_PAGE.rx_qtd.0[2]);
-        println!("usbinfo: ipheth0 RX qTD token=0x{:08X} (active={})",
-            rx_tok, (rx_tok & token::ACTIVE != 0) as u8);
+        let rx_tok = read_volatile(&raw const IPHETH_PAGE.rx_qtds[0].0[2]);
+        println!("usbinfo: ipheth0 RX qTD0 token=0x{:08X} (active={}) framing={} ntb_pending={}",
+            rx_tok, (rx_tok & token::ACTIVE != 0) as u8,
+            if l.ncm { "NCM" } else { "legacy" }, NTB_PENDING_LEN);
     }
     // Live carrier check (vendor request 0x45; 0x04 = hotspot active).
     let iface = iphone::iphone_device().map(|d| d.ipheth_iface).unwrap_or(2);
