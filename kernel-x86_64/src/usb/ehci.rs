@@ -731,6 +731,9 @@ pub fn control(
 /// `is_in` selects PID). `toggle` is the caller-maintained data toggle —
 /// updated from the retired qTD so it stays correct across transfers.
 /// Returns bytes actually transferred.
+/// Bulk transfer. `timeout_ms` bounds how long we wait for the device
+/// to ACK — a ready device responds in microseconds, so a NAKing one
+/// should fail fast (don't burn whole seconds per frame).
 pub fn bulk(
     ctl_idx: usize,
     dev: &DevCtx,
@@ -740,6 +743,7 @@ pub fn bulk(
     toggle: &mut bool,
     buf: &mut [u8],
     len: usize,
+    timeout_ms: u64,
 ) -> Option<usize> {
     let ctl = unsafe { CTLS[ctl_idx]? };
     let len = len.min(4096).min(buf.len());
@@ -760,7 +764,7 @@ pub fn bulk(
     }
     let dw1 = qh_dw1(dev, ep, mps);
     let dw2 = qh_dw2(dev);
-    let res = unsafe { run_xfer(&ctl, dw1, dw2, ctl.qtd_phys[0], 0, 2000) };
+    let res = unsafe { run_xfer(&ctl, dw1, dw2, ctl.qtd_phys[0], 0, timeout_ms) };
     if res.is_err() {
         return None;
     }
@@ -1950,15 +1954,11 @@ fn deliver_rx(buf: &mut [u8], off: usize, len: usize) -> usize {
 /// Transmit one Ethernet frame (legacy framing: raw frame, no padding).
 pub fn ipheth_send_frame(frame: &[u8]) -> bool {
     if unsafe { IPHETH_LINK.is_none() } { return false; }
-    if !unsafe { IPHETH_CARRIER_UP } {
-        unsafe {
-            if !IPHETH_TX_BLOCKED_LOGGED {
-                IPHETH_TX_BLOCKED_LOGGED = true;
-                println!("[ehci-ipheth] TX blocked: carrier off — tap Trust on the iPhone / check hotspot (TX auto-enables when carrier=0x04)");
-            }
-        }
-        return false;
-    }
+    // We deliberately do NOT hard-gate TX on the carrier byte. The
+    // carrier read proved unreliable on iOS 18 (it would falsely block
+    // legitimate TX), and a not-ready phone just NAKs — which the short
+    // bulk timeout (BULK_TX_TIMEOUT_MS) fails fast on without burning a
+    // 2 s window. So always attempt; let the wire decide.
     gate_acquire();
     let ok = ipheth_send_frame_inner(frame);
     gate_release();
@@ -1971,9 +1971,12 @@ fn ipheth_send_frame_inner(frame: &[u8]) -> bool {
     let mut tmp = [0u8; 1600];
     tmp[..frame.len()].copy_from_slice(frame);
     let mut toggle = unsafe { IPHETH_TX_TOGGLE };
+    // Short timeout: a ready phone ACKs instantly; a not-ready one NAKs
+    // and we move on rather than freezing the caller for seconds.
+    const BULK_TX_TIMEOUT_MS: u64 = 300;
     let ok = bulk(
         l.ctl_idx, &l.dev, l.out_ep & 0x0F, l.out_mps,
-        false, &mut toggle, &mut tmp, frame.len(),
+        false, &mut toggle, &mut tmp, frame.len(), BULK_TX_TIMEOUT_MS,
     ).is_some();
     unsafe {
         IPHETH_TX_TOGGLE = toggle;
@@ -2029,41 +2032,29 @@ pub fn ipheth_tick() {
     let iface = iphone::iphone_device().map(|d| d.ipheth_iface).unwrap_or(2);
     let mut carrier = [0u8; 1];
     let ok = control(l.ctl_idx, &l.dev, 0xC0, iphone::IPHETH_CMD_CARRIER_CHECK, 0, iface as u16, Some(&mut carrier)).is_some();
-    let mut reenumerate = false;
     unsafe {
         if ok {
-            IPHETH_TICK_FAILS = 0;
             let on = carrier[0] == iphone::IPHETH_CARRIER_ON;
             if on != IPHETH_CARRIER_UP {
                 IPHETH_CARRIER_UP = on;
                 IPHETH_TX_BLOCKED_LOGGED = false;
-                println!("[ehci-ipheth] carrier {} (byte=0x{:02X}){}",
-                    if on { "ON" } else { "OFF" }, carrier[0],
-                    if on { " — TX enabled" } else { "" });
-            }
-        } else {
-            IPHETH_TICK_FAILS += 1;
-            if IPHETH_TICK_FAILS >= 2 {
-                IPHETH_TICK_FAILS = 0;
-                reenumerate = true;
+                println!("[ehci-ipheth] carrier {} (byte=0x{:02X})",
+                    if on { "ON" } else { "OFF" }, carrier[0]);
             }
         }
-    }
-    if reenumerate {
-        println!("[ehci-ipheth] phone stopped responding — re-enumerating");
-        unsafe { IPHETH_CARRIER_UP = false; }
-        ipheth_net_teardown();
-        let _ = enumerate_incremental_inner();
-        // Back off ~10 s before the next keepalive so a genuinely-gone
-        // phone doesn't trigger a re-enumeration storm.
-        unsafe { IPHETH_TICK_LAST = now.wrapping_add(558); }
+        // A failed carrier check is NOT a reason to tear the link down.
+        // The earlier self-heal (teardown + incremental re-enum) killed
+        // tethering for good, because the iPhone's port shows no
+        // connect-change so nothing rebuilt the ipheth path. We now
+        // leave the link intact across transient control failures; a
+        // real unplug is handled by the next full `usbenum`.
     }
     gate_release();
     // NOTE: run this ONLY from the dedicated ipheth_keepalive_task,
-    // NEVER from the keyboard pump — its control transfer + self-heal
-    // can block ~1 s and would freeze input. The network stack is driven
-    // by the shell's own TCP path (tcp.rs read/write call net::poll), so
-    // we deliberately do NOT poll the stack here.
+    // NEVER from the keyboard pump — its control transfer can block ~1 s
+    // and would freeze input. The network stack is driven by the shell's
+    // own TCP path (tcp.rs read/write call net::poll), so we do NOT poll
+    // the stack here.
 }
 
 /// usbinfo: tether data-path state — counters + a LIVE carrier check
