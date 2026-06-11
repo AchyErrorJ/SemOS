@@ -282,6 +282,9 @@ fn sleep_ms(ms: u64) {
     let ticks_needed = (ms * 62).div_ceil(1000) + 1;
     let end = kernel_core::platform::ticks() + ticks_needed;
     while kernel_core::platform::ticks() < end {
+        // Ctrl+C cuts the wait short so a runaway enumeration can be
+        // aborted — every EHCI reset/debounce wait routes through here.
+        if crate::keyboard::abort_requested() { return; }
         core::hint::spin_loop();
     }
 }
@@ -1307,6 +1310,7 @@ fn enumerate_all_full_inner() -> usize {
             }
             sleep_ms(50);
         }
+        if crate::keyboard::abort_requested() { break; }
         for port in 1..=ctl.n_ports {
             let addr = ctl.op_base + op::PORTSC_BASE + ((port - 1) as u64) * 4;
             let sc = unsafe { read_u32(addr) };

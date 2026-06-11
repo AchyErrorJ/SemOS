@@ -288,7 +288,14 @@ impl Platform for X86Platform {
         // return, so this only enables interrupts for the duration of
         // enumerate_ports.
         x86_64::instructions::interrupts::enable();
+        // Fresh start — a Ctrl+C from a previous command shouldn't abort
+        // this one before it begins. The user can Ctrl+C again to stop it.
+        crate::keyboard::clear_abort();
         let n = crate::usb::xhci::enumerate_ports() as u64;
+        if crate::keyboard::abort_requested() {
+            crate::println!("usbenum: aborted (Ctrl+C)");
+            return n;
+        }
         // Companion-EHCI bus too (W540 USB-2 jacks; iPhone hot-plug).
         // Incremental: re-scan only what changed, preserving the live
         // ipheth data path + untouched devices. Falls back to a full

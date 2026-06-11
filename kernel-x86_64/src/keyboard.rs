@@ -91,6 +91,24 @@ static KEYBOARD: Mutex<KeyboardState> = Mutex::new(KeyboardState::new());
 pub static SKIP_DEMOS: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// Ctrl+C abort. Set when Ctrl+C is detected (works via the timer-polled
+/// keyboard path, so it fires even while a command is mid-loop). Long-
+/// running kernel operations (USB enumeration, network waits) poll
+/// [`abort_requested`] and bail early. The shell clears it before each
+/// command via [`clear_abort`].
+pub static ABORT_REQUESTED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// True if the user pressed Ctrl+C since the last [`clear_abort`].
+pub fn abort_requested() -> bool {
+    ABORT_REQUESTED.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Clear the Ctrl+C abort flag (call before starting a fresh command).
+pub fn clear_abort() {
+    ABORT_REQUESTED.store(false, core::sync::atomic::Ordering::Relaxed);
+}
+
 /// Lowercase scancode-to-ASCII table (scancode set 1, index 0x00-0x39)
 static SCANCODE_TABLE: [u8; 58] = [
     0,    // 0x00: (none)
@@ -403,6 +421,15 @@ pub fn handle_scancode(scancode: u8) {
         0x2A | 0x36 => { kb.shift = true; return; }   // Shift pressed
         0x1D => { kb.ctrl = true; return; }            // Ctrl pressed
         0x3A => { kb.caps_lock = !kb.caps_lock; return; } // Caps Lock toggle
+        // Ctrl+C — request abort of the running command. Set the global
+        // flag (polled by long-running kernel loops) AND push 0x03 (ETX)
+        // into the line discipline so a blocked SYS_READ also unblocks.
+        0x2E if kb.ctrl => {
+            ABORT_REQUESTED.store(true, core::sync::atomic::Ordering::Relaxed);
+            drop(kb);
+            crate::tty::input_push(0x03);
+            return;
+        }
         _ => {}
     }
 

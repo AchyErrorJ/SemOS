@@ -1562,10 +1562,12 @@ pub fn enumerate_ports() -> usize {
     // waits 1 second, then scans for any NEW CCS=1 ports we haven't
     // tried yet.
     for pass in 0..4 {
+        if crate::keyboard::abort_requested() { break; }
         if pass > 0 {
             // Wait 1 second between passes for slow-signaling devices.
             let retry_wait = kernel_core::platform::ticks() + 62;
             while kernel_core::platform::ticks() < retry_wait {
+                if crate::keyboard::abort_requested() { break; }
                 core::hint::spin_loop();
             }
             // Drain any new events from the wait window.
