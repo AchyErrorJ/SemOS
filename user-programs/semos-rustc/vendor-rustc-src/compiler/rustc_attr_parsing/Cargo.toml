@@ -21,8 +21,10 @@ rustc_target = { path = "../rustc_target" }
 thin-vec = { version = "0.2.12", default-features = false }
 # tidy-alphabetical-end
 
-# Stage F11: context.rs uses semos_std::sync::LazyLock; fluent macro
-# emits rustc_error_messages::DiagMessage refs.
+# option B: fluent_messages! emits rustc_error_messages::* on BOTH targets.
+[dependencies.rustc_error_messages]
+path = "../rustc_error_messages"
+
+# Stage F11: context.rs uses semos_std::sync::LazyLock.
 [target.'cfg(target_os = "none")'.dependencies]
-rustc_error_messages = { path = "../rustc_error_messages" }
 semos-std = { path = "../../../../std-shim" }
