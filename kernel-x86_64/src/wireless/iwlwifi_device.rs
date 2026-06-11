@@ -77,6 +77,8 @@ pub struct IwlDevice {
     /// Firmware error/log table pointers (for reading crash logs).
     pub error_table_ptr: u32,
     pub log_table_ptr: u32,
+    /// Command-queue (queue 0) write index.
+    pub tx_write_idx: u16,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -106,6 +108,7 @@ impl IwlDevice {
         Self {
             pci, state: DeviceState::Probed, csr, sm,
             scd_base_ptr: 0, error_table_ptr: 0, log_table_ptr: 0,
+            tx_write_idx: 0,
         }
     }
 
@@ -524,6 +527,83 @@ impl IwlDevice {
         ok
     }
 
+    /// Stage 3b: send one host command to the firmware via queue 0, then
+    /// watch whether the firmware consumes it (SCD read-pointer advances),
+    /// responds (RX status advances), and whether the error table stays
+    /// clean. Diagnostic-heavy; bounded; safe (a bad command faults the
+    /// ucode but the fault is readable, not a hang).
+    pub fn send_cmd(&mut self, cmd_id: u8, payload: &[u8]) -> bool {
+        use super::iwlwifi_csr::{CSR_HBUS_TARG_WRPTR, scd};
+        let cmd_phys = match phys_of(unsafe { &raw const CMD_BUF } as u64) { Some(p)=>p, None=>return false };
+        let total = 4 + payload.len(); // 4-byte header + payload
+        let idx = self.tx_write_idx as usize;
+
+        // Build command: header [cmd, group/flags, seq_lo, seq_hi] + payload.
+        unsafe {
+            CMD_BUF.0[0] = cmd_id;
+            CMD_BUF.0[1] = 0;
+            CMD_BUF.0[2] = (idx & 0xFF) as u8;  // sequence low (queue 0)
+            CMD_BUF.0[3] = 0;
+            CMD_BUF.0[4..4 + payload.len()].copy_from_slice(payload);
+        }
+        // Build the TFD at this index: num_tbs=1, tb[0]=CMD_BUF.
+        unsafe {
+            let tfd = &mut TX_TFD_RING.0[idx];
+            for b in tfd.iter_mut() { *b = 0; }
+            tfd[3] = 1; // num_tbs
+            let lo = (cmd_phys & 0xFFFF_FFFF) as u32;
+            let hi_n_len = (((cmd_phys >> 32) & 0xF) as u16) | ((total as u16) << 4);
+            tfd[4..8].copy_from_slice(&lo.to_le_bytes());
+            tfd[8..10].copy_from_slice(&hi_n_len.to_le_bytes());
+            // Scheduler byte-count entry (bytes incl. overhead, + wrap dup).
+            let bc = ((total + 8) & 0xFFF) as u16;
+            TX_BC_TBL.0[idx] = bc;
+            if idx < 64 { TX_BC_TBL.0[256 + idx] = bc; }
+        }
+        // Advance write pointer + ring the doorbell.
+        self.tx_write_idx = ((idx + 1) % TX_RING_SIZE) as u16;
+        let stts_before = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
+        if !self.grab_nic_access() { return false; }
+        let rd_before = self.csr.read_prph(scd::queue_rdptr(0));
+        self.csr.write32(CSR_HBUS_TARG_WRPTR, self.tx_write_idx as u32);
+        self.release_nic_access();
+
+        // Wait (bounded) for the RX status page to advance (a response).
+        let mut responded = false;
+        for _ in 0..200 {
+            let s = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
+            if s != stts_before { responded = true; break; }
+            for _ in 0..2000 { for _ in 0..100 { core::hint::spin_loop(); } } // ~2 ms
+        }
+        // Snapshot: did the firmware consume the TFD? respond? fault?
+        if !self.grab_nic_access() { return false; }
+        let rd_after = self.csr.read_prph(scd::queue_rdptr(0));
+        let err_valid = self.csr.mem_read32(self.error_table_ptr);
+        let err_id = self.csr.mem_read32(self.error_table_ptr + 4);
+        self.release_nic_access();
+        let stts_after = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
+
+        println!("[iwlwifi] send_cmd 0x{:02X}: wr_idx={} SCD_rdptr {}->{} rb_stts 0x{:08X}->0x{:08X} responded={}",
+            cmd_id, self.tx_write_idx, rd_before, rd_after, stts_before, stts_after, responded as u8);
+        if err_valid != 0 {
+            println!("[iwlwifi] send_cmd: FIRMWARE FAULT err_valid=0x{:08X} err_id=0x{:08X} (command rejected)",
+                err_valid, err_id);
+        } else {
+            println!("[iwlwifi] send_cmd: error table clean (no fault)");
+        }
+        // If we got a response, dump the first RX dwords of the next buffer.
+        if responded {
+            let idx2 = (stts_after & 0xFF) as usize % RX_RING_SIZE;
+            let rb = unsafe {
+                let p = &raw const RX_BUFS.0[idx2.saturating_sub(1) % RX_RING_SIZE] as *const u32;
+                (core::ptr::read_volatile(p), core::ptr::read_volatile(p.add(1)))
+            };
+            println!("[iwlwifi] send_cmd: response RXB=[{:08X} {:08X}] (cmd byte 0x{:02X})",
+                rb.0, rb.1, (rb.1 & 0xFF) as u8);
+        }
+        responded
+    }
+
     /// Start the association sequence: scan for SSID, then auth/assoc/4-way/DHCP.
     /// Requires firmware loaded + PHY init done.
     pub fn connect(&mut self, ssid: &[u8], psk: &[u8]) {
@@ -633,7 +713,15 @@ pub fn init() -> bool {
                                 // Stage 3a: stand up the TX command queue +
                                 // scheduler, verify by register readback.
                                 println!("[iwlwifi] Stage 3a: configuring TX command queue...");
-                                dev.tx_init();
+                                if dev.tx_init() {
+                                    // Stage 3b: send the first host command as a
+                                    // queue-plumbing probe (PHY_CONFIGURATION_CMD
+                                    // 0x6a, zeroed payload). We watch consumption
+                                    // + response + the fault table.
+                                    println!("[iwlwifi] Stage 3b: sending first command...");
+                                    let payload = [0u8; 8];
+                                    dev.send_cmd(0x6a, &payload);
+                                }
                             } else {
                                 println!("[iwlwifi] Stage 2c: no ALIVE signal — firmware silent after release");
                             }
