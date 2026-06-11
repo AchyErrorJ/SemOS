@@ -37,59 +37,72 @@ pub struct IwlPciInfo {
     pub bar0_size: u64,
 }
 
-/// Walk PCI bus 0 looking for a known iwlwifi NIC.
-/// Returns `Some(IwlPciInfo)` on the first match, `None` if none found.
+/// Walk ALL PCI buses looking for a known iwlwifi NIC. On a ThinkPad the
+/// WiFi card sits behind a PCIe root port, so it lives on a higher bus
+/// (e.g. 01:00.0 / 02:00.0), not bus 0 — a bus-0-only scan misses it.
+/// Also dumps every network-class (0x02) device so an unrecognized card
+/// (wrong device ID, or a non-Intel module) is still visible in the log.
+/// Returns `Some(IwlPciInfo)` on the first iwlwifi match.
 pub fn probe() -> Option<IwlPciInfo> {
-    // Scan the first 32 slots on bus 0, function 0.  iwlwifi is usually
-    // at a low slot number on Intel PCHs (e.g. 00:03.0).
-    for slot in 0..32u8 {
-        let vendor = pci::read_u16(0, slot, 0, pci::regs::VENDOR_ID);
-        if vendor != INTEL_VENDOR_ID {
-            continue;
-        }
-        let device = pci::read_u16(0, slot, 0, pci::regs::DEVICE_ID);
-        if let Some(name) = device_name(device) {
-            let loc = pci::Location { bus: 0, slot, func: 0 };
-
-            // Enable bus-master + memory-space in the PCI command register.
-            let cmd = pci::read_u32(0, slot, 0, pci::regs::COMMAND);
-            let cmd_en = cmd | 0x0006; // bit 1 = Memory Space, bit 2 = Bus Master
-            pci::write_u32(0, slot, 0, pci::regs::COMMAND, cmd_en);
-
-            // Read BAR0 (offset 0x10) to get the MMIO base.
-            let bar0_raw = pci::read_u32(0, slot, 0, pci::regs::BAR0);
-            if bar0_raw & 0x1 != 0 {
-                println!("[iwlwifi-pci] {} @ {:02X}:{:02X}.{} has IO BAR (unsupported)",
-                    name, 0, slot, 0);
-                continue;
+    let mut found: Option<(u8, u8, u8, u16)> = None;
+    for bus in 0..=255u8 {
+        for slot in 0..32u8 {
+            for func in 0..8u8 {
+                let vendor = pci::read_u16(bus, slot, func, pci::regs::VENDOR_ID);
+                if vendor == 0xFFFF {
+                    continue;
+                }
+                let device = pci::read_u16(bus, slot, func, pci::regs::DEVICE_ID);
+                let loc = pci::Location { bus, slot, func };
+                let (class, sub, _pi) = pci::class_triple(loc);
+                // Diagnostic: surface every network-controller (class 0x02)
+                // so a card we don't recognize is still in the log.
+                if class == 0x02 {
+                    println!("[iwlwifi-pci] network device {:02X}:{:02X}.{}  vendor=0x{:04X} device=0x{:04X} class=0x{:02X} subclass=0x{:02X}",
+                        bus, slot, func, vendor, device, class, sub);
+                }
+                if vendor == INTEL_VENDOR_ID {
+                    if let Some(_name) = device_name(device) {
+                        if found.is_none() {
+                            found = Some((bus, slot, func, device));
+                        }
+                    }
+                }
+                // Skip non-multifunction extra funcs to save time.
+                if func == 0 {
+                    let header_type = (pci::read_u32(bus, slot, 0, 0x0C) >> 16) as u8;
+                    if header_type & 0x80 == 0 {
+                        break;
+                    }
+                }
             }
-            let bar0_phys = (bar0_raw & !0xF) as u64;
-
-            // Determine BAR size by writing all-1s, reading back the mask,
-            // then restoring the original value.
-            pci::write_u32(0, slot, 0, pci::regs::BAR0, 0xFFFF_FFFF);
-            let mask = pci::read_u32(0, slot, 0, pci::regs::BAR0);
-            pci::write_u32(0, slot, 0, pci::regs::BAR0, bar0_raw);
-            let bar0_size = if mask == 0 {
-                0
-            } else {
-                let size_mask = !(mask & !0xF) + 1;
-                size_mask as u64
-            };
-
-            println!("[iwlwifi-pci] found {} @ {:02X}:{:02X}.{}  device=0x{:04X}  BAR0=0x{:08X} size=0x{:X}",
-                name, 0, slot, 0, device, bar0_phys, bar0_size);
-
-            return Some(IwlPciInfo {
-                loc,
-                device_id: device,
-                name,
-                bar0_phys,
-                bar0_size,
-            });
         }
     }
-    None
+
+    let (bus, slot, func, device) = found?;
+    let name = device_name(device).unwrap_or("iwlwifi");
+    let loc = pci::Location { bus, slot, func };
+
+    // Enable bus-master + memory-space.
+    let cmd = pci::read_u32(bus, slot, func, pci::regs::COMMAND);
+    pci::write_u32(bus, slot, func, pci::regs::COMMAND, cmd | 0x0006);
+
+    let bar0_raw = pci::read_u32(bus, slot, func, pci::regs::BAR0);
+    if bar0_raw & 0x1 != 0 {
+        println!("[iwlwifi-pci] {} @ {:02X}:{:02X}.{} has IO BAR (unsupported)",
+            name, bus, slot, func);
+        return None;
+    }
+    let bar0_phys = (bar0_raw & !0xF) as u64;
+    pci::write_u32(bus, slot, func, pci::regs::BAR0, 0xFFFF_FFFF);
+    let mask = pci::read_u32(bus, slot, func, pci::regs::BAR0);
+    pci::write_u32(bus, slot, func, pci::regs::BAR0, bar0_raw);
+    let bar0_size = if mask == 0 { 0 } else { (!(mask & !0xF) + 1) as u64 };
+
+    println!("[iwlwifi-pci] found {} @ {:02X}:{:02X}.{}  device=0x{:04X}  BAR0=0x{:08X} size=0x{:X}",
+        name, bus, slot, func, device, bar0_phys, bar0_size);
+
+    Some(IwlPciInfo { loc, device_id: device, name, bar0_phys, bar0_size })
 }
 
 fn device_name(device_id: u16) -> Option<&'static str> {
