@@ -579,6 +579,13 @@ unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: 
     let deadline = kernel_core::platform::ticks() + (timeout_ms * 62).div_ceil(1000) + 2;
     let mut result: Result<(), &'static str> = Err("timeout");
     'wait: while kernel_core::platform::ticks() < deadline {
+        // Ctrl+C: bail out of a transfer to a dead/NAKing device so a
+        // runaway usbenum (which issues many such transfers) is
+        // interruptible. We still fall through to unlink + IAA below.
+        if crate::keyboard::abort_requested() {
+            result = Err("aborted");
+            break 'wait;
+        }
         let tok = read_volatile(&raw const ASYNCPS[pg].qtds[last_qtd_idx].0[2]);
         if tok & token::ACTIVE == 0 {
             if tok & token::ERR_MASK != 0 {
@@ -1499,6 +1506,7 @@ fn enumerate_incremental_inner() -> usize {
     // Re-scan each known hub's downstream ports for connect-change.
     let (hubs, n_hubs) = collect_hubs();
     for hub_dev in hubs.iter().flatten().take(n_hubs) {
+        if crate::keyboard::abort_requested() { break; }
         let ctl_idx = hub_dev.ctl as usize;
         let hub = DevCtx {
             addr: hub_dev.addr,
