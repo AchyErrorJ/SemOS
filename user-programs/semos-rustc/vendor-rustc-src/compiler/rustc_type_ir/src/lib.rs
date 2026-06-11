@@ -17,6 +17,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 extern crate self as rustc_type_ir;
 
 use core::fmt;
