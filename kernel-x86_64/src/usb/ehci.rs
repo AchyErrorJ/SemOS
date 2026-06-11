@@ -1454,11 +1454,7 @@ pub fn enumerate_incremental() -> usize {
                 Some(s) => s,
                 None => continue,
             };
-            // C_PORT_CONNECTION (bit 0 of the change word).
-            if change & 0x0001 == 0 {
-                continue; // no connect-change on this port
-            }
-            let _ = hub_clear_port_feature(ctl_idx, &hub, port, hub_feature::C_PORT_CONNECTION);
+            let changed = change & 0x0001 != 0; // C_PORT_CONNECTION
             let now_connected = status & 0x0001 != 0;
             // Find any recorded child on this (hub, port).
             let existing = unsafe {
@@ -1467,8 +1463,18 @@ pub fn enumerate_incremental() -> usize {
                         && d.hub_addr == hub.addr && d.hub_port == port)
                     .map(|d| d.addr)
             };
+            // React to a latched connect-change, OR to a connected port
+            // with no recorded device — the latter recovers devices whose
+            // earlier enumeration failed after the change bit was already
+            // consumed (same rule the root-port scan applies).
+            if !changed && !(now_connected && existing.is_none()) {
+                continue;
+            }
+            if changed {
+                let _ = hub_clear_port_feature(ctl_idx, &hub, port, hub_feature::C_PORT_CONNECTION);
+            }
             if now_connected {
-                println!("[ehci] hub addr={} port {}: connect-change, now connected — enumerating", hub.addr, port);
+                println!("[ehci] hub addr={} port {}: connect-change/new, now connected — enumerating", hub.addr, port);
                 // Replace any stale record first.
                 if let Some(a) = existing {
                     remove_subtree(ctl_idx, a);
