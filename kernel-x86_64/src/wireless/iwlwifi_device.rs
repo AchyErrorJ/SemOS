@@ -268,6 +268,9 @@ pub fn init() -> bool {
             // Firmware load (Stage 2) follows once the blob is embedded.
             if dev.power_up() {
                 println!("[iwlwifi] Stage 1 (power-up) complete — ready for firmware load");
+                // Stage 2a: parse the embedded ucode (pure, no hardware) so
+                // the boot log shows the section layout we'll DMA in 2b.
+                let _ = super::iwlwifi_fw_image::parse();
             } else {
                 println!("[iwlwifi] Stage 1 (power-up) FAILED — see CSR dump above");
             }
