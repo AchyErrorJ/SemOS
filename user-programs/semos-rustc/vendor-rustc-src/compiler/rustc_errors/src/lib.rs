@@ -217,11 +217,18 @@ use crate::timings::TimingRecord;
 pub mod annotate_snippet_emitter_writer;
 #[cfg(target_os = "none")]
 pub mod annotate_snippet_emitter_writer {
-    use crate::translation::Translator;
+    use crate::translation::{Translator, FluentArgs};
+    use crate::DiagInner;
+    use crate::registry::Registry;
     use rustc_span::source_map::SourceMap;
-    pub struct AnnotateSnippetEmitter;
+    // M27 iter 8 debug: SemOS has no terminal renderer, so diagnostics were
+    // dropped — which meant `FatalError::raise()` (a swallowed `error:`) just
+    // showed up as an opaque "rustc fatal error" panic. Store the translator
+    // and print the primary message + children of every diagnostic through
+    // semos_std so rustc's real errors are visible on the serial console.
+    pub struct AnnotateSnippetEmitter { translator: Translator }
     impl AnnotateSnippetEmitter {
-        pub fn new<D>(_dst: D, _translator: Translator) -> Self { Self }
+        pub fn new<D>(_dst: D, translator: Translator) -> Self { Self { translator } }
         pub fn sm(self, _sm: Option<alloc::sync::Arc<SourceMap>>) -> Self { self }
         pub fn short_message(self, _b: bool) -> Self { self }
         pub fn theme(self, _t: crate::emitter_stub::OutputTheme) -> Self { self }
@@ -234,9 +241,23 @@ pub mod annotate_snippet_emitter_writer {
         pub fn ignored_directories_in_source_blocks(self, _dirs: alloc::vec::Vec<alloc::string::String>) -> Self { self }
     }
     impl super::emitter_stub::Emitter for AnnotateSnippetEmitter {
-        fn translator(&self) -> &Translator {
-            panic!("AnnotateSnippetEmitter::translator unavailable on SemOS")
+        fn emit_diagnostic(&mut self, diag: DiagInner, _registry: &Registry) {
+            let args = FluentArgs::new();
+            let lvl = diag.level();
+            for (msg, _) in &diag.messages {
+                if let Ok(s) = self.translator.translate_message(msg, &args) {
+                    semos_std::println!("[rustc-diag] {:?}: {}", lvl, s);
+                }
+            }
+            for child in &diag.children {
+                for (msg, _) in &child.messages {
+                    if let Ok(s) = self.translator.translate_message(msg, &args) {
+                        semos_std::println!("[rustc-diag]   = {}", s);
+                    }
+                }
+            }
         }
+        fn translator(&self) -> &Translator { &self.translator }
     }
 }
 pub mod codes;

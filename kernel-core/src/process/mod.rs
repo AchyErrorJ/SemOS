@@ -919,7 +919,14 @@ pub fn spawn_from_elf_with_args(
     let stack_top = elf_info.stack_top as u64;
     // D.2 port: 64 KiB → 1 MiB to give Cranelift's regalloc recursion
     // (and other compiler-class workloads) breathing room.
-    const USER_PROC_STACK_SIZE: u64 = 1024 * 1024;
+    // M27 iter 8: 1 MiB → 32 MiB. semos-rustc overflowed the 1 MiB stack in
+    // the post-parse phase (macro expansion / name resolution / AST→HIR
+    // lowering) — rustc's deeply-recursive core. On the host rustc runs the
+    // compiler on an 8–16 MiB+ dedicated thread stack; that thread path is
+    // host-gated off on SemOS, so the driver runs on this main user stack.
+    // The heap now lives at 4 GiB and the stack grows down from ~549 GiB, so
+    // 32 MiB is collision-free (8192 PT frames, well within the pool).
+    const USER_PROC_STACK_SIZE: u64 = 32 * 1024 * 1024;
     let stack_size = USER_PROC_STACK_SIZE;
     let user_rsp = match platform.map_user_stack(cr3, stack_top, stack_size) {
         Some(rsp) => rsp,

@@ -442,7 +442,12 @@ pub fn install_guard_page(virt: u64) -> bool {
 pub mod user_layout {
     pub const USER_CODE_BASE: u64   = 0x0000_0000_0040_0000;  // 4MB
     pub const USER_DATA_BASE: u64   = 0x0000_0000_0080_0000;  // 8MB
-    pub const USER_HEAP_BASE: u64   = 0x0000_0000_00C0_0000;  // 12MB
+    // 4 GiB — must clear the loaded binary's highest segment. semos-rustc's
+    // ~83 MiB .text reaches ~0x5331248, so the old 12 MiB base sat inside it
+    // and the user heap allocator (std-shim) mapped RW/NX pages over the code
+    // (M27 iter 8 root cause). The allocator drives the heap via SYS_MMAP_ANON;
+    // this constant is the source of truth it mirrors.
+    pub const USER_HEAP_BASE: u64   = 0x0000_0001_0000_0000;  // 4 GiB
     pub const USER_STACK_TOP: u64   = 0x0000_007F_FFFF_0000;  // ~512GB - 64KB
     pub const USER_STACK_SIZE: u64  = 16 * 1024;              // 16KB — must NOT exceed TASK_STACK_SIZE; larger sizes alias adjacent slots' TASK_STACKS in spawn_user_task and corrupt their iret-RIP slot (task #40)
 }

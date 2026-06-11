@@ -263,7 +263,11 @@ pub fn diagnostics_registry() -> Registry {
 
 /// This is the primary entry point for rustc.
 pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) {
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-d] run_compiler FIRST LINE (before EarlyDiagCtxt::new)");
     let mut default_early_dcx = EarlyDiagCtxt::new(ErrorOutputType::default());
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-d] EarlyDiagCtxt::new returned OK");
 
     // Throw away the first argument, the name of the binary.
     // In case of at_args being empty, as might be the case by
@@ -277,11 +281,19 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
 
     let args = args::arg_expand_all(&default_early_dcx, at_args);
 
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-d] run_compiler entry; args={:?}", args);
     let (matches, help_only) = match handle_options(&default_early_dcx, &args) {
-        HandledOptions::None => return,
+        HandledOptions::None => {
+            #[cfg(target_os = "none")]
+            semos_std::println!("[probe-d] handle_options -> None (early return)");
+            return;
+        }
         HandledOptions::Normal(matches) => (matches, false),
         HandledOptions::HelpOnly(matches) => (matches, true),
     };
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-d] handle_options OK; free={:?} help_only={}", matches.free, help_only);
 
     let sopts = config::build_session_options(&mut default_early_dcx, &matches);
     // fully initialize ice path static once unstable options are available as context
@@ -292,9 +304,13 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
         return;
     }
 
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-d] session_options + ice_file done");
     let input = make_input(&default_early_dcx, &matches.free);
     let has_input = input.is_some();
     let (odir, ofile) = make_output(&matches);
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-d] make_input has_input={}; calling interface::run_compiler", has_input);
 
     drop(default_early_dcx);
 
@@ -324,6 +340,8 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
     let registered_lints = config.register_lints.is_some();
 
     interface::run_compiler(config, |compiler| {
+        #[cfg(target_os = "none")]
+        semos_std::println!("[probe] driver_impl closure entry (session ready)");
         let sess = &compiler.sess;
         let codegen_backend = &*compiler.codegen_backend;
 
@@ -367,7 +385,11 @@ pub fn run_compiler(at_args: &[String], callbacks: &mut (dyn Callbacks + Send)) 
 
         // Parse the crate root source code (doesn't parse submodules yet)
         // Everything else is parsed during macro expansion.
+        #[cfg(target_os = "none")]
+        semos_std::println!("[probe] about to passes::parse (read + lex + parse input)");
         let mut krate = passes::parse(sess);
+        #[cfg(target_os = "none")]
+        semos_std::println!("[probe] passes::parse returned");
 
         // If pretty printing is requested: Figure out the representation, print it and exit
         if let Some(pp_mode) = sess.opts.pretty {

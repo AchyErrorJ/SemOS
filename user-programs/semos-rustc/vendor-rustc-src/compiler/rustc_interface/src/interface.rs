@@ -411,6 +411,8 @@ pub(crate) fn initialize_checked_jobserver(early_dcx: &EarlyDiagCtxt) {
 #[allow(rustc::bad_opt_access)]
 pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Send) -> R {
     trace!("run_compiler");
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-i] interface::run_compiler entry");
 
     // Set parallel mode before thread pool creation, which will create `Lock`s.
     rustc_data_structures::sync::set_dyn_thread_safe_mode(config.opts.unstable_opts.threads > 1);
@@ -418,8 +420,12 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
     // Check jobserver before run_in_thread_pool_with_globals, which call jobserver::acquire_thread
     let early_dcx = EarlyDiagCtxt::new(config.opts.error_format);
     initialize_checked_jobserver(&early_dcx);
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-i] jobserver init OK");
 
     crate::callbacks::setup_callbacks();
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-i] setup_callbacks OK; building target config");
 
     let target = config::build_target_config(
         &early_dcx,
@@ -427,6 +433,8 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
         config.opts.sysroot.path(),
         config.opts.unstable_opts.unstable_options,
     );
+    #[cfg(target_os = "none")]
+    semos_std::println!("[probe-i] build_target_config OK; entering thread pool");
     let file_loader = config.file_loader.unwrap_or_else(|| Box::new(RealFileLoader));
     let path_mapping = config.opts.file_path_mapping();
     let hash_kind = config.opts.unstable_opts.src_hash_algorithm(&target);
@@ -439,6 +447,8 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
         &config.extra_symbols,
         SourceMapInputs { file_loader, path_mapping, hash_kind, checksum_hash_kind },
         |current_gcx, jobserver_proxy| {
+            #[cfg(target_os = "none")]
+            semos_std::println!("[probe] thread-pool closure entry");
             // The previous `early_dcx` can't be reused here because it doesn't
             // impl `Send`. Creating a new one is fine.
             let early_dcx = EarlyDiagCtxt::new(config.opts.error_format);
@@ -457,6 +467,9 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
                 }
             };
 
+            #[cfg(target_os = "none")]
+            semos_std::println!("[probe] codegen_backend built");
+
             let temps_dir = config.opts.unstable_opts.temps_dir.as_deref().map(PathBuf::from);
 
             let bundle = match rustc_errors::fluent_bundle(
@@ -468,6 +481,9 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
                 Ok(bundle) => bundle,
                 Err(e) => early_dcx.early_fatal(format!("failed to load fluent bundle: {e}")),
             };
+
+            #[cfg(target_os = "none")]
+            semos_std::println!("[probe] fluent_bundle loaded; building session");
 
             let mut locale_resources = config.locale_resources;
             locale_resources.push(codegen_backend.locale_resource());
@@ -540,6 +556,8 @@ pub fn run_compiler<R: Send>(config: Config, f: impl FnOnce(&Compiler) -> R + Se
             // the resume_unwind branch below, just at coarser granularity.
             #[cfg(not(target_os = "none"))]
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&compiler)));
+            #[cfg(target_os = "none")]
+            semos_std::println!("[probe] session+compiler built; calling user closure f");
             #[cfg(target_os = "none")]
             let res: core::result::Result<_, alloc::boxed::Box<dyn core::any::Any + Send>> = Ok(f(&compiler));
 

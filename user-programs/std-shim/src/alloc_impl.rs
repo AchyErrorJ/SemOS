@@ -30,7 +30,16 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::arch::{SYS_MMAP_ANON, syscall2};
 
 /// User heap base — matches kernel's `paging::user_layout::USER_HEAP_BASE`.
-const USER_HEAP_BASE: u64 = 0x0000_0000_00C0_0000; // 12 MiB
+///
+/// MUST sit above the loaded binary's highest segment. The old value
+/// (12 MiB) sat *inside* a large program's `.text`: semos-rustc's code
+/// segment runs 0x400000..~0x5331248 (~83 MiB), so the first heap grow
+/// (1 MiB at 0xC00000) mapped RW/NX pages straight over `run_compiler`'s
+/// code → `INSTRUCTION_FETCH | PROTECTION_VIOLATION` the instant the
+/// program called it (M27 Phase 5b iter 8 root cause). 4 GiB is clear of
+/// any binary's code/data (which live at 4 MiB..~100 MiB) and ~508 GiB
+/// below the user stacks (~512 GiB), so the bump region can grow freely.
+const USER_HEAP_BASE: u64 = 0x0000_0001_0000_0000; // 4 GiB
 /// mmap granularity when growing (1 MiB).
 const GROW_CHUNK: u64 = 1024 * 1024;
 

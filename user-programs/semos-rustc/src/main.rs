@@ -26,8 +26,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use rustc_codegen_ssa::traits::CodegenBackend;
-use rustc_driver_impl::Callbacks;
-use rustc_interface::interface::Config;
+use rustc_driver_impl::{Callbacks, Compilation};
+use rustc_interface::interface::{Config, Compiler};
+use rustc_middle::ty::TyCtxt;
 use rustc_session::config::Options;
 use rustc_target::spec::Target;
 use semos_std::println;
@@ -45,6 +46,27 @@ impl Callbacks for SemosCallbacks {
                 rustc_codegen_cranelift::__rustc_codegen_backend()
             },
         ));
+    }
+
+    // iter 8 diagnostics: print pipeline checkpoints so we can see how far
+    // a real compile gets when diagnostics are otherwise swallowed.
+    fn after_crate_root_parsing(
+        &mut self,
+        _c: &Compiler,
+        _k: &mut rustc_ast::ast::Crate,
+    ) -> Compilation {
+        println!("[semos-rustc] checkpoint: crate root parsed");
+        Compilation::Continue
+    }
+
+    fn after_expansion<'tcx>(&mut self, _c: &Compiler, _tcx: TyCtxt<'tcx>) -> Compilation {
+        println!("[semos-rustc] checkpoint: macro expansion done");
+        Compilation::Continue
+    }
+
+    fn after_analysis<'tcx>(&mut self, _c: &Compiler, _tcx: TyCtxt<'tcx>) -> Compilation {
+        println!("[semos-rustc] checkpoint: analysis (typeck+borrowck) done — entering codegen");
+        Compilation::Continue
     }
 }
 
@@ -93,8 +115,9 @@ semos_std::main!(fn main() {
         return;
     }
 
-    println!("semos-rustc Phase 5b iter 6 — invoking rustc_driver_impl::run_compiler");
+    println!("semos-rustc Phase 5b iter 8 [BUILD-TAG abc123] — invoking rustc_driver_impl::run_compiler");
     println!("argv: {:?}", argv);
+    println!("[main] about to call rustc_driver_impl::run_compiler");
 
     // Prepend the binary name back since run_compiler strips argv[0].
     let mut args: Vec<String> = vec![String::from("semos-rustc")];

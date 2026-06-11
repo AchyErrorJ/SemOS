@@ -66,6 +66,10 @@ rustc_codegen_ssa = { path = "vendor-rustc-src/compiler/rustc_codegen_ssa" }
 rustc_session = { path = "vendor-rustc-src/compiler/rustc_session" }
 rustc_target = { path = "vendor-rustc-src/compiler/rustc_target" }
 rustc_interface = { path = "vendor-rustc-src/compiler/rustc_interface" }
+# iter 8: Callbacks checkpoint hooks need ast::Crate + ty::TyCtxt in
+# their signatures (after_crate_root_parsing / after_analysis).
+rustc_ast = { path = "vendor-rustc-src/compiler/rustc_ast" }
+rustc_middle = { path = "vendor-rustc-src/compiler/rustc_middle" }
 
 # Direct Cranelift deps stay for the smoke-path fallback (if rustc_driver
 # integration hits a blocker we can still emit ELFs via cg_clif's lower

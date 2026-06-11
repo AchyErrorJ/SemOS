@@ -72,6 +72,7 @@ impl OngoingCodegen {
 
 /// SemOS-target entry that replaces `cg_clif::driver::aot::run_aot`.
 pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
+    semos_std::println!("[aot_semos] run_aot reached — codegen starting");
     // 1. Build one shared ObjectModule for the entire crate.
     //    Single-module / single-task is fine on SemOS — no jobserver,
     //    no parallel CGUs, no incremental cache.
@@ -156,6 +157,9 @@ pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
     use rustc_session::config::OutFileName;
     match out_file_name {
         OutFileName::Real(ref path_buf) => {
+            semos_std::println!(
+                "[aot_semos] writing {} bytes of ELF to {}",
+                elf_bytes.len(), path_buf.as_str());
             if let Err(e) = semos_std::fs::write(path_buf.as_str(), &elf_bytes) {
                 tcx.dcx().fatal(alloc::format!(
                     "aot_semos: fs::write({}) failed: {:?}",
@@ -163,6 +167,7 @@ pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
                     e
                 ));
             }
+            semos_std::println!("[aot_semos] ELF write OK");
         }
         OutFileName::Stdout => {
             tcx.dcx().fatal("aot_semos: -o - (stdout) not supported on SemOS target");

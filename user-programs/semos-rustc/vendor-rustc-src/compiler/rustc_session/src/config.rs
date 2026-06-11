@@ -1385,7 +1385,10 @@ pub fn host_tuple() -> &'static str {
     // Instead of grabbing the host triple (for the current host), we grab (at
     // compile time) the target triple that this rustc is built with and
     // calling that (at runtime) the host triple.
-    (option_env!("CFG_COMPILER_HOST_TRIPLE")).expect("CFG_COMPILER_HOST_TRIPLE")
+    // SemOS: the official rustc bootstrap sets CFG_COMPILER_HOST_TRIPLE; our
+    // vendored build doesn't, so fall back to the SemOS target. semos-rustc
+    // runs on SemOS and emits SemOS ELFs, so its host == target.
+    (option_env!("CFG_COMPILER_HOST_TRIPLE")).unwrap_or("x86_64-unknown-none")
 }
 
 fn file_path_mapping(

@@ -629,7 +629,13 @@ fn handle_free(ptr: u64, _size: u64) -> u64 {
 fn handle_get_cwd(buf_ptr: u64, buf_len: u64) -> u64 {
     let pid = crate::process::current_pid();
     let len_out = buf_len as usize;
-    if len_out == 0 || len_out > 256 { return u64::MAX; }
+    // Only `cwd_len` bytes (≤128) are ever written, bounded by the
+    // `cwd_len > len_out` check below — so any non-empty caller buffer is
+    // safe. The old `len_out > 256` upper cap wrongly rejected generous
+    // buffers: semos_std::env::current_dir() passes a 4 KiB scratch buffer,
+    // so every call returned u64::MAX → rustc's "Current directory is
+    // invalid" fatal (M27 iter 8). Keep only a sane sanity ceiling.
+    if len_out == 0 || len_out > (1 << 20) { return u64::MAX; }
 
     let cwd_bytes: [u8; 128];
     let cwd_len: usize;

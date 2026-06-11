@@ -23,37 +23,68 @@ pub use rustc_stable_hash::{
 };
 #[cfg(target_os = "none")]
 pub use rustc_hashes::{FromStableHash, StableHasherHash};
+// M27 iter 8: a real accumulating hasher. The previous SemOS stub no-op'd
+// every write and returned [0; 2] from finish() — "incremental hashes dead
+// per §1.3". But StableHasher also computes DefPathHash, which MUST be
+// collision-free *within a single compile* (two distinct DefPaths hashing
+// equal aborts compilation — the crate-root vs `core` collision we hit).
+// We don't need SipHash or cross-session/cross-arch stability (incremental
+// is dropped), only within-run uniqueness, so this is two independent
+// FNV-1a-style lanes with murmur3 fmix64 finalization. Note Hash64::from
+// reads only lane 0, so lane 0 must be well-distributed on its own.
 #[cfg(target_os = "none")]
-pub struct StableHasher;
+pub struct StableHasher {
+    a: u64,
+    b: u64,
+}
 #[cfg(target_os = "none")]
 impl StableHasher {
-    pub fn new() -> Self { Self }
-    pub fn finish<T: FromStableHash<Hash = StableHasherHash>>(self) -> T {
-        // SemOS uses passthrough — incremental hashes dead per §1.3.
-        T::from(StableHasherHash([0; 2]))
+    pub fn new() -> Self {
+        Self { a: 0xcbf2_9ce4_8422_2325, b: 0x9e37_79b9_7f4a_7c15 }
     }
-    pub fn write(&mut self, _bytes: &[u8]) {}
-    pub fn write_u8(&mut self, _i: u8) {}
-    pub fn write_u16(&mut self, _i: u16) {}
-    pub fn write_u32(&mut self, _i: u32) {}
-    pub fn write_u64(&mut self, _i: u64) {}
-    pub fn write_u128(&mut self, _i: u128) {}
-    pub fn write_usize(&mut self, _i: usize) {}
-    pub fn write_i8(&mut self, _i: i8) {}
-    pub fn write_i16(&mut self, _i: i16) {}
-    pub fn write_i32(&mut self, _i: i32) {}
-    pub fn write_i64(&mut self, _i: i64) {}
-    pub fn write_i128(&mut self, _i: i128) {}
-    pub fn write_isize(&mut self, _i: isize) {}
+    #[inline]
+    fn put(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.a = (self.a ^ byte as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            self.b = (self.b ^ byte as u64)
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .rotate_left(27);
+        }
+    }
+    #[inline]
+    fn fmix(mut x: u64) -> u64 {
+        x ^= x >> 33;
+        x = x.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        x ^= x >> 33;
+        x = x.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        x ^= x >> 33;
+        x
+    }
+    pub fn finish<T: FromStableHash<Hash = StableHasherHash>>(self) -> T {
+        T::from(StableHasherHash([Self::fmix(self.a), Self::fmix(self.b ^ self.a)]))
+    }
+    pub fn write(&mut self, bytes: &[u8]) { self.put(bytes); }
+    pub fn write_u8(&mut self, i: u8) { self.put(&[i]); }
+    pub fn write_u16(&mut self, i: u16) { self.put(&i.to_le_bytes()); }
+    pub fn write_u32(&mut self, i: u32) { self.put(&i.to_le_bytes()); }
+    pub fn write_u64(&mut self, i: u64) { self.put(&i.to_le_bytes()); }
+    pub fn write_u128(&mut self, i: u128) { self.put(&i.to_le_bytes()); }
+    pub fn write_usize(&mut self, i: usize) { self.put(&(i as u64).to_le_bytes()); }
+    pub fn write_i8(&mut self, i: i8) { self.put(&[i as u8]); }
+    pub fn write_i16(&mut self, i: i16) { self.put(&i.to_le_bytes()); }
+    pub fn write_i32(&mut self, i: i32) { self.put(&i.to_le_bytes()); }
+    pub fn write_i64(&mut self, i: i64) { self.put(&i.to_le_bytes()); }
+    pub fn write_i128(&mut self, i: i128) { self.put(&i.to_le_bytes()); }
+    pub fn write_isize(&mut self, i: isize) { self.put(&(i as u64).to_le_bytes()); }
 }
 #[cfg(target_os = "none")]
 impl Default for StableHasher {
-    fn default() -> Self { Self }
+    fn default() -> Self { Self::new() }
 }
 #[cfg(target_os = "none")]
 impl core::hash::Hasher for StableHasher {
-    fn write(&mut self, _b: &[u8]) {}
-    fn finish(&self) -> u64 { 0 }
+    fn write(&mut self, b: &[u8]) { self.put(b); }
+    fn finish(&self) -> u64 { Self::fmix(self.a) }
 }
 
 /// Something that implements `HashStable<CTX>` can be hashed in a way that is

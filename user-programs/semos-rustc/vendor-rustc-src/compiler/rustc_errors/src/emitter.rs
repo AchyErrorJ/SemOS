@@ -556,16 +556,26 @@ struct Buffy {
 
 impl Write for Buffy {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // M27 TODO(Phase 2b): semos_std::io::Write is implemented for
-        // Vec<u8> via the blanket alloc-backed impl (verified in Cranelift
-        // port). If a future semos_std change removes that impl, this site
-        // needs an explicit io::Write impl-for-Vec<u8>.
-        self.buffer.write(buf)
+        // M27 iter 8: WRITE-THROUGH, not buffered. The original buffered
+        // into `self.buffer` and only pushed to Stdout on flush(). But
+        // rustc's fatal-error path calls `process::exit` (no destructors
+        // run, so Drop's flush never fires) — every diagnostic emitted
+        // before a fatal exit was silently LOST. That made all compile
+        // failures invisible on SemOS. SYS_WRITE is already atomic per
+        // the Buffy doc comment, so unbuffered write-through is correct
+        // and costs nothing. We still append to `self.buffer` so the Drop
+        // assertion stays meaningful, then immediately drain it.
+        let n = self.buffer.write(buf)?;
+        self.buffer_writer.write_all(&self.buffer)?;
+        self.buffer.clear();
+        Ok(n)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.buffer_writer.write_all(&self.buffer)?;
-        self.buffer.clear();
+        if !self.buffer.is_empty() {
+            self.buffer_writer.write_all(&self.buffer)?;
+            self.buffer.clear();
+        }
         Ok(())
     }
 }

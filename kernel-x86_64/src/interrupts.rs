@@ -299,7 +299,7 @@ extern "x86-interrupt" fn page_fault_handler(
         // would drown the demo output. The fault exit-code sentinel set
         // in kill_current_task() is what lets parents/pollers detect a
         // real crash (vs SYS_EXIT(0)). Flip USER_PF_VERBOSE to debug.
-        const USER_PF_VERBOSE: bool = false;
+        const USER_PF_VERBOSE: bool = true; // M27 iter8: trace the semos-rustc run_compiler entry fault
         if USER_PF_VERBOSE {
             let cr2 = Cr2::read_raw();
             let rip = stack_frame.instruction_pointer.as_u64();

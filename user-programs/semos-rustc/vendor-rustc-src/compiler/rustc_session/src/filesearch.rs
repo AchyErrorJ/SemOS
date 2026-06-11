@@ -264,6 +264,17 @@ pub(crate) fn default_sysroot() -> PathBuf {
         rustlib_path.exists().then_some(p)
     }
 
+    // SemOS: no dll/exe path introspection (current_dll_path is stubbed Err)
+    // and argv[0] isn't a symlink, so neither host discovery path works.
+    // The sysroot is a fixed location in the SemOS path namespace; target
+    // rustlib (core/alloc/std rlibs) is expected under /sysroot/lib/rustlib/.
+    #[cfg(target_os = "none")]
+    {
+        let _ = from_env_args_next; // silence unused on target
+        return PathBuf::from("/sysroot");
+    }
+
+    #[cfg(not(target_os = "none"))]
     from_env_args_next()
         .unwrap_or_else(|| default_from_rustc_driver_dll().expect("Failed finding sysroot"))
 }
