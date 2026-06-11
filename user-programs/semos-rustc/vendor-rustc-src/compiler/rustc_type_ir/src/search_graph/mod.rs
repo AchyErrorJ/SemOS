@@ -19,7 +19,13 @@ use core::fmt::Debug;
 use core::hash::Hash;
 use core::iter;
 use core::marker::PhantomData;
+// M27 option B: data_structures::HashMap is std::HashMap on host (rustc-hash
+// `std` feature) but hashbrown on target — its `.entry()` returns the matching
+// Entry, so the import must track the map type per target.
+#[cfg(target_os = "none")]
 use hashbrown::hash_map::Entry;
+#[cfg(not(target_os = "none"))]
+use std::collections::hash_map::Entry;
 
 use derive_where::derive_where;
 #[cfg(feature = "nightly")]
