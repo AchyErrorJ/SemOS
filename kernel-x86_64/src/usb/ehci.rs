@@ -856,6 +856,12 @@ fn bring_up_hub(ctl_idx: usize, hub: &DevCtx, depth: u8) -> usize {
 /// (matching the original inline code — `bring_up_hub` is entered with
 /// `depth + 1`, so a second-tier hub recursing through `enumerate_device`
 /// → `bring_up_hub` still gets its own +1, preserving the descent guard).
+///
+/// Dock cascade hardening: if `enumerate_device` fails on a connected
+/// port, the port is reset once more and enumeration retried a single
+/// time before giving up. On the W540, an iPhone behind the Pro Dock's
+/// hub enumerated once then failed to re-appear on later usbenum runs;
+/// the single fresh reset before retry recovers that race.
 fn bring_up_hub_port(ctl_idx: usize, hub: &DevCtx, port: u8, depth: u8) -> bool {
     let (status, change) = match hub_get_port_status(ctl_idx, hub, port) {
         Some(s) => s,
@@ -884,7 +890,20 @@ fn bring_up_hub_port(ctl_idx: usize, hub: &DevCtx, port: u8, depth: u8) -> bool 
     } else {
         (hub.hub_addr, hub.hub_port)
     };
-    enumerate_device(ctl_idx, child_eps, tt_addr, tt_port, depth)
+    if enumerate_device(ctl_idx, child_eps, tt_addr, tt_port, depth) {
+        return true;
+    }
+    // Dock cascade hardening: re-reset this port once (SET_FEATURE
+    // PORT_RESET, wait for C_PORT_RESET — handled by hub_reset_port) and
+    // retry enumerate_device once more before giving up. Covers the
+    // iPhone-behind-dock case where the first enumerate raced the
+    // device's own re-attach.
+    println!("[ehci] hub addr={} port {}: enumerate failed — re-resetting once and retrying", hub.addr, port);
+    let child_eps2 = match hub_reset_port(ctl_idx, hub, port) {
+        Some(eps) => eps,
+        None => return false,
+    };
+    enumerate_device(ctl_idx, child_eps2, tt_addr, tt_port, depth)
 }
 
 /// Reset a downstream hub port and return the attached child's EPS speed
