@@ -332,6 +332,12 @@ pub fn poll_one_scancode() -> bool {
 /// flooding the console.
 pub fn report_poll_stats(tick: u64) {
     use core::sync::atomic::Ordering;
+    // Diagnostic for "typing produces nothing on real hardware" — solved.
+    // Off by default: the cumulative-counter gate below means that once
+    // ANY PS/2 byte ever arrives (e.g. pong reads a key), the line would
+    // print every second for the rest of the session.
+    const PS2_POLL_DIAG: bool = false;
+    if !PS2_POLL_DIAG { return; }
     if tick % 62 != 0 { return; }
     let b = POLL_BYTES.load(Ordering::Relaxed);
     if b == 0 { return; }
