@@ -512,10 +512,15 @@ fn qh_dw2(dev: &DevCtx) -> u32 {
 /// from earlier transfers.
 unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: usize, timeout_ms: u64) -> Result<(), &'static str> {
     let pg = ctl.page;
+    // INSERT the transfer QH between head and whatever head currently
+    // points at (head itself when idle, the persistent ipheth RX QH when
+    // armed) — and restore that link on unlink, so one-shot transfers
+    // never orphan the RX QH.
+    let chain_next = read_volatile(&raw const ASYNCPS[pg].head.0[0]);
     // Initialize the transfer QH.
     let x = &raw mut ASYNCPS[pg].xfer.0;
     for dw in (*x).iter_mut() { *dw = 0; }
-    (*x)[0] = ctl.head_phys | LINK_TYP_QH; // close the ring back to head
+    (*x)[0] = chain_next;
     (*x)[1] = dw1;
     (*x)[2] = dw2;
     (*x)[4] = first_qtd;  // overlay next qTD
@@ -553,10 +558,10 @@ unsafe fn run_xfer(ctl: &Ctl, dw1: u32, dw2: u32, first_qtd: u32, last_qtd_idx: 
         core::hint::spin_loop();
     }
 
-    // Unlink: point head back at itself, then ring the IAA doorbell and
-    // wait for the advance interrupt status so we know the HC no longer
-    // holds a cached pointer to the transfer QH.
-    write_volatile(&raw mut ASYNCPS[pg].head.0[0], ctl.head_phys | LINK_TYP_QH);
+    // Unlink: restore head's previous link, then ring the IAA doorbell
+    // and wait for the advance interrupt status so we know the HC no
+    // longer holds a cached pointer to the transfer QH.
+    write_volatile(&raw mut ASYNCPS[pg].head.0[0], chain_next);
     fence(Ordering::SeqCst);
     let cmd = read_u32(ctl.op_base + op::USBCMD);
     write_u32(ctl.op_base + op::USBCMD, cmd | usbcmd::IAAD);
@@ -986,6 +991,8 @@ fn try_ipheth(ctl_idx: usize, dev: &DevCtx, cfg_blob: &[u8], cfg_value: u8) -> b
         mac,
         confirmed_pairing: false,
     });
+    // Bring up the bulk data path (persistent RX QH + first receive).
+    ipheth_net_setup(ctl_idx, dev, in_ep, out_ep, in_mps, out_mps);
     true
 }
 
@@ -1150,6 +1157,9 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
 /// Scan all root ports on all controllers and enumerate what's there.
 /// Returns total devices enumerated (hubs count, their children too).
 pub fn enumerate_all() -> usize {
+    // Port resets invalidate device addresses — the live ipheth RX QH
+    // must be unlinked first or the HC keeps polling a stale address.
+    ipheth_net_teardown();
     // Re-runs (usbenum hot-plug debugging) reset every port anyway, so
     // start from a clean table + fresh addresses each time.
     unsafe {
@@ -1200,6 +1210,202 @@ pub fn init_and_enumerate() -> usize {
     let n = enumerate_all();
     println!("[ehci] enumeration complete: {} device tree(s)", n);
     n
+}
+
+// ============================================================================
+// ipheth data path — persistent bulk-IN RX + one-shot bulk-OUT TX
+// ============================================================================
+//
+// The RX QH lives permanently in the async schedule (head → rx → head;
+// one-shot transfers insert themselves between head and rx without
+// disturbing it). One receive is outstanding at a time: a single qTD
+// with a 2 KiB buffer; the HC retires it on the frame's short packet,
+// `ipheth_recv_frame` harvests + re-arms. Data toggles are tracked in
+// software (DTC=1), same scheme as `bulk()`.
+//
+// Legacy ipheth framing: each retired transfer is one Ethernet frame
+// prefixed with 2 alignment bytes (IPHETH_IP_ALIGN). We never send
+// ENABLE_NCM, so the iPhone stays in legacy framing.
+
+#[repr(C, align(4096))]
+struct IphethPage {
+    rx_qh: Qh,
+    rx_qtd: Qtd,
+    rx_buf: [u8; 2048],
+}
+static mut IPHETH_PAGE: IphethPage = IphethPage {
+    rx_qh: Qh([0; 32]),
+    rx_qtd: Qtd([0; 16]),
+    rx_buf: [0; 2048],
+};
+
+#[derive(Copy, Clone)]
+struct IphethLink {
+    ctl_idx: usize,
+    dev: DevCtx,
+    in_ep: u8,
+    out_ep: u8,
+    in_mps: u16,
+    out_mps: u16,
+    rx_qh_phys: u32,
+    rx_qtd_phys: u32,
+    rx_buf_phys: u32,
+}
+static mut IPHETH_LINK: Option<IphethLink> = None;
+static mut IPHETH_RX_TOGGLE: bool = false;
+static mut IPHETH_TX_TOGGLE: bool = false;
+/// Rate-limit RX error logging (a noisy phone would flood serial).
+static mut IPHETH_RX_ERRS: u32 = 0;
+
+/// Arm (or re-arm) the single outstanding bulk-IN receive.
+fn ipheth_arm_rx() {
+    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return };
+    unsafe {
+        let q = &raw mut IPHETH_PAGE.rx_qtd.0;
+        (*q)[0] = LINK_T;
+        (*q)[1] = LINK_T;
+        let dt = if IPHETH_RX_TOGGLE { token::DT } else { 0 };
+        (*q)[2] = token::ACTIVE | token::CERR_3 | token::PID_IN | token::IOC | dt
+            | ((2048u32) << token::TOTAL_SHIFT);
+        (*q)[3] = l.rx_buf_phys;
+        (*q)[4] = (l.rx_buf_phys & !0xFFF).wrapping_add(0x1000);
+        (*q)[5] = 0; (*q)[6] = 0; (*q)[7] = 0;
+        fence(Ordering::SeqCst);
+        // Hand it to the (idle) RX QH via the overlay: next-qTD pointer
+        // first, then a zeroed token (Active=0, Halted=0) which makes
+        // the HC advance to and fetch our qTD.
+        let h = &raw mut IPHETH_PAGE.rx_qh.0;
+        write_volatile(&raw mut (*h)[4], l.rx_qtd_phys);
+        write_volatile(&raw mut (*h)[5], LINK_T);
+        fence(Ordering::SeqCst);
+        write_volatile(&raw mut (*h)[6], 0);
+        fence(Ordering::SeqCst);
+    }
+}
+
+/// Called from `try_ipheth` after GET_MACADDR succeeds: build the RX QH,
+/// splice it into this controller's async schedule, and arm the first
+/// receive. Idempotent via teardown-first.
+fn ipheth_net_setup(ctl_idx: usize, dev: &DevCtx, in_ep: u8, out_ep: u8, in_mps: u16, out_mps: u16) -> bool {
+    ipheth_net_teardown();
+    let ctl = match unsafe { CTLS[ctl_idx] } { Some(c) => c, None => return false };
+    let rx_qh_phys = match phys32_of(unsafe { &raw const IPHETH_PAGE.rx_qh } as u64) { Some(p) => p, None => return false };
+    let rx_qtd_phys = match phys32_of(unsafe { &raw const IPHETH_PAGE.rx_qtd } as u64) { Some(p) => p, None => return false };
+    let rx_buf_phys = match phys32_of(unsafe { &raw const IPHETH_PAGE.rx_buf } as u64) { Some(p) => p, None => return false };
+
+    unsafe {
+        let h = &raw mut IPHETH_PAGE.rx_qh.0;
+        for dw in (*h).iter_mut() { *dw = 0; }
+        (*h)[0] = ctl.head_phys | LINK_TYP_QH; // close ring back to head
+        (*h)[1] = qh_dw1(dev, in_ep & 0x0F, in_mps);
+        (*h)[2] = qh_dw2(dev);
+        (*h)[4] = LINK_T;
+        (*h)[5] = LINK_T;
+        (*h)[6] = token::HALTED; // idle until armed
+        fence(Ordering::SeqCst);
+        // Splice in: head → rx (rx already points back at head).
+        write_volatile(&raw mut ASYNCPS[ctl.page].head.0[0], rx_qh_phys | LINK_TYP_QH);
+        fence(Ordering::SeqCst);
+
+        IPHETH_LINK = Some(IphethLink {
+            ctl_idx, dev: *dev, in_ep, out_ep, in_mps, out_mps,
+            rx_qh_phys, rx_qtd_phys, rx_buf_phys,
+        });
+        IPHETH_RX_TOGGLE = false;
+        IPHETH_TX_TOGGLE = false;
+        IPHETH_RX_ERRS = 0;
+    }
+    ipheth_arm_rx();
+    println!("[ehci-ipheth] RX armed: IN=0x{:02X} OUT=0x{:02X} (bulk data path live)", in_ep, out_ep);
+    true
+}
+
+/// Unlink the RX QH and forget the device. Must run before any
+/// re-enumeration (port resets change addresses, invalidating the QH).
+pub fn ipheth_net_teardown() {
+    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return };
+    if let Some(ctl) = unsafe { CTLS[l.ctl_idx] } {
+        unsafe {
+            // Restore head's self-link, then IAA so the HC drops any
+            // cached pointer to the RX QH before we forget it.
+            write_volatile(&raw mut ASYNCPS[ctl.page].head.0[0], ctl.head_phys | LINK_TYP_QH);
+            fence(Ordering::SeqCst);
+            let cmd = read_u32(ctl.op_base + op::USBCMD);
+            write_u32(ctl.op_base + op::USBCMD, cmd | usbcmd::IAAD);
+            for _ in 0..1_000_000u32 {
+                let sts = read_u32(ctl.op_base + op::USBSTS);
+                if sts & usbsts::IAA != 0 {
+                    write_u32(ctl.op_base + op::USBSTS, usbsts::IAA);
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+        }
+    }
+    unsafe { IPHETH_LINK = None; }
+}
+
+/// True once the data path is set up (NetDevice link_up signal).
+pub fn ipheth_active() -> bool {
+    unsafe { IPHETH_LINK.is_some() }
+}
+
+/// Non-consuming check: has the outstanding receive retired?
+pub fn ipheth_has_frame() -> bool {
+    if unsafe { IPHETH_LINK.is_none() } { return false; }
+    let tok = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtd.0[2]) };
+    tok & token::ACTIVE == 0
+}
+
+/// Harvest a received Ethernet frame (alignment padding stripped) into
+/// `buf`. Returns 0 if nothing has arrived. Always re-arms.
+pub fn ipheth_recv_frame(buf: &mut [u8]) -> usize {
+    if unsafe { IPHETH_LINK.is_none() } { return 0; }
+    let tok = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtd.0[2]) };
+    if tok & token::ACTIVE != 0 {
+        return 0;
+    }
+    let mut got = 0usize;
+    if tok & token::ERR_MASK == 0 {
+        let residual = ((tok & token::TOTAL_MASK) >> token::TOTAL_SHIFT) as usize;
+        let n = 2048usize.saturating_sub(residual);
+        if n > iphone::IPHETH_IP_ALIGN {
+            let payload = n - iphone::IPHETH_IP_ALIGN;
+            let copy = payload.min(buf.len());
+            unsafe {
+                buf[..copy].copy_from_slice(
+                    &IPHETH_PAGE.rx_buf[iphone::IPHETH_IP_ALIGN..iphone::IPHETH_IP_ALIGN + copy]);
+            }
+            got = copy;
+            iphone::mark_paired(); // first frame = pairing confirmed
+        }
+    } else {
+        unsafe {
+            IPHETH_RX_ERRS += 1;
+            if IPHETH_RX_ERRS <= 3 || IPHETH_RX_ERRS.is_power_of_two() {
+                println!("[ehci-ipheth] RX error #{} tok=0x{:08X} ({})",
+                    IPHETH_RX_ERRS, tok, err_token_name(tok));
+            }
+        }
+    }
+    unsafe { IPHETH_RX_TOGGLE = tok & token::DT != 0; }
+    ipheth_arm_rx();
+    got
+}
+
+/// Transmit one Ethernet frame (legacy framing: raw frame, no padding).
+pub fn ipheth_send_frame(frame: &[u8]) -> bool {
+    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return false };
+    if frame.is_empty() || frame.len() > 1600 { return false; }
+    let mut tmp = [0u8; 1600];
+    tmp[..frame.len()].copy_from_slice(frame);
+    let mut toggle = unsafe { IPHETH_TX_TOGGLE };
+    let ok = bulk(
+        l.ctl_idx, &l.dev, l.out_ep & 0x0F, l.out_mps,
+        false, &mut toggle, &mut tmp, frame.len(),
+    ).is_some();
+    unsafe { IPHETH_TX_TOGGLE = toggle; }
+    ok
 }
 
 /// usbinfo support: print every device enumerated through EHCI.

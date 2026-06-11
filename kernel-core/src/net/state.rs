@@ -70,6 +70,16 @@ static mut INITIALIZED: bool = false;
 const GUEST_IP:    Ipv4Address = Ipv4Address::new(10, 0, 2, 15);
 const GUEST_CIDR:  u8 = 24;
 const GATEWAY:     Ipv4Address = Ipv4Address::new(10, 0, 2, 2);
+const SLIRP_DNS:   Ipv4Address = Ipv4Address::new(10, 0, 2, 3);
+
+/// DNS resolver for the active interface. SLIRP default; overridden by
+/// `init_with_ipconfig` (e.g. the iPhone tether hands out 172.20.10.1).
+static mut DNS_SERVER_IP: Ipv4Address = SLIRP_DNS;
+
+/// The DNS server the resolver (net/dns.rs) should query.
+pub fn dns_server() -> Ipv4Address {
+    unsafe { DNS_SERVER_IP }
+}
 
 // ============================================================================
 // Public API
