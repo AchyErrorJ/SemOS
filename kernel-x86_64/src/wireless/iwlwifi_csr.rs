@@ -235,4 +235,22 @@ impl Csr {
         self.write32(CSR_HBUS_TARG_MEM_WADDR, addr);
         self.write32(CSR_HBUS_TARG_MEM_WDAT, value);
     }
+
+    /// Block write to device SRAM via the HBUS window. WADDR is set once
+    /// and auto-increments per WDAT write (iwl_write_mem). `dwords` are
+    /// little-endian values already. Caller must hold NIC access.
+    pub fn mem_write_block(&self, addr: u32, dwords: &[u32]) {
+        self.write32(CSR_HBUS_TARG_MEM_WADDR, addr);
+        for &v in dwords {
+            self.write32(CSR_HBUS_TARG_MEM_WDAT, v);
+        }
+    }
+
+    /// Block read from device SRAM (RADDR set once, auto-increments).
+    pub fn mem_read_block(&self, addr: u32, out: &mut [u32]) {
+        self.write32(CSR_HBUS_TARG_MEM_RADDR, addr);
+        for v in out.iter_mut() {
+            *v = self.read32(CSR_HBUS_TARG_MEM_RDAT);
+        }
+    }
 }

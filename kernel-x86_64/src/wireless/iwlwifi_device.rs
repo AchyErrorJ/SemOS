@@ -244,30 +244,39 @@ impl IwlDevice {
         true
     }
 
-    /// Load one firmware section (a `(load_addr, bytes)` pair) into device
-    /// SRAM, chunking through the bounce buffer.
+    /// Load one firmware section into device SRAM by writing it directly
+    /// through the HBUS memory window (iwl_write_mem). Bypasses the FH DMA
+    /// engine entirely — slower, but doesn't need the TX/scheduler setup
+    /// the service-channel DMA requires. Verifies by reading back.
     fn load_section(&self, addr: u32, data: &[u8]) -> bool {
-        let bounce_virt = unsafe { &raw const FW_DMA_BOUNCE as u64 };
-        let bounce_phys = match phys_of(bounce_virt) {
-            Some(p) => p,
-            None => { println!("[iwlwifi] bounce buffer phys translation failed"); return false; }
-        };
-        let mut off = 0usize;
-        while off < data.len() {
-            let n = (data.len() - off).min(FW_BOUNCE_SIZE);
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    data.as_ptr().add(off),
-                    (&raw mut FW_DMA_BOUNCE) as *mut u8,
-                    n,
-                );
-            }
-            // First dword of this chunk, for SRAM-readback verification.
-            let expect0 = u32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]);
-            if !self.load_chunk(addr + off as u32, bounce_phys, n as u32, expect0) {
-                return false;
-            }
-            off += n;
+        // Convert bytes → little-endian dwords (pad a short tail with 0).
+        let n_dw = (data.len() + 3) / 4;
+        if !self.grab_nic_access() {
+            return false;
+        }
+        // Write in bursts so a single grab covers a manageable run; the
+        // HBUS WADDR auto-increments, so we just stream WDAT.
+        self.csr.write32(super::iwlwifi_csr::CSR_HBUS_TARG_MEM_WADDR, addr);
+        for i in 0..n_dw {
+            let b0 = data.get(i*4).copied().unwrap_or(0);
+            let b1 = data.get(i*4+1).copied().unwrap_or(0);
+            let b2 = data.get(i*4+2).copied().unwrap_or(0);
+            let b3 = data.get(i*4+3).copied().unwrap_or(0);
+            self.csr.write32(super::iwlwifi_csr::CSR_HBUS_TARG_MEM_WDAT,
+                u32::from_le_bytes([b0, b1, b2, b3]));
+        }
+        // Verify first + a middle dword landed.
+        let expect0 = u32::from_le_bytes([
+            data.first().copied().unwrap_or(0),
+            data.get(1).copied().unwrap_or(0),
+            data.get(2).copied().unwrap_or(0),
+            data.get(3).copied().unwrap_or(0)]);
+        let got0 = self.csr.mem_read32(addr);
+        self.release_nic_access();
+        if got0 != expect0 {
+            println!("[iwlwifi] load_section 0x{:08X}: readback 0x{:08X} != expected 0x{:08X}",
+                addr, got0, expect0);
+            return false;
         }
         true
     }
