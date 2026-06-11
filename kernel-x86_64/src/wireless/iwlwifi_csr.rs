@@ -127,6 +127,26 @@ pub mod fh {
     }
 }
 
+/// FH receive-path registers (gen1) — RX buffer descriptor ring + status.
+pub mod fh_rx {
+    const MEM_LOWER: u64 = 0x1000;
+    /// Status write-back pointer reg (driver writes rb_stts_phys >> 4).
+    pub const RSCSR_CHNL0_STTS_WPTR: u64 = MEM_LOWER + 0xBC0;       // 0x1BC0
+    /// RBD circular buffer base reg (driver writes rbd_phys >> 8).
+    pub const RSCSR_CHNL0_RBDCB_BASE: u64 = MEM_LOWER + 0xBC0 + 0x4; // 0x1BC4
+    /// RX write pointer — driver advances to publish free buffers.
+    pub const RSCSR_CHNL0_WPTR: u64 = MEM_LOWER + 0xBC0 + 0x8;       // 0x1BC8
+    /// RX channel config.
+    pub const RCSR_CHNL0_CONFIG: u64 = MEM_LOWER + 0xC00;            // 0x1C00
+
+    pub const CONFIG_ENABLE: u32 = 0x8000_0000;
+    pub const CONFIG_IGNORE_RXF_EMPTY: u32 = 0x0000_0004;
+    pub const CONFIG_IRQ_DEST_HOST: u32 = 0x0000_1000;
+    pub const CONFIG_RB_SIZE_4K: u32 = 0x0000_0000;
+    pub const CONFIG_RBDC_SIZE_POS: u32 = 20; // value = log2(num RBDs)
+    pub const CONFIG_IRQ_RBTH_POS: u32 = 4;
+}
+
 /// APMG (power management gateway) registers — accessed via PRPH, 7000-series.
 pub mod apmg {
     pub const CLK_EN_REG:        u32 = 0x0000_3004;

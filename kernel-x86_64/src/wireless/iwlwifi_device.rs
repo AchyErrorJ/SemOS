@@ -26,6 +26,21 @@ static mut FW_DMA_BOUNCE: FwDmaBounce = FwDmaBounce([0; FW_BOUNCE_SIZE]);
 struct KeepWarm([u8; 4096]);
 static mut KEEP_WARM: KeepWarm = KeepWarm([0; 4096]);
 
+/// RX ring for catching the firmware's ALIVE notification (and later, all
+/// received frames). gen1 RBD = 32-bit (buf_phys >> 8). 256 buffers ×
+/// 4 KiB = 1 MiB; the NIC DMAs received notifications into these.
+const RX_RING_SIZE: usize = 256;
+#[repr(C, align(4096))]
+struct RxRbd([u32; RX_RING_SIZE]);
+static mut RX_RBD: RxRbd = RxRbd([0; RX_RING_SIZE]);
+/// Status page — the NIC writes the closed-buffer index here.
+#[repr(C, align(16))]
+struct RbStts([u32; 4]);
+static mut RB_STTS: RbStts = RbStts([0; 4]);
+#[repr(C, align(4096))]
+struct RxBufs([[u8; 4096]; RX_RING_SIZE]);
+static mut RX_BUFS: RxBufs = RxBufs([[0; 4096]; RX_RING_SIZE]);
+
 /// Translate a kernel-virtual address to physical via the active PML4.
 fn phys_of(virt: u64) -> Option<u64> {
     let page = virt & !0xFFF;
@@ -303,21 +318,92 @@ impl IwlDevice {
         true
     }
 
-    /// Stub: wait for the ALIVE notification from the ucode.
-    /// The ALIVE event is a notification sent by the running firmware
-    /// to confirm it booted successfully.  Without it, no further commands
-    /// can be issued.
-    pub fn wait_alive(&mut self) -> bool {
-        println!("[iwlwifi] wait_alive: STUB — needs event-ring polling on real hardware");
-        // TODO(M11): poll RX queue / event ring for ALIVE notification.
-        false
-    }
-
     /// Stub: initialise PHY from EEPROM/NVM + PNVM + regulatory caps.
     pub fn init_phy(&mut self) -> bool {
         println!("[iwlwifi] init_phy: STUB — needs NVM parse + channel table");
         // TODO(M11): read EEPROM, apply regulatory, run TX/RX calibration.
         false
+    }
+
+    /// Set up the RX buffer-descriptor ring so the firmware has somewhere
+    /// to DMA the ALIVE notification (and all later received frames).
+    pub fn rx_init(&self) -> bool {
+        use super::iwlwifi_csr::fh_rx::*;
+        // Fill the RBD ring with the physical address (>> 8) of each buffer.
+        for i in 0..RX_RING_SIZE {
+            let bp = match phys_of(unsafe { &raw const RX_BUFS.0[i] } as u64) {
+                Some(p) => p,
+                None => { println!("[iwlwifi] rx buf {} phys failed", i); return false; }
+            };
+            unsafe { RX_RBD.0[i] = (bp >> 8) as u32; }
+        }
+        let rbd_phys = match phys_of(unsafe { &raw const RX_RBD } as u64) { Some(p)=>p, None=>return false };
+        let stts_phys = match phys_of(unsafe { &raw const RB_STTS } as u64) { Some(p)=>p, None=>return false };
+        unsafe { RB_STTS.0 = [0; 4]; }
+
+        if !self.grab_nic_access() { return false; }
+        // Stop RX, program ring base + status pointer, then enable.
+        self.csr.write32(RCSR_CHNL0_CONFIG, 0);
+        self.csr.write32(RSCSR_CHNL0_WPTR, 0);
+        self.csr.write32(RSCSR_CHNL0_RBDCB_BASE, (rbd_phys >> 8) as u32);
+        self.csr.write32(RSCSR_CHNL0_STTS_WPTR, (stts_phys >> 4) as u32);
+        let cfg = CONFIG_ENABLE | CONFIG_IGNORE_RXF_EMPTY | CONFIG_IRQ_DEST_HOST
+            | CONFIG_RB_SIZE_4K
+            | (8 << CONFIG_RBDC_SIZE_POS)   // log2(256) = 8
+            | (0x10 << CONFIG_IRQ_RBTH_POS);
+        self.csr.write32(RCSR_CHNL0_CONFIG, cfg);
+        // Publish all but the last 8 buffers (write pointer must be 8-aligned).
+        self.csr.write32(RSCSR_CHNL0_WPTR, (RX_RING_SIZE - 8) as u32);
+        self.release_nic_access();
+        println!("[iwlwifi] rx_init: ring base=0x{:08X} stts=0x{:08X} cfg=0x{:08X}",
+            (rbd_phys >> 8) as u32, (stts_phys >> 4) as u32, cfg);
+        true
+    }
+
+    /// Release the NIC's CPU from reset so the loaded firmware starts
+    /// running. gen1: write CSR_RESET = 0.
+    pub fn release_cpu(&self) {
+        use super::iwlwifi_csr::CSR_RESET;
+        self.csr.write32(CSR_RESET, 0);
+    }
+
+    /// After releasing the CPU, watch for any sign the firmware booted:
+    /// the RX status page advancing, or interrupt status bits setting.
+    /// Diagnostic — dumps state regardless so we can see what the ucode
+    /// did. Returns true if something moved.
+    pub fn wait_alive(&self) -> bool {
+        use super::iwlwifi_csr::{CSR_INT, CSR_FH_INT_STATUS, CSR_RESET};
+        let mut moved = false;
+        let mut last_int = 0u32;
+        let mut last_fh = 0u32;
+        let mut last_stts = 0u32;
+        for _ in 0..200 {
+            let int = self.csr.read32(CSR_INT);
+            let fh = self.csr.read32(CSR_FH_INT_STATUS);
+            let stts = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
+            if int != 0 || fh != 0 || stts != 0 {
+                moved = true;
+                last_int = int; last_fh = fh; last_stts = stts;
+                break;
+            }
+            for _ in 0..5000 { for _ in 0..100 { core::hint::spin_loop(); } } // ~5 ms
+        }
+        // Final snapshot.
+        let int = self.csr.read32(CSR_INT);
+        let fh = self.csr.read32(CSR_FH_INT_STATUS);
+        let reset = self.csr.read32(CSR_RESET);
+        let stts0 = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
+        // First dwords of RX buffer 0 — if ALIVE landed, this is the notif.
+        let rxb0 = unsafe {
+            let p = &raw const RX_BUFS.0[0] as *const u32;
+            (core::ptr::read_volatile(p), core::ptr::read_volatile(p.add(1)),
+             core::ptr::read_volatile(p.add(2)), core::ptr::read_volatile(p.add(3)))
+        };
+        println!("[iwlwifi] post-release: moved={} CSR_INT=0x{:08X} FH_INT=0x{:08X} RESET=0x{:08X} rb_stts=0x{:08X}",
+            moved as u8, int, fh, reset, stts0);
+        println!("[iwlwifi] post-release: first-seen INT=0x{:08X} FH=0x{:08X} stts=0x{:08X}; RXB0=[{:08X} {:08X} {:08X} {:08X}]",
+            last_int, last_fh, last_stts, rxb0.0, rxb0.1, rxb0.2, rxb0.3);
+        moved
     }
 
     /// Start the association sequence: scan for SSID, then auth/assoc/4-way/DHCP.
@@ -420,6 +506,16 @@ pub fn init() -> bool {
                     println!("[iwlwifi] Stage 2b: loading INIT image into NIC SRAM...");
                     if dev.load_image(&fw.init) {
                         println!("[iwlwifi] Stage 2b: INIT image DMA complete — all sections in SRAM");
+                        // Stage 2c: RX ring → release CPU → watch for ALIVE.
+                        println!("[iwlwifi] Stage 2c: RX ring + release CPU, waiting for ALIVE...");
+                        if dev.rx_init() {
+                            dev.release_cpu();
+                            if dev.wait_alive() {
+                                println!("[iwlwifi] Stage 2c: firmware showed signs of life (see snapshot)");
+                            } else {
+                                println!("[iwlwifi] Stage 2c: no ALIVE signal — firmware silent after release");
+                            }
+                        }
                     } else {
                         println!("[iwlwifi] Stage 2b: INIT image load FAILED — see FH error above");
                     }
