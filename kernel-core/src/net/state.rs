@@ -85,12 +85,31 @@ pub fn dns_server() -> Ipv4Address {
 // Public API
 // ============================================================================
 
-/// Bring up the network stack on top of `dev`. The device must already
-/// have completed its own bring-up (virtio-net does this in
-/// `virtio::net::init()`); we just consume its MAC + send/recv APIs.
+/// Bring up the network stack on top of `dev` with the QEMU SLIRP
+/// default IP config (10.0.2.15/24, gw 10.0.2.2, dns 10.0.2.3). Thin
+/// wrapper over [`init_with_ipconfig`] for the common developer case.
 ///
 /// Idempotent: calling twice silently returns `true` the second time.
 pub fn init(dev: &'static dyn NetDevice) -> bool {
+    init_with_ipconfig(dev, GUEST_IP, GUEST_CIDR, GATEWAY, SLIRP_DNS)
+}
+
+/// Bring up the network stack on top of `dev` with an explicit IP
+/// config. The device must already have completed its own bring-up
+/// (virtio-net does this in `virtio::net::init()`); we just consume
+/// its MAC + send/recv APIs.
+///
+/// `ip`/`cidr` is the interface address, `gateway` the default route,
+/// `dns` the resolver the DNS client (net/dns.rs) should query.
+///
+/// Idempotent: calling twice silently returns `true` the second time.
+pub fn init_with_ipconfig(
+    dev: &'static dyn NetDevice,
+    ip: Ipv4Address,
+    cidr: u8,
+    gateway: Ipv4Address,
+    dns: Ipv4Address,
+) -> bool {
     unsafe {
         if INITIALIZED { return true; }
 
@@ -115,16 +134,19 @@ pub fn init(dev: &'static dyn NetDevice) -> bool {
         // timestamp for internal counters.
         let mut iface = Interface::new(config, device_ref, clock::now());
 
-        // Hardcode IP + default route per QEMU SLIRP convention.
-        let cidr = IpCidr::Ipv4(Ipv4Cidr::new(GUEST_IP, GUEST_CIDR));
+        // Apply the caller's IP + default route.
+        let ip_cidr = IpCidr::Ipv4(Ipv4Cidr::new(ip, cidr));
         iface.update_ip_addrs(|addrs| {
             // `push` returns Result, but we know the heapless Vec has
             // room (it's sized for IFACE_MAX_ADDR_COUNT which is ≥ 1).
-            let _ = addrs.push(cidr);
+            let _ = addrs.push(ip_cidr);
         });
-        let _ = iface.routes_mut().add_default_ipv4_route(GATEWAY);
+        let _ = iface.routes_mut().add_default_ipv4_route(gateway);
 
         IFACE = Some(iface);
+
+        // Record the DNS server so the resolver queries the right host.
+        DNS_SERVER_IP = dns;
 
         // Empty SocketSet — no sockets yet in v1. `addr_of_mut!` keeps
         // the borrow scoping explicit; we hand smoltcp a `&'static mut`
@@ -136,9 +158,11 @@ pub fn init(dev: &'static dyn NetDevice) -> bool {
         INITIALIZED = true;
 
         crate::platform::log("[net] smoltcp interface up: ");
-        log_ipv4(&GUEST_IP);
-        crate::platform::log("/24 via ");
-        log_ipv4(&GATEWAY);
+        log_ipv4(&ip);
+        crate::platform::log("/");
+        crate::platform::log_num(cidr as u64);
+        crate::platform::log(" via ");
+        log_ipv4(&gateway);
         crate::platform::log(" on ");
         crate::platform::log(dev.name());
         crate::platform::log("\n");

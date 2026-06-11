@@ -326,6 +326,30 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             }
         }
     }
+    // iPhone tether (ipheth over EHCI): if an iPhone with Personal Hotspot
+    // on was enumerated and its bulk data path is live, register it and
+    // bring up smoltcp with the iPhone tether subnet (172.20.10.0/28; the
+    // phone is both gateway and DNS at 172.20.10.1). On the W540 there is
+    // no virtio-net and no CDC-ECM, so net::init stays uninitialized until
+    // this call — `init_with_ipconfig` brings the stack up on ipheth0.
+    if usb::iphone_net::register_with_kernel_core() {
+        let mac = usb::iphone::iphone_device().map(|d| d.mac).unwrap_or([0; 6]);
+        println!("[ipheth] registered with driver registry as 'ipheth0' MAC {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        if let Some(nd) = kernel_core::drivers::registry::get_net("ipheth0") {
+            use kernel_core::net::Ipv4Address;
+            if kernel_core::net::init_with_ipconfig(
+                nd,
+                Ipv4Address::new(172, 20, 10, 9),
+                28,
+                Ipv4Address::new(172, 20, 10, 1),
+                Ipv4Address::new(172, 20, 10, 1),
+            ) {
+                kernel_core::net::poll();
+                println!("[ipheth] smoltcp up on ipheth0 (172.20.10.9/28 gw/dns 172.20.10.1)");
+            }
+        }
+    }
     println!();
 
     // Initialize kernel-core subsystems

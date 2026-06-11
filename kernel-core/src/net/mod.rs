@@ -42,7 +42,7 @@ pub mod tcp;
 
 pub use http::{decode_chunked, is_chunked, ChunkedError};
 
-pub use state::{init, poll, is_initialized};
+pub use state::{init, init_with_ipconfig, poll, is_initialized};
 pub use tcp::{TcpStream, TcpError};
 pub use dns::resolve;
 

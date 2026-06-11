@@ -29,6 +29,7 @@ pub mod cdc_ncm;
 pub mod ehci;
 pub mod hub;
 pub mod iphone;
+pub mod iphone_net;
 pub mod mass_storage;
 pub mod xhci;
 

@@ -35,8 +35,9 @@ use smoltcp::wire::{IpAddress, IpEndpoint, Ipv4Address};
 // SLIRP-provided resolver + protocol constants
 // ============================================================================
 
-/// QEMU SLIRP's built-in DNS server. Forwards to the host's resolver.
-const DNS_SERVER: Ipv4Address = Ipv4Address::new(10, 0, 2, 3);
+/// DNS server port. The server address itself is per-interface and
+/// comes from `super::state::dns_server()` (SLIRP default 10.0.2.3, or
+/// the iPhone tether's 172.20.10.1 — set by `init_with_ipconfig`).
 const DNS_PORT: u16 = 53;
 
 /// Ephemeral local port for the query. RFC 6335 reserves 49152-65535;
@@ -318,7 +319,7 @@ pub fn resolve(host: &str) -> Option<Ipv4Address> {
     // expires silently times out (observed: api.anthropic.com resolved warm,
     // example.com later returned nothing). We re-send every RESEND_EVERY
     // polls until a reply arrives or we hit MAX_POLLS.
-    let remote = IpEndpoint::new(IpAddress::Ipv4(DNS_SERVER), DNS_PORT);
+    let remote = IpEndpoint::new(IpAddress::Ipv4(super::state::dns_server()), DNS_PORT);
     let send_query = || -> bool {
         unsafe {
             match super::state::sockets_mut() {
