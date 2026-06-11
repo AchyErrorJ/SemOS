@@ -825,15 +825,12 @@ pub fn reclaim_dead_address_spaces() -> usize {
     unsafe {
         let spaces = &raw mut ADDRESS_SPACES;
         let mut freed = 0;
-        let mut total = 0;
-        let mut live = 0;
         for slot in (*spaces).iter_mut() {
-            if slot.is_some() { total += 1; }
             let dead = matches!(slot, Some(s) if !cr3_has_live_task(s.cr3));
             if dead {
                 if let Some(mut victim) = slot.take() {
                     let dying_cr3 = victim.cr3;
-                    victim.destroy(); // PT frames back to the pool
+                    victim.destroy();
                     // CRITICAL: a later spawn's create_address_space may
                     // get the SAME physical PML4 frame back from PT_POOL,
                     // so the new AS has cr3 == dying_cr3. If we leave any
@@ -852,13 +849,8 @@ pub fn reclaim_dead_address_spaces() -> usize {
                     }
                     freed += 1;
                 }
-            } else if slot.is_some() {
-                live += 1;
             }
         }
-        crate::serial::_print(format_args!(
-            "[reclaim] scanned: {} total, {} freed, {} still live\n",
-            total, freed, live));
         freed
     }
 }

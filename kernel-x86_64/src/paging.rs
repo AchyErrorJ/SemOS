@@ -230,12 +230,6 @@ pub fn alloc_pt_frame() -> Option<u64> {
     PT_POOL.lock().alloc()
 }
 
-/// Debug-only: read the current count of free frames in PT_POOL.
-#[allow(non_snake_case)]
-pub fn PT_POOL_DEBUG_count() -> usize {
-    PT_POOL.lock().count
-}
-
 /// Free a page table frame
 pub fn free_pt_frame(phys: u64) {
     PT_POOL.lock().free(phys);
@@ -698,7 +692,6 @@ impl AddressSpace {
     /// MUST NOT be freed (they back kernel mappings + the bootloader
     /// scratch identity map).
     pub fn destroy(&mut self) {
-        let mut stats = WalkStats::default();
         unsafe {
             let boot_pml4 = table_at_phys(boot_cr3());
             let proc_pml4 = table_at_phys(self.cr3);
@@ -709,66 +702,65 @@ impl AddressSpace {
                 let boot_e = boot_pml4.entry(i);
                 if !proc_e.is_present() { continue; }
                 if proc_e.0 == boot_e.0 { continue; } // inherited
-                free_pdpt(proc_e.phys_addr(), &mut stats);
+                free_pdpt(proc_e.phys_addr());
             }
         }
         // Free the PML4 itself last.
         free_pt_frame(self.cr3);
-        stats.pt_pool_frames += 1;
-        let after = PT_POOL.lock().count;
-        crate::serial::_print(format_args!(
-            "[destroy] freed: {} leaves to pools, {} pages to PT_POOL; PT_POOL now {}\n",
-            stats.leaf_to_pool, stats.pt_pool_frames, after));
         self.cr3 = 0;
         self.subtable_count = 0;
     }
 }
 
-#[derive(Default)]
-struct WalkStats {
-    leaf_to_pool: usize,    // leaf data frames returned to security pools
-    pt_pool_frames: usize,  // anything returned to PT_POOL (leaves + interior PTs)
-}
-
-unsafe fn free_pdpt(phys: u64, stats: &mut WalkStats) {
+/// Recursively free a PDPT page and every present non-huge descendant.
+/// Treats huge PDPT entries (1 GiB pages) as opaque — they're never
+/// allocated by SemOS user-process mappings (map_4k/map_2m only), so
+/// encountering one means a shared kernel range we must NOT free.
+unsafe fn free_pdpt(phys: u64) {
     let tbl = table_at_phys(phys);
     for i in 0..512 {
         let e = tbl.entry(i);
         if !e.is_present() { continue; }
         if e.is_huge() { continue; }
-        free_pd(e.phys_addr(), stats);
+        free_pd(e.phys_addr());
     }
     free_pt_frame(phys);
-    stats.pt_pool_frames += 1;
 }
 
-unsafe fn free_pd(phys: u64, stats: &mut WalkStats) {
+/// Recursively free a PD page. 2 MiB huge entries point at security-
+/// pool memory (NOT PT_POOL), so we don't free those leaves — only the
+/// PD page itself once we're done.
+unsafe fn free_pd(phys: u64) {
     let tbl = table_at_phys(phys);
     for i in 0..512 {
         let e = tbl.entry(i);
         if !e.is_present() { continue; }
         if e.is_huge() { continue; }
-        free_pt(e.phys_addr(), stats);
+        free_pt(e.phys_addr());
     }
     free_pt_frame(phys);
-    stats.pt_pool_frames += 1;
 }
 
-unsafe fn free_pt(phys: u64, stats: &mut WalkStats) {
+/// Free a PT page and every 4 KiB leaf frame it maps.
+///
+/// Provenance is determined by phys-address range. `crate::memory::free`
+/// walks the security-tier pool bases and returns `true` if the addr
+/// falls in one — that's an mmap_anon data frame, return it to that
+/// pool. Otherwise it's a PT_POOL frame (map_elf_segment / map_user_stack
+/// allocate via `alloc_pt_frame`), return there. Without this split the
+/// security-pool pages leak into PT_POOL on every spawn, exhausting the
+/// Public pool after a few invocations.
+unsafe fn free_pt(phys: u64) {
     let tbl = table_at_phys(phys);
     for i in 0..512 {
         let e = tbl.entry(i);
         if !e.is_present() { continue; }
         let leaf = e.phys_addr();
-        if crate::memory::free(leaf) {
-            stats.leaf_to_pool += 1;
-        } else {
+        if !crate::memory::free(leaf) {
             free_pt_frame(leaf);
-            stats.pt_pool_frames += 1;
         }
     }
     free_pt_frame(phys);
-    stats.pt_pool_frames += 1;
 }
 
 // ============================================================================
