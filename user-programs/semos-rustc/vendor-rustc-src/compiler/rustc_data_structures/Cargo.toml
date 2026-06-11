@@ -47,6 +47,9 @@ tracing = { version = "0.1", default-features = false }
 semos-std = { path = "../../../../std-shim" }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
+# Host build (option B): re-enable rustc-hash's `std` feature so its std-backed
+# FxHashMap/FxHashSet aliases exist (matches upstream; host code uses std Entry).
+rustc-hash = { version = "2.0.0", features = ["std"] }
 # Phase 5b Stage E iter 8: elsa pulls stable_deref_trait (17 errors).
 # elsa is a self-referential-collections crate used by SourceMap; the
 # specific use sites are dump/debug only.

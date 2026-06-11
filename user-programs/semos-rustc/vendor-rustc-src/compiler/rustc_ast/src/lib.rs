@@ -26,6 +26,11 @@
 #[macro_use]
 extern crate alloc;
 
+// M27 option B (host build): alias `semos_std` to `std` so the unconditional
+// Phase-3 semos_std::* substitutions resolve on host (no semos-std dep there).
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 pub mod util {
     pub mod case;
     pub mod classify;

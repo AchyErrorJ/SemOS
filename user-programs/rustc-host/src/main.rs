@@ -1,10 +1,28 @@
-// M27 DEMO 80 option B — feasibility probe.
-// Step 1: confirm the foundational vendored crate builds for the HOST target
-// (the cfg(not(target_os="none")) paths, which have only ever been exercised
-// implicitly). If this links, we expand the deps toward rustc_driver_impl and
-// turn this into a real host rustc driver.
+// M27 DEMO 80 option B — host rustc driver.
+// Drives the vendored rustc front+back end on the host so we can compile
+// core/compiler_builtins for x86_64-unknown-none with a metadata symbol table
+// matching semos-rustc. Backend is cg_clif (same make_codegen_backend trick as
+// the SemOS binary), avoiding rustc_codegen_llvm in the vendored tree.
+use rustc_codegen_ssa::traits::CodegenBackend;
+use rustc_driver_impl::{Callbacks, run_compiler};
+use rustc_interface::interface::Config;
+use rustc_session::config::Options;
+use rustc_target::spec::Target;
+
+struct HostCallbacks;
+
+impl Callbacks for HostCallbacks {
+    fn config(&mut self, config: &mut Config) {
+        config.make_codegen_backend = Some(Box::new(
+            |_opts: &Options, _target: &Target| -> Box<dyn CodegenBackend> {
+                rustc_codegen_cranelift::__rustc_codegen_backend()
+            },
+        ));
+    }
+}
+
 fn main() {
-    let mut m: rustc_data_structures::fx::FxHashMap<u32, u32> = Default::default();
-    m.insert(1, 2);
-    println!("rustc_data_structures host build OK ({} entries)", m.len());
+    let args: Vec<String> = std::env::args().collect();
+    let mut cb = HostCallbacks;
+    run_compiler(&args, &mut cb);
 }

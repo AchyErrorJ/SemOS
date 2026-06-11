@@ -137,11 +137,20 @@ pub trait FileLoader {
 // the BorrowedBuf machinery to semos_std::io.
 pub struct RealFileLoader;
 
+// M27 option B: semos_std::path::Path is str-backed (`as_str()`); std::path::Path
+// (host) is OsStr-backed (`to_str() -> Option`). This helper yields &str on both.
+#[cfg(target_os = "none")]
+#[inline]
+fn path_as_str(p: &Path) -> &str { p.as_str() }
+#[cfg(not(target_os = "none"))]
+#[inline]
+fn path_as_str(p: &Path) -> &str { p.to_str().expect("non-UTF-8 path in host rustc build") }
+
 impl FileLoader for RealFileLoader {
     fn file_exists(&self, path: &Path) -> bool {
         // M27 R4 B5: semos_std::path::Path has no `exists()`; probe by
         // attempting an open. This matches std's exists() behavior.
-        File::open(path.as_str()).is_ok()
+        File::open(path_as_str(path)).is_ok()
     }
 
     fn read_file(&self, path: &Path) -> io::Result<String> {
@@ -150,7 +159,7 @@ impl FileLoader for RealFileLoader {
         // is dropped because semos_std::fs::File has no metadata yet;
         // SourceFile::new will enforce the limit on the returned
         // contents downstream.
-        fs::read_to_string(path.as_str())
+        fs::read_to_string(path_as_str(path))
     }
 
     fn read_binary_file(&self, path: &Path) -> io::Result<Arc<[u8]>> {
@@ -161,16 +170,22 @@ impl FileLoader for RealFileLoader {
         // include_bytes! correctness, just temporarily 2x peak RSS
         // for binary includes. Restore upstream code once semos_std
         // grows BorrowedBuf + File::metadata.
-        let bytes = fs::read(path.as_str())?;
+        let bytes = fs::read(path_as_str(path))?;
         Ok(Arc::from(bytes))
     }
 
+    #[cfg(target_os = "none")]
     fn current_directory(&self) -> io::Result<PathBuf> {
         // M27 R4 B5: semos_std::env::current_dir_string returns
         // Option<String>; lift into the io::Result<PathBuf> shape.
         semos_std::env::current_dir_string()
             .map(PathBuf::from)
             .ok_or_else(io::Error::other)
+    }
+
+    #[cfg(not(target_os = "none"))]
+    fn current_directory(&self) -> io::Result<PathBuf> {
+        std::env::current_dir()
     }
 }
 

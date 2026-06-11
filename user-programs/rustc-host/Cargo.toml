@@ -13,7 +13,12 @@ name = "rustc-host"
 path = "src/main.rs"
 
 [dependencies]
-rustc_data_structures = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_data_structures" }
+rustc_driver_impl = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_driver_impl" }
+rustc_codegen_cranelift = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_codegen_cranelift" }
+rustc_codegen_ssa = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_codegen_ssa" }
+rustc_session = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_session" }
+rustc_target = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_target" }
+rustc_interface = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_interface" }
 
 # Own workspace root so the semos-rustc target-none workspace doesn't claim us.
 [workspace]

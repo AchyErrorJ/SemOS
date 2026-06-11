@@ -699,6 +699,64 @@ where
     }
 }
 
+// M27 option B (host): on host, FxHashMap/FxHashSet are std::collections types
+// (rustc-hash `std` feature), so they need their own Encodable/Decodable — the
+// upstream impls that §1.3 cfg'd out because the no_std target lacks std HashMap.
+#[cfg(not(target_os = "none"))]
+impl<E: Encoder, K, V, S> Encodable<E> for std::collections::HashMap<K, V, S>
+where
+    K: Encodable<E> + Eq,
+    V: Encodable<E>,
+    S: BuildHasher,
+{
+    fn encode(&self, e: &mut E) {
+        e.emit_usize(self.len());
+        for (key, val) in self {
+            key.encode(e);
+            val.encode(e);
+        }
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+impl<D: Decoder, K, V, S> Decodable<D> for std::collections::HashMap<K, V, S>
+where
+    K: Decodable<D> + Hash + Eq,
+    V: Decodable<D>,
+    S: BuildHasher + Default,
+{
+    fn decode(d: &mut D) -> std::collections::HashMap<K, V, S> {
+        let len = d.read_usize();
+        (0..len).map(|_| (Decodable::decode(d), Decodable::decode(d))).collect()
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+impl<E: Encoder, K, S> Encodable<E> for std::collections::HashSet<K, S>
+where
+    K: Encodable<E> + Eq,
+    S: BuildHasher,
+{
+    fn encode(&self, e: &mut E) {
+        e.emit_usize(self.len());
+        for v in self {
+            v.encode(e);
+        }
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+impl<D: Decoder, K, S> Decodable<D> for std::collections::HashSet<K, S>
+where
+    K: Decodable<D> + Hash + Eq,
+    S: BuildHasher + Default,
+{
+    fn decode(d: &mut D) -> std::collections::HashSet<K, S> {
+        let len = d.read_usize();
+        (0..len).map(|_| Decodable::decode(d)).collect()
+    }
+}
+
 #[cfg(any())]
 impl<E: Encoder, T, S> Encodable<E> for HashSet<T, S>
 where

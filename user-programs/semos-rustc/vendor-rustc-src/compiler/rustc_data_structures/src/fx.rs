@@ -5,11 +5,12 @@ use core::hash::BuildHasherDefault;
 // On the SemOS target with `default-features = false` we re-create the
 // same aliases on top of `hashbrown` directly.
 pub use rustc_hash::{FxBuildHasher, FxHasher};
+// Host: std::HashMap-backed FxHashMap (rustc-hash `std` feature) — matches
+// upstream and the host-only code (profiling/measureme, obligation_forest) that
+// uses std `Entry`. Target: hashbrown-backed (no std). rustc_serialize provides
+// Encodable/Decodable for std HashMap (host) and hashbrown (target) accordingly.
 #[cfg(not(target_os = "none"))]
 pub use rustc_hash::{FxHashMap, FxHashSet};
-// Use `FxBuildHasher` (not `BuildHasherDefault<FxHasher>`) on both
-// branches so the `Default` impl from rustc_hash applies and the
-// `with_hasher(FxBuildHasher)` call below type-checks identically.
 #[cfg(target_os = "none")]
 pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, FxBuildHasher>;
 #[cfg(target_os = "none")]

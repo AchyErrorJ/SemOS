@@ -59,11 +59,9 @@ extern crate std;
 //
 // M27 R4 B2: on SemOS target there is no `std::assert_matches`; pull
 // from core (stable since 1.82 via assert_matches feature gate).
-#[cfg(not(target_os = "none"))]
-pub use std::assert_matches::{assert_matches, debug_assert_matches};
-// M27 fix: nightly-2026-02-01 does NOT have `core::assert_matches`.
-// Provide local macros that delegate to `assert!(matches!(...))`.
-#[cfg(target_os = "none")]
+// M27 fix: nightly-2026-02-01's `std::assert_matches` path doesn't resolve in
+// our vendored host build, and `core::assert_matches` is absent on the target,
+// so provide local macros that delegate to `assert!(matches!(...))` on BOTH.
 mod assert_matches_stub {
     /// Assert that an expression matches a pattern (simplified stub).
     #[macro_export]

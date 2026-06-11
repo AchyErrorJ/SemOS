@@ -37,6 +37,13 @@
 #[macro_use]
 extern crate alloc;
 
+// M27 option B (host build): the Phase-3 port substituted std::* → semos_std::*
+// unconditionally here. On host (no semos-std dep) alias `semos_std` to `std`
+// so the io/fs/path imports resolve; the few divergent semos_std-only calls
+// (env::var→Option, current_dir_string) are cfg-split at their sites.
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 // The code produced by the `Encodable`/`Decodable` derive macros refer to
 // `rustc_span::Span{Encoder,Decoder}`. That's fine outside this crate, but doesn't work inside
 // this crate without this line making `rustc_span` available.
@@ -511,11 +518,20 @@ impl RealFileName {
             FileNameDisplayPreference::Local => {
                 self.local.as_ref().unwrap_or(&self.maybe_remapped).name.to_string_lossy()
             }
+            // M27 option B: semos_std path::file_name() -> Option<&str> (&str: Into<Cow<str>>);
+            // std path::file_name() -> Option<&OsStr>, which needs to_string_lossy().
+            #[cfg(target_os = "none")]
             FileNameDisplayPreference::Short => self
                 .maybe_remapped
                 .name
                 .file_name()
                 .map_or_else(|| "".into(), |f| f.into()),
+            #[cfg(not(target_os = "none"))]
+            FileNameDisplayPreference::Short => self
+                .maybe_remapped
+                .name
+                .file_name()
+                .map_or_else(|| "".into(), |f| f.to_string_lossy()),
             FileNameDisplayPreference::Scope(scope) => self.path(scope).to_string_lossy(),
         }
     }
@@ -1784,6 +1800,10 @@ impl SourceFileHash {
         let len = hash.hash_len();
         let value = &mut hash.value[..len];
         let data = src.as_ref();
+        // Only suppress unused warnings on the target, where the hashing match
+        // below is cfg'd out. On host the match consumes value/data/len, so
+        // moving them here would be a use-after-move.
+        #[cfg(target_os = "none")]
         let _ = (value, data, len);
         #[cfg(not(target_os = "none"))]
         match kind {
