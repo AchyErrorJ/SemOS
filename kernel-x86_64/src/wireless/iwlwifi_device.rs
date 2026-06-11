@@ -485,18 +485,39 @@ impl IwlDevice {
         let bc_phys = match phys_of(unsafe { &raw const TX_BC_TBL } as u64) { Some(p)=>p, None=>return false };
 
         if !self.grab_nic_access() { return false; }
+        use super::iwlwifi_csr::{CSR_HBUS_TARG_WRPTR, fh};
+        let scd_base = self.scd_base_ptr;
         // Disable the scheduler while we configure it.
         self.csr.write_prph(scd::TXFACT, 0);
+        // Clear the SCD per-queue context memory in SRAM (scd_base+0x600
+        // .. +0x808) so stale state doesn't confuse the scheduler.
+        let ctx_words = (scd::TRANS_TBL_OFFSET - scd::CONTEXT_MEM_OFFSET) / 4;
+        for i in 0..ctx_words {
+            self.csr.mem_write32(scd_base + scd::CONTEXT_MEM_OFFSET + i * 4, 0);
+        }
         // Byte-count table base (>> 10) and the command-queue TFD ring base.
         self.csr.write_prph(scd::DRAM_BASE_ADDR, (bc_phys >> 10) as u32);
         self.csr.write32(fh_cbbc_queue(0), (tfd_phys >> 8) as u32);
         // All queues independent (no chaining/aggregation) for the cmd queue.
         self.csr.write_prph(scd::QUEUECHAIN_SEL, 0);
         self.csr.write_prph(scd::AGGR_SEL, 0);
-        // Reset queue-0 read pointer; write pointer via the doorbell later.
+        self.csr.write_prph(scd::CHAINEXT_EN, 0);
+        // Reset queue-0 read pointer + the hardware write pointer.
         self.csr.write_prph(scd::queue_rdptr(0), 0);
-        // Mark queue 0 active.
-        self.csr.write_prph(scd::queue_status(0), scd::QUEUE_STTS_ACTIVE);
+        self.csr.write32(CSR_HBUS_TARG_WRPTR, 0);
+        // Write the queue-0 SCD context in SRAM: window=0, then frame-limit
+        // (64) in both the window-size and frame-limit fields.
+        let frame_limit: u32 = 64;
+        self.csr.mem_write32(scd_base + scd::context_queue_offset(0), 0);
+        self.csr.mem_write32(scd_base + scd::context_queue_offset(0) + 4,
+            ((frame_limit << scd::CTX_WIN_SIZE_POS) & 0x7F)
+            | ((frame_limit << scd::CTX_FRAME_LIMIT_POS) & 0x7F0000));
+        // Enable queue 0 in the SCD with the command TX FIFO.
+        self.csr.write_prph(scd::queue_status(0), scd::queue_enable_val(scd::CMD_FIFO));
+        // Enable the FH TX DMA channels (DMA enable + credit enable).
+        for chan in 0..8u64 {
+            self.csr.write32(fh::tcsr_tx_config(chan), fh::TX_CONFIG_DMA_ENABLE | 0x8);
+        }
         // Enable queue 0 in the TX activity mask.
         self.csr.write_prph(scd::TXFACT, 1 << 0);
 

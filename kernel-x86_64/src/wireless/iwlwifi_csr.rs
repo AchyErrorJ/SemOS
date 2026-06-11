@@ -115,10 +115,21 @@ pub mod scd {
     pub const fn queue_rdptr(q: u32) -> u32 { 0x0000_a02c00 + 0x68 + q * 4 }
     /// Per-queue status bits.
     pub const fn queue_status(q: u32) -> u32 { 0x0000_a02c00 + 0x10c + q * 4 }
-    pub const QUEUE_STTS_ACTIVE: u32 = 1 << 19;
-    /// SCD context table in SRAM lives at scd_base_ptr + this, per queue.
-    pub const CONTEXT_QUEUE_OFFSET: u32 = 0x600;
+    /// Queue-status enable value: active(bit3) + TX-FIFO(bits0-2) +
+    /// WSL(bit4) + the write-enable mask. Command queue uses TX FIFO 7.
+    pub const CMD_FIFO: u32 = 7;
+    pub const STTS_POS_ACTIVE: u32 = 3;
+    pub const STTS_POS_WSL: u32 = 4;
+    pub const STTS_MSK: u32 = 0x017F_0000;
+    pub fn queue_enable_val(fifo: u32) -> u32 {
+        (1 << STTS_POS_ACTIVE) | (fifo & 0x7) | (1 << STTS_POS_WSL) | STTS_MSK
+    }
+    /// SCD context table in SRAM lives at scd_base_ptr + these offsets.
+    pub const CONTEXT_MEM_OFFSET: u32 = 0x600;
     pub const TRANS_TBL_OFFSET: u32 = 0x808;
+    pub const fn context_queue_offset(q: u32) -> u32 { CONTEXT_MEM_OFFSET + q * 8 }
+    pub const CTX_WIN_SIZE_POS: u32 = 0;
+    pub const CTX_FRAME_LIMIT_POS: u32 = 16;
 }
 
 /// FH (Flow Handler) registers — direct BAR0 MMIO, used for firmware DMA.
