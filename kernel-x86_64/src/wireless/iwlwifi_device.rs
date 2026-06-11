@@ -41,6 +41,21 @@ static mut RB_STTS: RbStts = RbStts([0; 4]);
 struct RxBufs([[u8; 4096]; RX_RING_SIZE]);
 static mut RX_BUFS: RxBufs = RxBufs([[0; 4096]; RX_RING_SIZE]);
 
+// ---- TX command queue (queue 0) ----
+const TX_RING_SIZE: usize = 256;
+/// One gen1 TFD = 128 bytes (3 reserved + num_tbs + 20 TBs×6 + 4 pad).
+#[repr(C, align(4096))]
+struct TxTfdRing([[u8; 128]; TX_RING_SIZE]);
+static mut TX_TFD_RING: TxTfdRing = TxTfdRing([[0; 128]; TX_RING_SIZE]);
+/// Scheduler byte-count table: 320 × u16 = 640 bytes, must be 1 KiB-aligned.
+#[repr(C, align(1024))]
+struct TxBcTbl([u16; 320]);
+static mut TX_BC_TBL: TxBcTbl = TxBcTbl([0; 320]);
+/// Command staging buffer (header + payload) the TFD points at.
+#[repr(C, align(64))]
+struct CmdBuf([u8; 512]);
+static mut CMD_BUF: CmdBuf = CmdBuf([0; 512]);
+
 /// Translate a kernel-virtual address to physical via the active PML4.
 fn phys_of(virt: u64) -> Option<u64> {
     let page = virt & !0xFFF;
@@ -454,6 +469,57 @@ impl IwlDevice {
         true
     }
 
+    /// Stage 3a: set up the TX command queue (queue 0) + configure the
+    /// scheduler, then read the scheduler registers back to confirm it's
+    /// responding before we trust it. Requires ALIVE (scd_base_ptr set).
+    pub fn tx_init(&mut self) -> bool {
+        use super::iwlwifi_csr::{scd, fh_cbbc_queue};
+        if self.scd_base_ptr == 0 {
+            println!("[iwlwifi] tx_init: no scd_base (not ALIVE?)");
+            return false;
+        }
+        let tfd_phys = match phys_of(unsafe { &raw const TX_TFD_RING } as u64) { Some(p)=>p, None=>return false };
+        let bc_phys = match phys_of(unsafe { &raw const TX_BC_TBL } as u64) { Some(p)=>p, None=>return false };
+
+        if !self.grab_nic_access() { return false; }
+        // Disable the scheduler while we configure it.
+        self.csr.write_prph(scd::TXFACT, 0);
+        // Byte-count table base (>> 10) and the command-queue TFD ring base.
+        self.csr.write_prph(scd::DRAM_BASE_ADDR, (bc_phys >> 10) as u32);
+        self.csr.write32(fh_cbbc_queue(0), (tfd_phys >> 8) as u32);
+        // All queues independent (no chaining/aggregation) for the cmd queue.
+        self.csr.write_prph(scd::QUEUECHAIN_SEL, 0);
+        self.csr.write_prph(scd::AGGR_SEL, 0);
+        // Reset queue-0 read pointer; write pointer via the doorbell later.
+        self.csr.write_prph(scd::queue_rdptr(0), 0);
+        // Mark queue 0 active.
+        self.csr.write_prph(scd::queue_status(0), scd::QUEUE_STTS_ACTIVE);
+        // Enable queue 0 in the TX activity mask.
+        self.csr.write_prph(scd::TXFACT, 1 << 0);
+
+        // Read back to confirm the SCD is alive and took our config.
+        let txfact = self.csr.read_prph(scd::TXFACT);
+        let chain = self.csr.read_prph(scd::QUEUECHAIN_SEL);
+        let dram = self.csr.read_prph(scd::DRAM_BASE_ADDR);
+        let q0 = self.csr.read_prph(scd::queue_status(0));
+        let cbbc = self.csr.read32(fh_cbbc_queue(0));
+        self.release_nic_access();
+
+        println!("[iwlwifi] tx_init: tfd=0x{:08X} bc=0x{:08X} scd_base=0x{:08X}",
+            (tfd_phys >> 8) as u32, (bc_phys >> 10) as u32, self.scd_base_ptr);
+        println!("[iwlwifi] tx_init readback: TXFACT=0x{:08X} CHAIN=0x{:08X} DRAM_BASE=0x{:08X} Q0_STTS=0x{:08X} CBBC0=0x{:08X}",
+            txfact, chain, dram, q0, cbbc);
+        // Sanity: if the SCD echoes our DRAM_BASE + TXFACT, the address map
+        // is right. All-zero or all-ones means wrong PRPH offsets.
+        let ok = dram == (bc_phys >> 10) as u32 && txfact == 1;
+        if ok {
+            println!("[iwlwifi] tx_init: scheduler responding — command queue configured");
+        } else {
+            println!("[iwlwifi] tx_init: scheduler readback mismatch — SCD register map may be off");
+        }
+        ok
+    }
+
     /// Start the association sequence: scan for SSID, then auth/assoc/4-way/DHCP.
     /// Requires firmware loaded + PHY init done.
     pub fn connect(&mut self, ssid: &[u8], psk: &[u8]) {
@@ -559,7 +625,11 @@ pub fn init() -> bool {
                         if dev.rx_init() {
                             dev.release_cpu();
                             if dev.wait_alive() {
-                                println!("[iwlwifi] Stage 2c: firmware showed signs of life (see snapshot)");
+                                println!("[iwlwifi] Stage 2c: firmware ALIVE");
+                                // Stage 3a: stand up the TX command queue +
+                                // scheduler, verify by register readback.
+                                println!("[iwlwifi] Stage 3a: configuring TX command queue...");
+                                dev.tx_init();
                             } else {
                                 println!("[iwlwifi] Stage 2c: no ALIVE signal — firmware silent after release");
                             }

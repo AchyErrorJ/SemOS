@@ -94,6 +94,33 @@ pub mod gio_chicken {
     pub const DIS_L0S_EXIT_TIMER:   u32 = 0x2000_0000;
 }
 
+/// FH command-queue circular-buffer base registers (direct BAR0). Queue q
+/// TFD ring base goes here as (tfd_phys >> 8).
+pub const fn fh_cbbc_queue(q: u64) -> u64 { 0x1000 + 0x9D0 + 4 * q }
+
+/// Scheduler (SCD) registers — accessed via PRPH. Best-known 7000-series
+/// addresses; tx_init reads them back to confirm before trusting them.
+pub mod scd {
+    pub const SRAM_BASE_ADDR: u32 = 0x0000_a02c00;
+    pub const DRAM_BASE_ADDR: u32 = 0x0000_a02b08;
+    pub const AIT: u32 = 0x0000_a02c0c;
+    pub const TXFACT: u32 = 0x0000_a02c10;
+    pub const ACTIVE: u32 = 0x0000_a02c14;
+    pub const QUEUECHAIN_SEL: u32 = 0x0000_a02ce8;
+    pub const CHAINEXT_EN: u32 = 0x0000_a02d40;
+    pub const AGGR_SEL: u32 = 0x0000_a02d48;
+    pub const INTERRUPT_MASK: u32 = 0x0000_a02e0c;
+    pub const EN_CTRL: u32 = 0x0000_a03c00;
+    /// Per-queue read pointer (queues 0-7 at +4 each).
+    pub const fn queue_rdptr(q: u32) -> u32 { 0x0000_a02c00 + 0x68 + q * 4 }
+    /// Per-queue status bits.
+    pub const fn queue_status(q: u32) -> u32 { 0x0000_a02c00 + 0x10c + q * 4 }
+    pub const QUEUE_STTS_ACTIVE: u32 = 1 << 19;
+    /// SCD context table in SRAM lives at scd_base_ptr + this, per queue.
+    pub const CONTEXT_QUEUE_OFFSET: u32 = 0x600;
+    pub const TRANS_TBL_OFFSET: u32 = 0x808;
+}
+
 /// FH (Flow Handler) registers — direct BAR0 MMIO, used for firmware DMA.
 /// Offsets per iwl-fh.h. The firmware service channel is channel 9.
 pub mod fh {
