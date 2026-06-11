@@ -21,7 +21,7 @@
 #![feature(ptr_as_ref_unchecked)]
 #![feature(rustc_attrs)]
 #![feature(trim_prefix_suffix)]
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
 

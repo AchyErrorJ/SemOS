@@ -1,0 +1,4 @@
+# Must match semos-rustc's pin so the vendored source compiles identically.
+[toolchain]
+channel = "nightly-2026-02-01"
+components = ["rust-src", "llvm-tools-preview"]

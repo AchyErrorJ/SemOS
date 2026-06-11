@@ -13,7 +13,7 @@
 //! connect the fact that they can only be produced by a `StableHasher` to their
 //! `Encode`/`Decode` impls.
 
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 #[macro_use]
 extern crate alloc;

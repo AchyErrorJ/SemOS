@@ -8,7 +8,7 @@
 // the SemOS-host build. `#![no_std]` MUST be the first inner attribute,
 // before the `#![feature(...)]` block (Rust attribute-ordering rules
 // learned in A2-followup §lib.rs).
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(array_windows)]
 #![doc(test(attr(deny(warnings), allow(internal_features))))]

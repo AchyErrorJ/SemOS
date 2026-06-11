@@ -271,7 +271,7 @@
 
 // tidy-alphabetical-start
 #![doc(test(attr(allow(unused_variables), deny(warnings), allow(internal_features))))]
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-end
 
 #[macro_use]

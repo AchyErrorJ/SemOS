@@ -1,6 +1,6 @@
 // M27 Stage F6: no_std + alloc. x86_64-unknown-none has no `std`,
 // so we need to declare no_std and pull alloc explicitly.
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 // tidy-alphabetical-start
 #![cfg_attr(feature = "nightly", allow(internal_features))]

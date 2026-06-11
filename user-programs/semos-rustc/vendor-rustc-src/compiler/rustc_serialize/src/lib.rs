@@ -10,7 +10,7 @@
 #![feature(never_type)]
 #![feature(sized_hierarchy)]
 // tidy-alphabetical-end
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 #[macro_use]
 extern crate alloc;

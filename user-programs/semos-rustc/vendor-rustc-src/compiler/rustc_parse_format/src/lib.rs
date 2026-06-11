@@ -9,7 +9,7 @@
 // so no `#![feature]` attributes should be added.
 #![deny(unstable_features)]
 #![doc(test(attr(deny(warnings), allow(internal_features))))]
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-end
 
 #[macro_use]

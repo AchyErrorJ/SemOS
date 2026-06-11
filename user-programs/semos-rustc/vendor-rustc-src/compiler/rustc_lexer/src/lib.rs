@@ -23,7 +23,7 @@
 // We want to be able to build this crate with a stable compiler,
 // so no `#![feature]` attributes should be added.
 #![deny(unstable_features)]
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-end
 
 #[macro_use]

@@ -19,7 +19,7 @@
 // (no full std) on the SemOS-host build. Cranelift port log patch #11
 // pattern: std::* → core::* / alloc::* / semos_std::* (B5 PathBuf,
 // fs/io).
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![feature(array_windows)]

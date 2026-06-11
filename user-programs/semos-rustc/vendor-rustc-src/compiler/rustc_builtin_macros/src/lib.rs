@@ -1,7 +1,7 @@
 //! This crate contains implementations of built-in macros and other code generating facilities
 //! injecting code into the crate before it is lowered to HIR.
 
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![allow(internal_features)]
 #![feature(assert_matches)]

@@ -33,7 +33,7 @@
 //! debugging, you can make changes inside those crates and quickly run main.rs
 //! to read the debug logs.
 
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 #[macro_use]
 extern crate alloc;

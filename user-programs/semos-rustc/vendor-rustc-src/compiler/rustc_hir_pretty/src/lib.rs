@@ -2,7 +2,7 @@
 //! the definitions in this file have equivalents in `rustc_ast_pretty`.
 
 // M27 Phase 3 D2: no_std hygiene per RECIPE §1.2.
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![recursion_limit = "256"]
 // tidy-alphabetical-end

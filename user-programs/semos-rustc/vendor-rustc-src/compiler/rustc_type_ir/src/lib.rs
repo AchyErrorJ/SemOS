@@ -1,6 +1,6 @@
 // M27 Phase 3 D3: no_std port (RECIPE §1.2). `nightly` feature is the
 // active SemOS target (rustc-analyzer reuses the non-nightly surface upstream).
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(feature = "nightly", rustc_diagnostic_item = "type_ir")]
 // tidy-alphabetical-start
 #![allow(rustc::direct_use_of_rustc_type_ir)]

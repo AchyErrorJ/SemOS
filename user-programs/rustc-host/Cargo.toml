@@ -1,0 +1,19 @@
+# M27 DEMO 80 option B: build the vendored rustc source as a HOST tool so it
+# can compile core/compiler_builtins for x86_64-unknown-none with a metadata
+# symbol table matching semos-rustc (see docs/M27_DISK_SYSROOT_DESIGN.md §6c).
+# Starts as a feasibility probe of the foundational crate; expands to the full
+# rustc_driver_impl driver once the host paths build.
+[package]
+name = "rustc-host"
+version = "0.0.1"
+edition = "2021"
+
+[[bin]]
+name = "rustc-host"
+path = "src/main.rs"
+
+[dependencies]
+rustc_data_structures = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_data_structures" }
+
+# Own workspace root so the semos-rustc target-none workspace doesn't claim us.
+[workspace]

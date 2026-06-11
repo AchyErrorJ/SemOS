@@ -56,7 +56,7 @@ This API is completely unstable and subject to change.
 */
 
 // M27 Phase 3 D2: no_std hygiene per RECIPE §1.2.
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(assert_matches)]
 #![feature(gen_blocks)]

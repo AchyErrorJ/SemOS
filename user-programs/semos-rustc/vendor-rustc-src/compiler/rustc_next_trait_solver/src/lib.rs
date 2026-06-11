@@ -7,7 +7,7 @@
 // M27 Stage F5: no_std + alloc — `x86_64-unknown-none` has no `std`.
 // The crate body uses `Vec`/`Box`/`Option`/`Result` etc.; the alloc
 // prelude reaches them. `#[macro_use]` brings `vec!`/`format!` in.
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 // tidy-alphabetical-start
 #![allow(rustc::direct_use_of_rustc_type_ir)]

@@ -3,7 +3,7 @@
 #![cfg_attr(feature = "nightly", feature(extend_one, step_trait, test))]
 #![cfg_attr(feature = "nightly", feature(new_range_api))]
 // tidy-alphabetical-end
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 #[macro_use]
 extern crate alloc;

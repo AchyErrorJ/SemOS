@@ -11,7 +11,7 @@
 //! even if it is stabilized or removed, *do not remove it*. Instead, move the
 //! symbol to the `accepted` or `removed` modules respectively.
 
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 #[macro_use]
 extern crate alloc;

@@ -76,7 +76,7 @@
 //! This is equivalent to `#[repr(C, packed)]` and results in a single `AttributeKind::Repr`
 //! containing both `C` and `packed` annotations.
 
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(decl_macro)]
 #![feature(if_let_guard)]

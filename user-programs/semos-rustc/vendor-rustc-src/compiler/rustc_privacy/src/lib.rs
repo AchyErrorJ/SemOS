@@ -1,5 +1,5 @@
 // M27 Phase 3 D3: no_std port (RECIPE §1.2). Inner attrs must precede items.
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-start
 #![feature(associated_type_defaults)]
 #![feature(try_blocks)]

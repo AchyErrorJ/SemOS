@@ -8,7 +8,7 @@
 #![feature(if_let_guard)]
 #![feature(iter_intersperse)]
 #![feature(iter_order_by)]
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
 

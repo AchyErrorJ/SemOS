@@ -9,7 +9,7 @@
 #![cfg_attr(feature = "nightly", allow(internal_features))]
 #![cfg_attr(feature = "nightly", feature(never_type))]
 #![cfg_attr(feature = "nightly", feature(rustc_attrs))]
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-end
 
 #[macro_use]

@@ -1,5 +1,5 @@
 // M27 Stage F9: no_std + alloc.
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 
 // tidy-alphabetical-start
 #![allow(internal_features)]

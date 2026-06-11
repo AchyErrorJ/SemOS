@@ -3,7 +3,7 @@
 
 // tidy-alphabetical-start
 #![deny(rustdoc::invalid_codeblock_attributes)]
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 // tidy-alphabetical-end
 
 #[macro_use]

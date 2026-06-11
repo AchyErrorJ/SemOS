@@ -1,0 +1,18 @@
+# Host build. MUST set target explicitly: the repo-root .cargo/config forces
+# [build] target = aarch64-unknown-none (ARM-kernel leftover), which we override
+# here. No build-std (host has prebuilt std/core).
+[build]
+target = "x86_64-pc-windows-msvc"
+
+# Host build (target set above; no build-std).
+# Same CFG_* + RUSTC_BOOTSTRAP as semos-rustc so the produced rustc has the
+# matching version/StableCrateId hashing. The pre-interned symbol table comes
+# from the (shared) vendored source, which is what makes core's metadata
+# compatible with semos-rustc.
+[env]
+RUSTC_BOOTSTRAP = "1"
+CFG_RELEASE = "1.84.0-semos-m27"
+CFG_RELEASE_CHANNEL = "nightly"
+CFG_VERSION = "1.84.0-semos-m27 (semos-rustc 2026-06-01)"
+CFG_VER_DATE = "2026-06-01"
+CFG_VER_HASH = "semos-m27"
