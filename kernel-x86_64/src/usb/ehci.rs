@@ -1070,9 +1070,16 @@ fn try_ipheth(ctl_idx: usize, dev: &DevCtx, cfg_blob: &[u8], cfg_value: u8) -> b
         Some(n) if n >= 1 => {
             let on = carrier[0] == iphone::IPHETH_CARRIER_ON;
             println!("[ehci-ipheth] carrier byte=0x{:02X} ({})", carrier[0],
-                if on { "ON — hotspot active" } else { "off" });
+                if on { "ON — hotspot active" } else { "off — TX held until carrier (Trust tapped? hotspot joinable?)" });
+            unsafe {
+                IPHETH_CARRIER_UP = on;
+                IPHETH_TX_BLOCKED_LOGGED = false;
+            }
         }
-        _ => println!("[ehci-ipheth] CARRIER_CHECK failed (non-fatal)"),
+        _ => {
+            println!("[ehci-ipheth] CARRIER_CHECK failed (non-fatal)");
+            unsafe { IPHETH_CARRIER_UP = false; }
+        }
     }
     iphone::stash(iphone::IphoneDevice {
         slot_id: dev.addr, // EHCI device address; not an xHCI slot
@@ -1943,6 +1950,15 @@ fn deliver_rx(buf: &mut [u8], off: usize, len: usize) -> usize {
 /// Transmit one Ethernet frame (legacy framing: raw frame, no padding).
 pub fn ipheth_send_frame(frame: &[u8]) -> bool {
     if unsafe { IPHETH_LINK.is_none() } { return false; }
+    if !unsafe { IPHETH_CARRIER_UP } {
+        unsafe {
+            if !IPHETH_TX_BLOCKED_LOGGED {
+                IPHETH_TX_BLOCKED_LOGGED = true;
+                println!("[ehci-ipheth] TX blocked: carrier off — tap Trust on the iPhone / check hotspot (TX auto-enables when carrier=0x04)");
+            }
+        }
+        return false;
+    }
     gate_acquire();
     let ok = ipheth_send_frame_inner(frame);
     gate_release();
@@ -1980,6 +1996,13 @@ fn ipheth_send_frame_inner(frame: &[u8]) -> bool {
 /// Keepalive cadence state for `ipheth_tick`.
 static mut IPHETH_TICK_LAST: u64 = 0;
 static mut IPHETH_TICK_FAILS: u32 = 0;
+/// Last carrier state (0x04 = hotspot session active). Linux stops the
+/// TX queue until carrier is ON — the phone NAKs/blackholes TX in the
+/// carrier-off state (which includes "Trust not yet tapped this
+/// session"). We mirror that: TX is refused fast while carrier is off
+/// instead of burning a 2 s NAK window per frame.
+static mut IPHETH_CARRIER_UP: bool = false;
+static mut IPHETH_TX_BLOCKED_LOGGED: bool = false;
 
 /// Periodic tether keepalive + self-heal. Called from the console pump
 /// loop (runs whenever the shell is waiting for input); rate-limited
@@ -2010,6 +2033,14 @@ pub fn ipheth_tick() {
     unsafe {
         if ok {
             IPHETH_TICK_FAILS = 0;
+            let on = carrier[0] == iphone::IPHETH_CARRIER_ON;
+            if on != IPHETH_CARRIER_UP {
+                IPHETH_CARRIER_UP = on;
+                IPHETH_TX_BLOCKED_LOGGED = false;
+                println!("[ehci-ipheth] carrier {} (byte=0x{:02X}){}",
+                    if on { "ON" } else { "OFF" }, carrier[0],
+                    if on { " — TX enabled" } else { "" });
+            }
         } else {
             IPHETH_TICK_FAILS += 1;
             if IPHETH_TICK_FAILS >= 2 {
@@ -2020,6 +2051,7 @@ pub fn ipheth_tick() {
     }
     if reenumerate {
         println!("[ehci-ipheth] phone stopped responding — re-enumerating");
+        unsafe { IPHETH_CARRIER_UP = false; }
         ipheth_net_teardown();
         let _ = enumerate_incremental_inner();
         // Back off ~10 s before the next keepalive so a genuinely-gone
@@ -2027,6 +2059,15 @@ pub fn ipheth_tick() {
         unsafe { IPHETH_TICK_LAST = now.wrapping_add(558); }
     }
     gate_release();
+    // Drive the network stack while the shell idles (gate released —
+    // net::poll re-enters our send/recv which take it). Without this,
+    // a DHCP lease or ARP reply arriving while nobody runs a net
+    // syscall would sit unharvested forever.
+    if unsafe { IPHETH_CARRIER_UP } {
+        for _ in 0..4 {
+            kernel_core::net::poll();
+        }
+    }
 }
 
 /// usbinfo: tether data-path state — counters + a LIVE carrier check
