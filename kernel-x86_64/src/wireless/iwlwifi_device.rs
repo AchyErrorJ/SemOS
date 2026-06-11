@@ -393,16 +393,38 @@ impl IwlDevice {
         let fh = self.csr.read32(CSR_FH_INT_STATUS);
         let reset = self.csr.read32(CSR_RESET);
         let stts0 = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
-        // First dwords of RX buffer 0 — if ALIVE landed, this is the notif.
-        let rxb0 = unsafe {
-            let p = &raw const RX_BUFS.0[0] as *const u32;
-            (core::ptr::read_volatile(p), core::ptr::read_volatile(p.add(1)),
-             core::ptr::read_volatile(p.add(2)), core::ptr::read_volatile(p.add(3)))
-        };
         println!("[iwlwifi] post-release: moved={} CSR_INT=0x{:08X} FH_INT=0x{:08X} RESET=0x{:08X} rb_stts=0x{:08X}",
             moved as u8, int, fh, reset, stts0);
-        println!("[iwlwifi] post-release: first-seen INT=0x{:08X} FH=0x{:08X} stts=0x{:08X}; RXB0=[{:08X} {:08X} {:08X} {:08X}]",
-            last_int, last_fh, last_stts, rxb0.0, rxb0.1, rxb0.2, rxb0.3);
+        let _ = (last_int, last_fh, last_stts);
+
+        // Dump the full ALIVE notification (RX buffer 0). iwl_rx_packet =
+        // len_n_flags(4) + cmd_header(4) + payload[]. The ALIVE payload
+        // carries the scheduler base + error-table pointers Stage 3 needs.
+        let mut dw = [0u32; 20];
+        unsafe {
+            let p = &raw const RX_BUFS.0[0] as *const u32;
+            for (i, slot) in dw.iter_mut().enumerate() {
+                *slot = core::ptr::read_volatile(p.add(i));
+            }
+        }
+        let len = dw[0] & 0x3FFF;
+        let cmd = (dw[1] & 0xFF) as u8;
+        println!("[iwlwifi] ALIVE: len_n_flags=0x{:08X} (len={}) cmd=0x{:02X}", dw[0], len, cmd);
+        for chunk in dw.chunks(4).enumerate() {
+            let (i, c) = chunk;
+            let pad = [0u32; 4];
+            let c = if c.len() == 4 { c } else { &pad[..c.len()] };
+            println!("[iwlwifi] ALIVE[{:02}]: {:08X} {:08X} {:08X} {:08X}",
+                i * 4, c[0], c.get(1).copied().unwrap_or(0),
+                c.get(2).copied().unwrap_or(0), c.get(3).copied().unwrap_or(0));
+        }
+        // Heuristic: SRAM pointers (error tables, scd_base) read as
+        // 0x008xxxxx (data SRAM). Flag any payload dword that looks like one.
+        for (i, &v) in dw.iter().enumerate().skip(2) {
+            if (0x0080_0000..0x0084_0000).contains(&v) {
+                println!("[iwlwifi] ALIVE: dword[{}]=0x{:08X} looks like an SRAM pointer", i, v);
+            }
+        }
         moved
     }
 
