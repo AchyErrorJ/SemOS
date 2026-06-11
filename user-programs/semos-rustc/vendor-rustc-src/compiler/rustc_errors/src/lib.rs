@@ -25,6 +25,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 extern crate self as rustc_errors;
 
 // M27 §1.9: SemOS has no std::backtrace::Backtrace and no stack-unwinder.
@@ -118,7 +121,7 @@ pub use diagnostic_impls::{
 #[cfg(not(target_os = "none"))]
 pub use emitter::ColorConfig;
 #[cfg(not(target_os = "none"))]
-use emitter::{DynEmitter, Emitter};
+use emitter::{DynEmitter, Emitter, TimingEvent};
 #[cfg(target_os = "none")]
 pub mod emitter_stub {
     use alloc::boxed::Box;
@@ -1728,10 +1731,16 @@ impl DiagCtxtInner {
         // M27 R4 B5: ICE file open. semos_std::fs::OpenOptions exposes
         // create+append. PathBuf::as_str gives the bare string path.
         let mut out = self.ice_file.as_ref().and_then(|file| {
+            // M27 option B: semos path::PathBuf has as_str(); std PathBuf uses
+            // to_str(). OpenOptions::open accepts &str on both.
+            #[cfg(target_os = "none")]
+            let p = file.as_str();
+            #[cfg(not(target_os = "none"))]
+            let p = file.to_str().unwrap_or("");
             semos_std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(file.as_str())
+                .open(p)
                 .ok()
         });
 

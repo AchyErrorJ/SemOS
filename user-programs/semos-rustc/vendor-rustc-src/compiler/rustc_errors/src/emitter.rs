@@ -592,7 +592,9 @@ impl Drop for Buffy {
 
 pub fn stderr_destination(color: ColorConfig) -> Destination {
     // M27 R4 B5: semos_std::io::Stdout as Stderr analogue (see Buffy comment).
-    let buffer_writer = semos_std::io::Stdout;
+    // option B: on host this resolves to std::io::Stdout; obtain a handle value
+    // (std::io::Stdout has no unit-struct form, unlike the semos shim).
+    let buffer_writer = std::io::stdout();
     // We need to resolve `ColorChoice::Auto` before `Box`ing since
     // `ColorChoice::Auto` on `dyn Write` will always resolve to `Never`
     let choice = get_stderr_color_choice(color, &buffer_writer);

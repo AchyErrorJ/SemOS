@@ -357,10 +357,12 @@ impl Diagnostic {
             // verification. Cranelift port confirmed Write-for-Vec<u8> exists
             // via blanket alloc-backed impl.
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.0.lock().write(buf)
+                // M27 option B: std Mutex::lock returns Result (semos returns the
+                // guard directly). This module is host-only, so unwrap.
+                self.0.lock().unwrap().write(buf)
             }
             fn flush(&mut self) -> io::Result<()> {
-                self.0.lock().flush()
+                self.0.lock().unwrap().flush()
             }
         }
 

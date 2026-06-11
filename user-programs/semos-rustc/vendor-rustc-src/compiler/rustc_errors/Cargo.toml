@@ -33,6 +33,9 @@ tracing = { version = "0.1", default-features = false }
 annotate-snippets = { version = "0.12.10", features = ["simd"] }
 anstream = "0.6.20"
 termize = "0.2"
+# Host build (option B): json.rs uses serde_json::to_writer{,_pretty}, which need
+# the `std` feature (base dep is default-features=false + alloc for the no_std target).
+serde_json = { version = "1.0.59", features = ["std"] }
 
 # Stage F8: emitter / styled-buffer paths reference semos_std.
 [target.'cfg(target_os = "none")'.dependencies]
