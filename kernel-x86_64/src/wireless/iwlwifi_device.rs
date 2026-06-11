@@ -20,6 +20,12 @@ const FW_BOUNCE_SIZE: usize = 32 * 1024;
 struct FwDmaBounce([u8; FW_BOUNCE_SIZE]);
 static mut FW_DMA_BOUNCE: FwDmaBounce = FwDmaBounce([0; FW_BOUNCE_SIZE]);
 
+/// Keep-warm DMA page — the FH DMA engine requires its address programmed
+/// (FH_KW_MEM_ADDR) before the firmware service channel will run.
+#[repr(C, align(4096))]
+struct KeepWarm([u8; 4096]);
+static mut KEEP_WARM: KeepWarm = KeepWarm([0; 4096]);
+
 /// Translate a kernel-virtual address to physical via the active PML4.
 fn phys_of(virt: u64) -> Option<u64> {
     let page = virt & !0xFFF;
@@ -187,10 +193,26 @@ impl IwlDevice {
         self.csr.clear_bit(CSR_GP_CNTRL, gp_cntrl::MAC_ACCESS_REQ);
     }
 
-    /// DMA one chunk (already staged in the bounce buffer at `src_phys`) of
-    /// `len` bytes to device SRAM address `dst`. Uses the FH service
-    /// channel. iwlwifi `iwl_pcie_load_firmware_chunk`.
-    fn load_chunk(&self, dst: u32, src_phys: u64, len: u32) -> bool {
+    /// Program the keep-warm page address into the FH (once). The DMA
+    /// engine needs this before the service channel will transfer.
+    fn set_keep_warm(&self) -> bool {
+        use super::iwlwifi_csr::fh;
+        let kw_virt = unsafe { &raw const KEEP_WARM as u64 };
+        let kw_phys = match phys_of(kw_virt) {
+            Some(p) => p,
+            None => { println!("[iwlwifi] keep-warm phys translation failed"); return false; }
+        };
+        if !self.grab_nic_access() { return false; }
+        self.csr.write32(fh::KW_MEM_ADDR, (kw_phys >> 4) as u32);
+        self.release_nic_access();
+        true
+    }
+
+    /// DMA one chunk (staged at `src_phys`, `len` bytes) to device SRAM
+    /// address `dst` via the FH service channel. Verifies by reading the
+    /// first dword back out of SRAM rather than trusting the (poorly
+    /// understood) TSSR idle bits.
+    fn load_chunk(&self, dst: u32, src_phys: u64, len: u32, expect0: u32) -> bool {
         use super::iwlwifi_csr::fh;
         let ch = fh::SRVC_CHNL;
         if !self.grab_nic_access() {
@@ -206,11 +228,17 @@ impl IwlDevice {
         self.csr.write32(fh::tcsr_tx_config(ch),
             fh::TX_CONFIG_DMA_ENABLE | fh::TX_CONFIG_CIRQ_HOST_ENDTFD);
         self.release_nic_access();
-        // Wait for the channel to go idle (DMA complete).
-        let idle = fh::tssr_idle_mask(ch);
-        if !self.csr.poll32(fh::TSSR_TX_STATUS, idle, true, 20_000) {
-            println!("[iwlwifi] load_chunk: FH DMA to 0x{:08X} never completed (TSSR=0x{:08X})",
-                dst, self.csr.read32(fh::TSSR_TX_STATUS));
+
+        // Give the DMA time, then VERIFY by reading SRAM back through the
+        // HBUS memory window (definitive — independent of TSSR semantics).
+        for _ in 0..5000 { for _ in 0..100 { core::hint::spin_loop(); } } // ~5 ms
+        if !self.grab_nic_access() { return false; }
+        let tssr = self.csr.read32(fh::TSSR_TX_STATUS);
+        let got0 = self.csr.mem_read32(dst);
+        self.release_nic_access();
+        if got0 != expect0 {
+            println!("[iwlwifi] load_chunk dst=0x{:08X}: SRAM readback 0x{:08X} != expected 0x{:08X} (TSSR=0x{:08X})",
+                dst, got0, expect0, tssr);
             return false;
         }
         true
@@ -234,7 +262,9 @@ impl IwlDevice {
                     n,
                 );
             }
-            if !self.load_chunk(addr + off as u32, bounce_phys, n as u32) {
+            // First dword of this chunk, for SRAM-readback verification.
+            let expect0 = u32::from_le_bytes([data[off], data[off+1], data[off+2], data[off+3]]);
+            if !self.load_chunk(addr + off as u32, bounce_phys, n as u32, expect0) {
                 return false;
             }
             off += n;
@@ -246,6 +276,9 @@ impl IwlDevice {
     /// SRAM. Skips marker sections (load address in the 0xFFFFxxxx / 0xAAAA
     /// special range). Returns true if every real section DMA'd cleanly.
     pub fn load_image(&self, img: &super::iwlwifi_fw_image::FwImage) -> bool {
+        if !self.set_keep_warm() {
+            return false;
+        }
         for s in img.sections[..img.count].iter() {
             // Separator / metadata markers are not SRAM destinations.
             if s.addr >= 0xFFFF_0000 || s.addr == super::iwlwifi_fw_image::PAGING_SEPARATOR {

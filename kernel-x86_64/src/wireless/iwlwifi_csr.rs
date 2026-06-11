@@ -110,6 +110,9 @@ pub mod fh {
     pub const fn tcsr_tx_buf_sts(chnl: u64) -> u64 { MEM_LOWER + 0xD00 + 0x20 * chnl + 0x8 }
     // TX shared status (channel-idle bits).
     pub const TSSR_TX_STATUS: u64 = MEM_LOWER + 0xEA0 + 0x010;
+    // Keep-warm DMA page address register (value = kw_phys >> 4). The FH
+    // DMA engine needs this set before the service channel will run.
+    pub const KW_MEM_ADDR: u64 = MEM_LOWER + 0x97C;
 
     pub const TX_CONFIG_DMA_PAUSE: u32 = 0x0000_0000;
     pub const TX_CONFIG_DMA_ENABLE: u32 = 0x8000_0000;
