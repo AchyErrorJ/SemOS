@@ -2,7 +2,9 @@
 
 // tidy-alphabetical-start
 #![cfg_attr(target_os = "none", no_std)]
-#![deny(missing_docs)]
+// option B: the deny was added for the minimal SemOS stub; the full host
+// incremental code has many (intentionally) undocumented internal items.
+#![cfg_attr(target_os = "none", deny(missing_docs))]
 #![cfg_attr(not(target_os = "none"), feature(file_buffered))]
 // tidy-alphabetical-end
 

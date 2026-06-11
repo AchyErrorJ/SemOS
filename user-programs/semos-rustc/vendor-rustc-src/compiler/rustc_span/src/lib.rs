@@ -57,6 +57,9 @@ use rustc_macros::{Decodable, Encodable, HashStable_Generic};
 // remains in scope; the SpanEncoder/FileEncoder impl below is also
 // dropped via cfg(any()).
 use rustc_serialize::opaque::MemDecoder;
+// option B: host needs FileEncoder (stub) for the SpanEncoder impl below.
+#[cfg(not(target_os = "none"))]
+use rustc_serialize::opaque::FileEncoder;
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use tracing::debug;
 pub use unicode_width::UNICODE_VERSION;
@@ -1421,7 +1424,9 @@ pub trait SpanEncoder: Encoder {
     fn encode_def_id(&mut self, def_id: DefId);
 }
 
-#[cfg(any())]
+// option B: host incremental (persist/save.rs) needs FileEncoder: SpanEncoder.
+// Disabled on target (incremental dropped per §1.3); enable on host.
+#[cfg(not(target_os = "none"))]
 impl SpanEncoder for FileEncoder {
     fn encode_span(&mut self, span: Span) {
         let span = span.data();
