@@ -33,11 +33,10 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
-# These have to be in sync with each other
-cranelift-codegen = { version = "0.122.0", default-features = false, features = ["unwind", "all-native-arch"] }
-cranelift-frontend = { version = "0.122.0", default-features = false, features = ["core"] }
-cranelift-module = { version = "0.122.0", default-features = false, features = ["core"] }
-cranelift-object = { version = "0.122.0", default-features = false }
+# cranelift-{codegen,frontend,module,object} are declared per-target below:
+# no_std (`core` / default-features=false) on the SemOS target (patched to the
+# vendored no_std copies), std (default features) on host (option B — uses the
+# unpatched registry crates, which rustc-host's separate workspace resolves).
 target-lexicon = { version = "0.13", default-features = false }
 gimli = { version = "0.31", default-features = false, features = ["write"] }
 object = { version = "0.36", default-features = false, features = ["read_core", "write_core", "archive", "elf"] }
@@ -85,6 +84,18 @@ rustc_target = { path = "../rustc_target" }
 # the no_std target build needs. Host build keeps native std.
 [target.'cfg(target_os = "none")'.dependencies]
 semos-std = { path = "../../../../std-shim" }
+# no_std cranelift (patched to vendored copies via the workspace [patch.crates-io]).
+cranelift-codegen = { version = "0.122.0", default-features = false, features = ["unwind", "all-native-arch"] }
+cranelift-frontend = { version = "0.122.0", default-features = false, features = ["core"] }
+cranelift-module = { version = "0.122.0", default-features = false, features = ["core"] }
+cranelift-object = { version = "0.122.0", default-features = false }
+
+# option B host build: std cranelift from the registry (no `core` feature).
+[target.'cfg(not(target_os = "none"))'.dependencies]
+cranelift-codegen = { version = "0.122.0", features = ["unwind", "all-native-arch"] }
+cranelift-frontend = { version = "0.122.0" }
+cranelift-module = { version = "0.122.0" }
+cranelift-object = { version = "0.122.0" }
 
 # Phase 5c Stage G iter 1: [patch.crates-io] inherited from parent
 # workspace at user-programs/semos-rustc/Cargo.toml. Per cargo: only the
