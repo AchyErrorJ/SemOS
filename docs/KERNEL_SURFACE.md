@@ -116,3 +116,19 @@ broader auditability claim.
   posture) populated in full as the gate for Stage 2b firmware upload. §3
   syscall surface stubbed. Decision pending (user): proceed to Stage 2b under
   declared trust, or build VT-d first.
+- **2026-06-11 (decision)** — The dev machine is a **ThinkPad T540p** (HM87,
+  non-vPro). Empirically confirmed via the ACPI probe: 26 ACPI tables present,
+  **no DMAR table** → the platform exposes **no VT-d**, even after a VT-x BIOS
+  toggle. Per the thesis ("IOMMU where the platform allows; declared trust
+  where it doesn't"), the **decision is to proceed with iwlwifi under declared
+  trust on this machine**, with the blast radius in §1.1 as the accepted,
+  documented vulnerability. This is the thesis's stated fallback, not a
+  compromise of it. Containment is deferred to the production targets, which
+  pivoted to **Apple Silicon (M1/M2, DART IOMMU)** and eventually **N1X (ARM
+  SMMU)** — both ARM64, both with their own IOMMUs where the real containment
+  work will land. The Intel-specific VT-d driver is therefore shelved; the
+  T540p is an x86 dev rig and the iwlwifi chip driver is dev-rig-only (the
+  portable assets are the 802.11 / WPA2 / NetDevice layers). **The kernel's
+  documented vulnerability while iwlwifi runs on the T540p: a compromised NIC
+  firmware can read/write all physical memory (no IOMMU). Accepted, here, by
+  decision.**

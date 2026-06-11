@@ -94,6 +94,36 @@ pub mod gio_chicken {
     pub const DIS_L0S_EXIT_TIMER:   u32 = 0x2000_0000;
 }
 
+/// FH (Flow Handler) registers — direct BAR0 MMIO, used for firmware DMA.
+/// Offsets per iwl-fh.h. The firmware service channel is channel 9.
+pub mod fh {
+    pub const SRVC_CHNL: u64 = 9;
+    const MEM_LOWER: u64 = 0x1000;
+    // TFDIB (Transfer Frame Descriptor Image Buffer) control.
+    pub const fn tfdib_ctrl0(chnl: u64) -> u64 { MEM_LOWER + 0x900 + 0x8 * chnl }
+    pub const fn tfdib_ctrl1(chnl: u64) -> u64 { MEM_LOWER + 0x900 + 0x8 * chnl + 0x4 }
+    pub const ADDR_BITSHIFT: u32 = 28;
+    // Service-channel SRAM destination address.
+    pub const fn srvc_sram_addr(chnl: u64) -> u64 { MEM_LOWER + 0x9C8 + (chnl - 9) * 0x4 }
+    // TX channel config + buffer status.
+    pub const fn tcsr_tx_config(chnl: u64) -> u64 { MEM_LOWER + 0xD00 + 0x20 * chnl }
+    pub const fn tcsr_tx_buf_sts(chnl: u64) -> u64 { MEM_LOWER + 0xD00 + 0x20 * chnl + 0x8 }
+    // TX shared status (channel-idle bits).
+    pub const TSSR_TX_STATUS: u64 = MEM_LOWER + 0xEA0 + 0x010;
+
+    pub const TX_CONFIG_DMA_PAUSE: u32 = 0x0000_0000;
+    pub const TX_CONFIG_DMA_ENABLE: u32 = 0x8000_0000;
+    pub const TX_CONFIG_CIRQ_HOST_ENDTFD: u32 = 0x0010_0000;
+    pub const BUF_STS_TB_NUM_POS: u32 = 20;
+    pub const BUF_STS_TB_IDX_POS: u32 = 12;
+    pub const BUF_STS_TFBD_VALID: u32 = 0x0000_4000;
+
+    /// The two idle-status bits for a given channel in TSSR_TX_STATUS.
+    pub const fn tssr_idle_mask(chnl: u64) -> u32 {
+        (1u32 << (chnl + 16)) | (1u32 << chnl)
+    }
+}
+
 /// APMG (power management gateway) registers — accessed via PRPH, 7000-series.
 pub mod apmg {
     pub const CLK_EN_REG:        u32 = 0x0000_3004;

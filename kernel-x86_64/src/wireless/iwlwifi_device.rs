@@ -13,6 +13,20 @@ use super::iwlwifi_csr::Csr;
 use super::iwlwifi_sm::AssocStateMachine;
 use super::MacAddr;
 
+/// Firmware-load DMA bounce buffer: each chunk is copied here (a known,
+/// page-aligned physical address) before the FH DMAs it into device SRAM.
+const FW_BOUNCE_SIZE: usize = 32 * 1024;
+#[repr(C, align(4096))]
+struct FwDmaBounce([u8; FW_BOUNCE_SIZE]);
+static mut FW_DMA_BOUNCE: FwDmaBounce = FwDmaBounce([0; FW_BOUNCE_SIZE]);
+
+/// Translate a kernel-virtual address to physical via the active PML4.
+fn phys_of(virt: u64) -> Option<u64> {
+    let page = virt & !0xFFF;
+    let off = virt & 0xFFF;
+    crate::paging::walk_active_pml4(page).map(|p| p + off)
+}
+
 /// Opaque device handle.  Created by `probe()` on PCI match.
 pub struct IwlDevice {
     pub pci: IwlPciInfo,
@@ -150,14 +164,101 @@ impl IwlDevice {
         true
     }
 
-    /// Stub: load firmware blob into NIC SRAM and kick the ucode.
-    /// On real hardware this reads `iwlwifi-7260-17.ucode` (or AX211 equiv)
-    /// from an embedded binary blob, writes it via the DMA engine, and
-    /// sets the INIT bit in CSR_GP_CNTRL.
-    pub fn load_firmware(&mut self) -> bool {
-        println!("[iwlwifi] load_firmware: STUB — needs firmware blob + real CSR sequence");
-        // TODO(M11): embed firmware blob, write to SRAM, kick ucode.
+    /// Request access to the MAC (so FH/PRPH writes land), iwlwifi
+    /// `iwl_grab_nic_access`. Returns true on grant.
+    fn grab_nic_access(&self) -> bool {
+        use super::iwlwifi_csr::{CSR_GP_CNTRL, gp_cntrl};
+        self.csr.set_bit(CSR_GP_CNTRL, gp_cntrl::MAC_ACCESS_REQ);
+        // Wait for MAC_CLOCK_READY with GOING_TO_SLEEP clear.
+        for _ in 0..15_000 {
+            let v = self.csr.read32(CSR_GP_CNTRL);
+            if v & gp_cntrl::MAC_CLOCK_READY != 0 && v & gp_cntrl::GOING_TO_SLEEP == 0 {
+                return true;
+            }
+            for _ in 0..100 { core::hint::spin_loop(); }
+        }
+        println!("[iwlwifi] grab_nic_access timed out (GP_CNTRL=0x{:08X})",
+            self.csr.read32(CSR_GP_CNTRL));
         false
+    }
+
+    fn release_nic_access(&self) {
+        use super::iwlwifi_csr::{CSR_GP_CNTRL, gp_cntrl};
+        self.csr.clear_bit(CSR_GP_CNTRL, gp_cntrl::MAC_ACCESS_REQ);
+    }
+
+    /// DMA one chunk (already staged in the bounce buffer at `src_phys`) of
+    /// `len` bytes to device SRAM address `dst`. Uses the FH service
+    /// channel. iwlwifi `iwl_pcie_load_firmware_chunk`.
+    fn load_chunk(&self, dst: u32, src_phys: u64, len: u32) -> bool {
+        use super::iwlwifi_csr::fh;
+        let ch = fh::SRVC_CHNL;
+        if !self.grab_nic_access() {
+            return false;
+        }
+        self.csr.write32(fh::tcsr_tx_config(ch), fh::TX_CONFIG_DMA_PAUSE);
+        self.csr.write32(fh::srvc_sram_addr(ch), dst);
+        self.csr.write32(fh::tfdib_ctrl0(ch), (src_phys & 0xFFFF_FFFF) as u32);
+        self.csr.write32(fh::tfdib_ctrl1(ch),
+            (((src_phys >> 32) as u32) << fh::ADDR_BITSHIFT) | len);
+        self.csr.write32(fh::tcsr_tx_buf_sts(ch),
+            (1 << fh::BUF_STS_TB_NUM_POS) | (1 << fh::BUF_STS_TB_IDX_POS) | fh::BUF_STS_TFBD_VALID);
+        self.csr.write32(fh::tcsr_tx_config(ch),
+            fh::TX_CONFIG_DMA_ENABLE | fh::TX_CONFIG_CIRQ_HOST_ENDTFD);
+        self.release_nic_access();
+        // Wait for the channel to go idle (DMA complete).
+        let idle = fh::tssr_idle_mask(ch);
+        if !self.csr.poll32(fh::TSSR_TX_STATUS, idle, true, 20_000) {
+            println!("[iwlwifi] load_chunk: FH DMA to 0x{:08X} never completed (TSSR=0x{:08X})",
+                dst, self.csr.read32(fh::TSSR_TX_STATUS));
+            return false;
+        }
+        true
+    }
+
+    /// Load one firmware section (a `(load_addr, bytes)` pair) into device
+    /// SRAM, chunking through the bounce buffer.
+    fn load_section(&self, addr: u32, data: &[u8]) -> bool {
+        let bounce_virt = unsafe { &raw const FW_DMA_BOUNCE as u64 };
+        let bounce_phys = match phys_of(bounce_virt) {
+            Some(p) => p,
+            None => { println!("[iwlwifi] bounce buffer phys translation failed"); return false; }
+        };
+        let mut off = 0usize;
+        while off < data.len() {
+            let n = (data.len() - off).min(FW_BOUNCE_SIZE);
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    data.as_ptr().add(off),
+                    (&raw mut FW_DMA_BOUNCE) as *mut u8,
+                    n,
+                );
+            }
+            if !self.load_chunk(addr + off as u32, bounce_phys, n as u32) {
+                return false;
+            }
+            off += n;
+        }
+        true
+    }
+
+    /// Load all sections of a firmware image (INIT or RUNTIME) into device
+    /// SRAM. Skips marker sections (load address in the 0xFFFFxxxx / 0xAAAA
+    /// special range). Returns true if every real section DMA'd cleanly.
+    pub fn load_image(&self, img: &super::iwlwifi_fw_image::FwImage) -> bool {
+        for s in img.sections[..img.count].iter() {
+            // Separator / metadata markers are not SRAM destinations.
+            if s.addr >= 0xFFFF_0000 || s.addr == super::iwlwifi_fw_image::PAGING_SEPARATOR {
+                continue;
+            }
+            let data = &super::iwlwifi_fw_image::FW_7260[s.off..s.off + s.len];
+            if !self.load_section(s.addr, data) {
+                println!("[iwlwifi] load_image: section addr=0x{:08X} len={} FAILED", s.addr, s.len);
+                return false;
+            }
+            println!("[iwlwifi] loaded section addr=0x{:08X} len={}", s.addr, s.len);
+        }
+        true
     }
 
     /// Stub: wait for the ALIVE notification from the ucode.
@@ -268,9 +369,19 @@ pub fn init() -> bool {
             // Firmware load (Stage 2) follows once the blob is embedded.
             if dev.power_up() {
                 println!("[iwlwifi] Stage 1 (power-up) complete — ready for firmware load");
-                // Stage 2a: parse the embedded ucode (pure, no hardware) so
-                // the boot log shows the section layout we'll DMA in 2b.
-                let _ = super::iwlwifi_fw_image::parse();
+                // Stage 2a: parse the embedded ucode.
+                if let Some(fw) = super::iwlwifi_fw_image::parse() {
+                    // Stage 2b: DMA the INIT image sections into device SRAM
+                    // via the FH service channel. (CPU stays in reset — the
+                    // ucode does not run yet; ALIVE handshake is the next
+                    // step and needs the RX ring.)
+                    println!("[iwlwifi] Stage 2b: loading INIT image into NIC SRAM...");
+                    if dev.load_image(&fw.init) {
+                        println!("[iwlwifi] Stage 2b: INIT image DMA complete — all sections in SRAM");
+                    } else {
+                        println!("[iwlwifi] Stage 2b: INIT image load FAILED — see FH error above");
+                    }
+                }
             } else {
                 println!("[iwlwifi] Stage 1 (power-up) FAILED — see CSR dump above");
             }
