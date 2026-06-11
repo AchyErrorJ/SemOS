@@ -3534,6 +3534,7 @@ pub fn print_usbinfo() -> u64 {
 
     // Devices living on the companion EHCI bus (W540 USB-2 jacks).
     crate::usb::ehci::print_devices();
+    crate::usb::ehci::print_tether_status();
 
     match unsafe { CDC_ECM } {
         Some(e) => println!(

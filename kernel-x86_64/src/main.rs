@@ -347,6 +347,22 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             ) {
                 kernel_core::net::poll();
                 println!("[ipheth] smoltcp up on ipheth0 (172.20.10.9/28 gw/dns 172.20.10.1)");
+                // iOS hotspots are suspected to NAT only for clients they
+                // have LEASED — run DHCP on top; the static config above
+                // keeps working until the lease replaces it. Lease
+                // progress happens inside net::poll (driven by any net
+                // activity, e.g. the first `fetch`).
+                if kernel_core::net::start_dhcp() {
+                    // Give the lease ~2s of wall-clock at boot (tick-based
+                    // per the net-wait rule; DISCOVER→ACK is several RTTs).
+                    // If it doesn't land here, later net activity keeps
+                    // polling and the lease applies whenever it arrives.
+                    let deadline = kernel_core::platform::ticks() + 124;
+                    while kernel_core::platform::ticks() < deadline {
+                        kernel_core::net::poll();
+                        core::hint::spin_loop();
+                    }
+                }
             }
         }
     }
@@ -572,6 +588,20 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // On a fresh disk `load()` returns Err(_) which we log + continue.
     if kernel_core::fs::paths::Namespace::init().is_err() {
         println!("    Path namespace: FAILED to install root");
+    }
+    // M27 DEMO 80: the SemOS-resident semos-rustc reads its input source
+    // through SYS_OPEN (path namespace), NOT the flat ramfs. Register the
+    // hello.rs source as a namespace file and a /tmp directory for the
+    // compiled output (`semos-rustc /hello.rs -o /tmp/hello.elf`).
+    {
+        use kernel_core::fs::paths::Namespace;
+        use kernel_core::semantic::object::SecurityTier;
+        if Namespace::create_file("/hello.rs", SecurityTier::Public, HELLO_RS_SOURCE).is_err() {
+            println!("    [WARN] DEMO 80: failed to register /hello.rs in namespace");
+        } else {
+            println!("    DEMO 80: /hello.rs registered ({} bytes) + /tmp dir", HELLO_RS_SOURCE.len());
+        }
+        let _ = Namespace::mkdir("/tmp");
     }
     if let Some(dev) = kernel_core::drivers::registry::get_block("virtio0") {
         match kernel_core::fs::paths::Namespace::load(dev) {

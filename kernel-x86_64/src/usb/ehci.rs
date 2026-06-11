@@ -1546,6 +1546,15 @@ static mut IPHETH_RX_TOGGLE: bool = false;
 static mut IPHETH_TX_TOGGLE: bool = false;
 /// Rate-limit RX error logging (a noisy phone would flood serial).
 static mut IPHETH_RX_ERRS: u32 = 0;
+/// Traffic counters for tether debugging (usbinfo prints them). On a
+/// machine with no serial, these are how we localize a dead data path:
+/// TX_OK=0 → smoltcp never sent / TX engine broken; TX_OK>0 RX_FRAMES=0
+/// → phone not forwarding to us (lease/trust/RX engine); both >0 but no
+/// DNS answer → NAT/routing on the phone (DHCP needed).
+static mut IPHETH_TX_OK: u32 = 0;
+static mut IPHETH_TX_ERR: u32 = 0;
+static mut IPHETH_RX_FRAMES: u32 = 0;
+static mut IPHETH_RX_BYTES: u64 = 0;
 
 /// Arm (or re-arm) the single outstanding bulk-IN receive.
 fn ipheth_arm_rx() {
@@ -1667,6 +1676,13 @@ pub fn ipheth_recv_frame(buf: &mut [u8]) -> usize {
                     &IPHETH_PAGE.rx_buf[iphone::IPHETH_IP_ALIGN..iphone::IPHETH_IP_ALIGN + copy]);
             }
             got = copy;
+            unsafe {
+                IPHETH_RX_FRAMES += 1;
+                IPHETH_RX_BYTES += copy as u64;
+                if IPHETH_RX_FRAMES == 1 {
+                    println!("[ehci-ipheth] first RX frame ({} bytes)", copy);
+                }
+            }
             iphone::mark_paired(); // first frame = pairing confirmed
         }
     } else {
@@ -1694,8 +1710,47 @@ pub fn ipheth_send_frame(frame: &[u8]) -> bool {
         l.ctl_idx, &l.dev, l.out_ep & 0x0F, l.out_mps,
         false, &mut toggle, &mut tmp, frame.len(),
     ).is_some();
-    unsafe { IPHETH_TX_TOGGLE = toggle; }
+    unsafe {
+        IPHETH_TX_TOGGLE = toggle;
+        if ok {
+            IPHETH_TX_OK += 1;
+            if IPHETH_TX_OK == 1 {
+                println!("[ehci-ipheth] first TX frame ({} bytes)", frame.len());
+            }
+        } else {
+            IPHETH_TX_ERR += 1;
+            if IPHETH_TX_ERR <= 3 || IPHETH_TX_ERR.is_power_of_two() {
+                println!("[ehci-ipheth] TX error #{} tok=0x{:08X} ({})",
+                    IPHETH_TX_ERR, LAST_ERR_TOKEN, err_token_name(LAST_ERR_TOKEN));
+            }
+        }
+    }
     ok
+}
+
+/// usbinfo: tether data-path state — counters + a LIVE carrier check
+/// (control transfer to the phone), so a single usbinfo run tells us
+/// which leg of the path is dead.
+pub fn print_tether_status() {
+    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => {
+        println!("usbinfo: ipheth data path not active");
+        return;
+    }};
+    unsafe {
+        println!("usbinfo: ipheth0 — TX ok={} err={}  RX frames={} bytes={} errs={}",
+            IPHETH_TX_OK, IPHETH_TX_ERR, IPHETH_RX_FRAMES, IPHETH_RX_BYTES, IPHETH_RX_ERRS);
+        let rx_tok = read_volatile(&raw const IPHETH_PAGE.rx_qtd.0[2]);
+        println!("usbinfo: ipheth0 RX qTD token=0x{:08X} (active={})",
+            rx_tok, (rx_tok & token::ACTIVE != 0) as u8);
+    }
+    // Live carrier check (vendor request 0x45; 0x04 = hotspot active).
+    let iface = iphone::iphone_device().map(|d| d.ipheth_iface).unwrap_or(2);
+    let mut carrier = [0u8; 1];
+    match control(l.ctl_idx, &l.dev, 0xC0, iphone::IPHETH_CMD_CARRIER_CHECK, 0, iface as u16, Some(&mut carrier)) {
+        Some(n) if n >= 1 => println!("usbinfo: ipheth0 carrier=0x{:02X} ({})",
+            carrier[0], if carrier[0] == iphone::IPHETH_CARRIER_ON { "ON" } else { "OFF — is hotspot still on?" }),
+        _ => println!("usbinfo: ipheth0 carrier check FAILED (control transfer error)"),
+    }
 }
 
 /// usbinfo support: print every device enumerated through EHCI.

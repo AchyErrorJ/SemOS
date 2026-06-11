@@ -32,8 +32,9 @@ use crate::drivers::traits::NetDevice;
 // ============================================================================
 
 /// Number of socket slots the kernel reserves. Pick small for v1; can
-/// expand when concurrent sockets become useful.
-const SOCKET_SLOTS: usize = 4;
+/// expand when concurrent sockets become useful. (+1 slot reserved for
+/// the DHCP client socket when `start_dhcp` runs.)
+const SOCKET_SLOTS: usize = 6;
 
 /// Backing storage for the [`SocketSet`]. Each `SocketStorage::EMPTY`
 /// is a `None`-shaped slot until a socket is added.
@@ -53,6 +54,11 @@ static mut SOCKETS: Option<SocketSet<'static>> = None;
 /// Are we initialised? Set by `init()`, checked by `poll()` so a tick
 /// fired before `init` is a no-op rather than a deref of `None`.
 static mut INITIALIZED: bool = false;
+
+/// DHCP client socket handle, when `start_dhcp` has run. Polled inside
+/// `poll()`; a lease replaces the interface's static address + default
+/// route + DNS server (static config stays as the pre-lease fallback).
+static mut DHCP_HANDLE: Option<smoltcp::iface::SocketHandle> = None;
 
 // ============================================================================
 // Default IP config — v1 hardcoded, future DHCP via socket-dhcpv4.
@@ -192,7 +198,69 @@ pub fn poll() -> bool {
             Some(s) => s,
             None => return false,
         };
-        iface.poll(clock::now(), device, sockets)
+        let worked = iface.poll(clock::now(), device, sockets);
+        dhcp_process(iface, sockets);
+        worked
+    }
+}
+
+/// Start the DHCP client on the active interface. Idempotent. The
+/// current (static) config keeps working until a lease arrives; the
+/// lease then replaces address, default route, and DNS server. Needed
+/// for networks that only route leased clients (iPhone Personal
+/// Hotspot is suspected to be one).
+pub fn start_dhcp() -> bool {
+    unsafe {
+        if !INITIALIZED { return false; }
+        if DHCP_HANDLE.is_some() { return true; }
+        let sockets = match SOCKETS.as_mut() {
+            Some(s) => s,
+            None => return false,
+        };
+        let socket = smoltcp::socket::dhcpv4::Socket::new();
+        let handle = sockets.add(socket);
+        DHCP_HANDLE = Some(handle);
+        crate::platform::log("[net] DHCP client started\n");
+        true
+    }
+}
+
+/// Consume pending DHCP events; apply a lease when one lands.
+unsafe fn dhcp_process(iface: &mut Interface, sockets: &mut SocketSet<'static>) {
+    use smoltcp::socket::dhcpv4;
+    let handle = match DHCP_HANDLE {
+        Some(h) => h,
+        None => return,
+    };
+    let event = sockets.get_mut::<dhcpv4::Socket>(handle).poll();
+    match event {
+        None => {}
+        Some(dhcpv4::Event::Configured(config)) => {
+            crate::platform::log("[net] DHCP lease: ");
+            log_ipv4(&config.address.address());
+            crate::platform::log("/");
+            crate::platform::log_num(config.address.prefix_len() as u64);
+            iface.update_ip_addrs(|addrs| {
+                addrs.clear();
+                let _ = addrs.push(IpCidr::Ipv4(config.address));
+            });
+            if let Some(router) = config.router {
+                let _ = iface.routes_mut().add_default_ipv4_route(router);
+                crate::platform::log(" via ");
+                log_ipv4(&router);
+            }
+            if let Some(dns) = config.dns_servers.first() {
+                DNS_SERVER_IP = *dns;
+                crate::platform::log(" dns ");
+                log_ipv4(dns);
+            }
+            crate::platform::log("\n");
+        }
+        Some(dhcpv4::Event::Deconfigured) => {
+            // Lease lost — keep the last config (better a stale address
+            // than none on a link this simple); the client renegotiates.
+            crate::platform::log("[net] DHCP deconfigured (keeping last config)\n");
+        }
     }
 }
 
