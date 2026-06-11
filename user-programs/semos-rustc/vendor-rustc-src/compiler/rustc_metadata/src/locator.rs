@@ -998,6 +998,55 @@ fn get_rmeta_metadata_section<'a, 'p>(filename: &'p Path) -> Result<OwnedSlice, 
     ))
 }
 
+/// M27 DEMO 80 step C3: prove a host-built rlib's `.rmeta` actually DECODES in
+/// `semos-rustc` — the one risk that could sink the whole disk-sysroot plan
+/// (the metadata schema must match between the vendored rustc source and the
+/// host nightly that produced `core`/`compiler_builtins`). Called from
+/// `semos-rustc --c3-selftest` with an embedded `compiler_builtins.rmeta`; no
+/// disk/kernel plumbing, so it isolates the decode question. See
+/// docs/M27_DISK_SYSROOT_DESIGN.md §5.
+#[cfg(target_os = "none")]
+pub fn semos_c3_probe(raw: Vec<u8>, cfg_version: &'static str) {
+    semos_std::println!("[c3] rmeta bytes: {}", raw.len());
+    let slice = slice_owned(raw, Deref::deref);
+    let blob = match MetadataBlob::new(slice) {
+        Ok(b) => {
+            semos_std::println!("[c3] MetadataBlob::new OK (MemDecoder validation passed)");
+            b
+        }
+        Err(()) => {
+            semos_std::println!("[c3] FAIL: MetadataBlob::new — MemDecoder rejected the blob");
+            return;
+        }
+    };
+    match blob.check_compatibility(cfg_version) {
+        Ok(()) => semos_std::println!("[c3] check_compatibility OK (version strings match)"),
+        Err(Some(found)) => semos_std::println!(
+            "[c3] version mismatch (expected): found={:?} expected={:?}",
+            found,
+            rustc_version(cfg_version)
+        ),
+        Err(None) => semos_std::println!(
+            "[c3] FAIL: METADATA_HEADER mismatch — schema/format differs, host rlib unusable"
+        ),
+    }
+    // Deeper proof: decode the CrateHeader (Symbol + TargetTuple + bools). Needs
+    // the symbol interner, so run inside default session globals.
+    rustc_span::create_default_session_globals_then(|| {
+        let hdr = blob.get_header();
+        semos_std::println!(
+            "[c3] get_header DECODED: name={:?} triple={:?} is_proc_macro={} is_stub={}",
+            hdr.name.as_str(),
+            hdr.triple,
+            hdr.is_proc_macro_crate,
+            hdr.is_stub
+        );
+        semos_std::println!(
+            "[c3] SUCCESS — host-built rmeta decodes in semos-rustc; schema is compatible"
+        );
+    });
+}
+
 /// A diagnostic function for dumping crate metadata to an output stream.
 pub fn list_file_metadata(
     target: &Target,

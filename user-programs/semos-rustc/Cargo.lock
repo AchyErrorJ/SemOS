@@ -3041,6 +3041,7 @@ dependencies = [
  "rustc_driver",
  "rustc_driver_impl",
  "rustc_interface",
+ "rustc_metadata",
  "rustc_middle",
  "rustc_session",
  "rustc_target",

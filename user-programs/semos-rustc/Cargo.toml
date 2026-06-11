@@ -70,6 +70,9 @@ rustc_interface = { path = "vendor-rustc-src/compiler/rustc_interface" }
 # their signatures (after_crate_root_parsing / after_analysis).
 rustc_ast = { path = "vendor-rustc-src/compiler/rustc_ast" }
 rustc_middle = { path = "vendor-rustc-src/compiler/rustc_middle" }
+# DEMO 80 step C3: call rustc_metadata::locator::semos_c3_probe to prove a
+# host-built .rmeta decodes in semos-rustc before building the disk sysroot.
+rustc_metadata = { path = "vendor-rustc-src/compiler/rustc_metadata" }
 
 # Direct Cranelift deps stay for the smoke-path fallback (if rustc_driver
 # integration hits a blocker we can still emit ELFs via cg_clif's lower

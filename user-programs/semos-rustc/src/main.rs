@@ -115,6 +115,21 @@ semos_std::main!(fn main() {
         return;
     }
 
+    // DEMO 80 step C3: decode-compatibility self-test. Embeds a host-built
+    // compiler_builtins.rmeta and asks rustc_metadata to decode it — proving
+    // (or disproving) that host-built crate metadata is schema-compatible with
+    // this semos-rustc before we build any disk-sysroot plumbing.
+    if argv.iter().any(|a| a == "--c3-selftest") {
+        static CB_RMETA: &[u8] = include_bytes!("../test-sources/compiler_builtins.rmeta");
+        println!("[c3] embedded compiler_builtins.rmeta: {} bytes", CB_RMETA.len());
+        rustc_metadata::locator::semos_c3_probe(
+            CB_RMETA.to_vec(),
+            option_env!("CFG_VERSION").unwrap_or("1.84.0-semos-m27"),
+        );
+        println!("[c3] selftest returned");
+        return;
+    }
+
     println!("semos-rustc Phase 5b iter 8 [BUILD-TAG abc123] — invoking rustc_driver_impl::run_compiler");
     println!("argv: {:?}", argv);
     println!("[main] about to call rustc_driver_impl::run_compiler");

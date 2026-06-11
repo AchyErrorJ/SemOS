@@ -161,6 +161,50 @@ their blob slices, and make `handle_open_path` + `handle_fread` resolve them.
   release to cut the 57 MB (metadata still carries MIR, so savings are
   bounded). Worth measuring once C3 passes; not on the critical path.
 
+## 6b. C3 RESULT (2026-06-11) — host rlibs are INCOMPATIBLE; pivot to host-tool build
+
+Ran the C3 probe (`semos-rustc --c3-selftest`, embedded 1.8 MB
+`compiler_builtins.rmeta`). Outcome:
+
+- `MetadataBlob::new` OK, version-string `String` decoded:
+  `found="rustc 1.95.0-nightly (905b92696 2026-01-31)"` vs
+  `expected="rustc 1.84.0-semos-m27 …"`.
+- **`get_header` decoded `name="concat"`** (should be `compiler_builtins`),
+  triple correct (`x86_64-unknown-none`), bools correct.
+
+**Diagnosis (confirmed via decoder.rs:383–403):** symbols are decoded by three
+tags; `SYMBOL_PREDEFINED → Symbol::new(index)` resolves a **pre-interned symbol
+by table index**. `compiler_builtins` was encoded as `SYMBOL_PREDEFINED(N)`;
+index N in semos-rustc's vendored pre-interned table is `concat`. So the
+**pre-interned symbol table differs** between the rmeta's compiler and the
+vendored source — even though both build *under* nightly-2026-02-01, the vendored
+rustc *source* is a different rustc version than the toolchain's bundled rustc.
+`core`'s metadata is saturated with predefined symbols → host rlibs are unusable,
+and there is no decode-side fix (index→symbol is lossy without the encoder table).
+
+**Decision:** build `core`/`compiler_builtins` with a rustc that shares
+semos-rustc's exact symbol table = **build the vendored rustc source as a HOST
+tool** (option B). This is also the project's real cross-compiler.
+
+## 6c. Option B plan — vendored rustc as a host tool
+
+1. **Host driver crate** (`user-programs/rustc-host` or a host bin/feature):
+   standard `fn main()` → `rustc_driver_impl::run_compiler(args)`, host target
+   (`x86_64-pc-windows-msvc`), real std (cfg(target_os="none") gates OFF), its
+   own `.cargo/config` (NOT semos-rustc's target-none one), `RUSTC_BOOTSTRAP=1`
+   + the same `CFG_*` envs so symbol tables/versions match the SemOS build.
+2. **Feasibility gate:** the vendored crates have only ever been built for
+   target-none; the `cfg(not(target_os="none"))` (host) paths may have bitrotted.
+   Probe foundational crates for host first; fix cfg/host-path breakage as it
+   surfaces (expected to be the bulk of the work).
+3. **Codegen backend:** reuse cg_clif on host (same `make_codegen_backend` trick
+   as semos-rustc) — avoids needing rustc_codegen_llvm in the vendored tree.
+4. **Produce the rlibs:** drive the host rustc (directly or via
+   `RUSTC=… cargo build -Z build-std=core,compiler_builtins --target
+   x86_64-unknown-none`) against the rust-src core source → `libcore.rlib` +
+   `libcompiler_builtins.rlib` with **matching** metadata.
+5. Stage those on disk and resume Layers A/B (now safe — schema guaranteed).
+
 ## 7. What we are NOT doing (scope guard)
 
 - No general writable disk filesystem (this is read-only sysroot only).
