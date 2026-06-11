@@ -22,6 +22,12 @@ extern crate alloc;
 
 extern crate self as rustc_hir;
 
+// M27 option B (host build): alias semos_std to std so the unconditional
+// `semos_std::path::PathBuf` in IntoDiagArg impls resolves to std::path::PathBuf
+// on host — matching rustc_error_messages' __IntoDiagArgPathBuf.
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 mod arena;
 pub mod attrs;
 pub mod def;

@@ -15,6 +15,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 pub mod errors;
 
 pub mod utils;

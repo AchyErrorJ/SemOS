@@ -16,6 +16,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 mod accepted;
 mod builtin_attrs;
 mod removed;

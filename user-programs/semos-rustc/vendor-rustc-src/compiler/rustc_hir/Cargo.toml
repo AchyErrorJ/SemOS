@@ -20,9 +20,6 @@ rustc_macros = { path = "../rustc_macros" }
 rustc_serialize = { path = "../rustc_serialize" }
 rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
-# M27 R4 B5: PathBuf in IntoDiagArg trait impls (def.rs, hir.rs, limit.rs,
-# attrs/data_structures.rs); mirrors B2/rustc_lint_defs precedent.
-semos-std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", features = ["union", "may_dangle"] }
 thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
@@ -33,3 +30,9 @@ tracing = { version = "0.1", default-features = false }
 # so odht use sites are dead on SemOS target.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 odht = { version = "0.3.1", features = ["nightly"] }
+
+# M27 R4 B5: PathBuf in IntoDiagArg trait impls. Target-gated so host uses std
+# PathBuf (via the `extern crate std as semos_std` alias in lib.rs) — matching
+# rustc_error_messages' __IntoDiagArgPathBuf = std::path::PathBuf on host.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }

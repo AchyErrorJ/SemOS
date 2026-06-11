@@ -444,9 +444,14 @@ impl Definitions {
         self.table
             .def_path_hash_to_index
             .get(&hash.local_hash())
-            // Stage F8: odht returns owned DefIndex via Copy; BTreeMap
-            // returns `&DefIndex`. Copy-deref normalizes both paths.
-            .map(|local_def_index| LocalDefId { local_def_index: *local_def_index })
+            // Stage F8: odht (host) returns owned DefIndex (Copy); BTreeMap
+            // (target) returns `&DefIndex` which needs a deref.
+            .map(|local_def_index| LocalDefId {
+                #[cfg(target_os = "none")]
+                local_def_index: *local_def_index,
+                #[cfg(not(target_os = "none"))]
+                local_def_index,
+            })
     }
 
     pub fn def_path_hash_to_def_index_map(&self) -> &DefPathHashMap {
