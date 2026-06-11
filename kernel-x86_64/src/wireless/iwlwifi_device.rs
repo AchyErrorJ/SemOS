@@ -56,6 +56,12 @@ pub struct IwlDevice {
     pub csr: Csr,
     /// WiFi association state machine (scan → auth → assoc → 4-way → DHCP).
     pub sm: AssocStateMachine,
+    /// Scheduler base in device SRAM, reported by the ALIVE notification.
+    /// Needed to set up the TX command queue (Stage 3).
+    pub scd_base_ptr: u32,
+    /// Firmware error/log table pointers (for reading crash logs).
+    pub error_table_ptr: u32,
+    pub log_table_ptr: u32,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -82,7 +88,10 @@ impl IwlDevice {
         // TODO(M11): read real STA MAC from EEPROM/NVM instead of placeholder.
         let sta_mac: MacAddr = [0x00, 0x16, 0x3E, 0x00, 0x00, 0x01];
         let sm = AssocStateMachine::new(sta_mac);
-        Self { pci, state: DeviceState::Probed, csr, sm }
+        Self {
+            pci, state: DeviceState::Probed, csr, sm,
+            scd_base_ptr: 0, error_table_ptr: 0, log_table_ptr: 0,
+        }
     }
 
     /// Diagnostic: read CSR_HW_REV and CSR_HW_RF_ID.  Prints chip revision
@@ -371,7 +380,7 @@ impl IwlDevice {
     /// the RX status page advancing, or interrupt status bits setting.
     /// Diagnostic — dumps state regardless so we can see what the ucode
     /// did. Returns true if something moved.
-    pub fn wait_alive(&self) -> bool {
+    pub fn wait_alive(&mut self) -> bool {
         use super::iwlwifi_csr::{CSR_INT, CSR_FH_INT_STATUS, CSR_RESET};
         let mut moved = false;
         let mut last_int = 0u32;
@@ -407,25 +416,42 @@ impl IwlDevice {
                 *slot = core::ptr::read_volatile(p.add(i));
             }
         }
-        let len = dw[0] & 0x3FFF;
         let cmd = (dw[1] & 0xFF) as u8;
-        println!("[iwlwifi] ALIVE: len_n_flags=0x{:08X} (len={}) cmd=0x{:02X}", dw[0], len, cmd);
-        for chunk in dw.chunks(4).enumerate() {
-            let (i, c) = chunk;
-            let pad = [0u32; 4];
-            let c = if c.len() == 4 { c } else { &pad[..c.len()] };
-            println!("[iwlwifi] ALIVE[{:02}]: {:08X} {:08X} {:08X} {:08X}",
-                i * 4, c[0], c.get(1).copied().unwrap_or(0),
-                c.get(2).copied().unwrap_or(0), c.get(3).copied().unwrap_or(0));
+        // ALIVE payload starts at dw[2] (after len_n_flags + cmd header).
+        // iwl_alive_resp_ver1: status@dw[2].low16, then pointers. Layout
+        // confirmed on hardware: error_table=dw[7], log_table=dw[8],
+        // scd_base=dw[12].
+        let status = (dw[2] & 0xFFFF) as u16;
+        self.error_table_ptr = dw[7];
+        self.log_table_ptr = dw[8];
+        self.scd_base_ptr = dw[12];
+
+        if cmd != 0x01 || status != 0xCAFE {
+            println!("[iwlwifi] ALIVE: unexpected cmd=0x{:02X} status=0x{:04X} — dumping payload",
+                cmd, status);
+            for (i, &v) in dw.iter().enumerate() {
+                println!("[iwlwifi]   ALIVE dw[{:02}]=0x{:08X}", i, v);
+            }
+            return moved;
         }
-        // Heuristic: SRAM pointers (error tables, scd_base) read as
-        // 0x008xxxxx (data SRAM). Flag any payload dword that looks like one.
-        for (i, &v) in dw.iter().enumerate().skip(2) {
-            if (0x0080_0000..0x0084_0000).contains(&v) {
-                println!("[iwlwifi] ALIVE: dword[{}]=0x{:08X} looks like an SRAM pointer", i, v);
+        println!("[iwlwifi] ALIVE OK (status=0xCAFE): scd_base=0x{:08X} err_table=0x{:08X} log_table=0x{:08X}",
+            self.scd_base_ptr, self.error_table_ptr, self.log_table_ptr);
+
+        // Peek the firmware error table: first dword is a "valid" flag —
+        // non-zero means the ucode logged a fatal error during boot.
+        if self.grab_nic_access() {
+            let valid = self.csr.mem_read32(self.error_table_ptr);
+            let err_id = self.csr.mem_read32(self.error_table_ptr + 4);
+            self.release_nic_access();
+            if valid != 0 {
+                println!("[iwlwifi] ALIVE: firmware error table VALID=0x{:08X} error_id=0x{:08X} (ucode logged a fault!)",
+                    valid, err_id);
+            } else {
+                println!("[iwlwifi] ALIVE: firmware error table clean (no fault)");
             }
         }
-        moved
+        self.state = DeviceState::Alive;
+        true
     }
 
     /// Start the association sequence: scan for SSID, then auth/assoc/4-way/DHCP.
