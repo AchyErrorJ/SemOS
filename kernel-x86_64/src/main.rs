@@ -50,6 +50,7 @@ pub mod demos; // agent/shell/TUI boot demos, extracted from main.rs (new demos 
 pub mod gdt;
 mod interrupts;
 mod memory;
+mod firmware;
 mod platform_impl;
 pub mod context;
 mod syscall;
@@ -187,6 +188,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     println!("[*] Initializing paging...");
     paging::init(boot_info);
     println!("[OK] Paging subsystem initialized");
+    println!();
+
+    // Firmware probe: authoritative machine identity (SMBIOS/DMI) + whether
+    // the platform exposes an IOMMU (ACPI DMAR / VT-d). Read-only; informs
+    // the VT-d subsystem before any DMA-device firmware is loaded.
+    firmware::probe(boot_info.rsdp_addr.into_option());
     println!();
 
     // Try to bring up the Local APIC timer; fall back to the legacy 8259 PIC
