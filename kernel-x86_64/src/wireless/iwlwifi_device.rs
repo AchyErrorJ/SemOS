@@ -59,16 +59,95 @@ impl IwlDevice {
         println!("[iwlwifi] HW_REV=0x{:08X} RF_ID=0x{:08X}", rev, rf_id);
     }
 
-    /// Stub: assert SW reset via CSR_RESET, then wait for MAC clocks.
-    /// Real implementation will pulse the reset bit, poll GP_CNTRL for
-    /// MAC_CLOCK_READY, then clear the reset bit.
-    pub fn reset_device(&mut self) -> bool {
-        println!("[iwlwifi] reset_device: STUB");
-        // TODO(M11):
-        //   1. write32(CSR_RESET, SW_RESET_BIT)
-        //   2. poll32(CSR_GP_CNTRL, MAC_CLOCK_READY, true, 100_000)
-        //   3. write32(CSR_RESET, 0)
+    /// Software-reset the device (CSR_RESET.SW_RESET), then settle.
+    pub fn sw_reset(&self) {
+        use super::iwlwifi_csr::{CSR_RESET, reset};
+        self.csr.set_bit(CSR_RESET, reset::SW_RESET);
+        // ~5 ms settle (the reg self-clears; we just need the delay).
+        for _ in 0..5000 { for _ in 0..100 { core::hint::spin_loop(); } }
+    }
+
+    /// Request ownership of the device from BIOS/ME and wait for the
+    /// hardware to acknowledge it is ours to drive. iwlwifi
+    /// `iwl_pcie_prepare_card_hw`. Returns true if the NIC reports ready.
+    pub fn prepare_card_hw(&self) -> bool {
+        use super::iwlwifi_csr::{CSR_HW_IF_CONFIG_REG as CFG, hw_if_config as f};
+        // Fast path: maybe already ours.
+        self.csr.set_bit(CFG, f::NIC_READY);
+        if self.csr.poll32(CFG, f::NIC_READY, true, 5_000) {
+            return true;
+        }
+        // Otherwise run the PREPARE handshake, up to 10 tries.
+        for attempt in 0..10 {
+            self.csr.set_bit(CFG, f::PREPARE);
+            // Wait for the device to release/grant ownership.
+            self.csr.poll32(CFG, f::NIC_PREPARE_DONE, true, 20_000);
+            self.csr.set_bit(CFG, f::NIC_READY);
+            if self.csr.poll32(CFG, f::NIC_READY, true, 5_000) {
+                println!("[iwlwifi] prepare_card_hw: NIC_READY after {} attempt(s)", attempt + 1);
+                return true;
+            }
+        }
+        println!("[iwlwifi] prepare_card_hw: NIC never became ready (BIOS/ME may hold the card)");
         false
+    }
+
+    /// Advanced Power Management init — bring up the MAC clock so the
+    /// device is in a state where firmware can be loaded. iwlwifi
+    /// `iwl_pcie_apm_init` (7000-series / pre-secboot variant).
+    pub fn apm_init(&self) -> bool {
+        use super::iwlwifi_csr::*;
+        // Disable L0s exit timer + L0s-on-RX (platform/ICH workarounds).
+        self.csr.set_bit(CSR_GIO_CHICKEN_BITS, gio_chicken::DIS_L0S_EXIT_TIMER);
+        self.csr.set_bit(CSR_GIO_CHICKEN_BITS, gio_chicken::L1A_NO_L0S_RX);
+        // Wake the device on mgmt-bus interrupt.
+        self.csr.set_bit(CSR_HW_IF_CONFIG_REG, hw_if_config::HAP_WAKE_L1A);
+        // "Initialization complete" → starts the MAC clock.
+        self.csr.set_bit(CSR_GP_CNTRL, gp_cntrl::INIT_DONE);
+        // Wait for the clock to stabilize (spec allows up to ~25 ms).
+        if !self.csr.poll32(CSR_GP_CNTRL, gp_cntrl::MAC_CLOCK_READY, true, 25_000) {
+            println!("[iwlwifi] apm_init: MAC clock never became ready (GP_CNTRL=0x{:08X})",
+                self.csr.read32(CSR_GP_CNTRL));
+            return false;
+        }
+        // 7000-series: enable the DMA clock via APMG, disable L1-Active,
+        // clear the RF-kill monitor disable. These are PRPH (indirect).
+        self.csr.write_prph(apmg::CLK_EN_REG, apmg::CLK_VAL_DMA_CLK_RQT);
+        for _ in 0..20 { for _ in 0..100 { core::hint::spin_loop(); } } // ~20 µs
+        self.csr.set_bits_prph(apmg::PCIDEV_STT_REG, apmg::PCIDEV_STT_VAL_L1_ACT_DIS);
+        self.csr.clear_bits_prph(apmg::RTC_INT_STT_REG, apmg::RTC_INT_STT_RFKILL);
+        println!("[iwlwifi] apm_init: MAC clock ready, APMG configured (GP_CNTRL=0x{:08X})",
+            self.csr.read32(CSR_GP_CNTRL));
+        true
+    }
+
+    /// Stage 1 bring-up: reset → take ownership → power up the MAC clock,
+    /// dumping registers along the way. Does NOT load firmware (Stage 2).
+    /// Advances `state` to `Probed` (clocked + owned) on success.
+    pub fn power_up(&mut self) -> bool {
+        use super::iwlwifi_csr::*;
+        let rev = self.csr.read32(CSR_HW_REV);
+        let rf = self.csr.read32(CSR_HW_RF_ID);
+        println!("[iwlwifi] power_up: HW_REV=0x{:08X} RF_ID=0x{:08X}", rev, rf);
+        if rev == 0xFFFF_FFFF {
+            println!("[iwlwifi] power_up: CSRs read all-ones — BAR/PCI mapping wrong; aborting");
+            return false;
+        }
+        self.sw_reset();
+        if !self.prepare_card_hw() {
+            return false;
+        }
+        if !self.apm_init() {
+            return false;
+        }
+        // Read back HW_REV again (some bits are only valid after clocks up)
+        // + the RF-kill state so the boot log shows whether the radio is
+        // hardware-killed (wifi switch / airplane mode).
+        let cfg = self.csr.read32(CSR_HW_IF_CONFIG_REG);
+        let gpc = self.csr.read32(CSR_GP_CNTRL);
+        println!("[iwlwifi] power_up OK: HW_IF_CONFIG=0x{:08X} GP_CNTRL=0x{:08X}", cfg, gpc);
+        self.state = DeviceState::Probed;
+        true
     }
 
     /// Stub: load firmware blob into NIC SRAM and kick the ucode.
@@ -184,13 +263,13 @@ pub fn init() -> bool {
         // On metal these read non-zero values; if they all read 0xFFFFFFFF
         // the BAR mapping is wrong (e.g., paging or PCI command register
         // not properly set up).
-        if let Some(dev) = DEVICE.as_ref() {
-            dev.read_hw_rev();
-            let cfg = dev.csr.read32(super::iwlwifi_csr::CSR_HW_IF_CONFIG_REG);
-            let gpc = dev.csr.read32(super::iwlwifi_csr::CSR_GP_CNTRL);
-            println!("[iwlwifi] HW_IF_CONFIG=0x{:08X} GP_CNTRL=0x{:08X}", cfg, gpc);
-            if cfg == 0xFFFFFFFF && gpc == 0xFFFFFFFF {
-                println!("[iwlwifi] WARN: CSRs read all-ones — BAR mapping or PCI command may be wrong");
+        if let Some(dev) = DEVICE.as_mut() {
+            // Stage 1: reset + take ownership + bring up the MAC clock.
+            // Firmware load (Stage 2) follows once the blob is embedded.
+            if dev.power_up() {
+                println!("[iwlwifi] Stage 1 (power-up) complete — ready for firmware load");
+            } else {
+                println!("[iwlwifi] Stage 1 (power-up) FAILED — see CSR dump above");
             }
         }
     }
