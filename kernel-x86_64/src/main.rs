@@ -1454,6 +1454,23 @@ fn idle_with_heartbeat() -> ! {
 /// Continuous M10 watchdog. Emits a beat every 5 wall-clock seconds via
 /// `kernel_core::scheduler::SCHEDULER_TICK_HZ` — must match the actual timer
 /// rate, NOT a 100 Hz assumption.
+/// Dedicated background task for the iPhone tether keepalive. Runs the
+/// 1 Hz carrier poll + self-healing re-enumeration in its OWN scheduler
+/// slot so its blocking USB transfers (a carrier check, or a full
+/// re-enumeration) are preempted by the timer and never starve the
+/// keyboard pump (which lives in the loader task). The network stack
+/// itself is driven by the shell's TCP path, not here.
+#[cfg(feature = "interactive")]
+fn ipheth_keepalive_task() {
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+    loop {
+        usb::ehci::ipheth_tick(); // internally rate-limited to ~1 s
+        // ~0.5 s between checks; the tick no-ops until its 1 s boundary,
+        // so this just bounds how soon we notice a carrier-up after Trust.
+        let _ = dispatch(SYS_SLEEP, 31, 0, 0, 0);
+    }
+}
+
 fn kernel_idle_task() {
     const TICK_HZ: u64 = kernel_core::scheduler::SCHEDULER_TICK_HZ;
     const BEAT_TICKS: u64 = 5 * TICK_HZ;
@@ -1496,6 +1513,16 @@ fn interactive_session() {
 
     // Pin FD/stdio resolution to this (the loader) task before spawning.
     kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
+
+    // If an iPhone tether is live, run its carrier keepalive in a
+    // dedicated task so its blocking USB transfers never stall the
+    // keyboard pump that lives in this (the loader) task.
+    if usb::ehci::ipheth_active() {
+        match crate::context::spawn_task("ipheth-keepalive", ipheth_keepalive_task) {
+            Some(slot) => println!("[ipheth] keepalive task in slot {}", slot),
+            None => println!("[ipheth] could not spawn keepalive task"),
+        }
+    }
 
     loop {
         // No args → REPL. The child inherits fd 0 = Console (keyboard line
@@ -1547,11 +1574,6 @@ fn interactive_session() {
 /// for that instead). Arrow keys become `ESC [ A/B/C/D` for the line editor.
 #[cfg(feature = "interactive")]
 fn pump_console_input(prev: &mut [u8; 6]) {
-    // Tether keepalive piggybacks on the console pump (runs while the
-    // shell idles; internally rate-limited to ~1 s). iPhones drop the
-    // link when the host goes silent — this is the Linux-parity carrier
-    // poll plus self-healing re-enumeration.
-    usb::ehci::ipheth_tick();
     usb::xhci::poll_hid(|rep| {
         let shift = rep.shift_held();
         for &k in rep.keys.iter() {

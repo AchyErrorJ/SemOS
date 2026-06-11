@@ -2059,15 +2059,11 @@ pub fn ipheth_tick() {
         unsafe { IPHETH_TICK_LAST = now.wrapping_add(558); }
     }
     gate_release();
-    // Drive the network stack while the shell idles (gate released —
-    // net::poll re-enters our send/recv which take it). Without this,
-    // a DHCP lease or ARP reply arriving while nobody runs a net
-    // syscall would sit unharvested forever.
-    if unsafe { IPHETH_CARRIER_UP } {
-        for _ in 0..4 {
-            kernel_core::net::poll();
-        }
-    }
+    // NOTE: run this ONLY from the dedicated ipheth_keepalive_task,
+    // NEVER from the keyboard pump — its control transfer + self-heal
+    // can block ~1 s and would freeze input. The network stack is driven
+    // by the shell's own TCP path (tcp.rs read/write call net::poll), so
+    // we deliberately do NOT poll the stack here.
 }
 
 /// usbinfo: tether data-path state — counters + a LIVE carrier check
