@@ -7,6 +7,11 @@
 #![feature(iter_intersperse)]
 #![feature(macro_derive)]
 #![feature(rustc_attrs)]
+// M27 option B host build: std HashMap::get_many_mut + str::ceil_char_boundary
+// are nightly-gated on host (on target the hashbrown/str-backed semos types
+// provide equivalents without these features).
+#![cfg_attr(not(target_os = "none"), feature(map_many_mut))]
+#![cfg_attr(not(target_os = "none"), feature(round_char_boundary))]
 // To generate CodegenOptionsTargetModifiers and UnstableOptionsTargetModifiers enums
 // with macro_rules, it is necessary to use recursive mechanic ("Incremental TT Munchers").
 #![recursion_limit = "256"]

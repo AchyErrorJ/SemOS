@@ -139,10 +139,13 @@ impl SearchPath {
             Ok(files) => files
                 .filter_map(|e| {
                     e.ok().and_then(|e| {
-                        // Stage F9: semos_std::ffi::OsString == String, so
-                        // `to_str()` is just `Some(&self)`. Use as_str().
+                        // Stage F9: semos_std::ffi::OsString == String (as_str);
+                        // std OsString (host) is OsStr-backed (to_str).
                         let fname = e.file_name();
+                        #[cfg(target_os = "none")]
                         let s: &str = fname.as_str();
+                        #[cfg(not(target_os = "none"))]
+                        let s: &str = fname.to_str().unwrap_or("");
                         Some({
                             let file_name_str: Arc<str> = s.into();
                             let p: PathBuf = e.path();

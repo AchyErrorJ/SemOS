@@ -433,6 +433,12 @@ impl CheckCfg {
             if self.exhaustive_values {
                 // Get all values map at once otherwise it would be costly.
                 // (8 values * 220 targets ~= 1760 times, at the time of writing this comment).
+                // std renamed get_many_mut -> get_disjoint_mut; hashbrown (target)
+                // still uses get_many_mut. Same [Option<&mut V>; N] shape.
+                #[cfg(target_os = "none")]
+                let buckets = self.expecteds.get_many_mut(VALUES);
+                #[cfg(not(target_os = "none"))]
+                let buckets = self.expecteds.get_disjoint_mut(VALUES);
                 let [
                     Some(values_target_abi),
                     Some(values_target_arch),
@@ -442,7 +448,7 @@ impl CheckCfg {
                     Some(values_target_os),
                     Some(values_target_pointer_width),
                     Some(values_target_vendor),
-                ] = self.expecteds.get_many_mut(VALUES)
+                ] = buckets
                 else {
                     panic!("unable to get all the check-cfg values buckets");
                 };

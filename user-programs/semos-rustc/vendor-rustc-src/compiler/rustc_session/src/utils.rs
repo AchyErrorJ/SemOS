@@ -72,9 +72,13 @@ pub fn extra_compiler_flags() -> Option<(Vec<String>, bool)> {
 
     const ICE_REPORT_COMPILER_FLAGS_STRIP_VALUE: &[&str] = &["incremental"];
 
-    // Stage F9: semos_std::ffi::OsString IS String (UTF-8 only), so
-    // each iterator item is already an owned String.
+    // Stage F9: semos_std::ffi::OsString IS String (UTF-8 only), so each item is
+    // already an owned String and the str methods below apply. On host OsString
+    // is OsStr-backed, so use std::env::args() (String items) to match.
+    #[cfg(target_os = "none")]
     let mut args = semos_std::env::args_os();
+    #[cfg(not(target_os = "none"))]
+    let mut args = std::env::args();
 
     let mut result = Vec::new();
     let mut excluded_cargo_defaults = false;

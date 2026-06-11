@@ -1023,8 +1023,14 @@ impl Input {
     pub fn filestem(&self) -> &str {
         if let Input::File(ifile) = self {
             // If for some reason getting the file stem as a UTF-8 string fails,
-            // then fallback to a fixed name.
+            // then fallback to a fixed name. semos file_stem yields &str; std
+            // (host) yields &OsStr, so narrow via to_str().
+            #[cfg(target_os = "none")]
             if let Some(name) = ifile.file_stem() {
+                return name;
+            }
+            #[cfg(not(target_os = "none"))]
+            if let Some(name) = ifile.file_stem().and_then(|n| n.to_str()) {
                 return name;
             }
         }
@@ -1079,7 +1085,10 @@ impl OutFileName {
     pub fn filestem(&self) -> Option<&OsStr> {
         match *self {
             OutFileName::Real(ref path) => path.file_stem(),
+            #[cfg(target_os = "none")]
             OutFileName::Stdout => Some(semos_std::ffi::osstr_new("stdout")),
+            #[cfg(not(target_os = "none"))]
+            OutFileName::Stdout => Some(std::ffi::OsStr::new("stdout")),
         }
     }
 
@@ -1129,8 +1138,13 @@ impl OutFileName {
         match self {
             OutFileName::Stdout => print!("{content}"),
             OutFileName::Real(path) => {
-                // Stage F9: semos_std::fs::write requires bytes.
-                if let Err(e) = fs::write(path.as_path().as_str(), content.as_bytes()) {
+                // Stage F9: semos_std::fs::write takes &str; std::fs::write (host)
+                // takes AsRef<Path>, so pass the &Path directly.
+                #[cfg(target_os = "none")]
+                let write_res = fs::write(path.as_path().as_str(), content.as_bytes());
+                #[cfg(not(target_os = "none"))]
+                let write_res = fs::write(path.as_path(), content.as_bytes());
+                if let Err(e) = write_res {
                     sess.dcx().emit_fatal(FileWriteFail { path, err: e.to_string() });
                 }
             }
@@ -1163,8 +1177,12 @@ fn maybe_strip_file_name(mut path: PathBuf) -> PathBuf {
     if path.file_name().map_or(0, |name| name.len()) > MAX_FILENAME_LENGTH {
         // Stage F9: semos_std::path::Path::file_name returns `Option<&str>`
         // (not `Option<&OsStr>` like std), so the result is already a UTF-8
-        // string slice — no `to_string_lossy` indirection needed.
+        // string slice. On host it's &OsStr — narrow to &str so the str ops
+        // below (len/index/ceil_char_boundary) apply.
+        #[cfg(target_os = "none")]
         let filename = path.file_name().unwrap();
+        #[cfg(not(target_os = "none"))]
+        let filename = path.file_name().unwrap().to_str().unwrap_or("");
         let hash_len = 64 / 4; // Hash64 is 64 bits encoded in hex
         let hyphen_len = 1; // the '-' we insert between hash and suffix
 

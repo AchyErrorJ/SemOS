@@ -157,7 +157,7 @@ fn current_dll_path() -> Result<PathBuf, String> {
         GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
             PCWSTR(
-                current_dll_path as fn() -> Result<semos_std::path::PathBuf, core::string::String>
+                current_dll_path as fn() -> Result<semos_std::path::PathBuf, String>
                     as *mut u16,
             ),
             &mut module,

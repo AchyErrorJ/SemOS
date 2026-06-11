@@ -1086,7 +1086,11 @@ pub fn build_session(
         // simple monotonic counter from an atomic.
         .map(|_| {
             #[cfg(not(target_os = "none"))]
-            let n = OsRng.next_u32();
+            let n = {
+                // rand 0.9: OsRng is fallible (TryRngCore), not RngCore.
+                use rand::TryRngCore;
+                OsRng.try_next_u32().expect("OsRng failed")
+            };
             #[cfg(target_os = "none")]
             let n: u32 = {
                 use core::sync::atomic::{AtomicU32, Ordering};
