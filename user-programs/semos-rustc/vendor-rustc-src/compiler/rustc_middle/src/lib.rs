@@ -70,6 +70,11 @@ extern crate alloc;
 #[cfg(not(target_os = "none"))]
 extern crate std;
 
+// option B: alias semos_std to std on host so unconditional semos_std::* refs
+// (incl. PathBuf in IntoDiagArg impls) resolve to std types.
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 #[cfg(test)]
 mod tests;
 

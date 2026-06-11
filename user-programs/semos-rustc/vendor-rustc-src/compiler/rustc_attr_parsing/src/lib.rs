@@ -87,6 +87,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 #[macro_use]
 /// All the individual attribute parsers for each of rustc's built-in attributes.
 mod attributes;

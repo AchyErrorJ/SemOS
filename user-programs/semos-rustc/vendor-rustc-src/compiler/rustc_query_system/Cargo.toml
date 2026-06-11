@@ -8,6 +8,8 @@ edition = "2024"
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_data_structures = { path = "../rustc_data_structures" }
+# option B: fluent_messages! emits rustc_error_messages::* on BOTH targets.
+rustc_error_messages = { path = "../rustc_error_messages" }
 rustc_errors = { path = "../rustc_errors" }
 rustc_feature = { path = "../rustc_feature" }
 rustc_fluent_macro = { path = "../rustc_fluent_macro" }
@@ -37,5 +39,4 @@ parking_lot = "0.12"
 
 # Stage F10: caches.rs / job.rs need semos_std::{io, sync::OnceLock}.
 [target.'cfg(target_os = "none")'.dependencies]
-rustc_error_messages = { path = "../rustc_error_messages" }
 semos-std = { path = "../../../../std-shim" }

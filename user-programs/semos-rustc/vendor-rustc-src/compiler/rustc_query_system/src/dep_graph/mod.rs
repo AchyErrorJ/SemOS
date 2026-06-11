@@ -10,7 +10,12 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::borrow::ToOwned;
 
+// std::panic provides catch_unwind/resume_unwind (host-only non-abort path
+// below); core::panic lacks them.
+#[cfg(target_os = "none")]
 use core::panic;
+#[cfg(not(target_os = "none"))]
+use std::panic;
 
 pub use dep_node::{DepKind, DepKindStruct, DepNode, DepNodeParams, WorkProductId};
 pub(crate) use graph::DepGraphData;

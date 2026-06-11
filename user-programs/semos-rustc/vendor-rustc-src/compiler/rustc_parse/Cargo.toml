@@ -16,6 +16,8 @@ rustc-literal-escaper = "0.0.7"
 rustc_ast = { path = "../rustc_ast" }
 rustc_ast_pretty = { path = "../rustc_ast_pretty" }
 rustc_data_structures = { path = "../rustc_data_structures" }
+# option B: fluent_messages! emits rustc_error_messages::* on BOTH targets.
+rustc_error_messages = { path = "../rustc_error_messages" }
 rustc_errors = { path = "../rustc_errors" }
 rustc_feature = { path = "../rustc_feature" }
 rustc_fluent_macro = { path = "../rustc_fluent_macro" }
@@ -33,7 +35,6 @@ unicode-width = "0.2.2"
 # Stage F10: lib.rs/errors.rs need semos_std on the SemOS target, and
 # the fluent macro now emits `rustc_error_messages::*` references.
 [target.'cfg(target_os = "none")'.dependencies]
-rustc_error_messages = { path = "../rustc_error_messages" }
 semos-std = { path = "../../../../std-shim" }
 
 [dev-dependencies]

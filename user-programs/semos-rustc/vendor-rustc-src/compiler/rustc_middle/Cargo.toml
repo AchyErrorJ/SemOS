@@ -36,7 +36,6 @@ rustc_span = { path = "../rustc_span" }
 rustc_target = { path = "../rustc_target" }
 rustc_thread_pool = { path = "../rustc_thread_pool" }
 rustc_type_ir = { path = "../rustc_type_ir" }
-semos-std = { path = "../../../../std-shim" }
 smallvec = { version = "1.8.1", default-features = false, features = ["union", "may_dangle"] }
 thin-vec = { version = "0.2.12", default-features = false }
 tracing = { version = "0.1", default-features = false }
@@ -48,6 +47,11 @@ tracing = { version = "0.1", default-features = false }
 [target.'cfg(not(target_os = "none"))'.dependencies]
 polonius-engine = "0.13.0"
 gsgdt = "0.1.2"
+
+# option B: target-gate semos-std (host uses std via the lib.rs alias) so PathBuf
+# in IntoDiagArg impls is std on host — matches rustc_error_messages.
+[target.'cfg(target_os = "none")'.dependencies]
+semos-std = { path = "../../../../std-shim" }
 
 [features]
 # tidy-alphabetical-start
