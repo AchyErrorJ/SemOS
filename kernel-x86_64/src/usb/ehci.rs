@@ -458,6 +458,37 @@ pub fn init() -> usize {
 /// "no" from the device); Halted WITH XactErr = device not responding.
 static mut LAST_ERR_TOKEN: u32 = 0;
 
+/// Driver-wide gate. All transfers share one qTD pool + SETUP/DATA
+/// buffers + the transfer QH, and the scheduler is preemptive: the
+/// ipheth keepalive (console-pump context) interleaving with a
+/// syscall-driven transfer corrupted live transfers on the T540p
+/// (phantom "disconnected" statuses for internal devices, XactErr
+/// storms). Task contexts spin-acquire; the keepalive try-acquires and
+/// skips its turn if the driver is busy. Single-core + preemption makes
+/// the spin safe (the holder keeps running).
+static EHCI_GATE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn gate_acquire() {
+    use core::sync::atomic::Ordering;
+    while EHCI_GATE
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        core::hint::spin_loop();
+    }
+}
+
+fn gate_try_acquire() -> bool {
+    use core::sync::atomic::Ordering;
+    EHCI_GATE
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+}
+
+fn gate_release() {
+    EHCI_GATE.store(false, core::sync::atomic::Ordering::Release);
+}
+
 fn err_token_name(tok: u32) -> &'static str {
     if tok & token::ACTIVE != 0 { "never-completed (device NAKed whole window)" }
     else if tok & token::XACTERR != 0 { "XactErr/no-response" }
@@ -1225,6 +1256,13 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
 /// Used at boot from `init_and_enumerate` and as the incremental path's
 /// conservative fallback.
 pub fn enumerate_all_full() -> usize {
+    gate_acquire();
+    let r = enumerate_all_full_inner();
+    gate_release();
+    r
+}
+
+fn enumerate_all_full_inner() -> usize {
     // Port resets invalidate device addresses — the live ipheth RX QH
     // must be unlinked first or the HC keeps polling a stale address.
     ipheth_net_teardown();
@@ -1360,10 +1398,17 @@ fn collect_hubs() -> ([Option<EhciDevice>; MAX_DEVICES], usize) {
 /// path) alone. Falls back to a full scan whenever the picture is unclear.
 /// Returns the number of devices newly enumerated this pass.
 pub fn enumerate_incremental() -> usize {
+    gate_acquire();
+    let r = enumerate_incremental_inner();
+    gate_release();
+    r
+}
+
+fn enumerate_incremental_inner() -> usize {
     // Nothing recorded yet (cold boot, or a prior teardown wiped it) →
     // there's nothing to do incrementally; do the full bring-up.
     if devices_empty() {
-        return enumerate_all_full();
+        return enumerate_all_full_inner();
     }
 
     let mut total = 0usize;
@@ -1668,6 +1713,14 @@ pub fn ipheth_has_frame() -> bool {
 /// `buf`. Returns 0 if nothing has arrived. Always re-arms.
 pub fn ipheth_recv_frame(buf: &mut [u8]) -> usize {
     if unsafe { IPHETH_LINK.is_none() } { return 0; }
+    gate_acquire();
+    let n = ipheth_recv_frame_inner(buf);
+    gate_release();
+    n
+}
+
+fn ipheth_recv_frame_inner(buf: &mut [u8]) -> usize {
+    if unsafe { IPHETH_LINK.is_none() } { return 0; }
     let tok = unsafe { read_volatile(&raw const IPHETH_PAGE.rx_qtd.0[2]) };
     if tok & token::ACTIVE != 0 {
         return 0;
@@ -1709,6 +1762,14 @@ pub fn ipheth_recv_frame(buf: &mut [u8]) -> usize {
 
 /// Transmit one Ethernet frame (legacy framing: raw frame, no padding).
 pub fn ipheth_send_frame(frame: &[u8]) -> bool {
+    if unsafe { IPHETH_LINK.is_none() } { return false; }
+    gate_acquire();
+    let ok = ipheth_send_frame_inner(frame);
+    gate_release();
+    ok
+}
+
+fn ipheth_send_frame_inner(frame: &[u8]) -> bool {
     let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return false };
     if frame.is_empty() || frame.len() > 1600 { return false; }
     let mut tmp = [0u8; 1600];
@@ -1753,23 +1814,39 @@ pub fn ipheth_tick() {
     let now = kernel_core::platform::ticks();
     unsafe {
         if now.wrapping_sub(IPHETH_TICK_LAST) < 62 { return; }
-        IPHETH_TICK_LAST = now;
     }
-    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => return };
+    // NEVER contend: if any other context is mid-transfer, skip this
+    // second entirely (the corruption this prevents is exactly what
+    // took the whole T540p EHCI device table down).
+    if !gate_try_acquire() {
+        return;
+    }
+    unsafe { IPHETH_TICK_LAST = now; }
+    let l = match unsafe { IPHETH_LINK } { Some(l) => l, None => { gate_release(); return; } };
     let iface = iphone::iphone_device().map(|d| d.ipheth_iface).unwrap_or(2);
     let mut carrier = [0u8; 1];
-    match control(l.ctl_idx, &l.dev, 0xC0, iphone::IPHETH_CMD_CARRIER_CHECK, 0, iface as u16, Some(&mut carrier)) {
-        Some(_) => unsafe { IPHETH_TICK_FAILS = 0; },
-        None => unsafe {
+    let ok = control(l.ctl_idx, &l.dev, 0xC0, iphone::IPHETH_CMD_CARRIER_CHECK, 0, iface as u16, Some(&mut carrier)).is_some();
+    let mut reenumerate = false;
+    unsafe {
+        if ok {
+            IPHETH_TICK_FAILS = 0;
+        } else {
             IPHETH_TICK_FAILS += 1;
             if IPHETH_TICK_FAILS >= 2 {
                 IPHETH_TICK_FAILS = 0;
-                println!("[ehci-ipheth] phone stopped responding — re-enumerating");
-                ipheth_net_teardown();
-                let _ = enumerate_incremental();
+                reenumerate = true;
             }
-        },
+        }
     }
+    if reenumerate {
+        println!("[ehci-ipheth] phone stopped responding — re-enumerating");
+        ipheth_net_teardown();
+        let _ = enumerate_incremental_inner();
+        // Back off ~10 s before the next keepalive so a genuinely-gone
+        // phone doesn't trigger a re-enumeration storm.
+        unsafe { IPHETH_TICK_LAST = now.wrapping_add(558); }
+    }
+    gate_release();
 }
 
 /// usbinfo: tether data-path state — counters + a LIVE carrier check
@@ -1780,6 +1857,12 @@ pub fn print_tether_status() {
         println!("usbinfo: ipheth data path not active");
         return;
     }};
+    gate_acquire();
+    print_tether_status_inner(l);
+    gate_release();
+}
+
+fn print_tether_status_inner(l: IphethLink) {
     unsafe {
         println!("usbinfo: ipheth0 — TX ok={} err={}  RX frames={} bytes={} errs={}",
             IPHETH_TX_OK, IPHETH_TX_ERR, IPHETH_RX_FRAMES, IPHETH_RX_BYTES, IPHETH_RX_ERRS);
