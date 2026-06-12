@@ -8,7 +8,11 @@
 #[cfg(target_os = "none")] use alloc::{boxed::Box, string::{String, ToString}, vec::Vec, borrow::ToOwned};
 use core::cell::Cell;
 use core::slice;
+// option B: FxHashMap is std::HashMap on host (std Entry), hashbrown on target.
+#[cfg(target_os = "none")]
 use hashbrown::hash_map::Entry;
+#[cfg(not(target_os = "none"))]
+use std::collections::hash_map::Entry;
 
 use rustc_abi::{Align, ExternAbi, Size};
 use rustc_ast::{AttrStyle, MetaItemKind, ast};
