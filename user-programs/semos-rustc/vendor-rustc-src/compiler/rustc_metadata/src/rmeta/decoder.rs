@@ -1053,7 +1053,7 @@ impl<'a> CrateMetadataRef<'a> {
     }
 
     fn load_proc_macro<'tcx>(self, tcx: TyCtxt<'tcx>, id: DefIndex) -> SyntaxExtension {
-        #[cfg(not(target_os = "none"))]
+        #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
         let (name, kind, helper_attrs) = match *self.raw_proc_macro(tcx, id) {
             ProcMacro::CustomDerive { trait_name, attributes, client } => {
                 let helper_attrs =
@@ -1075,7 +1075,7 @@ impl<'a> CrateMetadataRef<'a> {
         // should never be called at runtime, but rmeta decoder still has the
         // dispatch arms. Provide a stub that constructs the same ADT shape
         // with field-cfg-gated extensions so the compile goes through.
-        #[cfg(target_os = "none")]
+        #[cfg(any(target_os = "none", procmacro_stub))]
         let (name, kind, helper_attrs) = match *self.raw_proc_macro(tcx, id) {
             ProcMacro::CustomDerive { trait_name, attributes, .. } => {
                 let helper_attrs =

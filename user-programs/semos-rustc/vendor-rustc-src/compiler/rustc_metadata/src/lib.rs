@@ -9,7 +9,7 @@
 #![feature(macro_metavar_expr)]
 #![feature(min_specialization)]
 #![feature(never_type)]
-#![cfg_attr(not(target_os = "none"), feature(proc_macro_internals))]
+#![cfg_attr(all(not(target_os = "none"), not(procmacro_stub)), feature(proc_macro_internals))]
 #![feature(result_option_map_or_default)]
 #![cfg_attr(not(target_os = "none"), feature(strip_circumfix))]
 #![feature(trusted_len)]

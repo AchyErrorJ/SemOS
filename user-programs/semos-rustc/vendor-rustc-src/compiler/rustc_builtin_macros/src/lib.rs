@@ -9,8 +9,8 @@
 #![feature(decl_macro)]
 #![feature(if_let_guard)]
 #![feature(iter_order_by)]
-#![cfg_attr(not(target_os = "none"), feature(proc_macro_internals))]
-#![cfg_attr(not(target_os = "none"), feature(proc_macro_quote))]
+#![cfg_attr(all(not(target_os = "none"), not(procmacro_stub)), feature(proc_macro_internals))]
+#![cfg_attr(all(not(target_os = "none"), not(procmacro_stub)), feature(proc_macro_quote))]
 #![feature(try_blocks)]
 #![recursion_limit = "256"]
 // tidy-alphabetical-end
