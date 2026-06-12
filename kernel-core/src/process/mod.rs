@@ -111,6 +111,13 @@ pub enum FdEntry {
         pipe_id: u32,
         is_read_end: bool,
     },
+    /// M27 DEMO 80: a read-only file from the SATA sysroot blob, exposed at
+    /// /sysroot/<name>. `idx` is the blob file index; `position` is the read
+    /// cursor (files are up to ~57 MB, so u64). Streamed from disk on SYS_FREAD.
+    SysrootBlob {
+        idx: u32,
+        position: u64,
+    },
 }
 
 /// File descriptor flags

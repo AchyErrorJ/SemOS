@@ -896,6 +896,24 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
     use crate::fs::paths::{Namespace, FsError};
     use crate::semantic::object::SecurityTier;
 
+    // M27 DEMO 80: read-only sysroot files streamed from the SATA blob, exposed
+    // at /sysroot/<name> (no namespace object). Used by the rustc crate loader to
+    // open `--extern core=/sysroot/libcore-<hash>.rmeta` etc.
+    if let Some(rest) = path.strip_prefix("/sysroot/") {
+        if !rest.is_empty() && !rest.contains('/') {
+            if let Some(idx) = crate::sysroot_blob::find(rest) {
+                return match crate::process::with_current_fds_mut(|t| {
+                    t.alloc(crate::process::FdEntry::SysrootBlob { idx: idx as u32, position: 0 })
+                })
+                .flatten()
+                {
+                    Some(fd) => fd as u64,
+                    None => u64::MAX,
+                };
+            }
+        }
+    }
+
     let want_create = (flags & open_flags::CREATE) != 0;
     let want_dir = (flags & open_flags::DIRECTORY) != 0;
 
@@ -1009,7 +1027,9 @@ fn handle_close(fd: u64) -> u64 {
                 t.close(fd as i32);
                 0
             }
-            Some(FdEntry::Console) | Some(FdEntry::Path { .. }) => {
+            Some(FdEntry::Console)
+            | Some(FdEntry::Path { .. })
+            | Some(FdEntry::SysrootBlob { .. }) => {
                 t.close(fd as i32);
                 0
             }
@@ -1059,6 +1079,24 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
                 }
             });
             n as u64
+        }
+
+        // M27 DEMO 80: sysroot blob file — stream from the SATA disk at cursor.
+        Some(FdEntry::SysrootBlob { idx, position }) => {
+            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len) };
+            match crate::sysroot_blob::read(idx as usize, position, buf) {
+                Some(n) => {
+                    if n > 0 {
+                        crate::process::with_current_fds_mut(|t| {
+                            if let Some(FdEntry::SysrootBlob { position: p, .. }) = t.get_mut(fd as i32) {
+                                *p = position + n as u64;
+                            }
+                        });
+                    }
+                    n as u64
+                }
+                None => u64::MAX,
+            }
         }
 
         // Legacy ramfs file: delegate to the ramfs fd table via the handle.
@@ -1378,6 +1416,23 @@ fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
         let s = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
         match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
     };
+    // M27 DEMO 80: sysroot blob files (/sysroot/<name>) are read-only, disk-
+    // backed, and have no namespace object. The rustc crate loader stats them
+    // (Path::exists / is_file) before opening, so report size + regular-file.
+    if let Some(rest) = path.strip_prefix("/sysroot/") {
+        if let Some(idx) = crate::sysroot_blob::find(rest) {
+            let out = unsafe { &mut *(out_ptr as *mut StatX) };
+            out.size = crate::sysroot_blob::file_len(idx).unwrap_or(0);
+            out.suid_high = 0;
+            out.suid_low = 0;
+            out.created_at = 0;
+            out.modified_at = 0;
+            out.file_type = 0; // Binary (is_file() == file_type != 3)
+            out.tier = 0; // Public
+            out._reserved = [0; 3];
+            return 0;
+        }
+    }
     let suid = match crate::fs::paths::Namespace::resolve(path) {
         Ok(s) => s,
         Err(_) => return u64::MAX,

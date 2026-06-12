@@ -101,6 +101,27 @@ pub fn count() -> usize {
     unsafe { (*core::ptr::addr_of!(SYSROOT)).as_ref().map(|s| s.count).unwrap_or(0) }
 }
 
+/// Find a staged file by exact name (e.g. "libcore-<hash>.rmeta"); returns its
+/// blob index, or `None`.
+pub fn find(name: &str) -> Option<usize> {
+    // SAFETY: read-only access to a table written once at boot.
+    let table = unsafe { (*core::ptr::addr_of!(SYSROOT)).as_ref()? };
+    (0..table.count).find(|&i| {
+        let f = &table.files[i];
+        core::str::from_utf8(&f.name[..f.name_len]).map(|n| n == name).unwrap_or(false)
+    })
+}
+
+/// Byte length of file `idx`, or `None` if out of range / no blob.
+pub fn file_len(idx: usize) -> Option<u64> {
+    // SAFETY: read-only access to a table written once at boot.
+    let table = unsafe { (*core::ptr::addr_of!(SYSROOT)).as_ref()? };
+    if idx >= table.count {
+        return None;
+    }
+    Some(table.files[idx].len)
+}
+
 /// Write file `idx`'s name into `out_name`; return its byte length, or `None`
 /// if `idx` is out of range / no blob.
 pub fn info(idx: usize, out_name: &mut [u8]) -> Option<u64> {

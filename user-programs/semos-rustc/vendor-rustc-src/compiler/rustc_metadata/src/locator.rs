@@ -986,16 +986,19 @@ fn get_rmeta_metadata_section<'a, 'p>(filename: &'p Path) -> Result<OwnedSlice, 
     Ok(slice_owned(mmap, Deref::deref))
 }
 
-// M27 R4 B5 TODO(Phase 5): SemOS arm reads the entire rmeta into a buffer
-// (no mmap on SemOS). Currently a stub — the SemOS rustc bootstrap doesn't
-// yet read rmeta from disk; when it does, this needs semos_std::fs::read +
-// rustc_data_structures::memmap::Mmap-from-Vec support.
+// M27 DEMO 80 (Layer C): read the whole rmeta into a heap `Vec` via
+// `semos_std::fs::read` (no mmap on SemOS), then wrap it as an `OwnedSlice`.
+// `/sysroot/<name>.rmeta` paths stream from the SATA sysroot blob (kernel
+// FdEntry::SysrootBlob); other paths fall through to the normal fs. The
+// resulting `MetadataBlob` owns the `Vec` for the compile's lifetime — fine on
+// the 4 GiB user heap even for the ~57 MB libcore.
 #[cfg(target_os = "none")]
 fn get_rmeta_metadata_section<'a, 'p>(filename: &'p Path) -> Result<OwnedSlice, MetadataError<'a>> {
-    let _ = filename;
-    Err(MetadataError::LoadFailure(
-        "rmeta read not supported on semos yet (R4 B5 TODO Phase 5)".to_string(),
-    ))
+    let path = filename.as_str();
+    let bytes = semos_std::fs::read(path).map_err(|_| {
+        MetadataError::LoadFailure(format!("failed to read rmeta from semos fs: '{}'", path))
+    })?;
+    Ok(slice_owned(bytes, Deref::deref))
 }
 
 /// M27 DEMO 80 step C3: prove a host-built rlib's `.rmeta` actually DECODES in

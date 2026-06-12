@@ -168,6 +168,49 @@ fn c3_disk_probe(cfg_version: &'static str) {
     }
 }
 
+/// Derive a crate name from a staged sysroot filename:
+/// `libcore-53344cc650ffcdf9.rmeta` → `core`. Strips the `lib` prefix, the
+/// `.rmeta`/`.rlib` extension, and the trailing `-<hash>` (the hash has no `-`).
+fn crate_name_from_libfile(fname: &str) -> Option<&str> {
+    let stem = fname.strip_prefix("lib")?;
+    let stem = stem.strip_suffix(".rmeta").or_else(|| stem.strip_suffix(".rlib"))?;
+    Some(match stem.rfind('-') {
+        Some(pos) => &stem[..pos],
+        None => stem,
+    })
+}
+
+/// Enumerate the SATA sysroot blob and build `--extern <crate>=/sysroot/<file>`
+/// args for each staged crate. Empty if no blob is staged.
+fn sysroot_extern_args() -> Vec<String> {
+    use semos_std::arch::{SYS_SYSROOT_INFO, syscall3};
+    let mut out = Vec::new();
+    let mut idx: u64 = 0;
+    loop {
+        let mut name = [0u8; 128];
+        let len = unsafe {
+            syscall3(SYS_SYSROOT_INFO, idx, name.as_mut_ptr() as u64, name.len() as u64)
+        };
+        if len == u64::MAX {
+            break;
+        }
+        let nlen = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+        if let Ok(fname) = core::str::from_utf8(&name[..nlen]) {
+            if let Some(crate_name) = crate_name_from_libfile(fname) {
+                let mut spec = String::from(crate_name);
+                spec.push('=');
+                spec.push_str("/sysroot/");
+                spec.push_str(fname);
+                println!("[sysroot] --extern {}", spec);
+                out.push(String::from("--extern"));
+                out.push(spec);
+            }
+        }
+        idx += 1;
+    }
+    out
+}
+
 semos_std::main!(fn main() {
     // Skip argv[0] like rustc_driver_impl::run_compiler does internally.
     let argv: Vec<String> = semos_std::env::args().into_iter().skip(1).collect();
@@ -205,6 +248,16 @@ semos_std::main!(fn main() {
     // Prepend the binary name back since run_compiler strips argv[0].
     let mut args: Vec<String> = vec![String::from("semos-rustc")];
     args.extend(argv);
+
+    // M27 DEMO 80: auto-inject `--extern <crate>=/sysroot/<lib...>.rmeta` for
+    // every crate staged in the SATA sysroot blob, so `semos-rustc /hello.rs`
+    // resolves `core` (+ its implicit `compiler_builtins` dep) from disk without
+    // the user typing --extern. No-op when no blob is staged.
+    let externs = sysroot_extern_args();
+    if externs.is_empty() {
+        println!("[sysroot] no disk sysroot staged — compile will hit the core wall");
+    }
+    args.extend(externs);
 
     let mut cb = SemosCallbacks;
     rustc_driver_impl::run_compiler(&args, &mut cb);
