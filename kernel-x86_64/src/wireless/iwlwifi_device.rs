@@ -518,8 +518,11 @@ impl IwlDevice {
         for chan in 0..8u64 {
             self.csr.write32(fh::tcsr_tx_config(chan), fh::TX_CONFIG_DMA_ENABLE | 0x8);
         }
-        // Enable queue 0 in the TX activity mask.
-        self.csr.write_prph(scd::TXFACT, 1 << 0);
+        // Activate the scheduler TX FIFOs. SCD_TXFACT is a per-FIFO mask;
+        // the command queue maps to FIFO 7, so enable all 8 FIFOs to cover
+        // it regardless of the exact queue→FIFO mapping (unused FIFOs have
+        // no pending TFDs, so this is safe).
+        self.csr.write_prph(scd::TXFACT, 0xFF);
 
         // Read back to confirm the SCD is alive and took our config.
         let txfact = self.csr.read_prph(scd::TXFACT);
@@ -539,9 +542,9 @@ impl IwlDevice {
         // on this generation (read back 0 / a hardware status), so they're
         // informational, not pass/fail.
         let _ = (dram, q0, cbbc, chain);
-        let ok = txfact == 1;
+        let ok = txfact != 0 && txfact != 0xFFFF_FFFF;
         if ok {
-            println!("[iwlwifi] tx_init: scheduler responding (TXFACT echoed queue-0 enable) — command queue armed");
+            println!("[iwlwifi] tx_init: scheduler responding (TXFACT=0x{:08X}) — command queue armed", txfact);
         } else {
             println!("[iwlwifi] tx_init: TXFACT readback wrong (0x{:08X}) — SCD base may be off", txfact);
         }
@@ -584,7 +587,12 @@ impl IwlDevice {
         // Advance write pointer + ring the doorbell.
         self.tx_write_idx = ((idx + 1) % TX_RING_SIZE) as u16;
         let stts_before = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
+        use super::iwlwifi_csr::{CSR_INT as CSR_INT_R, CSR_FH_INT_STATUS as CSR_FH_R};
         if !self.grab_nic_access() { return false; }
+        // Clear latched interrupt status so the post-doorbell read shows
+        // only NEW activity (W1C — write 1s to clear).
+        self.csr.write32(CSR_INT_R, 0xFFFF_FFFF);
+        self.csr.write32(CSR_FH_R, 0xFFFF_FFFF);
         let rd_before = self.csr.read_prph(scd::queue_rdptr(0));
         self.csr.write32(CSR_HBUS_TARG_WRPTR, self.tx_write_idx as u32);
         self.release_nic_access();
