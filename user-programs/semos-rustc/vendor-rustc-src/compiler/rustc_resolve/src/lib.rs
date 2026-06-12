@@ -28,6 +28,9 @@
 #[macro_use]
 extern crate alloc;
 
+#[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
 use core::cell::Ref;
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
