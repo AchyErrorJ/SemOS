@@ -6,7 +6,11 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::ops::ControlFlow;
 use alloc::borrow::Cow;
+// option B: FxHashSet is std::HashSet on host (std hash_set::Entry), hashbrown on target.
+#[cfg(target_os = "none")]
 use hashbrown::hash_set;
+#[cfg(not(target_os = "none"))]
+use std::collections::hash_set;
 // M27 R4 B5: PathBuf carries through from semos_std on this target.
 use semos_std::path::PathBuf;
 
