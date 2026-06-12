@@ -37,6 +37,7 @@ pub mod process;
 pub mod ipc;
 pub mod syscall;
 pub mod security;
+pub mod sysroot_blob;
 
 // Re-exports for convenience
 pub use platform::{Platform, set_platform, log, ticks};

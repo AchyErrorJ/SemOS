@@ -107,6 +107,67 @@ fn intercept_short_circuit(args: &[String]) -> bool {
     false
 }
 
+/// DEMO 80 Layer B: enumerate the SATA sysroot blob (staged by
+/// `tools/pack-sysroot-blob.py`) and decode each staged `.rmeta` via the c3
+/// probe. The `libcore` rmeta (~57 MB) is too big to embed, so it is streamed
+/// from disk in 64 KiB chunks through `SYS_SYSROOT_READ`.
+fn c3_disk_probe(cfg_version: &'static str) {
+    use semos_std::arch::{SYS_SYSROOT_INFO, SYS_SYSROOT_READ, syscall3, syscall4};
+
+    println!("[c3-disk] enumerating SATA sysroot blob...");
+    let mut files: Vec<(u64, String, u64)> = Vec::new();
+    let mut idx: u64 = 0;
+    loop {
+        let mut name = [0u8; 128];
+        let len = unsafe {
+            syscall3(SYS_SYSROOT_INFO, idx, name.as_mut_ptr() as u64, name.len() as u64)
+        };
+        if len == u64::MAX {
+            break;
+        }
+        let nlen = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+        let nm = match core::str::from_utf8(&name[..nlen]) {
+            Ok(s) => String::from(s),
+            Err(_) => String::from("<bad-utf8>"),
+        };
+        println!("[c3-disk]   [{}] {} ({} bytes)", idx, nm, len);
+        files.push((idx, nm, len));
+        idx += 1;
+    }
+    if files.is_empty() {
+        println!("[c3-disk] no sysroot blob staged (attach sysroot.img as a SATA/AHCI drive)");
+        return;
+    }
+
+    for (i, nm, len) in files {
+        println!("[c3-disk] reading {} from disk...", nm);
+        let mut bytes: Vec<u8> = Vec::with_capacity(len as usize);
+        let mut off: u64 = 0;
+        let mut chunk = [0u8; 65536];
+        let mut ok = true;
+        while off < len {
+            let n = unsafe {
+                syscall4(SYS_SYSROOT_READ, i, off, chunk.as_mut_ptr() as u64, chunk.len() as u64)
+            };
+            if n == u64::MAX {
+                println!("[c3-disk] read error at offset {}", off);
+                ok = false;
+                break;
+            }
+            if n == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..n as usize]);
+            off += n;
+        }
+        if !ok {
+            continue;
+        }
+        println!("[c3-disk] read {} bytes (expected {}); probing...", bytes.len(), len);
+        rustc_metadata::locator::semos_c3_probe(bytes, cfg_version);
+    }
+}
+
 semos_std::main!(fn main() {
     // Skip argv[0] like rustc_driver_impl::run_compiler does internally.
     let argv: Vec<String> = semos_std::env::args().into_iter().skip(1).collect();
@@ -120,12 +181,19 @@ semos_std::main!(fn main() {
     // (or disproving) that host-built crate metadata is schema-compatible with
     // this semos-rustc before we build any disk-sysroot plumbing.
     if argv.iter().any(|a| a == "--c3-selftest") {
+        let cfg_version = option_env!("CFG_VERSION").unwrap_or("1.84.0-semos-m27");
+
+        // (1) RAM path: the embedded host-built compiler_builtins.rmeta. With the
+        // rustc-host-built rmeta (matching symbol table) get_header should now
+        // decode name="compiler_builtins" (vs the old "concat").
         static CB_RMETA: &[u8] = include_bytes!("../test-sources/compiler_builtins.rmeta");
         println!("[c3] embedded compiler_builtins.rmeta: {} bytes", CB_RMETA.len());
-        rustc_metadata::locator::semos_c3_probe(
-            CB_RMETA.to_vec(),
-            option_env!("CFG_VERSION").unwrap_or("1.84.0-semos-m27"),
-        );
+        rustc_metadata::locator::semos_c3_probe(CB_RMETA.to_vec(), cfg_version);
+
+        // (2) Disk path (Layer B): enumerate + decode every rmeta staged on the
+        // SATA sysroot blob — notably the ~57 MB libcore, too big to embed.
+        c3_disk_probe(cfg_version);
+
         println!("[c3] selftest returned");
         return;
     }

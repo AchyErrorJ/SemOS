@@ -278,6 +278,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if ahci::init() {
         if ahci::register_with_kernel_core() {
             println!("[ahci] registered with driver registry as 'sata0'");
+            // M27 DEMO 80 (Layer B): if a sysroot blob is staged on the SATA
+            // disk (LBA 0 magic SEMSYSR1), cache its file table so semos-rustc
+            // can stream core/compiler_builtins metadata via SYS_SYSROOT_READ.
+            kernel_core::sysroot_blob::probe();
         }
     }
     println!();

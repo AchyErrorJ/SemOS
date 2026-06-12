@@ -154,6 +154,15 @@ pub mod numbers {
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
+    // M27 DEMO 80 — read-only sysroot blob staged on a SATA disk (Layer B).
+    /// SYS_SYSROOT_INFO(idx, name_buf_ptr, name_buf_len) -> file byte length,
+    /// or u64::MAX if idx is out of range / no blob. Writes the file name (up to
+    /// name_buf_len bytes) into name_buf_ptr.
+    pub const SYS_SYSROOT_INFO: u64 = 120;
+    /// SYS_SYSROOT_READ(idx, offset, buf_ptr, buf_len) -> bytes read (0 = EOF),
+    /// or u64::MAX on error. Streams file `idx` from disk at byte `offset`.
+    pub const SYS_SYSROOT_READ: u64 = 121;
+
     /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
     /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
     /// (hard error). The shim retries after yielding.
@@ -190,6 +199,10 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_RENAME => handle_rename(arg0, arg1, arg2, arg3),
         SYS_TRUNCATE => handle_truncate(arg0, arg1, arg2),
         SYS_STATX => handle_statx(arg0, arg1, arg2),
+
+        // Sysroot blob (Layer B) — read-only crate metadata staged on a SATA disk.
+        SYS_SYSROOT_INFO => handle_sysroot_info(arg0, arg1, arg2),
+        SYS_SYSROOT_READ => handle_sysroot_read(arg0, arg1, arg2, arg3),
 
         // Semantic objects (20-29)
         SYS_SEM_CREATE => handle_sem_create(arg0, arg1, arg2, arg3),
@@ -1076,6 +1089,44 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         }
 
         _ => u64::MAX, // Empty / no such FD
+    }
+}
+
+/// SYS_SYSROOT_INFO(idx, name_buf_ptr, name_buf_len) → file byte length, or
+/// u64::MAX if idx is out of range / no blob. Writes the file name (NUL-padded,
+/// up to name_buf_len bytes) into name_buf_ptr.
+fn handle_sysroot_info(idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u64 {
+    let cap = name_buf_len as usize;
+    if cap == 0 || cap > 256 {
+        return u64::MAX;
+    }
+    let mut tmp = [0u8; 256];
+    let n = cap.min(tmp.len());
+    match crate::sysroot_blob::info(idx as usize, &mut tmp[..n]) {
+        Some(len) => {
+            // SAFETY: user buffer; trust the VA as the rest of this file does.
+            unsafe {
+                let dest = core::slice::from_raw_parts_mut(name_buf_ptr as *mut u8, n);
+                dest.copy_from_slice(&tmp[..n]);
+            }
+            len
+        }
+        None => u64::MAX,
+    }
+}
+
+/// SYS_SYSROOT_READ(idx, offset, buf_ptr, buf_len) → bytes read (0 = EOF), or
+/// u64::MAX on error. Streams file `idx` from the SATA blob at byte `offset`.
+fn handle_sysroot_read(idx: u64, offset: u64, buf_ptr: u64, buf_len: u64) -> u64 {
+    let len = buf_len as usize;
+    if len == 0 || len > crate::semantic::object::MAX_FILE_CONTENT {
+        return u64::MAX;
+    }
+    // SAFETY: user buffer; trust the VA as the rest of this file does.
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len) };
+    match crate::sysroot_blob::read(idx as usize, offset, buf) {
+        Some(n) => n as u64,
+        None => u64::MAX,
     }
 }
 

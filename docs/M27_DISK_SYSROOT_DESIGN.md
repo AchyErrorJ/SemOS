@@ -212,3 +212,62 @@ tool** (option B). This is also the project's real cross-compiler.
 - No linking of a real `core` into the output — `/hello.rs` calls nothing in
   `core`, so only metadata (for name resolution) is needed; codegen/link is the
   next milestone after this wall falls.
+
+## 8. IMPLEMENTED — disk-staged c3-selftest (2026-06-12)
+
+Layers A + B are wired for the c3-selftest. Decision (Q1/Q2): **raw blob on a
+SATA/AHCI disk**, kernel reads it via the existing `Sata` `BlockDevice`. We pack
+the host-built `.rmeta` (not `.rlib`) — the c3 probe only needs the metadata
+blob, which avoids no_std `ar` parsing.
+
+**Layer A — `tools/pack-sysroot-blob.py`:** writes a sector-aligned raw image:
+header sector (`SEMSYSR1` magic, count, then `(name[64], lba u64, len u64)`
+records) + each file's bytes at its LBA.
+
+**Layer B — `kernel-core/src/sysroot_blob.rs`:** at boot (after AHCI registers)
+`probe()` reads LBA 0 of `sata0`; on a magic match it caches the file table.
+Two syscalls stream files without holding them in kernel RAM:
+`SYS_SYSROOT_INFO=120` (idx → name + len) and `SYS_SYSROOT_READ=121`
+(idx, offset, buf, len → bytes; loops a 32 KiB static scratch over `read_blocks`).
+
+**c3-selftest (`semos-rustc --c3-selftest`):** probes the embedded
+compiler_builtins.rmeta (RAM path) AND enumerates the disk blob, streaming each
+`.rmeta` (incl. the ~57 MB `libcore`) in 64 KiB chunks → `semos_c3_probe`.
+
+### Build + run
+
+```sh
+# 1. build the sysroot (host): see user-programs/rustc-host/build-core.sh
+#    → libcore-<hash>.rmeta + libcompiler_builtins-<hash>.rmeta
+# 2. pack the blob
+python tools/pack-sysroot-blob.py sysroot.img \
+  libcore-<hash>.rmeta=<deps>/libcore-<hash>.rmeta \
+  libcompiler_builtins-<hash>.rmeta=<deps>/libcompiler_builtins-<hash>.rmeta
+# 3. build kernel image (bakes semos-rustc): kernel-x86_64 build, then x86_64-runner
+```
+
+**QEMU** (attach the blob as a 2nd AHCI disk; needs `-cpu max` for RDRAND — the
+default CPU aborts at the TLS RNG check). Note the *full* image is too big to
+boot under QEMU-BIOS, but a semos-rustc-stubbed kernel boots and validates
+`probe()`:
+
+```sh
+qemu-system-x86_64 -cpu max -m 2048 \
+  -drive format=raw,file=<kernel-bios.img> \
+  -drive id=sysdisk,file=sysroot.img,if=none,format=raw \
+  -device ich9-ahci,id=ahci -device ide-hd,drive=sysdisk,bus=ahci.0 \
+  -serial stdio -display none
+```
+
+**Hardware (T540p):** flash the kernel image to the boot USB; write `sysroot.img`
+to the internal SATA disk (LBA 0). The kernel's AHCI reads `sata0`; expect
+`[sysroot] blob found: 2 file(s)` then, from `--c3-selftest`,
+`[c3] get_header DECODED: name="compiler_builtins"` and `name="core"`.
+
+**Smoke-tested 2026-06-12 (QEMU, stubbed kernel):** `probe()` found the AHCI
+blob, parsed both records with exact LBAs/sizes. The streaming `read()` + the
+~57 MB core decode run only in the full image → validate on hardware.
+
+**Next (DEMO 80 proper):** pack `.rlib` (+ no_std `ar` parse) and register the
+files in the `/sysroot/...` namespace so the rustc crate loader finds them, then
+compile `/hello.rs`.
