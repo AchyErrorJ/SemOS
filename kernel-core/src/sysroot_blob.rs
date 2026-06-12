@@ -53,13 +53,27 @@ fn block_dev() -> Option<&'static dyn crate::drivers::traits::BlockDevice> {
 pub fn probe() {
     let dev = match block_dev() {
         Some(d) => d,
-        None => return,
+        None => {
+            crate::platform::log("[sysroot] no block device registered\n");
+            return;
+        }
     };
     let mut hdr = [0u8; SECTOR];
     if dev.read_blocks(0, &mut hdr).is_err() {
+        crate::platform::log("[sysroot] LBA 0 read FAILED on the SATA disk\n");
         return;
     }
     if &hdr[0..8] != MAGIC {
+        // The disk the AHCI driver reads (first ATA port) has no sysroot blob at
+        // LBA 0. Dump the first bytes so we can tell what it is: all-00 = empty/
+        // wrong disk; an MBR/GPT (often ends 55 AA, "EFI PART" at LBA 1) = a
+        // partitioned/OS disk and the blob (if any) is on a DIFFERENT SATA port.
+        crate::platform::log("[sysroot] no SEMSYSR1 magic at LBA 0; first 16 bytes:");
+        for b in hdr.iter().take(16) {
+            crate::platform::log(" ");
+            crate::platform::log_hex_byte(*b);
+        }
+        crate::platform::log("\n");
         return;
     }
     let count = u32::from_le_bytes([hdr[8], hdr[9], hdr[10], hdr[11]]) as usize;
