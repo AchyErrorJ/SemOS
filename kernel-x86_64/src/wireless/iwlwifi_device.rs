@@ -651,7 +651,7 @@ impl IwlDevice {
         if responded {
             let closed = (stts_after & 0xFFFF) as usize;
             let bufi = closed.wrapping_sub(1) % RX_RING_SIZE;
-            let mut r = [0u32; 16];
+            let mut r = [0u32; 24];
             unsafe {
                 let p = &raw const RX_BUFS.0[bufi] as *const u32;
                 for (i, slot) in r.iter_mut().enumerate() {
@@ -660,8 +660,10 @@ impl IwlDevice {
             }
             println!("[iwlwifi] send_cmd: response cmd=0x{:02X} (buf {}): {:08X} {:08X} {:08X} {:08X}",
                 (r[1] & 0xFF) as u8, bufi, r[0], r[1], r[2], r[3]);
-            println!("[iwlwifi]   resp+: {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+            println!("[iwlwifi]   resp[4..12]: {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
                 r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]);
+            println!("[iwlwifi]   resp[12..20]: {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+                r[12], r[13], r[14], r[15], r[16], r[17], r[18], r[19]);
         }
         responded
     }
@@ -790,8 +792,10 @@ pub fn init() -> bool {
                                         // section so we can pull the WiFi MAC.
                                         // [op=read, target=cache, type=1(SW),
                                         //  offset=0, length=0x100].
-                                        println!("[iwlwifi] Stage 3c: reading NVM...");
-                                        let nvm = [0u8, 0, 1, 0, 0, 0, 0, 1];
+                                        println!("[iwlwifi] Stage 3c: reading NVM HW section (MAC)...");
+                                        // [op=read, target=cache, type=0(HW),
+                                        //  offset=0, length=0x40]. MAC is ~byte 42.
+                                        let nvm = [0u8, 0, 0, 0, 0, 0, 0x40, 0];
                                         dev.send_cmd(0x88, &nvm);
                                     }
                                 }
