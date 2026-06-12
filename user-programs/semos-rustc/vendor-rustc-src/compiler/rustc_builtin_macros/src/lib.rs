@@ -152,12 +152,12 @@ pub fn register_builtin_macros(resolver: &mut dyn ResolverExpand) {
     // a proc-macro built on top of bridge::client; on SemOS we register a
     // stub that produces an empty token-stream so the BangProcMacro field
     // gating compiles cleanly.
-    #[cfg(not(target_os = "none"))]
+    #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
     {
         let client = rustc_proc_macro::bridge::client::Client::expand1(rustc_proc_macro::quote);
         register(sym::quote, SyntaxExtensionKind::Bang(Arc::new(BangProcMacro { client })));
     }
-    #[cfg(target_os = "none")]
+    #[cfg(any(target_os = "none", procmacro_stub))]
     {
         register(sym::quote, SyntaxExtensionKind::Bang(Arc::new(BangProcMacro {})));
     }

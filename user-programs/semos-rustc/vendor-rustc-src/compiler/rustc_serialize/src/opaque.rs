@@ -9,6 +9,21 @@ use crate::int_overflow::DebugStrictAdd;
 use crate::leb128;
 use crate::serialize::{Decodable, Decoder};
 
+// option B: the real (host) FileEncoder writes rmeta/rlib to disk via std fs/io
+// and implements the Encoder/Encodable traits directly.
+#[cfg(not(target_os = "none"))]
+use std::fs::File;
+#[cfg(not(target_os = "none"))]
+use std::io;
+#[cfg(not(target_os = "none"))]
+use std::io::Write;
+#[cfg(not(target_os = "none"))]
+use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "none"))]
+use crate::serialize::{Encodable, Encoder};
+#[cfg(not(target_os = "none"))]
+const BUF_SIZE: usize = 8192;
+
 pub mod mem_encoder;
 
 // -----------------------------------------------------------------------------
@@ -22,6 +37,9 @@ pub const MAGIC_END_BYTES: &[u8] = b"rust-end-file";
 // these types in struct fields and function signatures still type-
 // check. The actual incremental cache writer is dead per §1.3; these
 // stubs return Err/no-op if any method is invoked at runtime.
+// option B: target-only — host uses the REAL FileEncoder (enabled below) so it
+// can actually write rmeta/rlib to disk.
+#[cfg(target_os = "none")]
 pub struct FileEncoder;
 // Matches the upstream shape `Result<usize, (PathBuf, io::Error)>`, so
 // callers like `if let Err((path, error)) = ...` type-check on SemOS.
@@ -29,13 +47,11 @@ pub struct FileEncoder;
 pub type FileEncodeResult = core::result::Result<usize, (std::path::PathBuf, std::io::Error)>;
 #[cfg(target_os = "none")]
 pub type FileEncodeResult = core::result::Result<usize, (semos_std::path::PathBuf, semos_std::io::Error)>;
+#[cfg(target_os = "none")]
 impl FileEncoder {
     /// std-compat constructor. Path is ignored on SemOS — the stub
     /// never opens a file (rmeta-to-disk dropped per M27 §1.3) but
     /// callers in rustc_codegen_ssa expect the io::Result<Self> shape.
-    #[cfg(not(target_os = "none"))]
-    pub fn new(_path: impl AsRef<std::path::Path>) -> std::io::Result<Self> { Ok(Self) }
-    #[cfg(target_os = "none")]
     pub fn new(_path: impl AsRef<semos_std::path::Path>) -> semos_std::io::Result<Self> { Ok(Self) }
     pub fn finish(&mut self) -> FileEncodeResult { Ok(0) }
     pub fn position(&self) -> usize { 0 }
@@ -43,6 +59,7 @@ impl FileEncoder {
     pub fn emit_raw_bytes(&mut self, _bytes: &[u8]) {}
 }
 
+#[cfg(target_os = "none")]
 impl crate::Encoder for FileEncoder {
     fn emit_usize(&mut self, _v: usize) {}
     fn emit_u128(&mut self, _v: u128) {}
@@ -66,7 +83,7 @@ impl crate::Encoder for FileEncoder {
 // would require semos-std `std::fs::File` + `std::io::Write` surface (not in
 // R2 top-5; out of scope for v1). Also drops `FileEncodeResult`, `BUF_SIZE`,
 // `IntEncodedWithFixedSize::Encodable<FileEncoder>`, and the `Drop` debug check.
-#[cfg(any())]
+#[cfg(not(target_os = "none"))]
 pub struct FileEncoder {
     // The input buffer. For adequate performance, we need to be able to write
     // directly to the unwritten region of the buffer, without calling copy_from_slice.
@@ -85,7 +102,7 @@ pub struct FileEncoder {
     finished: bool,
 }
 
-#[cfg(any())]
+#[cfg(not(target_os = "none"))]
 impl FileEncoder {
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         // File::create opens the file for writing only. When -Zmeta-stats is enabled, the metadata
@@ -238,7 +255,7 @@ impl FileEncoder {
     }
 }
 
-#[cfg(any())]
+#[cfg(not(target_os = "none"))]
 impl Drop for FileEncoder {
     fn drop(&mut self) {
         if !std::thread::panicking() {
@@ -256,7 +273,7 @@ macro_rules! write_leb128 {
     };
 }
 
-#[cfg(any())]
+#[cfg(not(target_os = "none"))]
 impl Encoder for FileEncoder {
     write_leb128!(emit_usize, usize, write_usize_leb128);
     write_leb128!(emit_u128, u128, write_u128_leb128);
@@ -457,7 +474,7 @@ impl<'a> Decoder for MemDecoder<'a> {
 // since the default implementations call `encode` on their slices internally.
 // M27 §1.3: `impl Encodable<FileEncoder> for [u8]` cfg'd out (FileEncoder gone).
 // MemEncoder's [u8] specialization lives in mem_encoder.rs.
-#[cfg(any())]
+#[cfg(not(target_os = "none"))]
 impl Encodable<FileEncoder> for [u8] {
     fn encode(&self, e: &mut FileEncoder) {
         Encoder::emit_usize(e, self.len());
@@ -481,12 +498,18 @@ impl IntEncodedWithFixedSize {
     pub const ENCODED_SIZE: usize = 8;
 }
 
-// Stage F10: re-enable the FileEncoder Encodable impl using the
-// stub (no-op write). rustc_query_system needs this for IncrementalDep
-// graph node count encoding (dead path on SemOS but type-checked).
+// Stage F10: no-op stub impl on target; real impl on host writes 8 fixed bytes.
+#[cfg(target_os = "none")]
 impl crate::Encodable<FileEncoder> for IntEncodedWithFixedSize {
     #[inline]
     fn encode(&self, _e: &mut FileEncoder) {}
+}
+#[cfg(not(target_os = "none"))]
+impl crate::Encodable<FileEncoder> for IntEncodedWithFixedSize {
+    #[inline]
+    fn encode(&self, e: &mut FileEncoder) {
+        e.write_array(self.0.to_le_bytes());
+    }
 }
 
 impl<'a> Decodable<MemDecoder<'a>> for IntEncodedWithFixedSize {

@@ -4,7 +4,11 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::borrow::Borrow;
+// option B: FxHashMap is std::HashMap on host (std Entry), hashbrown on target.
+#[cfg(target_os = "none")]
 use hashbrown::hash_map::Entry;
+#[cfg(not(target_os = "none"))]
+use std::collections::hash_map::Entry;
 use alloc::sync::Arc;
 // M27 R4 B5: cfg-split host vs SemOS for fs/io/path.
 #[cfg(not(target_os = "none"))]

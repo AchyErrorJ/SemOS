@@ -455,7 +455,10 @@ pub(in crate::rmeta) fn provide(providers: &mut Providers) {
         // sufficiently visible parent (considering modules that re-export the
         // external item to be parents).
         visible_parent_map: |tcx, ()| {
+            #[cfg(target_os = "none")]
             use hashbrown::hash_map::Entry;
+            #[cfg(not(target_os = "none"))]
+            use std::collections::hash_map::Entry;
             use alloc::collections::vec_deque::VecDeque;
 
             let mut visible_parent_map: DefIdMap<DefId> = Default::default();
