@@ -52,6 +52,11 @@ tracing = { version = "0.1", default-features = false }
 # already cfg-split their usages.
 [target.'cfg(not(target_os = "none"))'.dependencies]
 pathdiff = "0.2.0"
+# option B: host back/link.rs + back/linker.rs locate the MSVC toolchain.
+find-msvc-tools = "0.1"
+# option B: errors.rs uses bstr::ByteSlice::replace (allocates) for sysroot-path
+# scrubbing; the base bstr dep drops default features incl. alloc.
+bstr = { version = "1.11.3", features = ["alloc"] }
 # ar_archive_writer pulls object 0.37 → crc32fast (21 errors).
 # Archive-writing is linker-related; F1+G1 §1.7-gated all back/link*
 # modules. Host-only.

@@ -2198,8 +2198,12 @@ impl Emitter for SharedEmitter {
         );
     }
 
-    // M27 §1.8: Emitter trait no longer has `source_map` after our
-    // fluent-removal patch in rustc_errors. Drop the override entirely.
+    // M27 §1.8: the SemOS emitter_stub Emitter trait dropped `source_map`; the
+    // real host Emitter trait still requires it. SharedEmitter has no SourceMap.
+    #[cfg(not(target_os = "none"))]
+    fn source_map(&self) -> Option<&rustc_span::source_map::SourceMap> {
+        None
+    }
 
     fn translator(&self) -> &Translator {
         panic!("shared emitter attempted to translate a diagnostic");
