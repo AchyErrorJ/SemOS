@@ -597,15 +597,29 @@ impl IwlDevice {
             for _ in 0..2000 { for _ in 0..100 { core::hint::spin_loop(); } } // ~2 ms
         }
         // Snapshot: did the firmware consume the TFD? respond? fault?
+        use super::iwlwifi_csr::{CSR_INT, CSR_FH_INT_STATUS};
         if !self.grab_nic_access() { return false; }
         let rd_after = self.csr.read_prph(scd::queue_rdptr(0));
         let err_valid = self.csr.mem_read32(self.error_table_ptr);
         let err_id = self.csr.mem_read32(self.error_table_ptr + 4);
+        // Ground-truth: read the SCD queue-0 context back from SRAM (did
+        // our tx_init writes land?) + the read/write pointers the SCD
+        // actually keeps there.
+        let ctx0 = self.csr.mem_read32(self.scd_base_ptr + scd::context_queue_offset(0));
+        let ctx1 = self.csr.mem_read32(self.scd_base_ptr + scd::context_queue_offset(0) + 4);
+        let int_now = self.csr.read32(CSR_INT);
+        let fh_now = self.csr.read32(CSR_FH_INT_STATUS);
+        // Read the TFD + byte-count we wrote (confirm our DMA structures).
+        let tfd_dw0 = unsafe { core::ptr::read_volatile(&raw const TX_TFD_RING.0[idx] as *const u32) };
+        let tfd_tb = unsafe { core::ptr::read_volatile((&raw const TX_TFD_RING.0[idx] as *const u32).add(1)) };
+        let bc_ent = unsafe { core::ptr::read_volatile(&raw const TX_BC_TBL.0[idx]) };
         self.release_nic_access();
         let stts_after = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
 
         println!("[iwlwifi] send_cmd 0x{:02X}: wr_idx={} SCD_rdptr {}->{} rb_stts 0x{:08X}->0x{:08X} responded={}",
             cmd_id, self.tx_write_idx, rd_before, rd_after, stts_before, stts_after, responded as u8);
+        println!("[iwlwifi]   diag: scd_ctx[0]=0x{:08X}/0x{:08X} INT=0x{:08X} FH_INT=0x{:08X} TFD=[0x{:08X} 0x{:08X}] bc=0x{:04X}",
+            ctx0, ctx1, int_now, fh_now, tfd_dw0, tfd_tb, bc_ent);
         if err_valid != 0 {
             println!("[iwlwifi] send_cmd: FIRMWARE FAULT err_valid=0x{:08X} err_id=0x{:08X} (command rejected)",
                 err_valid, err_id);
