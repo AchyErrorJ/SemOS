@@ -646,15 +646,22 @@ impl IwlDevice {
         } else {
             println!("[iwlwifi] send_cmd: error table clean (no fault)");
         }
-        // If we got a response, dump the first RX dwords of the next buffer.
+        // If we got a response, dump the response packet (16 dwords) from
+        // the buffer the NIC just closed.
         if responded {
-            let idx2 = (stts_after & 0xFF) as usize % RX_RING_SIZE;
-            let rb = unsafe {
-                let p = &raw const RX_BUFS.0[idx2.saturating_sub(1) % RX_RING_SIZE] as *const u32;
-                (core::ptr::read_volatile(p), core::ptr::read_volatile(p.add(1)))
-            };
-            println!("[iwlwifi] send_cmd: response RXB=[{:08X} {:08X}] (cmd byte 0x{:02X})",
-                rb.0, rb.1, (rb.1 & 0xFF) as u8);
+            let closed = (stts_after & 0xFFFF) as usize;
+            let bufi = closed.wrapping_sub(1) % RX_RING_SIZE;
+            let mut r = [0u32; 16];
+            unsafe {
+                let p = &raw const RX_BUFS.0[bufi] as *const u32;
+                for (i, slot) in r.iter_mut().enumerate() {
+                    *slot = core::ptr::read_volatile(p.add(i));
+                }
+            }
+            println!("[iwlwifi] send_cmd: response cmd=0x{:02X} (buf {}): {:08X} {:08X} {:08X} {:08X}",
+                (r[1] & 0xFF) as u8, bufi, r[0], r[1], r[2], r[3]);
+            println!("[iwlwifi]   resp+: {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+                r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]);
         }
         responded
     }
@@ -778,7 +785,15 @@ pub fn init() -> bool {
                                     // first INIT-ucode command. Payload = a u32
                                     // antenna mask (0x3 = both antennas on 7260).
                                     let payload = [0x03u8, 0, 0, 0];
-                                    dev.send_cmd(0x98, &payload);
+                                    if dev.send_cmd(0x98, &payload) {
+                                        // NVM_ACCESS_CMD (0x88): read the NVM SW
+                                        // section so we can pull the WiFi MAC.
+                                        // [op=read, target=cache, type=1(SW),
+                                        //  offset=0, length=0x100].
+                                        println!("[iwlwifi] Stage 3c: reading NVM...");
+                                        let nvm = [0u8, 0, 1, 0, 0, 0, 0, 1];
+                                        dev.send_cmd(0x88, &nvm);
+                                    }
                                 }
                             } else {
                                 println!("[iwlwifi] Stage 2c: no ALIVE signal — firmware silent after release");
