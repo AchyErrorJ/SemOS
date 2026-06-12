@@ -595,10 +595,8 @@ fn module_codegen(
 
     OngoingModuleCodegen::Async(std::thread::spawn(move || {
         profiler.clone().generic_activity_with_arg("compile functions", &*cgu_name).run(|| {
-            cranelift_codegen::timing::set_thread_profiler(Box::new(super::MeasuremeProfiler(
-                profiler.clone(),
-            )));
-
+            // cranelift_codegen::timing is unavailable on the vendored no_std
+            // build (timing feature disabled), so skip thread profiler setup.
             let mut cached_context = Context::new();
             for codegened_func in codegened_functions {
                 crate::base::compile_fn(

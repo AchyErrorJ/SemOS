@@ -1050,17 +1050,10 @@ pub fn create_and_enter_global_ctxt<T, F: for<'tcx> FnOnce(TyCtxt<'tcx>) -> T>(
     // `F: for<'tcx> FnOnce(TyCtxt<'tcx>) -> T` rules it out. Box::leak
     // upgrades them to `'static`, which is fine — `create_and_enter_global_ctxt`
     // is called at most once per compile and the leak is per-process.
-    #[cfg(not(target_os = "none"))]
-    let gcx_cell = OnceLock::new();
-    #[cfg(not(target_os = "none"))]
-    let arena = WorkerLocal::new(|_| Arena::default());
-    #[cfg(not(target_os = "none"))]
-    let hir_arena = WorkerLocal::new(|_| rustc_hir::Arena::default());
-    #[cfg(target_os = "none")]
+    // Host needs the same leak: the boxed `inner` closure type-erases the borrow
+    // and the borrow checker conservatively rejects local references.
     let gcx_cell = Box::leak(Box::new(OnceLock::new()));
-    #[cfg(target_os = "none")]
     let arena = Box::leak(Box::new(WorkerLocal::new(|_| Arena::default())));
-    #[cfg(target_os = "none")]
     let hir_arena = Box::leak(Box::new(WorkerLocal::new(|_| rustc_hir::Arena::default())));
 
     // This closure is necessary to force rustc to perform the correct lifetime
@@ -1117,11 +1110,7 @@ pub fn create_and_enter_global_ctxt<T, F: for<'tcx> FnOnce(TyCtxt<'tcx>) -> T>(
         )
     });
 
-    // Stage H iter 3: target gcx_cell/arena/hir_arena are already `&'static`
-    // (Box::leak'd above); host versions are local values borrowed by `&`.
-    #[cfg(not(target_os = "none"))]
-    let (gcx_ref, arena_ref, hir_arena_ref) = (&gcx_cell, &arena, &hir_arena);
-    #[cfg(target_os = "none")]
+    // gcx_cell/arena/hir_arena are `&'static` above, so pass them directly.
     let (gcx_ref, arena_ref, hir_arena_ref) = (gcx_cell, arena, hir_arena);
     inner(
         &compiler.sess,

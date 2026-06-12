@@ -128,15 +128,12 @@ impl CommentWriter {
     ) {
         debug_assert!(self.enabled);
 
-        use hashbrown::hash_map::Entry;
-        match self.entity_comments.entry(entity.into()) {
-            Entry::Occupied(mut occ) => {
-                occ.get_mut().push('\n');
-                occ.get_mut().push_str(comment.as_ref());
-            }
-            Entry::Vacant(vac) => {
-                vac.insert(comment.into());
-            }
+        let entity = entity.into();
+        if let Some(existing) = self.entity_comments.get_mut(&entity) {
+            existing.push('\n');
+            existing.push_str(comment.as_ref());
+        } else {
+            self.entity_comments.insert(entity, comment.into());
         }
     }
 
@@ -147,15 +144,11 @@ impl CommentWriter {
     ) {
         debug_assert!(self.enabled);
 
-        use hashbrown::hash_map::Entry;
-        match self.inst_post_comments.entry(entity) {
-            Entry::Occupied(mut occ) => {
-                occ.get_mut().push('\n');
-                occ.get_mut().push_str(comment.as_ref());
-            }
-            Entry::Vacant(vac) => {
-                vac.insert(comment.into());
-            }
+        if let Some(existing) = self.inst_post_comments.get_mut(&entity) {
+            existing.push('\n');
+            existing.push_str(comment.as_ref());
+        } else {
+            self.inst_post_comments.insert(entity, comment.into());
         }
     }
 }

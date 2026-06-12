@@ -379,15 +379,13 @@ fn build_isa(sess: &Session, jit: bool) -> Arc<dyn TargetIsa + 'static> {
     let flags = settings::Flags::new(flags_builder);
 
     let isa_builder = match sess.opts.cg.target_cpu.as_deref() {
-        // Stage G iter 8: cranelift-native runtime CPU detection is
-        // host-only (uses libc cpuid via std). SemOS target hardcodes
-        // x86_64 features at build time; "native" falls through to
-        // explicit lookup of the build target.
+        // Stage G iter 8: cranelift-native is intentionally dropped from the
+        // vendored dependency set (it needs libc cpuid on host). For the
+        // SemOS cross-compiler the target triple is x86_64-unknown-none, so
+        // "native" just resolves through the explicit ISA lookup like any
+        // other target_cpu.
         Some("native") => {
-            #[cfg(not(target_os = "none"))]
-            { cranelift_native::builder_with_options(true).unwrap() }
-            #[cfg(target_os = "none")]
-            { cranelift_codegen::isa::lookup(target_triple.clone()).unwrap() }
+            cranelift_codegen::isa::lookup(target_triple.clone()).unwrap()
         }
         Some(value) => {
             let mut builder =

@@ -255,7 +255,7 @@ impl FileEncoder {
     }
 }
 
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), debug_assertions))]
 impl Drop for FileEncoder {
     fn drop(&mut self) {
         if !std::thread::panicking() {

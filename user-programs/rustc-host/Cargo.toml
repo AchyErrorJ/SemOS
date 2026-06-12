@@ -14,11 +14,49 @@ path = "src/main.rs"
 
 [dependencies]
 rustc_driver_impl = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_driver_impl" }
+rustc_driver = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_driver" }
 rustc_codegen_cranelift = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_codegen_cranelift" }
 rustc_codegen_ssa = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_codegen_ssa" }
 rustc_session = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_session" }
 rustc_target = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_target" }
 rustc_interface = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_interface" }
+rustc_hir_typeck = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_hir_typeck" }
+rustc_mir_build = { path = "../semos-rustc/vendor-rustc-src/compiler/rustc_mir_build" }
 
 # Own workspace root so the semos-rustc target-none workspace doesn't claim us.
 [workspace]
+
+[profile.release]
+debug = 2
+strip = false
+lto = false
+
+# option B: replicate semos-rustc's [patch.crates-io] so host uses the vendored
+# no_std cranelift + supporting forks (with the SemOS-added cg_clif API stubs).
+[patch.crates-io]
+tracing-core = { path = "../semos-rustc/vendor-externals/tracing-core" }
+scoped-tls = { path = "../semos-rustc/vendor-externals/scoped-tls" }
+either = { path = "../semos-rustc/vendor-externals/either" }
+indexmap = { path = "../semos-rustc/vendor-externals/indexmap" }
+ena = { path = "../semos-rustc/vendor-externals/ena" }
+cranelift-bitset = { path = "../semos-rustc/vendor-externals/cranelift-bitset" }
+cranelift-entity = { path = "../semos-rustc/vendor-externals/cranelift-entity" }
+cranelift-control = { path = "../semos-rustc/vendor-externals/cranelift-control" }
+libm = { path = "../semos-rustc/vendor-externals/libm" }
+cranelift-bforest = { path = "../semos-rustc/vendor-externals/cranelift-bforest" }
+cranelift-codegen-shared = { path = "../semos-rustc/vendor-externals/cranelift-codegen-shared" }
+rustc-hash = { path = "../semos-rustc/vendor-externals/rustc-hash" }
+memchr = { path = "../semos-rustc/vendor-externals/memchr" }
+cranelift-object = { path = "../semos-rustc/vendor-externals/cranelift-object" }
+anyhow = { path = "../semos-rustc/vendor-externals/anyhow" }
+crc32fast = { path = "../semos-rustc/vendor-externals/crc32fast" }
+regalloc2 = { path = "../semos-rustc/vendor-externals/regalloc2" }
+regex = { path = "../semos-rustc/vendor-externals/regex" }
+aho-corasick = { path = "../semos-rustc/vendor-externals/aho-corasick" }
+cranelift-module = { path = "../semos-rustc/vendor-externals/cranelift-module" }
+gimli = { path = "../semos-rustc/vendor-externals/gimli" }
+cranelift-codegen = { path = "../semos-rustc/vendor-externals/cranelift-codegen" }
+cranelift-frontend = { path = "../semos-rustc/vendor-externals/cranelift-frontend" }
+cranelift-assembler-x64 = { path = "../semos-rustc/vendor-externals/cranelift-assembler-x64" }
+cranelift-assembler-x64-meta = { path = "../semos-rustc/vendor-externals/cranelift-assembler-x64-meta" }
+cranelift-srcgen = { path = "../semos-rustc/vendor-externals/cranelift-srcgen" }

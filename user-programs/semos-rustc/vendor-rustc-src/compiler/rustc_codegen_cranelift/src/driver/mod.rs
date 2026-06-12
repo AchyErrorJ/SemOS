@@ -59,13 +59,16 @@ fn predefine_mono_items<'tcx>(
     });
 }
 
+#[cfg(target_os = "none")]
 struct MeasuremeProfiler(SelfProfilerRef);
 
+#[cfg(target_os = "none")]
 struct TimingGuard {
     profiler: core::mem::ManuallyDrop<SelfProfilerRef>,
     inner: Option<rustc_data_structures::profiling::TimingGuard<'static>>,
 }
 
+#[cfg(target_os = "none")]
 impl Drop for TimingGuard {
     fn drop(&mut self) {
         self.inner.take();
@@ -75,6 +78,7 @@ impl Drop for TimingGuard {
     }
 }
 
+#[cfg(target_os = "none")]
 impl cranelift_codegen::timing::Profiler for MeasuremeProfiler {
     fn start_pass(&self, pass: cranelift_codegen::timing::Pass) -> Box<dyn core::any::Any> {
         let mut timing_guard = Box::new(TimingGuard {

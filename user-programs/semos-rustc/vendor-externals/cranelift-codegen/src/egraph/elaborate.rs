@@ -5,7 +5,6 @@ use super::Stats;
 use super::cost::Cost;
 use crate::ctxhash::NullCtx;
 use crate::dominator_tree::DominatorTreePreorder;
-use crate::hash_map::Entry as HashEntry;
 use crate::inst_predicates::is_pure_for_egraph;
 use crate::ir::{Block, Function, Inst, Value, ValueDef};
 use crate::loop_analysis::{Loop, LoopAnalysis};
@@ -391,16 +390,16 @@ impl<'a> Elaborator<'a> {
         // currently rematerialized. Right now we don't do this, to
         // avoid the need for another fixpoint loop here.
         if arg.in_block != insert_block && remat_values.contains(&arg.value) {
-            let new_value = match remat_copies.entry((insert_block, arg.value)) {
-                HashEntry::Occupied(o) => *o.get(),
-                HashEntry::Vacant(v) => {
-                    let inst = func.dfg.value_def(arg.value).inst().unwrap();
-                    debug_assert_eq!(func.dfg.inst_results(inst).len(), 1);
-                    let new_inst = func.dfg.clone_inst(inst);
-                    func.layout.insert_inst(new_inst, before);
-                    let new_result = func.dfg.inst_results(new_inst)[0];
-                    *v.insert(new_result)
-                }
+            let new_value = if let Some(v) = remat_copies.get(&(insert_block, arg.value)) {
+                *v
+            } else {
+                let inst = func.dfg.value_def(arg.value).inst().unwrap();
+                debug_assert_eq!(func.dfg.inst_results(inst).len(), 1);
+                let new_inst = func.dfg.clone_inst(inst);
+                func.layout.insert_inst(new_inst, before);
+                let new_result = func.dfg.inst_results(new_inst)[0];
+                remat_copies.insert((insert_block, arg.value), new_result);
+                new_result
             };
             trace!("rematerialized {} as {}", arg.value, new_value);
             arg.value = new_value;

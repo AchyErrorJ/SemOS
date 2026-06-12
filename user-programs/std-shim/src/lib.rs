@@ -74,6 +74,15 @@ pub use core as __core;
 // Install our SYS_HEAP_ALLOC-backed allocator as the global. Downstream
 // programs that depend on semos-std inherit this automatically — no
 // further #[global_allocator] needed.
+//
+// HOST GUARD (target_os = "none" => SemOS bare-metal target only): when this
+// crate is pulled into a *host* tool build (e.g. user-programs/rustc-host, the
+// M27 DEMO 80 option-B host compiler), we must NOT register this allocator.
+// Its `alloc` routes to the SYS_HEAP_ALLOC syscall, which on a normal OS
+// returns null and makes the very first allocation abort with
+// "memory allocation of N bytes failed". On host we let std's default System
+// allocator stand. See docs/M27_DISK_SYSROOT_DESIGN.md §6c.
+#[cfg(target_os = "none")]
 #[global_allocator]
 static SEMOS_ALLOCATOR: alloc_impl::SemosAllocator = alloc_impl::SemosAllocator::new();
 
