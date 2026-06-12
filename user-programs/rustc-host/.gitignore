@@ -1,0 +1,8 @@
+# Regenerable build inputs/outputs for the option-B host sysroot build.
+# sysroot-src/ is a 47 MB patched copy of the rust-src library tree; regenerate
+# with `bash prepare-sysroot-src.sh` (applies sysroot-src.patch to nightly-2025-12-23).
+sysroot-src/
+# build artifacts (core.rlib is ~60 MB)
+sysroot-test/target/
+target/
+*.log

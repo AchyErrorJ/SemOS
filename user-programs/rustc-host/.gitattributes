@@ -1,0 +1,4 @@
+# Keep LF: .sh run via bash (CRLF breaks the shebang), and the patch context
+# lines must match the LF rust-src files byte-for-byte (`patch --binary`).
+*.sh text eol=lf
+*.patch -text

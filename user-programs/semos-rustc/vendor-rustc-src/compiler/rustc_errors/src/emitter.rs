@@ -590,11 +590,32 @@ impl Drop for Buffy {
     }
 }
 
+// HOST (option B, target_os != none): we have a real `std::io::Stderr`, and
+// diagnostics MUST go to stderr — when this host rustc is driven by cargo
+// (`-Z build-std`), cargo parses `--print=…` output on stdout. Routing
+// warnings (e.g. `interface_abi_required_feature`) to stdout corrupts that
+// machine-readable output ("output of --print=file-names missing"). So on host
+// we bypass the SemOS Stdout-as-Stderr shim and write to genuine stderr.
+#[cfg(not(target_os = "none"))]
+pub fn stderr_destination(color: ColorConfig) -> Destination {
+    use std::io::IsTerminal;
+    let stderr = std::io::stderr();
+    // Resolve Auto against the concrete handle before boxing (a `dyn Write`
+    // loses IsTerminal, so AutoStream would otherwise always pick Never).
+    let choice = match color.to_color_choice() {
+        ColorChoice::Auto => {
+            if stderr.is_terminal() { ColorChoice::Always } else { ColorChoice::Never }
+        }
+        other => other,
+    };
+    AutoStream::new(Box::new(stderr), choice)
+}
+
+#[cfg(target_os = "none")]
 pub fn stderr_destination(color: ColorConfig) -> Destination {
     // M27 R4 B5: semos_std::io::Stdout as Stderr analogue (see Buffy comment).
-    // option B: on host this resolves to std::io::Stdout; obtain a handle value
-    // (std::io::Stdout has no unit-struct form, unlike the semos shim).
-    let buffer_writer = std::io::stdout();
+    // The SemOS serial console exposes only a single Stdout sink.
+    let buffer_writer = semos_std::io::Stdout;
     // We need to resolve `ColorChoice::Auto` before `Box`ing since
     // `ColorChoice::Auto` on `dyn Write` will always resolve to `Never`
     let choice = get_stderr_color_choice(color, &buffer_writer);

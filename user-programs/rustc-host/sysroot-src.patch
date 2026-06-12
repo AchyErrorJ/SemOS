@@ -1,0 +1,287 @@
+diff --git a/src/ffi/va_list.rs b/src/ffi/va_list.rs
+index d5166ba..e46266c 100644
+--- a/src/ffi/va_list.rs
++++ b/src/ffi/va_list.rs
+@@ -256,12 +256,9 @@ impl<'f> VaList<'f> {
+ impl<'f> Clone for VaList<'f> {
+     #[inline]
+     fn clone(&self) -> Self {
+-        let mut dest = crate::mem::MaybeUninit::uninit();
+-        // SAFETY: we write to the `MaybeUninit`, thus it is initialized and `assume_init` is legal.
+-        unsafe {
+-            va_copy(dest.as_mut_ptr(), self);
+-            dest.assume_init()
+-        }
++        // SemOS M27: va_copy is the safe `fn(&VaList) -> VaList` form the
++        // vendored compiler expects (see intrinsics/mod.rs).
++        va_copy(self)
+     }
+ }
+ 
+diff --git a/src/intrinsics/mod.rs b/src/intrinsics/mod.rs
+index 2179b45..f5b47b6 100644
+--- a/src/intrinsics/mod.rs
++++ b/src/intrinsics/mod.rs
+@@ -3430,7 +3430,14 @@ pub const fn autodiff<F, G, T: crate::marker::Tuple, R>(f: F, df: G, args: T) ->
+ /// <https://clang.llvm.org/docs/OffloadingDesign.html>.
+ #[rustc_nounwind]
+ #[rustc_intrinsic]
+-pub const fn offload<F, T: crate::marker::Tuple, R>(f: F, args: T) -> R;
++// SemOS M27: vendored compiler expects offload's expanded 4-arg signature
++// (f, [u32;3], [u32;3], args) — see rustc_hir_analysis check/intrinsic.rs.
++pub const fn offload<F, T: crate::marker::Tuple, R>(
++    f: F,
++    _grid: [u32; 3],
++    _block: [u32; 3],
++    args: T,
++) -> R;
+ 
+ /// Inform Miri that a given pointer definitely has a certain alignment.
+ #[cfg(miri)]
+@@ -3467,7 +3474,10 @@ pub(crate) const fn miri_promise_symbolic_alignment(ptr: *const (), align: usize
+ ///
+ #[rustc_intrinsic]
+ #[rustc_nounwind]
+-pub unsafe fn va_copy<'f>(dest: *mut VaList<'f>, src: &VaList<'f>);
++// SemOS M27: vendored compiler expects va_copy as a *safe* `fn(&VaList) -> VaList`
++// (see rustc_hir_analysis check/intrinsic.rs); this nightly's core declared the
++// older `unsafe fn(*mut, &) -> ()` form. Match the compiler; call site updated.
++pub fn va_copy<'f>(src: &VaList<'f>) -> VaList<'f>;
+ 
+ /// Loads an argument of type `T` from the `va_list` `ap` and increment the
+ /// argument `ap` points to.
+diff --git a/src/macros/mod.rs b/src/macros/mod.rs
+index a12ee60..4a029b5 100644
+--- a/src/macros/mod.rs
++++ b/src/macros/mod.rs
+@@ -168,7 +168,7 @@ macro_rules! assert_ne {
+ /// ```
+ #[unstable(feature = "assert_matches", issue = "82775")]
+ #[allow_internal_unstable(panic_internals)]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro assert_matches {
+     ($left:expr, $(|)? $( $pattern:pat_param )|+ $( if $guard: expr )? $(,)?) => {
+         match $left {
+@@ -401,7 +401,7 @@ macro_rules! debug_assert_ne {
+ /// ```
+ #[unstable(feature = "assert_matches", issue = "82775")]
+ #[allow_internal_unstable(assert_matches)]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro debug_assert_matches($($arg:tt)*) {
+     if $crate::cfg!(debug_assertions) {
+         $crate::assert_matches::assert_matches!($($arg)*);
+@@ -1909,10 +1909,7 @@ pub(crate) mod builtin {
+         /* compiler built-in */
+     }
+ 
+-    /// Impl detail of EII
+-    #[unstable(feature = "eii_internals", issue = "none")]
+-    #[rustc_builtin_macro]
+-    pub macro eii_extern_target($item:item) {
+-        /* compiler built-in */
+-    }
++    // SemOS M27: `eii_extern_target` builtin macro absent in the vendored
++    // compiler (this nightly's core is newer than the vendored tree); removed
++    // since /hello.rs never references it.
+ }
+diff --git a/src/marker.rs b/src/marker.rs
+index 68f2276..732c976 100644
+--- a/src/marker.rs
++++ b/src/marker.rs
+@@ -153,7 +153,6 @@ unsafe impl<T: Sync + PointeeSized> Send for &T {}
+ #[fundamental] // for Default, for example, which requires that `[T]: !Default` be evaluatable
+ #[rustc_specialization_trait]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ // `Sized` being coinductive, despite having supertraits, is okay as there are no user-written impls,
+ // and we know that the supertraits are always implemented if the subtrait is just by looking at
+ // the builtin impls.
+@@ -172,7 +171,6 @@ pub trait Sized: MetaSized {
+ #[fundamental]
+ #[rustc_specialization_trait]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ // `MetaSized` being coinductive, despite having supertraits, is okay for the same reasons as
+ // `Sized` above.
+ #[rustc_coinductive]
+@@ -190,7 +188,6 @@ pub trait MetaSized: PointeeSized {
+ #[fundamental]
+ #[rustc_specialization_trait]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ #[rustc_coinductive]
+ pub trait PointeeSized {
+     // Empty
+@@ -236,7 +233,6 @@ pub trait PointeeSized {
+ #[unstable(feature = "unsize", issue = "18598")]
+ #[lang = "unsize"]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ pub trait Unsize<T: PointeeSized>: PointeeSized {
+     // Empty.
+ }
+@@ -512,7 +508,6 @@ impl<T: PointeeSized> Copy for &T {}
+ #[unstable(feature = "bikeshed_guaranteed_no_drop", issue = "none")]
+ #[lang = "bikeshed_guaranteed_no_drop"]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ #[doc(hidden)]
+ pub trait BikeshedGuaranteedNoDrop {}
+ 
+@@ -887,7 +882,6 @@ impl<T: PointeeSized> StructuralPartialEq for PhantomData<T> {}
+ )]
+ #[lang = "discriminant_kind"]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ pub trait DiscriminantKind {
+     /// The type of the discriminant, which must satisfy the trait
+     /// bounds required by `mem::Discriminant`.
+@@ -1057,7 +1051,6 @@ marker_impls! {
+ #[lang = "destruct"]
+ #[rustc_on_unimplemented(message = "can't drop `{Self}`", append_const_msg)]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ pub const trait Destruct: PointeeSized {}
+ 
+ /// A marker for tuple types.
+@@ -1068,7 +1061,6 @@ pub const trait Destruct: PointeeSized {}
+ #[lang = "tuple_trait"]
+ #[diagnostic::on_unimplemented(message = "`{Self}` is not a tuple")]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ pub trait Tuple {}
+ 
+ /// A marker for types which can be used as types of `const` generic parameters.
+@@ -1126,7 +1118,6 @@ marker_impls! {
+ )]
+ #[lang = "fn_ptr_trait"]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ pub trait FnPtr: Copy + Clone {
+     /// Returns the address of the function pointer.
+     #[lang = "fn_ptr_addr"]
+diff --git a/src/mem/transmutability.rs b/src/mem/transmutability.rs
+index f36cb8c..1682e6c 100644
+--- a/src/mem/transmutability.rs
++++ b/src/mem/transmutability.rs
+@@ -86,7 +86,6 @@ use crate::marker::ConstParamTy_;
+ #[unstable_feature_bound(transmutability)]
+ #[lang = "transmute_trait"]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ #[rustc_coinductive]
+ pub unsafe trait TransmuteFrom<Src, const ASSUME: Assume = { Assume::NOTHING }>
+ where
+diff --git a/src/panic.rs b/src/panic.rs
+index 7a42b3d..132b4b5 100644
+--- a/src/panic.rs
++++ b/src/panic.rs
+@@ -20,7 +20,7 @@ use crate::any::Any;
+ #[unstable(feature = "edition_panic", issue = "none", reason = "use panic!() instead")]
+ #[allow_internal_unstable(panic_internals, const_format_args)]
+ #[rustc_diagnostic_item = "core_panic_2015_macro"]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro panic_2015 {
+     () => (
+         $crate::panicking::panic("explicit panic")
+@@ -47,7 +47,7 @@ pub macro panic_2015 {
+ #[unstable(feature = "edition_panic", issue = "none", reason = "use panic!() instead")]
+ #[allow_internal_unstable(panic_internals, const_format_args)]
+ #[rustc_diagnostic_item = "core_panic_2021_macro"]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro panic_2021 {
+     () => (
+         $crate::panicking::panic("explicit panic")
+@@ -67,7 +67,7 @@ pub macro panic_2021 {
+ #[unstable(feature = "edition_panic", issue = "none", reason = "use unreachable!() instead")]
+ #[allow_internal_unstable(panic_internals)]
+ #[rustc_diagnostic_item = "unreachable_2015_macro"]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro unreachable_2015 {
+     () => (
+         $crate::panicking::panic("internal error: entered unreachable code")
+@@ -85,7 +85,7 @@ pub macro unreachable_2015 {
+ #[doc(hidden)]
+ #[unstable(feature = "edition_panic", issue = "none", reason = "use unreachable!() instead")]
+ #[allow_internal_unstable(panic_internals)]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro unreachable_2021 {
+     () => (
+         $crate::panicking::panic("internal error: entered unreachable code")
+diff --git a/src/pin.rs b/src/pin.rs
+index 74ecb5e..4791f56 100644
+--- a/src/pin.rs
++++ b/src/pin.rs
+@@ -2027,7 +2027,7 @@ unsafe impl<T: ?Sized> PinCoerceUnsized for *mut T {}
+ ///
+ /// [`Box::pin`]: ../../std/boxed/struct.Box.html#method.pin
+ #[stable(feature = "pin_macro", since = "1.68.0")]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ #[allow_internal_unstable(super_let)]
+ #[rustc_diagnostic_item = "pin_macro"]
+ // `super` gets removed by rustfmt
+diff --git a/src/prelude/v1.rs b/src/prelude/v1.rs
+index a5d9a53..a695e83 100644
+--- a/src/prelude/v1.rs
++++ b/src/prelude/v1.rs
+@@ -121,5 +121,4 @@ pub use crate::macros::builtin::define_opaque;
+ #[unstable(feature = "extern_item_impls", issue = "125418")]
+ pub use crate::macros::builtin::{eii, unsafe_eii};
+ 
+-#[unstable(feature = "eii_internals", issue = "none")]
+-pub use crate::macros::builtin::eii_extern_target;
++// SemOS M27: eii_extern_target removed (builtin macro absent in vendored compiler).
+diff --git a/src/ptr/metadata.rs b/src/ptr/metadata.rs
+index 1a58643..ea6ced8 100644
+--- a/src/ptr/metadata.rs
++++ b/src/ptr/metadata.rs
+@@ -55,7 +55,6 @@ use crate::ptr::NonNull;
+ /// [`to_raw_parts`]: *const::to_raw_parts
+ #[lang = "pointee_trait"]
+ #[rustc_deny_explicit_impl]
+-#[rustc_do_not_implement_via_object]
+ pub trait Pointee: PointeeSized {
+     /// The type for metadata in pointers and references to `Self`.
+     #[lang = "metadata_type"]
+diff --git a/src/ptr/mod.rs b/src/ptr/mod.rs
+index 29fe773..aded8a7 100644
+--- a/src/ptr/mod.rs
++++ b/src/ptr/mod.rs
+@@ -2660,7 +2660,7 @@ impl<F: FnPtr> fmt::Debug for F {
+ /// same requirements apply to field projections, even inside `addr_of!`. (In particular, it makes
+ /// no difference whether the pointer is null or dangling.)
+ #[stable(feature = "raw_ref_macros", since = "1.51.0")]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro addr_of($place:expr) {
+     &raw const $place
+ }
+@@ -2750,7 +2750,7 @@ pub macro addr_of($place:expr) {
+ /// same requirements apply to field projections, even inside `addr_of_mut!`. (In particular, it
+ /// makes no difference whether the pointer is null or dangling.)
+ #[stable(feature = "raw_ref_macros", since = "1.51.0")]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro addr_of_mut($place:expr) {
+     &raw mut $place
+ }
+diff --git a/src/task/ready.rs b/src/task/ready.rs
+index 495d72f..468b3b4 100644
+--- a/src/task/ready.rs
++++ b/src/task/ready.rs
+@@ -46,7 +46,7 @@
+ /// # }
+ /// ```
+ #[stable(feature = "ready_macro", since = "1.64.0")]
+-#[rustc_macro_transparency = "semitransparent"]
++#[rustc_macro_transparency = "semiopaque"]
+ pub macro ready($e:expr) {
+     match $e {
+         $crate::task::Poll::Ready(t) => t,
