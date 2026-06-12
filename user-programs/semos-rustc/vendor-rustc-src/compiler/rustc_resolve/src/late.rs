@@ -12,7 +12,11 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::borrow::Cow;
+// option B: FxHashMap is std::HashMap on host (std Entry), hashbrown on target.
+#[cfg(target_os = "none")]
 use hashbrown::hash_map::Entry;
+#[cfg(not(target_os = "none"))]
+use std::collections::hash_map::Entry;
 use core::mem::{replace, swap, take};
 use core::ops::ControlFlow;
 

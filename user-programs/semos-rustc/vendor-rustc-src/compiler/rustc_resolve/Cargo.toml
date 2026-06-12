@@ -9,6 +9,7 @@ hashbrown = { version = "0.15", default-features = false, features = ["default-h
 indexmap = { version = "2.4.0", default-features = false }
 itertools = { version = "0.12", default-features = false }
 rustc_arena = { path = "../rustc_arena" }
+# (itertools use_alloc for host below — sorted_by_key allocates)
 rustc_ast = { path = "../rustc_ast" }
 rustc_ast_pretty = { path = "../rustc_ast_pretty" }
 rustc_attr_parsing = { path = "../rustc_attr_parsing" }
@@ -33,6 +34,8 @@ tracing = { version = "0.1", default-features = false }
 
 [target.'cfg(not(target_os = "none"))'.dependencies]
 pulldown-cmark = { version = "0.11", features = ["html"], default-features = false }
+# option B: rustdoc.rs uses itertools::sorted_by_key (allocates) on host.
+itertools = { version = "0.12", features = ["use_alloc"] }
 
 [target.'cfg(target_os = "none")'.dependencies]
 semos-std = { path = "../../../../std-shim" }

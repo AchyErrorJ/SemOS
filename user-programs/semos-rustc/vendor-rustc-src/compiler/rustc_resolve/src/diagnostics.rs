@@ -2708,7 +2708,7 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
             format!(
                 "to make use of source file {}, use `mod {ident}` \
                  in this file to declare the module",
-                path.as_str()
+                path.display()
             ),
             Applicability::MaybeIncorrect,
         ))
