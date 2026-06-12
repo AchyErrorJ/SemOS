@@ -631,6 +631,18 @@ impl IwlDevice {
         if err_valid != 0 {
             println!("[iwlwifi] send_cmd: FIRMWARE FAULT err_valid=0x{:08X} err_id=0x{:08X} (command rejected)",
                 err_valid, err_id);
+            // Dump the firmware error-event table: error_id + PC + context.
+            // iwl_error_event_table: [0]valid [1]error_id [2]pc [3]hw_ver
+            // [4]blink2 [5]ilink1 [6]ilink2 [7]data1 [8]data2 [9]data3 ...
+            if self.grab_nic_access() {
+                let mut e = [0u32; 16];
+                self.csr.mem_read_block(self.error_table_ptr, &mut e);
+                self.release_nic_access();
+                println!("[iwlwifi]   fault: error_id=0x{:08X} pc=0x{:08X} hw=0x{:08X} data1=0x{:08X} data2=0x{:08X} data3=0x{:08X}",
+                    e[1], e[2], e[3], e[7], e[8], e[9]);
+                println!("[iwlwifi]   fault raw: {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+                    e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
+            }
         } else {
             println!("[iwlwifi] send_cmd: error table clean (no fault)");
         }
@@ -762,8 +774,11 @@ pub fn init() -> bool {
                                     // 0x6a, zeroed payload). We watch consumption
                                     // + response + the fault table.
                                     println!("[iwlwifi] Stage 3b: sending first command...");
-                                    let payload = [0u8; 8];
-                                    dev.send_cmd(0x6a, &payload);
+                                    // TX_ANT_CONFIGURATION_CMD (0x98): the real
+                                    // first INIT-ucode command. Payload = a u32
+                                    // antenna mask (0x3 = both antennas on 7260).
+                                    let payload = [0x03u8, 0, 0, 0];
+                                    dev.send_cmd(0x98, &payload);
                                 }
                             } else {
                                 println!("[iwlwifi] Stage 2c: no ALIVE signal — firmware silent after release");
