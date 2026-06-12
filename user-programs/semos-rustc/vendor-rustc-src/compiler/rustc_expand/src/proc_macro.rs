@@ -25,18 +25,18 @@ use crate::base::{self, *};
 use crate::errors;
 // M27 §1.5: proc_macro_server is host-only (the SemOS expand stubs never
 // construct a Rustc server).
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 use crate::proc_macro_server;
 
 // M27 §1.5: mpsc-backed MessagePipe is the cross-thread channel for the
 // proc-macro server. semos_std has no mpsc shim yet; host-only.
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 struct MessagePipe<T> {
     tx: std::sync::mpsc::SyncSender<T>,
     rx: std::sync::mpsc::Receiver<T>,
 }
 
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 impl<T> pm::bridge::server::MessagePipe<T> for MessagePipe<T> {
     fn new() -> (Self, Self) {
         let (tx1, rx1) = std::sync::mpsc::sync_channel(1);
@@ -53,7 +53,7 @@ impl<T> pm::bridge::server::MessagePipe<T> for MessagePipe<T> {
     }
 }
 
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 fn exec_strategy(sess: &Session) -> impl pm::bridge::server::ExecutionStrategy + 'static {
     pm::bridge::server::MaybeCrossThread::<MessagePipe<_>>::new(
         sess.opts.unstable_opts.proc_macro_execution_strategy
@@ -62,12 +62,12 @@ fn exec_strategy(sess: &Session) -> impl pm::bridge::server::ExecutionStrategy +
 }
 
 pub struct BangProcMacro {
-    #[cfg(not(target_os = "none"))]
+    #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
     pub client: pm::bridge::client::Client<pm::TokenStream, pm::TokenStream>,
 }
 
 impl base::BangProcMacro for BangProcMacro {
-    #[cfg(not(target_os = "none"))]
+    #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -93,7 +93,7 @@ impl base::BangProcMacro for BangProcMacro {
     }
     // M27 §1.5: SemOS target — proc-macros are out of scope for v1. Emit a
     // hard error from the diagnostic context (the call site has Span).
-    #[cfg(target_os = "none")]
+    #[cfg(any(target_os = "none", procmacro_stub))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -113,12 +113,12 @@ impl base::BangProcMacro for BangProcMacro {
 }
 
 pub struct AttrProcMacro {
-    #[cfg(not(target_os = "none"))]
+    #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
     pub client: pm::bridge::client::Client<(pm::TokenStream, pm::TokenStream), pm::TokenStream>,
 }
 
 impl base::AttrProcMacro for AttrProcMacro {
-    #[cfg(not(target_os = "none"))]
+    #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -146,7 +146,7 @@ impl base::AttrProcMacro for AttrProcMacro {
         )
     }
     // M27 §1.5: SemOS-target stub — attribute proc-macros not supported.
-    #[cfg(target_os = "none")]
+    #[cfg(any(target_os = "none", procmacro_stub))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -167,12 +167,12 @@ impl base::AttrProcMacro for AttrProcMacro {
 }
 
 pub struct DeriveProcMacro {
-    #[cfg(not(target_os = "none"))]
+    #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
     pub client: DeriveClient,
 }
 
 impl MultiItemModifier for DeriveProcMacro {
-    #[cfg(not(target_os = "none"))]
+    #[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -250,7 +250,7 @@ impl MultiItemModifier for DeriveProcMacro {
         ExpandResult::Ready(items)
     }
     // M27 §1.5: SemOS-target stub — derive proc-macros not supported.
-    #[cfg(target_os = "none")]
+    #[cfg(any(target_os = "none", procmacro_stub))]
     fn expand(
         &self,
         ecx: &mut ExtCtxt<'_>,
@@ -266,7 +266,7 @@ impl MultiItemModifier for DeriveProcMacro {
 }
 
 /// Provide a query for computing the output of a derive macro.
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 pub(super) fn provide_derive_macro_expansion<'tcx>(
     tcx: TyCtxt<'tcx>,
     key: (LocalExpnId, &'tcx TokenStream),
@@ -282,7 +282,7 @@ pub(super) fn provide_derive_macro_expansion<'tcx>(
 }
 
 // M27 §1.5: SemOS-target stub — incremental derive query path never fires.
-#[cfg(target_os = "none")]
+#[cfg(any(target_os = "none", procmacro_stub))]
 pub(super) fn provide_derive_macro_expansion<'tcx>(
     _tcx: TyCtxt<'tcx>,
     _key: (LocalExpnId, &'tcx TokenStream),
@@ -290,10 +290,10 @@ pub(super) fn provide_derive_macro_expansion<'tcx>(
     Err(())
 }
 
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 type DeriveClient = pm::bridge::client::Client<pm::TokenStream, pm::TokenStream>;
 
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 fn expand_derive_macro(
     invoc_id: LocalExpnId,
     input: TokenStream,
@@ -331,14 +331,14 @@ fn expand_derive_macro(
 }
 
 /// Stores the context necessary to expand a derive proc macro via a query.
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 struct QueryDeriveExpandCtx {
     /// Type-erased version of `&mut ExtCtxt`
     expansion_ctx: *mut (),
     client: DeriveClient,
 }
 
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 impl QueryDeriveExpandCtx {
     /// Store the extension context and the client into the thread local value.
     /// It will be accessible via the `with` method while `f` is active.
@@ -378,5 +378,5 @@ impl QueryDeriveExpandCtx {
 // M27 R4 B2: scoped_tls — see semos_std::scoped_thread_local! shim. Kept
 // behind cfg(not(target_os = "none")) because the QueryDeriveExpandCtx
 // only exists on host (proc-macro path).
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 scoped_tls::scoped_thread_local!(static DERIVE_EXPAND_CTX: QueryDeriveExpandCtx);

@@ -6,8 +6,11 @@
 #![feature(associated_type_defaults)]
 #![feature(if_let_guard)]
 #![feature(macro_metavar_expr)]
-#![cfg_attr(not(target_os = "none"), feature(proc_macro_diagnostic))]
-#![cfg_attr(not(target_os = "none"), feature(proc_macro_internals))]
+// option B: proc_macro_diagnostic/internals don't exist on nightly-2026-02-01 and
+// proc-macros aren't needed to compile core, so gate them (and all proc-macro code)
+// behind the procmacro_stub cfg set for the host build.
+#![cfg_attr(all(not(target_os = "none"), not(procmacro_stub)), feature(proc_macro_diagnostic))]
+#![cfg_attr(all(not(target_os = "none"), not(procmacro_stub)), feature(proc_macro_internals))]
 #![feature(try_blocks)]
 #![feature(yeet_expr)]
 // tidy-alphabetical-end
@@ -31,7 +34,7 @@ mod placeholders;
 // SemOS-target `proc_macro` module's expand() stubs do not reach
 // any proc_macro_server::Rustc constructor, so the module never compiles
 // on target. Upstream file body is preserved verbatim under this gate.
-#[cfg(not(target_os = "none"))]
+#[cfg(all(not(target_os = "none"), not(procmacro_stub)))]
 mod proc_macro_server;
 mod stats;
 
