@@ -664,6 +664,21 @@ impl IwlDevice {
                 r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[11]);
             println!("[iwlwifi]   resp[12..20]: {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
                 r[12], r[13], r[14], r[15], r[16], r[17], r[18], r[19]);
+            // For an NVM HW-section read, extract the MAC candidates. The
+            // section data starts at r[4]; the MAC is near byte 42. Print
+            // the raw 6 bytes AND the iwlwifi pair-swapped form at a few
+            // plausible offsets so we can recognize the real one.
+            if cmd_id == 0x88 {
+                let byte = |k: usize| -> u8 {
+                    ((r[4 + k / 4] >> ((k % 4) * 8)) & 0xFF) as u8
+                };
+                for off in [40usize, 42, 44, 48] {
+                    let b = [byte(off), byte(off+1), byte(off+2), byte(off+3), byte(off+4), byte(off+5)];
+                    println!("[iwlwifi]   MAC@{}: raw {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}  swapped {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                        off, b[0],b[1],b[2],b[3],b[4],b[5],
+                        b[1],b[0],b[3],b[2],b[5],b[4]);
+                }
+            }
         }
         responded
     }
