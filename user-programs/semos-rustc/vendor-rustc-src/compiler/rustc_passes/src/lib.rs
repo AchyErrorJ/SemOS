@@ -15,6 +15,9 @@
 extern crate alloc;
 
 #[cfg(not(target_os = "none"))]
+extern crate std as semos_std;
+
+#[cfg(not(target_os = "none"))]
 extern crate std;
 
 use rustc_middle::query::Providers;

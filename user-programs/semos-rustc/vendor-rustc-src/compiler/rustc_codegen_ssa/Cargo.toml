@@ -59,6 +59,10 @@ ar_archive_writer = "0.5"
 tempfile = "3.2"
 thorin-dwp = "0.9"
 wasm-encoder = "0.219"
+# option B: host back/ linker code (metadata.rs/link.rs) uses object::write; the
+# base object dep drops the "write" feature (crc32fast errors on the no_std target,
+# but it builds fine on host).
+object = { version = "0.37.0", features = ["write"] }
 
 [target.'cfg(unix)'.dependencies]
 # tidy-alphabetical-start
