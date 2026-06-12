@@ -3673,6 +3673,124 @@ fn msc_transaction(
     Some((data_xferred, status))
 }
 
+// ============================================================================
+// M27 DEMO 80 Stage 1: USB Mass Storage as a read-only BlockDevice ("usb0").
+// Lets generic kernel-core code read the SanDisk the same way it reads SATA, so
+// `flash-sysroot` can copy sysroot.img off a FAT stick onto the SATA disk.
+// ============================================================================
+
+/// BULK_DATA_BUF capacity (4 KiB = 8 logical sectors at 512 B).
+const MSC_XFER_BYTES: usize = 4096;
+
+/// Read `count` logical blocks starting at `lba` into `buf` via SCSI READ(10)
+/// over Bulk-Only Transport, chunking each transaction to BULK_DATA_BUF.
+/// Returns true only on a fully successful read (CSW status 0, no short packet).
+pub fn msc_read_blocks(lba: u32, count: u32, buf: &mut [u8]) -> bool {
+    use crate::usb::mass_storage::{self as msc_proto, scsi};
+    let msc = match enumerated_msc() {
+        Some(m) => m,
+        None => return false,
+    };
+    let bs = if msc.capacity_bs == 0 { 512 } else { msc.capacity_bs };
+    if bs == 0 || buf.len() < (count as usize) * (bs as usize) {
+        return false;
+    }
+    let max_per = (MSC_XFER_BYTES as u32) / bs; // 8 sectors/transaction at 512 B
+    if max_per == 0 {
+        return false;
+    }
+    let mut done = 0u32;
+    while done < count {
+        let n = (count - done).min(max_per);
+        let data_len = n * bs;
+        let mut cbw = [0u8; 31];
+        let cdb = scsi::read_10(lba + done, n as u16);
+        if msc_proto::build_cbw(&mut cbw, 0xD0_0000u32.wrapping_add(done), data_len, true, 0, &cdb)
+            .is_none()
+        {
+            return false;
+        }
+        let (xfer, st) = match msc_transaction(&msc, &cbw, true, data_len) {
+            Some(v) => v,
+            None => return false,
+        };
+        if st != 0 || xfer < data_len {
+            return false;
+        }
+        let off = (done * bs) as usize;
+        // SAFETY: BULK_DATA_BUF was just filled by the IN transfer above;
+        // single-threaded syscall/boot context.
+        let src = unsafe {
+            core::slice::from_raw_parts(
+                core::ptr::addr_of!(BULK_DATA_BUF) as *const u8,
+                data_len as usize,
+            )
+        };
+        buf[off..off + data_len as usize].copy_from_slice(src);
+        done += n;
+    }
+    true
+}
+
+/// USB Mass Storage exposed as a kernel-core `BlockDevice`. Read-only: the
+/// sysroot blob is copied FROM here TO the SATA disk, never written back.
+pub struct UsbMsc;
+
+impl kernel_core::drivers::traits::BlockDevice for UsbMsc {
+    fn read_blocks(
+        &self,
+        block: u64,
+        buf: &mut [u8],
+    ) -> kernel_core::drivers::traits::DriverResult<()> {
+        use kernel_core::drivers::traits::DriverError;
+        let bs = enumerated_msc()
+            .map(|m| if m.capacity_bs == 0 { 512 } else { m.capacity_bs })
+            .unwrap_or(512);
+        let count = (buf.len() / bs as usize) as u32;
+        if count == 0 {
+            return Err(DriverError::BufferTooSmall);
+        }
+        if msc_read_blocks(block as u32, count, buf) {
+            Ok(())
+        } else {
+            Err(DriverError::IoError)
+        }
+    }
+
+    fn write_blocks(
+        &self,
+        _block: u64,
+        _buf: &[u8],
+    ) -> kernel_core::drivers::traits::DriverResult<()> {
+        Err(kernel_core::drivers::traits::DriverError::ReadOnly)
+    }
+
+    fn block_size(&self) -> usize {
+        enumerated_msc()
+            .map(|m| if m.capacity_bs == 0 { 512 } else { m.capacity_bs as usize })
+            .unwrap_or(512)
+    }
+
+    fn block_count(&self) -> u64 {
+        enumerated_msc().map(|m| m.capacity_blocks as u64).unwrap_or(0)
+    }
+
+    fn name(&self) -> &'static str {
+        "usb0"
+    }
+}
+
+pub static USB_MSC: UsbMsc = UsbMsc;
+
+/// Register the enumerated USB MSC device as block device "usb0". Returns false
+/// (no-op) if no MSC device was enumerated.
+pub fn register_usb_with_kernel_core() -> bool {
+    if enumerated_msc().is_none() {
+        return false;
+    }
+    kernel_core::drivers::registry::register_block("usb0", &USB_MSC)
+}
+
 /// Issue INQUIRY (36 B) + READ CAPACITY (10) to populate MSC.inquiry +
 /// MSC.capacity_*. Called from the enumeration path after bulk EPs are up.
 fn msc_run_inquiry_and_capacity(msc: &mut MscDevice) -> bool {

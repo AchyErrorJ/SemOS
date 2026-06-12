@@ -377,6 +377,29 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             }
         }
     }
+    // M27 DEMO 80 Stage 1: register the enumerated USB stick as block device
+    // "usb0" (infrastructure — runs every boot, not gated behind the demo
+    // suite) and smoke-read its LBA 0 to confirm USB MSC reads work. For a
+    // FAT stick LBA 0 is the MBR (ends 55 AA); for a raw blob it's SEMSYSR1.
+    if usb::xhci::register_usb_with_kernel_core() {
+        println!("[usb0] registered USB Mass Storage as block device 'usb0'");
+        let mut sec = [0u8; 512];
+        match kernel_core::drivers::registry::get_block("usb0") {
+            Some(dev) => match dev.read_blocks(0, &mut sec) {
+                Ok(()) => {
+                    print!("[usb0] LBA 0 first 16 bytes:");
+                    for b in sec.iter().take(16) {
+                        print!(" {:02X}", b);
+                    }
+                    println!("  [510..512]={:02X} {:02X}", sec[510], sec[511]);
+                }
+                Err(_) => println!("[usb0] LBA 0 read FAILED"),
+            },
+            None => println!("[usb0] registry lookup failed"),
+        }
+    } else {
+        println!("[usb0] no USB Mass Storage device enumerated");
+    }
     println!();
 
     // Initialize kernel-core subsystems
