@@ -387,6 +387,13 @@ pub struct MscDevice {
 }
 static mut MSC: Option<MscDevice> = None;
 
+/// All enumerated USB Mass Storage devices (boot stick + sysroot SanDisk + ...).
+/// `MSC` above stays the most-recently-enumerated one for the existing single-
+/// device paths; this array lets `flash-sysroot` scan every stick for the one
+/// that actually holds SYSROOT.IMG. Filled by `try_enumerate_mass_storage`.
+pub const MAX_MSC: usize = 4;
+static mut MSC_DEVS: [Option<MscDevice>; MAX_MSC] = [None; MAX_MSC];
+
 /// CDC-ECM (Phase 15 M50): tethered phone or USB-Ethernet dongle.
 /// Populated by `try_enumerate_cdc_ecm` after a successful SET_CONFIGURATION
 /// + ConfigureEndpoint for the bulk IN/OUT pair.
@@ -2674,6 +2681,14 @@ pub fn enumerated_msc() -> Option<MscDevice> {
     unsafe { MSC }
 }
 
+/// The `i`-th enumerated USB Mass Storage device (see `MSC_DEVS`), or None.
+pub fn enumerated_msc_at(i: usize) -> Option<MscDevice> {
+    if i >= MAX_MSC {
+        return None;
+    }
+    unsafe { (*core::ptr::addr_of!(MSC_DEVS))[i] }
+}
+
 // ============================================================================
 // Bulk transfers (Mass Storage / CDC-ECM / generic bulk)
 // ============================================================================
@@ -3682,12 +3697,13 @@ fn msc_transaction(
 /// BULK_DATA_BUF capacity (4 KiB = 8 logical sectors at 512 B).
 const MSC_XFER_BYTES: usize = 4096;
 
-/// Read `count` logical blocks starting at `lba` into `buf` via SCSI READ(10)
-/// over Bulk-Only Transport, chunking each transaction to BULK_DATA_BUF.
-/// Returns true only on a fully successful read (CSW status 0, no short packet).
-pub fn msc_read_blocks(lba: u32, count: u32, buf: &mut [u8]) -> bool {
+/// Read `count` logical blocks starting at `lba` from MSC device `dev` into
+/// `buf` via SCSI READ(10) over Bulk-Only Transport, chunking each transaction
+/// to BULK_DATA_BUF. Returns true only on a fully successful read (CSW status
+/// 0, no short packet).
+pub fn msc_read_blocks(dev: usize, lba: u32, count: u32, buf: &mut [u8]) -> bool {
     use crate::usb::mass_storage::{self as msc_proto, scsi};
-    let msc = match enumerated_msc() {
+    let msc = match enumerated_msc_at(dev) {
         Some(m) => m,
         None => return false,
     };
@@ -3732,9 +3748,13 @@ pub fn msc_read_blocks(lba: u32, count: u32, buf: &mut [u8]) -> bool {
     true
 }
 
-/// USB Mass Storage exposed as a kernel-core `BlockDevice`. Read-only: the
-/// sysroot blob is copied FROM here TO the SATA disk, never written back.
-pub struct UsbMsc;
+/// USB Mass Storage exposed as a kernel-core `BlockDevice`, one per MSC slot
+/// (usb0..usb{MAX_MSC-1}). Read-only: the sysroot blob is copied FROM here TO
+/// the SATA disk, never written back. `dev` indexes `MSC_DEVS`, read per call,
+/// so the device tracks whatever is enumerated in that slot.
+pub struct UsbMsc {
+    dev: usize,
+}
 
 impl kernel_core::drivers::traits::BlockDevice for UsbMsc {
     fn read_blocks(
@@ -3743,14 +3763,14 @@ impl kernel_core::drivers::traits::BlockDevice for UsbMsc {
         buf: &mut [u8],
     ) -> kernel_core::drivers::traits::DriverResult<()> {
         use kernel_core::drivers::traits::DriverError;
-        let bs = enumerated_msc()
+        let bs = enumerated_msc_at(self.dev)
             .map(|m| if m.capacity_bs == 0 { 512 } else { m.capacity_bs })
             .unwrap_or(512);
         let count = (buf.len() / bs as usize) as u32;
         if count == 0 {
             return Err(DriverError::BufferTooSmall);
         }
-        if msc_read_blocks(block as u32, count, buf) {
+        if msc_read_blocks(self.dev, block as u32, count, buf) {
             Ok(())
         } else {
             Err(DriverError::IoError)
@@ -3766,31 +3786,36 @@ impl kernel_core::drivers::traits::BlockDevice for UsbMsc {
     }
 
     fn block_size(&self) -> usize {
-        enumerated_msc()
+        enumerated_msc_at(self.dev)
             .map(|m| if m.capacity_bs == 0 { 512 } else { m.capacity_bs as usize })
             .unwrap_or(512)
     }
 
     fn block_count(&self) -> u64 {
-        enumerated_msc().map(|m| m.capacity_blocks as u64).unwrap_or(0)
+        enumerated_msc_at(self.dev).map(|m| m.capacity_blocks as u64).unwrap_or(0)
     }
 
     fn name(&self) -> &'static str {
-        "usb0"
+        ["usb0", "usb1", "usb2", "usb3"][self.dev]
     }
 }
 
-pub static USB_MSC: UsbMsc = UsbMsc;
+static USB_MSCS: [UsbMsc; MAX_MSC] = [UsbMsc { dev: 0 }, UsbMsc { dev: 1 }, UsbMsc { dev: 2 }, UsbMsc { dev: 3 }];
+const USB_NAMES: [&str; MAX_MSC] = ["usb0", "usb1", "usb2", "usb3"];
 
-/// Register block device "usb0" backed by USB Mass Storage. Registered
-/// unconditionally: `UsbMsc` reads `enumerated_msc()` per call, so the device
-/// tracks whichever stick is currently enumerated. This lets the user boot,
-/// plug in the sysroot SanDisk, run `usbenum` (re-enumerate → sets MSC), then
-/// `flash-sysroot` — sidestepping the boot-stick-vs-data-stick ambiguity when
-/// two mass-storage devices are present. Reads return IoError until an MSC
-/// device is actually enumerated.
+/// Register one block device per MSC slot (usb0..usb3). Registered
+/// unconditionally — each `UsbMsc` reads its `MSC_DEVS` slot per call, so a
+/// device appears as soon as a stick enumerates into that slot (boot or
+/// `usbenum`). `flash-sysroot` scans usb0..usb3 for the one holding SYSROOT.IMG,
+/// so the user can boot with both the boot stick and the SanDisk plugged in.
 pub fn register_usb_with_kernel_core() -> bool {
-    kernel_core::drivers::registry::register_block("usb0", &USB_MSC)
+    let mut any = false;
+    for i in 0..MAX_MSC {
+        if kernel_core::drivers::registry::register_block(USB_NAMES[i], &USB_MSCS[i]) {
+            any = true;
+        }
+    }
+    any
 }
 
 /// Issue INQUIRY (36 B) + READ CAPACITY (10) to populate MSC.inquiry +
@@ -3887,6 +3912,17 @@ fn try_enumerate_mass_storage(
         return false;
     }
 
-    unsafe { MSC = Some(msc); }
+    unsafe {
+        MSC = Some(msc);
+        // Append to the multi-device table (first free slot), so a second stick
+        // doesn't clobber the first. Skip if a device on this slot is already
+        // recorded (re-enumeration) or the table is full.
+        let devs = &mut *core::ptr::addr_of_mut!(MSC_DEVS);
+        if !devs.iter().any(|d| d.map(|m| m.slot_id) == Some(slot_id)) {
+            if let Some(free) = devs.iter_mut().find(|d| d.is_none()) {
+                *free = Some(msc);
+            }
+        }
+    }
     true
 }

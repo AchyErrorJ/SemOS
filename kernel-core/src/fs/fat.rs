@@ -16,6 +16,29 @@ const ATTR_LFN: u8 = 0x0F;
 const ATTR_DIRECTORY: u8 = 0x10;
 const EOC: u32 = 0x0FFF_FFF8; // end-of-chain marker (>= this = last cluster)
 
+/// Case-insensitive ASCII compare of a reassembled UCS-2 LFN name (terminated
+/// by 0x0000, padded with 0xFFFF) against a lower-case ASCII target. ASCII-only.
+fn lfn_matches(name: &[u16], len: usize, target_lower: &str) -> bool {
+    let t = target_lower.as_bytes();
+    let mut ti = 0usize;
+    for &c in name.iter().take(len) {
+        if c == 0x0000 {
+            break;
+        }
+        if c == 0xFFFF {
+            continue;
+        }
+        if c > 0x7F || ti >= t.len() {
+            return false;
+        }
+        if (c as u8).to_ascii_lowercase() != t[ti] {
+            return false;
+        }
+        ti += 1;
+    }
+    ti == t.len()
+}
+
 pub struct Fat32<'a> {
     dev: &'a dyn BlockDevice,
     spc: u32,        // sectors per cluster
@@ -109,10 +132,16 @@ impl<'a> Fat32<'a> {
         )
     }
 
-    /// Find a file in the root directory by its 11-byte 8.3 short name
-    /// (upper-case, space-padded, e.g. `b"SYSROOT IMG"`). Returns
+    /// Find a file in the root directory, matching EITHER its 11-byte 8.3 short
+    /// name (`name83`, upper-case space-padded e.g. `b"SYSROOT IMG"`) OR its
+    /// long name (`long_lower`, lower-case e.g. `"sysroot.img"`) reassembled from
+    /// preceding LFN entries. The long-name path is insurance for the rare case
+    /// where a formatter mangles the 8.3 name (e.g. `SYSROO~1`). Returns
     /// `(first_cluster, size_bytes)`.
-    pub fn find_file(&mut self, name83: &[u8; 11]) -> Option<(u32, u32)> {
+    pub fn find_file(&mut self, name83: &[u8; 11], long_lower: &str) -> Option<(u32, u32)> {
+        // LFN accumulator (carried across sectors): up to 20 entries × 13 chars.
+        let mut lfn: [u16; 260] = [0; 260];
+        let mut lfn_max = 0usize; // highest ordinal seen for the current run
         let mut cluster = self.root_cluster;
         loop {
             if cluster < 2 || cluster >= EOC {
@@ -124,19 +153,48 @@ impl<'a> Fat32<'a> {
                 self.dev.read_blocks(base + s, &mut sec).ok()?;
                 let mut i = 0;
                 while i + 32 <= SECTOR {
-                    let first = sec[i];
-                    let attr = sec[i + 11];
+                    let e = &sec[i..i + 32];
+                    let first = e[0];
+                    let attr = e[11];
                     if first == 0x00 {
-                        return None; // 0x00 = no more entries anywhere
+                        return None; // no more entries anywhere
                     }
-                    if first != 0xE5 && attr != ATTR_LFN && (attr & ATTR_DIRECTORY) == 0 {
-                        if &sec[i..i + 11] == &name83[..] {
-                            let hi = u16::from_le_bytes([sec[i + 20], sec[i + 21]]) as u32;
-                            let lo = u16::from_le_bytes([sec[i + 26], sec[i + 27]]) as u32;
-                            let size =
-                                u32::from_le_bytes([sec[i + 28], sec[i + 29], sec[i + 30], sec[i + 31]]);
+                    if first == 0xE5 {
+                        lfn_max = 0; // deleted: discard any accumulated LFN run
+                    } else if attr == ATTR_LFN {
+                        // Place this fragment's 13 UCS-2 chars at (ord-1)*13.
+                        let ord = (first & 0x1F) as usize;
+                        if ord >= 1 && ord <= 20 {
+                            let mut put = (ord - 1) * 13;
+                            for &(a, b) in &[
+                                (1usize, 11usize),
+                                (14, 26),
+                                (28, 32),
+                            ] {
+                                let mut p = a;
+                                while p < b {
+                                    lfn[put] = u16::from_le_bytes([e[p], e[p + 1]]);
+                                    put += 1;
+                                    p += 2;
+                                }
+                            }
+                            if ord > lfn_max {
+                                lfn_max = ord;
+                            }
+                        }
+                    } else if (attr & ATTR_DIRECTORY) == 0 {
+                        // Short (file) entry. Match 8.3 or the reassembled long name.
+                        let matched = &e[0..11] == &name83[..]
+                            || (lfn_max > 0 && lfn_matches(&lfn, lfn_max * 13, long_lower));
+                        if matched {
+                            let hi = u16::from_le_bytes([e[20], e[21]]) as u32;
+                            let lo = u16::from_le_bytes([e[26], e[27]]) as u32;
+                            let size = u32::from_le_bytes([e[28], e[29], e[30], e[31]]);
                             return Some(((hi << 16) | lo, size));
                         }
+                        lfn_max = 0;
+                    } else {
+                        lfn_max = 0; // directory entry: not our file
                     }
                     i += 32;
                 }

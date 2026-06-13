@@ -19,12 +19,36 @@ def name_to_83(name):
     base, _, ext = name.upper().partition(".")
     return (base[:8].ljust(8) + ext[:3].ljust(3)).encode("ascii")  # 11 bytes
 
+def lfn_checksum(short11):
+    s = 0
+    for c in short11:
+        s = ((((s & 1) << 7) | (s >> 1)) + c) & 0xFF
+    return s
+
+def lfn_entry(longname, short11):
+    """One LFN entry for a name that fits 13 UCS-2 chars (ordinal 1, last)."""
+    e = bytearray(32)
+    e[0] = 0x01 | 0x40  # ordinal 1, last (physically first)
+    e[11] = 0x0F        # LFN attribute
+    e[12] = 0x00
+    e[13] = lfn_checksum(short11)
+    chars = [ord(c) for c in longname] + [0x0000]
+    while len(chars) < 13:
+        chars.append(0xFFFF)
+    ci = 0
+    for start, cnt in ((1, 5), (14, 6), (28, 2)):
+        for k in range(cnt):
+            struct.pack_into("<H", e, start + k * 2, chars[ci]); ci += 1
+    return e
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__); return 1
-    out, src = sys.argv[1], sys.argv[2]
-    fatname = sys.argv[3] if len(sys.argv) > 3 else os.path.basename(src)
-    name83 = name_to_83(fatname)
+    args = [a for a in sys.argv[1:] if a != "--lfn"]
+    lfn_mode = "--lfn" in sys.argv  # emit a mangled 8.3 + LFN entry (tests LFN path)
+    out, src = args[0], args[1]
+    fatname = args[2] if len(args) > 2 else os.path.basename(src)
+    name83 = b"SYSROO~1IMG" if lfn_mode else name_to_83(fatname)
 
     data = open(src, "rb").read()
     fsize = len(data)
@@ -104,7 +128,13 @@ def main():
     struct.pack_into("<H", ent, 26, first & 0xFFFF)
     struct.pack_into("<I", ent, 28, fsize)
     ro = cluster_off(2)
-    vol[ro : ro + 32] = ent  # entry, followed by zeros (end marker)
+    if lfn_mode:
+        # [LFN "sysroot.img"][short SYSROO~1IMG] — the 8.3 match fails, only the
+        # reassembled long name matches, exercising the reader's LFN path.
+        vol[ro : ro + 32] = lfn_entry(fatname, name83)
+        vol[ro + 32 : ro + 64] = ent
+    else:
+        vol[ro : ro + 32] = ent  # entry, followed by zeros (end marker)
 
     # ---- File data (clusters 3..) ----
     fo = cluster_off(3)

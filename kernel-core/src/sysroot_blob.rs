@@ -120,17 +120,35 @@ pub fn count() -> usize {
 /// magic landed. Streams in <=4 KiB chunks (no large RAM). Returns the number
 /// of bytes copied, or a static error string.
 pub fn flash_from_usb() -> Result<u64, &'static str> {
-    let usb = registry::get_block("usb0").ok_or("no usb0 (USB stick not enumerated)")?;
     let sata = registry::get_block("sata0").ok_or("no sata0 (SATA disk not found)")?;
 
-    let mut fat = crate::fs::fat::Fat32::mount(usb).ok_or("usb0 is not a FAT32 volume")?;
-    let (cluster, size) = fat
-        .find_file(b"SYSROOT IMG")
-        .ok_or("SYSROOT.IMG not found in usb0 root dir")?;
+    // Scan every USB mass-storage slot (boot stick + SanDisk + ...) and pick the
+    // one that actually has SYSROOT.IMG in its FAT root — so the user can boot
+    // with both drives plugged in and not worry which is which.
+    let mut chosen: Option<(crate::fs::fat::Fat32<'static>, u32, u32, &'static str)> = None;
+    for name in ["usb0", "usb1", "usb2", "usb3"] {
+        let dev = match registry::get_block(name) {
+            Some(d) => d,
+            None => continue,
+        };
+        let mut fat = match crate::fs::fat::Fat32::mount(dev) {
+            Some(f) => f,
+            None => continue, // not FAT32 (empty slot, raw disk, etc.)
+        };
+        if let Some((cluster, size)) = fat.find_file(b"SYSROOT IMG", "sysroot.img") {
+            crate::platform::log("[flash] found SYSROOT.IMG on ");
+            crate::platform::log(name);
+            crate::platform::log("\n");
+            chosen = Some((fat, cluster, size, name));
+            break;
+        }
+    }
+    let (mut fat, cluster, size, _name) =
+        chosen.ok_or("SYSROOT.IMG not found on any USB stick (usb0..usb3)")?;
 
     crate::platform::log("[flash] copying SYSROOT.IMG (");
     crate::platform::log_num(size as u64);
-    crate::platform::log(" bytes) usb0 -> sata0...\n");
+    crate::platform::log(" bytes) -> sata0...\n");
 
     let mut write_err = false;
     let mut written: u64 = 0;
