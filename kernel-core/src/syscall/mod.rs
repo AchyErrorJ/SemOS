@@ -162,6 +162,9 @@ pub mod numbers {
     /// SYS_SYSROOT_READ(idx, offset, buf_ptr, buf_len) -> bytes read (0 = EOF),
     /// or u64::MAX on error. Streams file `idx` from disk at byte `offset`.
     pub const SYS_SYSROOT_READ: u64 = 121;
+    /// SYS_FLASH_SYSROOT() -> bytes copied, or u64::MAX on error. Copies
+    /// sysroot.img off the FAT USB stick (usb0) onto the SATA disk (sata0).
+    pub const SYS_FLASH_SYSROOT: u64 = 122;
 
     /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
     /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
@@ -203,6 +206,7 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // Sysroot blob (Layer B) — read-only crate metadata staged on a SATA disk.
         SYS_SYSROOT_INFO => handle_sysroot_info(arg0, arg1, arg2),
         SYS_SYSROOT_READ => handle_sysroot_read(arg0, arg1, arg2, arg3),
+        SYS_FLASH_SYSROOT => handle_flash_sysroot(),
 
         // Semantic objects (20-29)
         SYS_SEM_CREATE => handle_sem_create(arg0, arg1, arg2, arg3),
@@ -1165,6 +1169,21 @@ fn handle_sysroot_read(idx: u64, offset: u64, buf_ptr: u64, buf_len: u64) -> u64
     match crate::sysroot_blob::read(idx as usize, offset, buf) {
         Some(n) => n as u64,
         None => u64::MAX,
+    }
+}
+
+/// SYS_FLASH_SYSROOT() → bytes copied, or u64::MAX on error. Copies sysroot.img
+/// off the FAT USB stick (usb0) onto the SATA disk (sata0); logs the reason on
+/// failure (serial), since the user-facing return is just success/fail.
+fn handle_flash_sysroot() -> u64 {
+    match crate::sysroot_blob::flash_from_usb() {
+        Ok(n) => n,
+        Err(e) => {
+            crate::platform::log("[flash] FAILED: ");
+            crate::platform::log(e);
+            crate::platform::log("\n");
+            u64::MAX
+        }
     }
 }
 

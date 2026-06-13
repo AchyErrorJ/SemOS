@@ -47,6 +47,7 @@ pub const SYS_SET_ENV:      u64 = 77;
 // M27 DEMO 80 — read-only sysroot blob staged on a SATA disk (Layer B).
 pub const SYS_SYSROOT_INFO: u64 = 120; // (idx, name_buf_ptr, name_buf_len) -> len | MAX
 pub const SYS_SYSROOT_READ: u64 = 121; // (idx, offset, buf_ptr, buf_len) -> n (0=EOF) | MAX
+pub const SYS_FLASH_SYSROOT: u64 = 122; // () -> bytes copied | MAX; FAT usb0 -> sata0
 
 pub const SYS_FUTEX_WAIT:   u64 = 90;
 pub const SYS_FUTEX_WAKE:   u64 = 91;

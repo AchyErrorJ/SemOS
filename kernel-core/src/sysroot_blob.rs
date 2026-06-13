@@ -115,6 +115,56 @@ pub fn count() -> usize {
     unsafe { (*core::ptr::addr_of!(SYSROOT)).as_ref().map(|s| s.count).unwrap_or(0) }
 }
 
+/// M27 DEMO 80 Stage 3: copy `sysroot.img` off a FAT-formatted USB stick
+/// ("usb0") onto the SATA disk ("sata0") at LBA 0, then verify the SEMSYSR1
+/// magic landed. Streams in <=4 KiB chunks (no large RAM). Returns the number
+/// of bytes copied, or a static error string.
+pub fn flash_from_usb() -> Result<u64, &'static str> {
+    let usb = registry::get_block("usb0").ok_or("no usb0 (USB stick not enumerated)")?;
+    let sata = registry::get_block("sata0").ok_or("no sata0 (SATA disk not found)")?;
+
+    let mut fat = crate::fs::fat::Fat32::mount(usb).ok_or("usb0 is not a FAT32 volume")?;
+    let (cluster, size) = fat
+        .find_file(b"SYSROOT IMG")
+        .ok_or("SYSROOT.IMG not found in usb0 root dir")?;
+
+    crate::platform::log("[flash] copying SYSROOT.IMG (");
+    crate::platform::log_num(size as u64);
+    crate::platform::log(" bytes) usb0 -> sata0...\n");
+
+    let mut write_err = false;
+    let mut written: u64 = 0;
+    let copied = fat.read_file(cluster, size, |off, chunk| {
+        // `off` is sector-aligned for every chunk; pad a short final chunk up to
+        // a full sector so write_blocks (multiple-of-512) is satisfied.
+        let mut sect = [0u8; 4096];
+        let n = chunk.len();
+        let padded = n.div_ceil(SECTOR) * SECTOR;
+        sect[..n].copy_from_slice(chunk);
+        if sata.write_blocks(off / SECTOR as u64, &sect[..padded]).is_err() {
+            write_err = true;
+            return false;
+        }
+        written += n as u64;
+        true
+    });
+    if write_err {
+        return Err("SATA write_blocks failed");
+    }
+    if !copied {
+        return Err("FAT read failed mid-copy");
+    }
+
+    // Verify: read back LBA 0 and confirm the magic.
+    let mut sec = [0u8; SECTOR];
+    sata.read_blocks(0, &mut sec).map_err(|_| "SATA verify read failed")?;
+    if &sec[0..8] != MAGIC {
+        return Err("verify failed: SEMSYSR1 magic not present on sata0 after copy");
+    }
+    crate::platform::log("[flash] done; SEMSYSR1 verified on sata0. Reboot to load it.\n");
+    Ok(written)
+}
+
 /// Find a staged file by exact name (e.g. "libcore-<hash>.rmeta"); returns its
 /// blob index, or `None`.
 pub fn find(name: &str) -> Option<usize> {

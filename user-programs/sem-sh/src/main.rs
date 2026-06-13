@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_OPEN, SYS_PONG, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FLASH_SYSROOT, SYS_OPEN, SYS_PONG, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -240,7 +240,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "usbinfo" | "usbenum"
+            | "usbinfo" | "usbenum" | "flash-sysroot"
     )
 }
 
@@ -926,6 +926,20 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // duration; control returns here on quit with the screen cleared.
             let rc = unsafe { syscall1(SYS_PONG, 0) };
             rc as i32
+        }
+        "flash-sysroot" => {
+            // M27 DEMO 80: copy sysroot.img off the FAT USB stick (usb0) onto
+            // the SATA disk (sata0) so the next boot's sysroot probe finds it.
+            // Returns bytes copied; u64::MAX on failure (reason logged to serial).
+            println!("flash-sysroot: copying sysroot.img usb0 -> sata0 (this may take a minute)...");
+            let n = unsafe { syscall1(SYS_FLASH_SYSROOT, 0) };
+            if n == u64::MAX {
+                println!("flash-sysroot: FAILED (see serial log for the reason)");
+                1
+            } else {
+                println!("flash-sysroot: copied {} bytes; SEMSYSR1 verified. Reboot to load it.", n);
+                0
+            }
         }
         _ => exec_external(&argv),
     }
