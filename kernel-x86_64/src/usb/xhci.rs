@@ -3782,12 +3782,14 @@ impl kernel_core::drivers::traits::BlockDevice for UsbMsc {
 
 pub static USB_MSC: UsbMsc = UsbMsc;
 
-/// Register the enumerated USB MSC device as block device "usb0". Returns false
-/// (no-op) if no MSC device was enumerated.
+/// Register block device "usb0" backed by USB Mass Storage. Registered
+/// unconditionally: `UsbMsc` reads `enumerated_msc()` per call, so the device
+/// tracks whichever stick is currently enumerated. This lets the user boot,
+/// plug in the sysroot SanDisk, run `usbenum` (re-enumerate → sets MSC), then
+/// `flash-sysroot` — sidestepping the boot-stick-vs-data-stick ambiguity when
+/// two mass-storage devices are present. Reads return IoError until an MSC
+/// device is actually enumerated.
 pub fn register_usb_with_kernel_core() -> bool {
-    if enumerated_msc().is_none() {
-        return false;
-    }
     kernel_core::drivers::registry::register_block("usb0", &USB_MSC)
 }
 
