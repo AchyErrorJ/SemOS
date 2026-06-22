@@ -24,6 +24,89 @@ const NAME_LEN: usize = 64;
 const REC_LEN: usize = 80;
 const MAX_FILES: usize = 6; // (512 - 16) / 80
 
+/// GPT partition name the blob lives in (UTF-16LE in the entry). Create this
+/// partition in Linux (`gdisk` / `parted name`) so the blob can share an SSD
+/// with the OS without overwriting its partition table. If the disk has no GPT
+/// at all we fall back to legacy raw-whole-disk mode (blob at absolute LBA 0).
+const TARGET_PART_NAME: &str = "SEMOS_SYSROOT";
+
+/// Absolute LBA where the blob's sector 0 lives. Set by [`probe`]/[`flash_from_usb`]
+/// from [`resolve_base_lba`]; 0 = legacy whole-disk mode.
+static mut BASE_LBA: u64 = 0;
+
+/// Resolve where the sysroot blob should live on `dev`:
+/// - **No GPT** (LBA 1 not `EFI PART`): `Some(0)` — legacy raw whole-disk mode.
+/// - **GPT present, `SEMOS_SYSROOT` partition found**: `Some(first_lba)`.
+/// - **GPT present, partition absent**: `None` — the disk is partitioned (likely
+///   an OS disk); refuse to touch LBA 0 and clobber its GPT.
+fn resolve_base_lba(dev: &dyn crate::drivers::traits::BlockDevice) -> Option<u64> {
+    let mut hdr = [0u8; SECTOR];
+    if dev.read_blocks(1, &mut hdr).is_err() {
+        // Can't read the GPT header sector; assume an unpartitioned scratch disk.
+        return Some(0);
+    }
+    if &hdr[0..8] != b"EFI PART" {
+        return Some(0); // no GPT → legacy whole-disk blob at LBA 0
+    }
+    let entries_lba = u64::from_le_bytes(hdr[72..80].try_into().unwrap());
+    let num_entries = u32::from_le_bytes(hdr[80..84].try_into().unwrap()) as usize;
+    let entry_size = u32::from_le_bytes(hdr[84..88].try_into().unwrap()) as usize;
+    if entry_size == 0 || entry_size > SECTOR {
+        return None; // malformed; don't risk a raw write
+    }
+    let per_sector = SECTOR / entry_size;
+    let mut sec = [0u8; SECTOR];
+    let mut scanned = 0usize;
+    let mut lba = entries_lba;
+    while scanned < num_entries {
+        if dev.read_blocks(lba, &mut sec).is_err() {
+            break;
+        }
+        for i in 0..per_sector {
+            if scanned >= num_entries {
+                break;
+            }
+            scanned += 1;
+            let e = &sec[i * entry_size..i * entry_size + entry_size];
+            // All-zero type GUID = unused entry.
+            if e[0..16].iter().all(|&b| b == 0) {
+                continue;
+            }
+            let first_lba = u64::from_le_bytes(e[32..40].try_into().unwrap());
+            // Name: 72 bytes UTF-16LE at offset 56, NUL-padded.
+            if part_name_matches(&e[56..128.min(entry_size)], TARGET_PART_NAME) {
+                return Some(first_lba);
+            }
+        }
+        lba += 1;
+    }
+    None // GPT present but no SEMOS_SYSROOT partition — refuse raw LBA 0
+}
+
+/// Compare a GPT partition name (UTF-16LE, NUL-padded) against an ASCII target.
+fn part_name_matches(raw: &[u8], target: &str) -> bool {
+    let mut tb = target.bytes();
+    let mut chunks = raw.chunks_exact(2);
+    loop {
+        match (chunks.next(), tb.next()) {
+            (Some(c), Some(t)) => {
+                let code = u16::from_le_bytes([c[0], c[1]]);
+                if code != t as u16 {
+                    return false;
+                }
+            }
+            // Target consumed: the rest of the name must be NUL padding.
+            (Some(c), None) => {
+                if u16::from_le_bytes([c[0], c[1]]) != 0 {
+                    return false;
+                }
+            }
+            (None, Some(_)) => return false, // name shorter than target
+            (None, None) => return true,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct SysrootFile {
     name: [u8; NAME_LEN],
@@ -58,9 +141,23 @@ pub fn probe() {
             return;
         }
     };
+    let base = match resolve_base_lba(dev) {
+        Some(b) => b,
+        None => {
+            crate::platform::log("[sysroot] disk is GPT-partitioned but has no SEMOS_SYSROOT partition; not probing LBA 0\n");
+            return;
+        }
+    };
+    // SAFETY: single-threaded boot init; written once before any syscall reads it.
+    unsafe { BASE_LBA = base; }
+    if base != 0 {
+        crate::platform::log("[sysroot] using SEMOS_SYSROOT partition at LBA ");
+        crate::platform::log_num(base);
+        crate::platform::log("\n");
+    }
     let mut hdr = [0u8; SECTOR];
-    if dev.read_blocks(0, &mut hdr).is_err() {
-        crate::platform::log("[sysroot] LBA 0 read FAILED on the SATA disk\n");
+    if dev.read_blocks(base, &mut hdr).is_err() {
+        crate::platform::log("[sysroot] header sector read FAILED on the SATA disk\n");
         return;
     }
     if &hdr[0..8] != MAGIC {
@@ -121,6 +218,12 @@ pub fn count() -> usize {
 /// of bytes copied, or a static error string.
 pub fn flash_from_usb() -> Result<u64, &'static str> {
     let sata = registry::get_block("sata0").ok_or("no sata0 (SATA disk not found)")?;
+    // Where the blob goes: a SEMOS_SYSROOT partition if present, else raw LBA 0.
+    // If the disk is GPT-partitioned but has no such partition, refuse — writing
+    // LBA 0 would destroy its partition table.
+    let base = resolve_base_lba(sata).ok_or(
+        "sata0 is GPT-partitioned with no SEMOS_SYSROOT partition; refusing to overwrite LBA 0",
+    )?;
 
     // Scan every USB mass-storage slot (boot stick + SanDisk + ...) and pick the
     // one that actually has SYSROOT.IMG in its FAT root — so the user can boot
@@ -159,7 +262,7 @@ pub fn flash_from_usb() -> Result<u64, &'static str> {
         let n = chunk.len();
         let padded = n.div_ceil(SECTOR) * SECTOR;
         sect[..n].copy_from_slice(chunk);
-        if sata.write_blocks(off / SECTOR as u64, &sect[..padded]).is_err() {
+        if sata.write_blocks(base + off / SECTOR as u64, &sect[..padded]).is_err() {
             write_err = true;
             return false;
         }
@@ -173,12 +276,14 @@ pub fn flash_from_usb() -> Result<u64, &'static str> {
         return Err("FAT read failed mid-copy");
     }
 
-    // Verify: read back LBA 0 and confirm the magic.
+    // Verify: read back the header sector and confirm the magic.
     let mut sec = [0u8; SECTOR];
-    sata.read_blocks(0, &mut sec).map_err(|_| "SATA verify read failed")?;
+    sata.read_blocks(base, &mut sec).map_err(|_| "SATA verify read failed")?;
     if &sec[0..8] != MAGIC {
         return Err("verify failed: SEMSYSR1 magic not present on sata0 after copy");
     }
+    // SAFETY: single-threaded syscall context; subsequent reads use this base.
+    unsafe { BASE_LBA = base; }
     crate::platform::log("[flash] done; SEMSYSR1 verified on sata0. Reboot to load it.\n");
     Ok(written)
 }
@@ -235,11 +340,14 @@ pub fn read(idx: usize, offset: u64, buf: &mut [u8]) -> Option<usize> {
     }
     let want = ((file_len - offset) as usize).min(buf.len());
     let dev = block_dev()?;
+    // SAFETY: read-only access to a value written once at boot by probe().
+    let base = unsafe { BASE_LBA };
 
     let mut produced = 0usize;
     while produced < want {
-        // Disk byte position of the next unread chunk.
-        let pos = file_lba * SECTOR as u64 + offset + produced as u64;
+        // Disk byte position of the next unread chunk (relative to the blob's
+        // base LBA — 0 in legacy whole-disk mode, the partition start otherwise).
+        let pos = (base + file_lba) * SECTOR as u64 + offset + produced as u64;
         let first_lba = pos / SECTOR as u64;
         let sub = (pos % SECTOR as u64) as usize;
         let remaining = want - produced;
