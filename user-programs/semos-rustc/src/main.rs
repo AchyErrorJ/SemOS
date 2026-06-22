@@ -33,6 +33,15 @@ use rustc_session::config::Options;
 use rustc_target::spec::Target;
 use semos_std::println;
 
+/// Flip to `true` to restore the pipeline-checkpoint trace (crate parsed /
+/// expansion / analysis / "run_compiler returned cleanly"). Default off — these
+/// printed on every compile.
+const RUSTC_DEBUG: bool = false;
+
+macro_rules! rdbg {
+    ($($arg:tt)*) => {{ if RUSTC_DEBUG { semos_std::println!($($arg)*); } }};
+}
+
 struct SemosCallbacks;
 
 impl Callbacks for SemosCallbacks {
@@ -55,17 +64,17 @@ impl Callbacks for SemosCallbacks {
         _c: &Compiler,
         _k: &mut rustc_ast::ast::Crate,
     ) -> Compilation {
-        println!("[semos-rustc] checkpoint: crate root parsed");
+        rdbg!("[semos-rustc] checkpoint: crate root parsed");
         Compilation::Continue
     }
 
     fn after_expansion<'tcx>(&mut self, _c: &Compiler, _tcx: TyCtxt<'tcx>) -> Compilation {
-        println!("[semos-rustc] checkpoint: macro expansion done");
+        rdbg!("[semos-rustc] checkpoint: macro expansion done");
         Compilation::Continue
     }
 
     fn after_analysis<'tcx>(&mut self, _c: &Compiler, _tcx: TyCtxt<'tcx>) -> Compilation {
-        println!("[semos-rustc] checkpoint: analysis (typeck+borrowck) done — entering codegen");
+        rdbg!("[semos-rustc] checkpoint: analysis (typeck+borrowck) done — entering codegen");
         Compilation::Continue
     }
 }
@@ -140,6 +149,11 @@ fn c3_disk_probe(cfg_version: &'static str) {
     }
 
     for (i, nm, len) in files {
+        // c3 probe validates rmeta metadata encoding only; .rlib archives
+        // contain an rmeta but are not raw MetadataBlobs.
+        if !nm.ends_with(".rmeta") {
+            continue;
+        }
         println!("[c3-disk] reading {} from disk...", nm);
         let mut bytes: Vec<u8> = Vec::with_capacity(len as usize);
         let mut off: u64 = 0;
@@ -182,9 +196,22 @@ fn crate_name_from_libfile(fname: &str) -> Option<&str> {
 
 /// Enumerate the SATA sysroot blob and build `--extern <crate>=/sysroot/<file>`
 /// args for each staged crate. Empty if no blob is staged.
+///
+/// If both `.rmeta` and `.rlib` are staged for the same crate, we pass the
+/// `.rlib` — that is the artifact rustc needs for both metadata loading and
+/// linking an executable. Passing the `.rmeta` would make codegen fail with
+/// `metadata_lib_required`.
 fn sysroot_extern_args() -> Vec<String> {
     use semos_std::arch::{SYS_SYSROOT_INFO, syscall3};
-    let mut out = Vec::new();
+
+    #[derive(Clone)]
+    struct Entry<'a> {
+        fname: &'a str,
+        is_rlib: bool,
+    }
+
+    // First pass: read the blob directory.
+    let mut entries: alloc::vec::Vec<(u64, alloc::string::String)> = Vec::new();
     let mut idx: u64 = 0;
     loop {
         let mut name = [0u8; 128];
@@ -196,17 +223,39 @@ fn sysroot_extern_args() -> Vec<String> {
         }
         let nlen = name.iter().position(|&b| b == 0).unwrap_or(name.len());
         if let Ok(fname) = core::str::from_utf8(&name[..nlen]) {
-            if let Some(crate_name) = crate_name_from_libfile(fname) {
-                let mut spec = String::from(crate_name);
-                spec.push('=');
-                spec.push_str("/sysroot/");
-                spec.push_str(fname);
-                println!("[sysroot] --extern {}", spec);
-                out.push(String::from("--extern"));
-                out.push(spec);
-            }
+            entries.push((idx, String::from(fname)));
         }
         idx += 1;
+    }
+
+    // Second pass: pick the .rlib for each crate if present, else fall back
+    // to the .rmeta. Keep the original blob order for determinism.
+    let mut chosen: alloc::vec::Vec<(u64, &str, bool)> = Vec::new();
+    let mut seen: alloc::vec::Vec<&str> = Vec::new();
+    for (i, fname) in entries.iter() {
+        if let Some(crate_name) = crate_name_from_libfile(fname) {
+            let is_rlib = fname.ends_with(".rlib");
+            if let Some(pos) = seen.iter().position(|&n| n == crate_name) {
+                if is_rlib {
+                    chosen[pos] = (*i, fname.as_str(), true);
+                }
+            } else {
+                seen.push(crate_name);
+                chosen.push((*i, fname.as_str(), is_rlib));
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (_i, fname, _is_rlib) in chosen {
+        let crate_name = crate_name_from_libfile(fname).unwrap();
+        let mut spec = String::from(crate_name);
+        spec.push('=');
+        spec.push_str("/sysroot/");
+        spec.push_str(fname);
+        println!("[sysroot] --extern {}", spec);
+        out.push(String::from("--extern"));
+        out.push(spec);
     }
     out
 }
@@ -261,5 +310,9 @@ semos_std::main!(fn main() {
 
     let mut cb = SemosCallbacks;
     rustc_driver_impl::run_compiler(&args, &mut cb);
-    println!("run_compiler returned cleanly");
+    rdbg!("run_compiler returned cleanly");
+    // Explicit exit: skip any leftover destructor work that might hang
+    // in a threaded codegen path and prevent the shell from getting its
+    // prompt back. The macro would call exit after main returns anyway.
+    semos_std::process::exit(0);
 });

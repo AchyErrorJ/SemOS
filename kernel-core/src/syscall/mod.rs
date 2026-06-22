@@ -149,8 +149,13 @@ pub mod numbers {
     pub const SYS_PONG:         u64 = 116; // () -> 0/err; runs the fullscreen pong game
     pub const SYS_TTY_SUPPRESS: u64 = 117; // (on: u64) -> 0; 1 silences keyboard input from
                                            // committing to the cooked-mode line discipline.
+    pub const SYS_WIFI_SCAN:    u64 = 123; // () -> n; scans WiFi, prints numbered network list
                                            // sem-sh wraps external commands so typing during a
                                            // child run doesn't buffer into the next prompt.
+    pub const SYS_TETRIS:       u64 = 124; // () -> 0/err; runs the fullscreen tetris game
+    pub const SYS_WIFI_CONNECT: u64 = 125; // (idx, pass_ptr, pass_len) -> 1/0; connect to network idx
+    pub const SYS_VOUCH:        u64 = 126; // (path_ptr, path_len, grant_tier) -> 1/0; mark a namespace tool safe to run at grant_tier. Interactive console ONLY (the agent cannot reach this).
+    pub const SYS_VOUCHES:      u64 = 127; // () -> count; print the active vouch grants (audit list)
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -228,6 +233,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
         // Process (40-49)
         SYS_SPAWN => handle_spawn(arg0, arg1, arg2, arg3),
+        SYS_VOUCH => handle_vouch(arg0, arg1, arg2),
+        SYS_VOUCHES => handle_vouches(),
         SYS_WAIT => handle_wait(arg0),
         SYS_KILL => handle_kill(arg0),
         SYS_DUP => handle_dup(arg0),
@@ -282,6 +289,13 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
 
         // Pong (the `pong` builtin) — fullscreen two-player game.
         SYS_PONG => crate::platform::get().run_pong(),
+        SYS_TETRIS => crate::platform::get().run_tetris(),
+
+        // WiFi scan (the `wifi` builtin) — scan + print numbered network list.
+        SYS_WIFI_SCAN => crate::platform::get().run_wifi_scan(),
+
+        // WiFi connect (`wifi connect <idx> <password>`) — associate + WPA2.
+        SYS_WIFI_CONNECT => crate::platform::get().run_wifi_connect(arg0, arg1, arg2),
 
         // Toggle the TTY input-suppression flag from user-space.
         // Used by sem-sh to silence keyboard input while a child command runs.
@@ -497,23 +511,52 @@ fn handle_exit(code: u64) -> u64 {
         let tasks = &raw mut crate::scheduler::TASKS;
         (*tasks)[idx].state = crate::scheduler::TaskState::Exited;
     }
-    // Process-level Zombie transition is intentionally not done here.
-    // The kernel's current_pid() is never refreshed on context switch
-    // (it's a separate hygiene issue), so the syscall handler can't
-    // cheaply identify which Process owns this slot — and getting it
-    // wrong would mark the WRONG process Zombie. Until that's
-    // refactored, callers that need to observe a Ring-3 child's exit
-    // poll its scheduler slot via `scheduler::task_state` /
-    // `scheduler::task_exit_code` directly. SYS_WAIT's existing
-    // PROCESS_TABLE polling path remains functional for the cases
-    // where it was already working (kernel parents that hand the PID
-    // back, etc.).
+    // DIAGNOSTIC: visible on screen + serial.
+    crate::platform::log("[exit] slot=");
+    crate::platform::log_num(idx as u64);
+    crate::platform::log(" code=");
+    crate::platform::log_num(code);
+    crate::platform::log("\n");
+    // Process-level Zombie transition: use the slot-keyed lookup
+    // (`pid_for_slot`) instead of the stale `current_pid()` global so we
+    // mark the RIGHT process. This makes SYS_WAIT's legacy PROCESS_TABLE
+    // fallback return immediately for Ring-3 children, and wakes a parent
+    // that may be blocked in `process::wait`.
+    {
+        let slot = crate::scheduler::current_task_index();
+        if let Some(pid) = crate::process::pid_for_slot(slot) {
+            unsafe {
+                if let Some(proc) = crate::process::get_mut(pid) {
+                    crate::platform::log("[exit] marking PID=");
+                    crate::platform::log_num(pid.0 as u64);
+                    crate::platform::log(" Zombie\n");
+                    proc.exit(crate::process::ExitStatus::failure(code as i32));
+                    if let Some(parent_pid) = proc.parent {
+                        if let Some(parent) = crate::process::get_mut(parent_pid) {
+                            if parent.state == crate::process::ProcessState::Waiting {
+                                parent.state = crate::process::ProcessState::Running;
+                            }
+                        }
+                    }
+                } else {
+                    crate::platform::log("[exit] pid_for_slot returned PID with no proc\n");
+                }
+            }
+        } else {
+            crate::platform::log("[exit] no process for slot\n");
+        }
+    }
+    // Reset any console flags the exiting process may have left set so the
+    // next scheduled task (usually the shell) can draw its prompt/output.
+    crate::platform::get().reset_tty_flags();
     // Yield immediately so the scheduler picks something else
     // (including any join_block waiter). Without this, the caller
     // returns from dispatch and keeps executing kernel-mode code on
     // an Exited slot — and if IF was cleared by a prior schedule()
     // call, a following `hlt` halts the CPU indefinitely.
+    crate::platform::log("[exit] scheduling\n");
     crate::platform::schedule();
+    crate::platform::log("[exit] schedule returned\n");
     // Returns 0; the syscall asm will SYSRET back to Ring 3, the user RIP
     // points at whatever follows the `syscall` instruction (usually
     // padding/zeros) and the task will page-fault on its next instruction
@@ -1776,32 +1819,153 @@ fn spawn_namespace_elf(path: &str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
         Some(b) => b,
         None => return u64::MAX,
     };
-
-    let mut argv_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
-    let mut envp_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
-    let (argc, envc) = match parse_spawn_args(spawn_args_ptr, &mut argv_items, &mut envp_items) {
-        Some(t) => t,
-        None => {
-            crate::platform::log("[syscall] spawn: argv/envp blob malformed\n");
-            return u64::MAX;
-        }
+    // Deny-by-default execution privilege. A namespace executable is a
+    // runtime/agent-created tool (e.g. one the on-device compiler just emitted).
+    // It runs at **tier 0 (Public — cannot read Sensitive/Secret objects like
+    // credentials or keys)** no matter who launches it, UNLESS it has been
+    // vouched (SYS_VOUCH, interactive-console only) AND its bytes are unchanged
+    // since the vouch (SHA-256 recheck — closes bait-and-switch). This is the
+    // capability fence on agent-authored code: "any created tool drops to tier 0
+    // unless it can be shown to be safe." Baked-in /bin programs don't reach this
+    // path — they're shipped-trusted and run at the launcher's clearance.
+    let exec_cap: u8 = match vouch_lookup(&suid) {
+        Some((tier, hash)) if crate::crypto::sha256::hash(elf_data) == hash => tier,
+        _ => 0, // unvouched, or bytes changed since vouch → tier 0
     };
-
-    match crate::process::spawn_from_elf_with_args(
-        "user-app",
-        elf_data,
-        spawn_tier,
-        &argv_items[..argc],
-        &envp_items[..envc],
-    ) {
-        Some(pid) => pid.0 as u64,
-        None => {
-            crate::platform::log("[syscall] spawn: failed to load namespace ELF: ");
-            crate::platform::log(path);
-            crate::platform::log("\n");
-            u64::MAX
-        }
+    let fenced_tier = spawn_tier.min(exec_cap);
+    if fenced_tier != spawn_tier {
+        crate::platform::log("[syscall] spawn: unvouched tool fenced to tier 0: ");
+        crate::platform::log(path);
+        crate::platform::log("\n");
     }
+    spawn_elf_bytes(elf_data, "user-app", fenced_tier, spawn_args_ptr)
+}
+
+// ============================================================================
+// Vouch mechanism (v1) — how an agent-authored tool earns the right to run with
+// privilege. Design: docs/VOUCH_MECHANISM_DESIGN_2026-06-15.md.
+// ============================================================================
+
+use core::sync::atomic::{AtomicUsize, Ordering as VouchOrdering};
+
+/// The scheduler task index allowed to call SYS_VOUCH — the **human-driven
+/// interactive shell**, set by `interactive_session` after it spawns sem-sh.
+/// `usize::MAX` = none (deny). The LLM agent runs as a different task (and its
+/// own tools are tier-0), so it can never match → it cannot vouch its own code.
+static VOUCH_AUTHORITY_TASK: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+/// Mark `task` as the sole vouch authority (the human console). Kernel-only.
+pub fn set_vouch_authority(task: usize) {
+    VOUCH_AUTHORITY_TASK.store(task, VouchOrdering::SeqCst);
+}
+
+fn is_vouch_authority() -> bool {
+    let a = VOUCH_AUTHORITY_TASK.load(VouchOrdering::SeqCst);
+    a != usize::MAX && crate::scheduler::current_task_index() == a
+}
+
+/// One ephemeral vouch grant. Lives in RAM only — **vouches clear on reboot**,
+/// so deny-by-default re-asserts every boot and trust is re-granted deliberately.
+#[derive(Clone, Copy)]
+struct VouchEntry {
+    suid: crate::semantic::suid::SUID,
+    tier: u8,
+    hash: [u8; 32],
+    used: bool,
+    /// The path vouched, kept for the `vouches` audit list (cosmetic).
+    path: [u8; 64],
+    path_len: u8,
+}
+const MAX_VOUCHES: usize = 32;
+static mut VOUCH_TABLE: [VouchEntry; MAX_VOUCHES] = [VouchEntry {
+    suid: crate::semantic::suid::SUID { high: 0, low: 0 },
+    tier: 0,
+    hash: [0; 32],
+    used: false,
+    path: [0; 64],
+    path_len: 0,
+}; MAX_VOUCHES];
+
+/// Look up a vouch grant for `suid` → (granted_tier, vouched-bytes hash).
+fn vouch_lookup(suid: &crate::semantic::suid::SUID) -> Option<(u8, [u8; 32])> {
+    let table = unsafe { &*core::ptr::addr_of!(VOUCH_TABLE) };
+    table.iter().find(|e| e.used && e.suid == *suid).map(|e| (e.tier, e.hash))
+}
+
+/// SYS_VOUCH(path_ptr, path_len, grant_tier) -> 1 ok / 0 err. Mark a namespace
+/// tool safe to run at `grant_tier`. Gate (the agent CANNOT pass it):
+///   1. caller is the interactive console (the vouch authority task), AND
+///   2. caller holds clearance >= grant_tier (can't grant more than you have).
+/// Binds the grant to SHA-256 of the ELF (spawn rechecks → anti bait-and-switch).
+fn handle_vouch(path_ptr: u64, path_len: u64, grant_tier: u64) -> u64 {
+    if !is_vouch_authority() {
+        crate::platform::log("[vouch] DENIED: caller is not the interactive console\n");
+        return 0;
+    }
+    let grant = grant_tier as u8;
+    if grant > 3 || grant > crate::scheduler::current_task_max_tier() {
+        crate::platform::log("[vouch] DENIED: grant exceeds caller clearance\n");
+        return 0;
+    }
+    let path = unsafe {
+        let s = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
+        match core::str::from_utf8(s) { Ok(s) => s, Err(_) => return 0 }
+    };
+    let suid = match crate::fs::paths::Namespace::resolve(path) { Ok(s) => s, Err(_) => return 0 };
+    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let hash = match registry.get(&suid).and_then(|o| o.content.as_bytes()) {
+        Some(elf) => crate::crypto::sha256::hash(elf),
+        None => return 0,
+    };
+    // Stash the path (truncated to 64 bytes) for the audit list.
+    let mut pbuf = [0u8; 64];
+    let plen = path.len().min(64);
+    pbuf[..plen].copy_from_slice(&path.as_bytes()[..plen]);
+    let table = unsafe { &mut *core::ptr::addr_of_mut!(VOUCH_TABLE) };
+    // Update an existing grant for this object, else take a free slot.
+    if let Some(e) = table.iter_mut().find(|e| e.used && e.suid == suid) {
+        e.tier = grant;
+        e.hash = hash;
+        e.path = pbuf;
+        e.path_len = plen as u8;
+    } else if let Some(e) = table.iter_mut().find(|e| !e.used) {
+        *e = VouchEntry { suid, tier: grant, hash, used: true, path: pbuf, path_len: plen as u8 };
+    } else {
+        crate::platform::log("[vouch] table full\n");
+        return 0;
+    }
+    crate::platform::log("[vouch] vouched: ");
+    crate::platform::log(path);
+    crate::platform::log("\n");
+    1
+}
+
+/// SYS_VOUCHES() -> count. Print the current vouch grants (path + tier) to the
+/// console for audit. Any task may list (read-only, no secrets exposed).
+fn handle_vouches() -> u64 {
+    let table = unsafe { &*core::ptr::addr_of!(VOUCH_TABLE) };
+    let mut n = 0u64;
+    crate::platform::log("[vouches] active grants (reset on reboot):\n");
+    for e in table.iter() {
+        if !e.used {
+            continue;
+        }
+        n += 1;
+        let path = core::str::from_utf8(&e.path[..e.path_len as usize]).unwrap_or("<?>");
+        crate::platform::log("  tier ");
+        crate::platform::log(match e.tier {
+            0 => "0 (sandboxed) ",
+            1 => "1 (internal)  ",
+            2 => "2 (sensitive) ",
+            _ => "3 (secret)    ",
+        });
+        crate::platform::log(path);
+        crate::platform::log("\n");
+    }
+    if n == 0 {
+        crate::platform::log("  (none)\n");
+    }
+    n
 }
 
 fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64) -> u64 {
@@ -1817,102 +1981,84 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
         }
     };
 
-    // Path-style lookup (Phase 14 prereq for `std::process::Command::new("/bin/X")`).
-    // Convention: `/bin/<name>` maps to the ramfs entry `<name>.elf` if
-    // present. Once user-program ELFs live in the path namespace
-    // proper (currently capped at 256 B inline content per object,
-    // so they don't fit), this collapses to a normal Namespace::resolve.
-    let ramfs_name: &str = if let Some(stripped) = path.strip_prefix("/bin/") {
-        // Promote /bin/foo → look up "foo.elf" first, then "foo"
-        // (so the convention works for either naming style in ramfs).
+    // Resolve `path` to ELF bytes and spawn. Three routes, all funnelled through
+    // `spawn_elf_bytes` — no hardcoded program table, so any ELF dropped into
+    // ramfs OR the path namespace is runnable by name. This is the keystone for
+    // agent-authored command-modules: the agent compiles `/apps/greet` on-device,
+    // and `greet` at the shell Just Works (the shell searches $PATH=/bin:/apps).
+    if let Some(stripped) = path.strip_prefix("/bin/") {
+        // /bin/<name> → ramfs "<name>.elf", then "<name>".
         let fs = match crate::fs::ramfs::get_fs() {
             Some(fs) => fs,
             None => return u64::MAX,
         };
-        // Small stack buffer to compose `<stripped>.elf` without alloc.
+        let name = intern_prog_name(stripped);
+        // Compose "<stripped>.elf" without alloc.
         let mut composed = [0u8; 64];
         let dot_elf = b".elf";
-        if stripped.len() + dot_elf.len() > composed.len() { return u64::MAX; }
-        composed[..stripped.len()].copy_from_slice(stripped.as_bytes());
-        composed[stripped.len()..stripped.len() + dot_elf.len()].copy_from_slice(dot_elf);
-        let with_elf = unsafe {
-            core::str::from_utf8_unchecked(&composed[..stripped.len() + dot_elf.len()])
-        };
-        if fs.find(with_elf).is_some() {
-            // Return path is borrowed from the local buffer; we can't
-            // hand it back across the function boundary. Re-find below.
-            // For now, use a small static interning table — only the
-            // hardcoded user programs are spawnable today.
-            match stripped {
-                "hello-rs" | "hello" => "hello-rs.elf",
-                "sem-demo" => "sem-demo.elf",
-                "exfil-demo" => "exfil-demo.elf",
-                "thread-demo" => "thread-demo.elf",
-                "hello-std" => "hello-std.elf",
-                "vec-demo"  => "vec-demo.elf",
-                "std-demo"  => "std-demo.elf",
-                "spawn-demo" => "spawn-demo.elf",
-                "net-demo"  => "net-demo.elf",
-                "sem-sh"    => "sem-sh.elf",
-                "sync-demo" => "sync-demo.elf",
-                "cg-clif-hello" => "cg-clif-hello.elf",
-                "semos-cc-hello" => "semos-cc-hello.elf",
-                "semos-cc" => "semos-cc.elf",
-                "semos-rustc" => "semos-rustc.elf",
-                _ => return u64::MAX,
+        if stripped.len() + dot_elf.len() <= composed.len() {
+            composed[..stripped.len()].copy_from_slice(stripped.as_bytes());
+            composed[stripped.len()..stripped.len() + dot_elf.len()].copy_from_slice(dot_elf);
+            let with_elf = unsafe {
+                core::str::from_utf8_unchecked(&composed[..stripped.len() + dot_elf.len()])
+            };
+            if let Some(file) = fs.find(with_elf) {
+                return spawn_elf_bytes(file.data(), name, spawn_tier, spawn_args_ptr);
             }
-        } else if fs.find(stripped).is_some() {
-            // Same problem with returning a borrow; only hardcoded paths.
-            match stripped {
-                "init" => "init",
-                _ => return u64::MAX,
-            }
-        } else {
-            crate::platform::log("[syscall] spawn: /bin/ path not found in ramfs: ");
-            crate::platform::log(stripped);
-            crate::platform::log("\n");
-            return u64::MAX;
         }
-    } else if path.starts_with('/') {
-        // Other absolute paths are path-namespace executables ("install
-        // anywhere"). Now that content can hold up to 256 KiB, resolve + spawn
-        // directly from the object's bytes — no ramfs, no hardcoded table.
-        return spawn_namespace_elf(path, spawn_tier, spawn_args_ptr);
-    } else {
-        path  // legacy: flat ramfs name (preserves existing callers)
-    };
+        if let Some(file) = fs.find(stripped) {
+            return spawn_elf_bytes(file.data(), name, spawn_tier, spawn_args_ptr);
+        }
+        crate::platform::log("[syscall] spawn: /bin/ path not found in ramfs: ");
+        crate::platform::log(stripped);
+        crate::platform::log("\n");
+        return u64::MAX;
+    }
 
-    // Look up the ELF binary in ramfs
+    if path.starts_with('/') {
+        // Absolute path → path-namespace executable (the agent-authored case:
+        // resolve + spawn directly from the registry object's bytes, tier-gated).
+        return spawn_namespace_elf(path, spawn_tier, spawn_args_ptr);
+    }
+
+    // Legacy: bare ramfs name (preserves existing callers).
     let fs = match crate::fs::ramfs::get_fs() {
         Some(fs) => fs,
         None => return u64::MAX,
     };
-    let file = match fs.find(ramfs_name) {
+    let file = match fs.find(path) {
         Some(f) => f,
         None => {
             crate::platform::log("[syscall] spawn: file not found in ramfs: ");
-            crate::platform::log(ramfs_name);
+            crate::platform::log(path);
             crate::platform::log("\n");
             return u64::MAX;
         }
     };
+    spawn_elf_bytes(file.data(), intern_prog_name(path), spawn_tier, spawn_args_ptr)
+}
 
-    let elf_data = file.data();
-
-    // We need a &'static str for the process name — use a fixed set
-    // (scheduler requires 'static lifetime names)
-    let static_name: &'static str = match ramfs_name {
+/// Map a program base name to a `'static` process name for the scheduler/logs.
+/// COSMETIC ONLY — never a gate. Unknown names get the generic "user", so any
+/// ELF (incl. one the agent just compiled) is spawnable; the old hardcoded
+/// table used to *reject* unknown names here, which blocked agent-authored
+/// command-modules.
+fn intern_prog_name(name: &str) -> &'static str {
+    // Strip a trailing ".elf" for the cosmetic comparison.
+    let base = name.strip_suffix(".elf").unwrap_or(name);
+    match base {
         "init" => "init",
         "shell" => "shell",
-        "test" => "test",
-        "hello-rs.elf" => "hello-rs",
-        "sem-demo.elf" => "sem-demo",
-        "exfil-demo.elf" => "exfil-demo",
+        "sem-sh" => "sem-sh",
+        "semos-rustc" => "semos-rustc",
         _ => "user",
-    };
+    }
+}
 
-    // Parse the optional SpawnArgs struct pointed to by arg3.
-    // Backwards-compatible: arg3=0 → empty argv/envp, behave like old API.
+/// Parse the SpawnArgs blob (argv/envp) and spawn `elf_data` Ring-3 at
+/// `spawn_tier`. The single spawn path shared by every route (/bin, namespace,
+/// legacy ramfs name). `arg3==0` → empty argv/envp (old API).
+fn spawn_elf_bytes(elf_data: &[u8], name: &'static str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
     let mut argv_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
     let mut envp_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
     let (argc, envc) = match parse_spawn_args(spawn_args_ptr, &mut argv_items, &mut envp_items) {
@@ -1922,9 +2068,8 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
             return u64::MAX;
         }
     };
-
     match crate::process::spawn_from_elf_with_args(
-        static_name, elf_data, spawn_tier,
+        name, elf_data, spawn_tier,
         &argv_items[..argc],
         &envp_items[..envc],
     ) {
@@ -1953,8 +2098,15 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
 fn handle_wait(pid: u64) -> u64 {
     use crate::scheduler::TaskState;
 
+    crate::platform::log("[wait] pid=");
+    crate::platform::log_num(pid);
+    crate::platform::log(" caller_slot=");
+    crate::platform::log_num(crate::scheduler::current_task_index() as u64);
+    crate::platform::log("\n");
+
     if pid == 0 {
         // Wait for any child.
+        crate::platform::log("[wait] waitpid_any path\n");
         return match crate::process::waitpid_any() {
             Some((_child_pid, status)) => status.code as u64,
             None => u64::MAX,
@@ -1965,26 +2117,53 @@ fn handle_wait(pid: u64) -> u64 {
 
     // Preferred path: block on the child's scheduler slot.
     if let Some(slot) = crate::process::get(child_pid).and_then(|p| p.task_id) {
+        crate::platform::log("[wait] child slot=");
+        crate::platform::log_num(slot as u64);
+        crate::platform::log(" state=");
+        crate::platform::log_num(crate::scheduler::task_state(slot) as u64);
+        crate::platform::log("\n");
         if slot < crate::scheduler::MAX_TASKS
             && slot != crate::scheduler::current_task_index()
         {
             // Fast path: already exited.
             if crate::scheduler::task_state(slot) == TaskState::Exited {
+                crate::platform::log("[wait] fast path\n");
                 return crate::scheduler::task_exit_code(slot);
             }
             // Empty slot → nothing to wait for (stale pid).
             if crate::scheduler::task_state(slot) != TaskState::Empty {
+                crate::platform::log("[wait] join_block path\n");
                 crate::scheduler::join_block(slot);
+                crate::platform::log("[wait] about to schedule\n");
                 crate::platform::schedule();
+                crate::platform::log("[wait] schedule returned, state=");
+                crate::platform::log_num(crate::scheduler::task_state(slot) as u64);
+                crate::platform::log(" code=");
+                crate::platform::log_num(crate::scheduler::task_exit_code(slot));
+                crate::platform::log("\n");
                 return crate::scheduler::task_exit_code(slot);
             }
+            crate::platform::log("[wait] child slot Empty, fallback\n");
+        } else {
+            crate::platform::log("[wait] slot invalid/self, fallback\n");
         }
+    } else {
+        crate::platform::log("[wait] no task_id, fallback\n");
     }
 
     // Legacy fallback: PROCESS_TABLE-based wait (kernel-parent case).
+    crate::platform::log("[wait] legacy wait\n");
     match crate::process::wait(child_pid) {
-        Some(status) => status.code as u64,
-        None => u64::MAX,
+        Some(status) => {
+            crate::platform::log("[wait] legacy returned code=");
+            crate::platform::log_num(status.code as u64);
+            crate::platform::log("\n");
+            status.code as u64
+        }
+        None => {
+            crate::platform::log("[wait] legacy returned None\n");
+            u64::MAX
+        }
     }
 }
 

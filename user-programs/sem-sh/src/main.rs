@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FLASH_SYSROOT, SYS_OPEN, SYS_PONG, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FLASH_SYSROOT, SYS_OPEN, SYS_PONG, SYS_TETRIS, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -23,6 +23,15 @@ use semos_std::net::TcpStream;
 use semos_std::string::String;
 use semos_std::vec::Vec;
 use semos_std::{env, fs, format, main, print, println, process};
+
+/// Flip to `true` to restore the exec/wait/return trace used to diagnose the
+/// post-compile prompt-redraw hang. Default off — these printed on every
+/// command and stomped the screen.
+const SH_DEBUG: bool = false;
+
+macro_rules! shdbg {
+    ($($arg:tt)*) => {{ if SH_DEBUG { println!($($arg)*); } }};
+}
 
 main!(fn main() {
     let args = env::args(); // args[0] = program path
@@ -63,6 +72,11 @@ fn read_line() -> Option<String> {
 /// Interactive read-eval-print loop.
 fn repl() -> ! {
     loop {
+        // Decisive marker for the prompt-redraw hang: if this prints but
+        // "sem-sh$ " does not, control DID return to the loop and the fault is
+        // in print!/the console flush; if this never prints, control never
+        // unwound back here (a hang on the way up). Gated — silent by default.
+        shdbg!("[sh] repl loop top");
         // Defense-in-depth: ensure the cooked-mode line discipline accepts
         // input. If any prior code path (an external command, a builtin)
         // left SUPPRESS set, we'd be deaf at the prompt forever. Cheap
@@ -240,7 +254,8 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "usbinfo" | "usbenum" | "flash-sysroot"
+            | "usbinfo" | "usbenum" | "flash-sysroot" | "pong" | "wifi" | "tetris"
+            | "vouch" | "unvouch" | "vouches"
     )
 }
 
@@ -390,11 +405,13 @@ fn run_command(line: &str) -> i32 {
     }
     segments.push(cur);
 
-    if segments.len() == 1 {
+    let r = if segments.len() == 1 {
         run_with_redirects(&segments[0])
     } else {
         run_pipeline(&segments)
-    }
+    };
+    println!("[run_cmd] returning status={} (dropping tokens next)", r);
+    r
 }
 
 /// Split a stage's tokens into (argv, out-redirect (path, append), in-redirect).
@@ -501,8 +518,10 @@ fn run_with_redirects(seg: &[String]) -> i32 {
         None => None,
     };
     let status = dispatch_argv(&argv);
+    shdbg!("[rwr] dispatch_argv returned status={}", status);
     restore_fd(saved_out, 1);
     restore_fd(saved_in, 0);
+    shdbg!("[rwr] restores done, returning");
     status
 }
 
@@ -910,6 +929,37 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             let rc = unsafe { syscall1(SYS_USBINFO, 0) };
             rc as i32
         }
+        "wifi" => {
+            // `wifi`                       → scan + numbered network list
+            // `wifi connect <n> <password>`→ join network #n with the password
+            if argv.len() >= 2 && argv[1] == "connect" {
+                if argv.len() < 4 {
+                    println!("wifi: usage: wifi connect <number> <password>");
+                    return 2;
+                }
+                let bytes = argv[2].as_bytes();
+                let mut idx: u64 = 0;
+                let mut ok = !bytes.is_empty();
+                for &b in bytes {
+                    if b.is_ascii_digit() {
+                        idx = idx.wrapping_mul(10).wrapping_add((b - b'0') as u64);
+                    } else { ok = false; break; }
+                }
+                if !ok {
+                    println!("wifi: '{}' is not a valid network number", argv[2]);
+                    return 2;
+                }
+                let pass = argv[3].as_bytes();
+                let rc = unsafe {
+                    syscall3(SYS_WIFI_CONNECT, idx, pass.as_ptr() as u64, pass.len() as u64)
+                };
+                if rc == 1 { 0 } else { 1 }
+            } else {
+                let n = unsafe { syscall1(SYS_WIFI_SCAN, 0) };
+                println!("wifi: {} network(s). Use `wifi connect <n> <password>` to join.", n);
+                0
+            }
+        }
         "usbenum" => {
             // Re-run xHCI port enumeration. Use after plugging in a USB
             // device (the kernel only enumerates at boot, so post-boot
@@ -919,12 +969,70 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("usbenum: {} device(s) enumerated", n);
             0
         }
+        "vouch" => {
+            // `vouch <path> [tier]` — mark an agent-created tool safe to run at
+            // `tier` (default 1 = Internal: LLM-capable, still can't read Secret
+            // credentials). Console-ONLY: the kernel rejects this unless THIS
+            // interactive shell is the call's origin, so the agent can't elevate
+            // its own tools. The grant is bound to the tool's exact bytes.
+            if argv.len() < 2 {
+                println!("vouch: usage: vouch <path> [tier 0-3]  (default 1)");
+                println!("  marks an agent-created tool safe to run with privilege");
+                return 2;
+            }
+            let mut tier: u64 = 1;
+            if argv.len() >= 3 {
+                let t = argv[2].as_bytes();
+                if t.len() == 1 && t[0].is_ascii_digit() && t[0] <= b'3' {
+                    tier = (t[0] - b'0') as u64;
+                } else {
+                    println!("vouch: tier must be 0, 1, 2 or 3");
+                    return 2;
+                }
+            }
+            let path = argv[1].as_bytes();
+            let rc = unsafe { syscall3(SYS_VOUCH, path.as_ptr() as u64, path.len() as u64, tier) };
+            if rc == 1 {
+                println!("vouch: '{}' may now run at tier {} (until reboot)", argv[1], tier);
+                0
+            } else {
+                println!("vouch: denied — console-only, or path/tier/clearance invalid");
+                1
+            }
+        }
+        "unvouch" => {
+            // Reset a tool to tier 0 (re-sandbox it). Same console-only gate.
+            if argv.len() < 2 {
+                println!("unvouch: usage: unvouch <path>");
+                return 2;
+            }
+            let path = argv[1].as_bytes();
+            let rc = unsafe { syscall3(SYS_VOUCH, path.as_ptr() as u64, path.len() as u64, 0) };
+            if rc == 1 {
+                println!("unvouch: '{}' reset to tier 0 (sandboxed)", argv[1]);
+                0
+            } else {
+                println!("unvouch: denied");
+                1
+            }
+        }
+        "vouches" => {
+            // Audit list: print every active vouch grant (kernel prints them).
+            let _ = unsafe { syscall1(SYS_VOUCHES, 0) };
+            0
+        }
         "pong" => {
             // Hand off to the kernel-side fullscreen pong game. Two-player
             // local: left W/S, right Up/Down, Space to pause/restart, Esc
             // to quit. The kernel holds FULLSCREEN_APP_ACTIVE for the
             // duration; control returns here on quit with the screen cleared.
             let rc = unsafe { syscall1(SYS_PONG, 0) };
+            rc as i32
+        }
+        "tetris" => {
+            // Kernel-side fullscreen Tetris (NES-style). Arrows/AD move, Up/X or
+            // Z rotate, Down soft-drop, Space hard-drop, P pause, Esc/Q quit.
+            let rc = unsafe { syscall1(SYS_TETRIS, 0) };
             rc as i32
         }
         "flash-sysroot" => {
@@ -975,6 +1083,7 @@ fn exec_external(argv: &[String]) -> i32 {
             format!("{}/{}", dir, prog)
         };
         if let Some(code) = spawn_at(&full, argv) {
+            shdbg!("[exec] spawn_at returned code={}, returning", code);
             return code;
         }
     }
@@ -990,8 +1099,14 @@ fn spawn_at(path: &str, argv: &[String]) -> Option<i32> {
     for a in &argv[1..] {
         cmd.arg(a.as_str());
     }
-    match cmd.status() {
-        Ok(s) => Some(s.code().unwrap_or(0)),
-        Err(_) => None,
-    }
+    // Diagnostics for the semos-rustc hang: if wait never returns we will
+    // see "spawn ..." but never "wait returned ..." on screen.
+    shdbg!("[sem-sh] spawn {}", path);
+    let mut child = cmd.spawn().ok()?;
+    shdbg!("[sem-sh] child pid {}", child.id());
+    let status = child.wait();
+    shdbg!("[sem-sh] after wait");
+    shdbg!("[sem-sh] wait returned {:?}", status.as_ref().map(|s| s.code()));
+    shdbg!("[sem-sh] about to return status");
+    Some(status.ok()?.code().unwrap_or(0))
 }
