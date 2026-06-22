@@ -1,16 +1,25 @@
 # Semantic OS
 
-A bare-metal x86_64 kernel written in Rust to test a hypothesis:
-**LLM data-leak risk should be enforced at the hardware/kernel boundary,
-not in user-space sandboxes.**
+A bare-metal x86_64 (and now aarch64) kernel written in Rust toward one idea:
+**an agent-native, self-extending, sovereign OS** — an LLM agent writes its own
+modules, compiles them *on the machine*, and loads them into the running system,
+with **security tiers as the capability fence** on agent-written code.
 
+The original hypothesis still anchors the security model: **LLM data-leak risk
+should be enforced at the hardware/kernel boundary, not in user-space sandboxes.**
 The kernel replaces the file abstraction with **semantic objects**
 (SUID-addressed) carrying an explicit **security tier**
 (`Public | Internal | Sensitive | Secret`). When a user task asks the
 kernel for an LLM-bound view of an object, the kernel applies tier-based
 redaction *before* returning bytes — even when the same task is
 permitted to read the object directly. The policy lives in Ring 0; user
-code can't bypass it.
+code can't bypass it. The same tier check (`current_task_max_tier()`) gates
+LLM/semantic/process/namespace syscalls pervasively, and a child can never
+exceed its spawner's clearance — so agent-authored tools spawned at **tier 0**
+are sandboxed by construction until a human **vouches** them (`SYS_VOUCH`).
+
+See [`docs/MASTER_ROADMAP_2026-06-15.md`](docs/MASTER_ROADMAP_2026-06-15.md)
+for the full reframed thesis and the active/gated/next view.
 
 ## The headline demo
 
@@ -41,7 +50,22 @@ DEMO 56 is the live agent version: a sandboxed shell at security tier 0
 provably **cannot read Secret files** and **cannot modify Public ones**
 even when the LLM driving it tries.
 
-## What runs today (2026-05-28)
+## What runs today (2026-06-22)
+
+> **On metal:** SemOS has booted on real hardware (ThinkPad T540p/W540) — not
+> just QEMU. On-device `rustc` compiled and ran a program on bare metal (DEMO 80);
+> the iwlwifi WiFi join and USB enumeration were brought up against real silicon.
+
+### Self-extension keystone (the headline since 2026-06-15)
+- **Any ramfs/namespace ELF runs by name** — the hardcoded `/bin` spawn table is
+  gone; `spawn_namespace_elf` + `$PATH` resolve arbitrary tools.
+- **Tier-0 fence**: agent-authored modules spawn powerless; the security tier is
+  the capability boundary, enforced on every gated syscall.
+- **Vouch mechanism** (`SYS_VOUCH` 126 / `SYS_VOUCHES` 127): only the human at the
+  interactive shell can elevate a tool, bytes-bound — the LLM agent can't elevate
+  its own code.
+- **On-device rustc** (M27 / DEMO 80): full parse → typeck/borrowck → Cranelift
+  codegen → ELF, reading `*.rlib` from a disk-staged sysroot blob, run on metal.
 
 ### Kernel core
 - Preemptive scheduler (LAPIC timer, FPU/SSE save-restore, per-task page tables)
@@ -51,9 +75,10 @@ even when the LLM driving it tries.
 - Persistent FS over a snapshot ring (Namespace → BlockDevice → disk)
 
 ### Drivers
-- **Storage**: VirtIO block + **NVMe** + **AHCI/SATA** — three backends behind one `BlockDevice` trait
+- **Storage**: VirtIO block + **NVMe** + **AHCI/SATA** + **USB Mass Storage** — behind one `BlockDevice` trait. Plus a **read-only FAT32 reader** and a raw sector-aligned **sysroot blob** loader (the on-disk store for the compiler's `*.rlib`s — see "On-device rustc").
 - **Network**: VirtIO-net + smoltcp + TLS 1.3 + cert-pinning. **Live HTTPS round-trip to api.anthropic.com** from bare metal.
-- **USB**: xHCI controller (incl. CSZ=1 / 64-byte contexts for Intel), HID boot keyboard, **live Mass Storage with bulk endpoints** (INQUIRY + READ CAPACITY validated against `-device usb-storage`)
+- **WiFi**: **iwlwifi (Intel 7260)** firmware bring-up → calibration → MAC → **live scan with real SSIDs** + interactive `wifi` / `wifi connect <n> <pass>` shell commands; WPA2 PMK/PTK/EAPOL-MIC crypto built and KAT-passing. 802.11 association TX is the in-progress frontier (hardware-gated).
+- **USB**: xHCI controller (incl. CSZ=1 / 64-byte contexts for Intel), **multi-slot enumeration + single-tier cascaded hubs**, HID boot keyboard, **live Mass Storage with bulk endpoints** (multiple MSC devices register as `usb0..usb3`). Standalone EHCI path enumerates an **iPhone tether** (ipheth).
 - **Audio**: Intel HD Audio controller + codec walk + 48 kHz 16-bit stereo PCM playback
 - **Framebuffer**: M6 drawing API, M7 TTF rasterization (ttf-parser), M8 2D vector (tiny-skia)
 - **Console**: TTY layer (cooked/raw mode, line editing, scrollback PageUp/PageDown), 2× scaled console font
@@ -71,22 +96,48 @@ even when the LLM driving it tries.
 - **USB Mass Storage** CBW/CSW + SCSI Block Commands (live on xHCI as of DEMO 69)
 - **HID report descriptor parser** for gamepad (axes + buttons, signed Logical Min/Max)
 
-### Self-hosting prep
-- `semos-std`: `#[global_allocator]`, `io::{Read,Write}`, `fs::File`, `env`, `sync::{Mutex,Once}`, `thread::spawn + JoinHandle<T>`, `process::Command`, `net::TcpStream`, **`time::{Instant,Duration}`**, **`path::{Path,PathBuf}`**
-- See [`docs/SELF_HOSTING_PLAN.md`](docs/SELF_HOSTING_PLAN.md) for the M25/26/27 roadmap toward rustc-on-metal
+### On-device rustc (M27 — self-hosting)
+- The full upstream `rustc` (incl. the **Cranelift codegen backend**, ported to
+  `no_std`) builds for the SemOS target and runs in Ring 3. On bare metal it has
+  taken a `hello.rs` through the entire pipeline to a working ELF, reading the
+  sysroot `*.rlib`s from a disk-staged blob via `SYS_SYSROOT_READ`.
+- `semos-std`: `#[global_allocator]`, `io::{Read,Write,Seek}`, `fs::{File,rename}`, `env`, `sync::{Mutex,Once}`, `thread::spawn + JoinHandle<T>`, `process::Command`, `net::TcpStream`, `time::{Instant,Duration}`, `path::{Path,PathBuf}`
+- See [`docs/SELF_HOSTING_PLAN.md`](docs/SELF_HOSTING_PLAN.md) and the M27 design notes for the rustc-on-metal roadmap.
+
+### ARM port
+- A standalone **aarch64** kernel (`kernel-aarch64/`) boots → UART → vectors → MMU
+  → GICv2 → timer → preemptive scheduler and runs the **same `kernel-core`** (sha256
+  KAT passes). "Two backends, one portable core." QEMU-testable: `cd kernel-aarch64 && cargo run --release`.
 
 ## Hardware target
 
 Two-machine bring-up:
-- **Stage 1: ThinkPad T540** (i7-4600M Haswell, 8 GB, 256 GB **SATA** SSD,
-  Win10) — cheap, coreboot-friendly, removable Wi-Fi card. Validates the
-  bootloader + kernel + iwlwifi (7260) + AHCI on real metal.
+- **Stage 1: ThinkPad T540p / W540** (Haswell, discrete Quadro on the W540) —
+  cheap, coreboot-friendly, removable Wi-Fi card. **Boots on real metal today**;
+  validated the kernel + iwlwifi (7260) join + USB enumeration + AHCI + on-device
+  rustc.
 - **Stage 2: ThinkPad P1 Gen 6** — i7 Raptor Lake hybrid, Intel Iris Xe iGPU,
   NVIDIA RTX dGPU. Where GPU work (M14 iGPU / M18 dGPU compute) begins.
 
-Debug-without-serial on metal works via three levels: framebuffer + scrollback,
-**panic-dump to disk** (recover from Windows via `tools/read-panic-log.ps1` —
-no third-party tool needed), and eventually network log streaming over Wi-Fi.
+### Dev/boot workflow (no more disk flashing)
+
+SemOS is self-contained: the whole OS (bootloader + kernel + every user program
+via `include_bytes!`) is one `.img`; the filesystem is in-memory ramfs, so there
+is no install state to preserve. The intended loop is **UEFI dual-boot**:
+
+1. Install Linux on the SSD with an EFI System Partition (ESP).
+2. Copy SemOS's UEFI payload into a folder on the ESP (e.g. `EFI/semos/BOOTX64.EFI`)
+   and register a boot-menu entry — the firmware menu then lists both.
+3. Each rebuild = overwrite that one `.efi` from Linux. Seconds, not a USB reflash.
+
+> **Caution:** the compiler **sysroot blob is written raw to LBA 0 of a whole
+> SATA disk** (no partition table) by `flash-sysroot`. Keep it on a **separate
+> disk** from your OS partitions, or it will clobber the GPT. (Partition-offset
+> support to let it live safely inside a partition is tracked in the roadmap.)
+
+Debug-without-serial on metal works via: framebuffer + scrollback,
+**panic-dump to disk** (recover via `tools/read-panic-log.ps1`), and network log
+streaming over Wi-Fi.
 
 ## Repo layout
 
@@ -100,6 +151,8 @@ kernel-x86_64/      # x86_64 platform crate
                     #   framebuffer + TTF + tiny-skia, context switch, PCI,
                     #   virtio block + net, NVMe, AHCI, HDA audio, xHCI,
                     #   agent, editor, panic_dump
+kernel-aarch64/     # standalone aarch64 platform crate running the same
+                    # kernel-core (UART, GICv2, MMU, timer, scheduler)
 x86_64-runner/      # Windows host tool — wraps the kernel ELF in a
                     # bootloader-0.11 disk image (UEFI + BIOS) for QEMU
 user-programs/      # Real Rust no_std user binaries embedded in the
@@ -201,7 +254,8 @@ shell `gdb -ex "set osabi none" -ex "set architecture i386:x86-64"
 ## Status
 
 This is an **active-development kernel**, validated end-to-end in QEMU
-and being prepared for first metal boot on a T540.
+**and booting on real metal** (ThinkPad T540p/W540) — where it has brought up
+WiFi, USB enumeration, and on-device `rustc`.
 
 The interesting parts:
 

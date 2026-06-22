@@ -65,6 +65,16 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
     idt[32].set_handler_fn(timer_interrupt_handler);
     idt[33].set_handler_fn(keyboard_interrupt_handler);
 
+    // PIC spurious interrupts. The master 8259 delivers a spurious IRQ7
+    // (vector 39) and the slave a spurious IRQ15 (vector 47) when an IRQ line
+    // de-asserts before the CPU acknowledges it — and these fire regardless of
+    // the interrupt mask. Without handlers, a stray spurious IRQ7 during early
+    // boot faults (#NP on the not-present IDT[39]); this is timing/layout
+    // sensitive, so it only shows up on some builds. Per the 8259 spec a
+    // spurious IRQ is NOT acknowledged with EOI — the handler just returns.
+    idt[39].set_handler_fn(spurious_pic_handler);
+    idt[47].set_handler_fn(spurious_pic_handler);
+
     // APIC spurious interrupt (vector 255). Must be installed even when the
     // APIC is not in use, so a stray interrupt during init doesn't triple-fault.
     idt[255].set_handler_fn(spurious_interrupt_handler);
@@ -74,6 +84,12 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
 
 extern "x86-interrupt" fn spurious_interrupt_handler(_stack_frame: InterruptStackFrame) {
     // Spurious interrupts must NOT be EOI'd per Intel SDM — just return.
+}
+
+extern "x86-interrupt" fn spurious_pic_handler(_stack_frame: InterruptStackFrame) {
+    // PIC spurious IRQ7 (master) / IRQ15 (slave): no real device asserted, so
+    // per the 8259 spec we do NOT send an EOI — just return. (No device in
+    // this kernel uses IRQ7 or IRQ15, so treating both as spurious is safe.)
 }
 
 /// Initialize interrupts.
@@ -299,7 +315,7 @@ extern "x86-interrupt" fn page_fault_handler(
         // would drown the demo output. The fault exit-code sentinel set
         // in kill_current_task() is what lets parents/pollers detect a
         // real crash (vs SYS_EXIT(0)). Flip USER_PF_VERBOSE to debug.
-        const USER_PF_VERBOSE: bool = true; // M27 iter8: trace the semos-rustc run_compiler entry fault
+        const USER_PF_VERBOSE: bool = false;
         if USER_PF_VERBOSE {
             let cr2 = Cr2::read_raw();
             let rip = stack_frame.instruction_pointer.as_u64();
@@ -505,6 +521,9 @@ fn kill_current_task() {
         // (cleanup deferred to slot reuse — see context::reap_exited_slot,
         //  called by alloc_task_slot via Platform::reap_slot)
     }
+    // A faulted user process may have left console flags set; clear them
+    // so the next task (usually the shell) can draw its output.
+    kernel_core::platform::get().reset_tty_flags();
     crate::context::schedule();
     // If pick_next found nothing better (every other slot Exited too),
     // schedule returns. Halt with interrupts on and try again on next tick.
@@ -551,7 +570,10 @@ extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFra
             }
         }
     }
-    TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    let _ = TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+    // (DEMO 80 timer-ISR `[hb]` heartbeat diagnostic removed — it printed once
+    // per second from the ISR and stomped interactive typing. Re-add a gated
+    // `if HB_VERBOSE` block here if you need the kernel-alive probe again.)
 
     // Polling fallback for the PS/2 keyboard: real hardware (W540 etc.)
     // routes legacy IRQ 1 through an IOAPIC pin that isn't pin 1 (ACPI

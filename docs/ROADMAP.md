@@ -8,6 +8,26 @@ When you finish a milestone, flip its checkbox in this file and update the [Proj
 
 Phase 8 (network → first remote LLM call) is closed. See [`PHASE_8_ROADMAP.md`](PHASE_8_ROADMAP.md) for that phase's historical detail. The current frontier is Phase 9.
 
+> **2026-06-22 — on-metal milestones + dev-loop decision.** On real hardware
+> (T540p/W540) the **post-compile freeze is resolved**: `semos-rustc` compiled
+> `hello.rs` → 1024-byte ELF → `[exit] code=0` → **control returned to sem-sh**
+> (the M27 DEMO 80 wall is broken). Cleanup landed: timer-ISR `[hb]` heartbeat
+> spam removed (was stomping interactive typing), boot-progress/USB/GPU/wifi
+> prints gated behind `*_VERBOSE` flags. **Dev loop decided:** UEFI dual-boot —
+> install Linux + ESP, copy SemOS's `.efi` into the ESP, pick it from the boot
+> menu; rebuild = overwrite one file (no USB reflash). **Sysroot blob caveat:**
+> `flash-sysroot` writes raw to LBA 0 of a whole SATA disk — keep it off the OS
+> SSD, or add partition-offset support (in progress).
+>
+> **2026-06-15 — combined view + thesis re-headline.** All seven planning docs are
+> now folded into one map: [`MASTER_ROADMAP_2026-06-15.md`](MASTER_ROADMAP_2026-06-15.md).
+> Headline reframed to **"agent-native, self-extending, sovereign OS"** after
+> on-device rustc compiled + ran a program on the T540p. Recent landings (not yet
+> rowed into the table below): **self-extension keystone** (hardcoded `/bin` spawn
+> table removed → any ramfs/namespace ELF runs by name, tier-scoped); **WiFi** full
+> Phase-A join HW-confirmed + WPA2 PTK/EAPOL-MIC/RSN-IE crypto built & KAT'd
+> (Phase-B frame TX blocked on hardware — boot drives dead).
+
 ---
 
 ## How to read this
