@@ -17,7 +17,15 @@ Phase 8 (network → first remote LLM call) is closed. See [`PHASE_8_ROADMAP.md`
 > install Linux + ESP, copy SemOS's `.efi` into the ESP, pick it from the boot
 > menu; rebuild = overwrite one file (no USB reflash). **Sysroot blob caveat:**
 > `flash-sysroot` writes raw to LBA 0 of a whole SATA disk — keep it off the OS
-> SSD, or add partition-offset support (in progress).
+> SSD, or add partition-offset support (landed: `SEMOS_SYSROOT` named GPT
+> partition + `BASE_LBA` offset). **WiFi assoc + 4-way wired:**
+> `iwlwifi_device::connect()` now sends open-system auth, waits for the auth
+> response, sends the WPA2 association request with RSN IE, waits for the assoc
+> response, then drives the EAPOL Msg1→Msg2→Msg3→Msg4 handshake using the
+> already-KAT'd PTK/MIC/RSN-IE builders. Data-frame EAPOL parsing + an
+> EAPOL-over-data-queue TX path added. On hardware Phase A still passes;
+> current blocker is `consumed=0` — the SCD is not pulling the auth frame from
+> data queue 1 (queue-config + TFD-layout fixes built, under test).
 >
 > **2026-06-15 — combined view + thesis re-headline.** All seven planning docs are
 > now folded into one map: [`MASTER_ROADMAP_2026-06-15.md`](MASTER_ROADMAP_2026-06-15.md).
