@@ -61,6 +61,16 @@ mod flags {
     pub const DIRTY: u64        = 1 << 6;
     pub const HUGE_PAGE: u64    = 1 << 7;  // 2MB at PD level, 1GB at PDPT level
     pub const GLOBAL: u64       = 1 << 8;
+    /// Software-available bit (9). Marks a next-level table entry whose
+    /// sub-table was allocated PRIVATE to this address space (not inherited
+    /// from the boot PML4 copy). `ensure_table` privatizes any non-marked
+    /// inherited user-half sub-table on first touch — without this, two
+    /// processes that both inherit a boot sub-table (e.g. the user-accessible
+    /// PML4[0] covering the 4 GiB heap) share leaf page tables → their heaps
+    /// alias the same physical frames → cross-address-space corruption.
+    /// Ignored by the MMU for table entries; lies below ADDR_MASK so it never
+    /// affects the sub-table physical address.
+    pub const PRIVATE_SUBTABLE: u64 = 1 << 9;
     pub const NO_EXECUTE: u64   = 1 << 63;
 
     /// Address mask for 4KB-aligned physical addresses in PTE
@@ -86,6 +96,17 @@ impl PageTableEntry {
             entry |= flags::USER;
         }
         Self(entry)
+    }
+
+    /// Like [`table`] but marks the entry as a PRIVATE (per-address-space)
+    /// sub-table — see [`flags::PRIVATE_SUBTABLE`].
+    pub fn table_private(phys_addr: u64, user: bool) -> Self {
+        Self(Self::table(phys_addr, user).0 | flags::PRIVATE_SUBTABLE)
+    }
+
+    /// True if this table entry was allocated private to its address space.
+    pub fn is_private_subtable(&self) -> bool {
+        self.0 & flags::PRIVATE_SUBTABLE != 0
     }
 
     /// Create a 4KB page entry
@@ -652,25 +673,31 @@ impl AddressSpace {
     ) -> Option<u64> {
         let existing = table.entry(index);
         if existing.is_present() {
-            let existing_user = (existing.0 & flags::USER) != 0;
-            // If we want user access but the inherited sub-table is
-            // kernel-only, we MUST allocate a fresh sub-table rather than
-            // OR'ing the USER bit onto the shared inherited entry — the
-            // sub-table is shared with the boot address space (and any other
-            // process), so mutating its entries would cross-contaminate.
-            // Allocating fresh costs us whatever mappings were inherited
-            // through this slot, but since this only triggers for user-half
-            // addresses, those were bootloader scratch we don't need.
-            if user && !existing_user {
+            // For a user mapping, the sub-table MUST be PRIVATE to this address
+            // space. If the present entry isn't marked private, it was either
+            // inherited from the boot PML4 copy (the user-accessible PML4[0]
+            // chain that covers the 4 GiB heap) or is otherwise shared — and
+            // reusing it would alias another process's mappings (their heaps /
+            // stacks at the same vaddr would share the same leaf frames →
+            // cross-address-space corruption, the DEMO 80 hang). Privatize on
+            // first touch: allocate a fresh sub-table (any inherited user-half
+            // mappings through this slot are bootloader scratch we don't need)
+            // and mark it private so subsequent touches reuse it. Kernel
+            // mappings (user == false) stay shared.
+            if user && !existing.is_private_subtable() {
                 let new_frame = alloc_pt_frame()?;
-                *table.entry_mut(index) = PageTableEntry::table(new_frame, user);
+                *table.entry_mut(index) = PageTableEntry::table_private(new_frame, user);
                 self.track_subtable(new_frame);
                 return Some(new_frame);
             }
             return Some(existing.phys_addr());
         }
         let new_frame = alloc_pt_frame()?;
-        *table.entry_mut(index) = PageTableEntry::table(new_frame, user);
+        *table.entry_mut(index) = if user {
+            PageTableEntry::table_private(new_frame, user)
+        } else {
+            PageTableEntry::table(new_frame, user)
+        };
         self.track_subtable(new_frame);
         Some(new_frame)
     }
