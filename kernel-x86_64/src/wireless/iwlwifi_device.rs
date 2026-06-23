@@ -1465,28 +1465,38 @@ impl IwlDevice {
         let tfd_phys = match phys_of(unsafe { &raw const TX1_TFD_RING } as u64) { Some(p)=>p, None=>return false };
         if !self.grab_nic_access() { return false; }
         let scd_base = self.scd_base_ptr;
-        // Disable the scheduler while we configure the new queue (mirrors tx_init).
-        self.csr.write_prph(scd::TXFACT, 0);
-        // Same per-queue setup tx_init does for queue 0 (proven to schedule).
-        self.csr.write32(fh_cbbc_queue(DATA_QUEUE as u64), (tfd_phys >> 8) as u32);
+
+        // OpenBSD iwm_enable_ac_txq sequence for AC/data queues.
+        self.csr.write32(CSR_HBUS_TARG_WRPTR, DATA_QUEUE << 8); // wrptr -> 0
+        // Disable the queue while we reconfigure it.
+        self.csr.write_prph(scd::queue_status(DATA_QUEUE),
+            (0 << scd::STTS_POS_ACTIVE) | (1 << scd::STTS_POS_SCD_ACT_EN));
         self.csr.clear_bits_prph(scd::AGGR_SEL, 1 << DATA_QUEUE);
-        self.csr.write_prph(scd::CHAINEXT_EN, 0);
         self.csr.write_prph(scd::queue_rdptr(DATA_QUEUE), 0);
-        self.csr.write32(CSR_HBUS_TARG_WRPTR, DATA_QUEUE << 8); // HW write ptr -> idx 0
+        self.csr.write32(fh_cbbc_queue(DATA_QUEUE as u64), (tfd_phys >> 8) as u32);
         self.csr.mem_write32(scd_base + scd::context_queue_offset(DATA_QUEUE), 0);
         let frame_limit: u32 = 64;
         self.csr.mem_write32(scd_base + scd::context_queue_offset(DATA_QUEUE) + 4,
             ((frame_limit << scd::CTX_WIN_SIZE_POS) & 0x7F)
             | ((frame_limit << scd::CTX_FRAME_LIMIT_POS) & 0x7F_0000));
+        // Enable the queue.
         self.csr.write_prph(scd::queue_status(DATA_QUEUE), scd::queue_enable_val(TX_FIFO_BE));
-        // Re-enable all FIFOs now that queue 1 is configured.
-        self.csr.write_prph(scd::TXFACT, 0xFF);
+        // Make sure the SCD enable-control bit for this queue is set.
+        let en_ctrl = self.csr.read_prph(scd::EN_CTRL);
+        self.csr.write_prph(scd::EN_CTRL, en_ctrl | (1 << DATA_QUEUE));
+        // Also set the per-queue ACTIVE bit; queue_status alone does not raise
+        // the ACTIVE bitmask on this firmware, so the scheduler ignores the queue.
+        let active = self.csr.read_prph(scd::ACTIVE);
+        self.csr.write_prph(scd::ACTIVE, active | (1 << DATA_QUEUE));
+
         let q_stts = self.csr.read_prph(scd::queue_status(DATA_QUEUE));
         let txfact = self.csr.read_prph(scd::TXFACT);
+        let active = self.csr.read_prph(scd::ACTIVE);
+        let en_ctrl_after = self.csr.read_prph(scd::EN_CTRL);
         self.release_nic_access();
         unsafe { TX1_WRITE_IDX = 0; }
-        println!("[iwlwifi] data TX queue {} enabled (FIFO BE, SCD regs) q_stts=0x{:08X} TXFACT=0x{:08X}",
-            DATA_QUEUE, q_stts, txfact);
+        println!("[iwlwifi] data TX queue {} enabled (FIFO BE) q_stts=0x{:08X} TXFACT=0x{:08X} ACTIVE=0x{:08X} EN_CTRL=0x{:08X}->0x{:08X}",
+            DATA_QUEUE, q_stts, txfact, active, en_ctrl, en_ctrl_after);
         true
     }
 

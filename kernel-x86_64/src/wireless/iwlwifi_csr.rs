@@ -44,6 +44,17 @@ pub const CSR_HW_REV_WA_REG:      u64 = 0x22C;
 pub const CSR_DBG_HPET_MEM_REG:   u64 = 0x240;
 pub const CSR_HW_RF_ID_TYPE:      u64 = 0x190;
 
+/// MAC-address strap/OTP registers (iwl-csr.h). iwlwifi's
+/// `iwl_set_hw_address_from_csr` reads the MAC from these — but ONLY on
+/// `mac_addr_from_csr` devices (8000-series and newer). On the **7260 these
+/// read floating junk** (STRAP = 0xD55555D5, the same undriven-bus pattern as
+/// CSR_HW_RF_ID); the real MAC lives in the NVM HW section (word 0x15). Kept
+/// for reference / the eventual 8000-series path — not used by the 7260.
+pub const CSR_MAC_ADDR0_OTP:      u64 = 0x380;
+pub const CSR_MAC_ADDR1_OTP:      u64 = 0x384;
+pub const CSR_MAC_ADDR0_STRAP:    u64 = 0x388;
+pub const CSR_MAC_ADDR1_STRAP:    u64 = 0x38C;
+
 /// HBUS (Host Bus) target windows — indirect access to NIC SRAM (MEM) and
 /// the peripheral/APMG register space (PRPH). HBUS base is 0x400, NOT 0x040.
 pub const CSR_HBUS_TARG_MEM_RADDR:  u64 = 0x40C;
@@ -120,9 +131,11 @@ pub mod scd {
     pub const CMD_FIFO: u32 = 7;
     pub const STTS_POS_ACTIVE: u32 = 3;
     pub const STTS_POS_WSL: u32 = 4;
+    pub const STTS_POS_SCD_ACT_EN: u32 = 5;
     pub const STTS_MSK: u32 = 0x017F_0000;
     pub fn queue_enable_val(fifo: u32) -> u32 {
-        (1 << STTS_POS_ACTIVE) | (fifo & 0x7) | (1 << STTS_POS_WSL) | STTS_MSK
+        (1 << STTS_POS_ACTIVE) | (fifo & 0x7) | (1 << STTS_POS_WSL)
+            | (1 << STTS_POS_SCD_ACT_EN) | STTS_MSK
     }
     /// SCD context table in SRAM lives at scd_base_ptr + these offsets.
     pub const CONTEXT_MEM_OFFSET: u32 = 0x600;

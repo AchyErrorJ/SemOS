@@ -429,7 +429,19 @@ Phases 15-18 are sequential and run in 2026. Phase 19 begins when a Mac is acqui
 
 ---
 
-## Phase 20 — Bare-Metal WiFi (background work)
+## Phase 20 — Bare-Metal WiFi (NOW A MAIN TRACK — active 2026-06)
+
+> **Status update 2026-06-15:** No longer background — this is the active online
+> path on the T540p. **M72 DONE** (7260 enumerated, INIT+RUNTIME firmware ALIVE,
+> calibration forwarded, real MAC from NVM). **M73 DONE** (LMAC scan returns real
+> SSIDs; `wifi` + `wifi connect <n> <pass>` shell commands work; full Phase-A host-
+> command join: PHY ctx + MAC ctx + binding + ADD_STA + time-event all HW-confirmed).
+> **M74 in progress** — WPA2 PMK derivation working on live input (PBKDF2-SHA1, KAT'd);
+> PTK + EAPOL-MIC crypto + the RSN IE built & KAT-verified offline (2026-06-15);
+> blocked on **Phase-B first on-air frame TX** (the `0x1c` TX path: queue-enable +
+> off-channel-assert fixed, currently `consumed=0` SCD-scheduling fix is built but
+> unbooted — boot drives dead). Detail in the `semos-wifi` project memory; see also
+> `MASTER_ROADMAP_2026-06-15.md`.
 
 **Goal:** Semantic OS connects to WiFi networks directly, without requiring a paired phone for network access. The phone remains useful for everything else (identity, crypto, camera, etc.); networking becomes independent.
 
@@ -439,7 +451,7 @@ Phases 15-18 are sequential and run in 2026. Phase 19 begins when a Mac is acqui
 
 **Implementation note:** Start with one specific chip — the Intel Wireless 7260 in the W540. Worry about other chips later or never.
 
-### M72 — WiFi chip enumeration and firmware load `[  ]`
+### M72 — WiFi chip enumeration and firmware load `[x — DONE 2026-06-13]`
 
 **What it does:** Identifies the Intel WiFi chip on PCIe, loads the firmware blob, brings the chip out of reset.
 
@@ -448,7 +460,7 @@ Phases 15-18 are sequential and run in 2026. Phase 19 begins when a Mac is acqui
 - [ ] Chip reports itself as alive via mailbox interface
 - [ ] DEMO 96: kernel boots, logs "Intel Wireless 7260 detected and initialized"
 
-### M73 — 802.11 management state machine `[  ]`
+### M73 — 802.11 management state machine `[x — scan + Phase-A join DONE 2026-06-15; on-air assoc pending Phase-B TX]`
 
 **What it does:** Scans for networks, joins one, handles association/disassociation, manages beacon timing.
 
@@ -457,7 +469,7 @@ Phases 15-18 are sequential and run in 2026. Phase 19 begins when a Mac is acqui
 - [ ] `wifi_connect(ssid, password)` joins a network
 - [ ] DEMO 97: `sem-sh wifi list` shows nearby networks, `sem-sh wifi connect` joins one
 
-### M74 — WPA2 / WPA3 authentication `[  ]`
+### M74 — WPA2 / WPA3 authentication `[🔨 — PMK/PTK/EAPOL-MIC crypto + RSN IE built & KAT'd 2026-06-15; 4-way handshake blocked on Phase-B frame TX]`
 
 **What it does:** Performs the cryptographic handshake with a protected network.
 
