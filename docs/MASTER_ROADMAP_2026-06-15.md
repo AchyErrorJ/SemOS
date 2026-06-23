@@ -101,16 +101,21 @@ Online path of choice on the T540p (no ethernet reach; tether blocked). Through
 `wifi connect <n> <pass>` → **Phase A complete** (PHY ctx + MAC ctx + binding +
 ADD_STA + time-event all HW-confirmed). **Phase B (first on-air frame TX):** the
 `0x90A` off-channel-TX assert is fixed (enable queue before time-event + widen
-window). 2026-06-22: **association request + WPA2 4-way handshake wired into
-`connect()`** — auth/assoc response parsing, data-frame EAPOL extraction, and
+window). 2026-06-22/23: **association request + WPA2 4-way handshake wired into
+`connect()`** — open-auth, assoc-req with RSN IE, data-frame EAPOL extraction, and
 EAPOL-Key Msg2/Msg4 TX all implemented; PTK/MIC/RSN-IE crypto already KAT'd.
-Current blocker is **`consumed=0` on data queue 1**: the SCD is not scheduling the
-auth frame even after queue-config fixes (disable scheduler during config + set
-all FIFOs, keep full `tx_cmd` in TB0). Next attempts: verify TFD/TB layout matches
-firmware expectations, check station→queue binding, or fall back to sending auth
-via the proven command queue. After TX flies: auth-resp → assoc(+RSN IE) →
-WPA2 4-way → key install → smoltcp NetDevice. NOT QEMU-testable. See
-[[semos-wifi]] memory for the blow-by-blow.
+Current blocker is **`consumed=0` on data queue 1**: the SCD still does not
+schedule the `0x1c` TX frame. Attempted fixes: direct-register queue setup
+mirroring OpenBSD `iwm_enable_ac_txq`, `SCD_ACT_EN` at bit 19, setting
+`SCD_ACTIVE`/`EN_CTRL`, sending `TX_CMD` on data queue 1 (not the host-command
+queue), and binding queue 1 to station 0 / TID 8 / FIFO BE via the `SCD_QUEUE_CFG`
+(0x1d) host command (response echoes queue 1). Still `SCD_rdptr 0→0`. Next:
+verify TFD/TB layout, try a smaller data-queue ring, or inspect the SCD
+translation-table entry after `SCD_QUEUE_CFG`. Also re-stubbed the 86 MB
+`semos-rustc` include_bytes! because the 102 MB kernel it produced caused
+`user_task` page faults and a dead keyboard on boot. After TX flies: auth-resp →
+assoc(+RSN IE) → WPA2 4-way → key install → smoltcp NetDevice. NOT QEMU-testable.
+See [[semos-wifi]] memory for the blow-by-blow.
 
 ### B. Self-extension loop (the thesis keystone) — ~80%
 On-device rustc compiles + runs a program (2026-06-15). Module/loader keystone

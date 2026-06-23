@@ -62,6 +62,7 @@ mod ahci;
 mod hda;
 mod wireless;
 mod panic_dump;
+mod tetris;
 pub mod paging;
 pub mod apic;
 pub mod ioapic;
@@ -514,6 +515,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // running under QEMU-BIOS need to keep this stub'd. If you're a
     // sub-agent reaching this comment: only flip the stub on if your
     // tests run on hardware or UEFI; for QEMU-BIOS leave the &[] in.
+    // UN-STUBBED for the DEMO 80 post-compile-hang investigation (real HW /
+    // UEFI boot). Re-stub to `&[]` for QEMU-BIOS validation sessions.
     static SEMOS_RUSTC_ELF: &[u8] = include_bytes!(
         "../../user-programs/semos-rustc/target/x86_64-unknown-none/release/semos-rustc"
     );

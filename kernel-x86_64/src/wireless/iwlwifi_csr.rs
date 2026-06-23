@@ -130,12 +130,13 @@ pub mod scd {
     /// WSL(bit4) + the write-enable mask. Command queue uses TX FIFO 7.
     pub const CMD_FIFO: u32 = 7;
     pub const STTS_POS_ACTIVE: u32 = 3;
+    pub const STTS_POS_TXF: u32 = 0;
     pub const STTS_POS_WSL: u32 = 4;
-    pub const STTS_POS_SCD_ACT_EN: u32 = 5;
+    pub const STTS_POS_SCD_ACT_EN: u32 = 19; // in the upper masked word
     pub const STTS_MSK: u32 = 0x017F_0000;
     pub fn queue_enable_val(fifo: u32) -> u32 {
-        (1 << STTS_POS_ACTIVE) | (fifo & 0x7) | (1 << STTS_POS_WSL)
-            | (1 << STTS_POS_SCD_ACT_EN) | STTS_MSK
+        (1 << STTS_POS_ACTIVE) | ((fifo & 0x7) << STTS_POS_TXF)
+            | (1 << STTS_POS_WSL) | STTS_MSK
     }
     /// SCD context table in SRAM lives at scd_base_ptr + these offsets.
     pub const CONTEXT_MEM_OFFSET: u32 = 0x600;

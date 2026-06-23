@@ -431,17 +431,21 @@ Phases 15-18 are sequential and run in 2026. Phase 19 begins when a Mac is acqui
 
 ## Phase 20 — Bare-Metal WiFi (NOW A MAIN TRACK — active 2026-06)
 
-> **Status update 2026-06-15:** No longer background — this is the active online
-> path on the T540p. **M72 DONE** (7260 enumerated, INIT+RUNTIME firmware ALIVE,
-> calibration forwarded, real MAC from NVM). **M73 DONE** (LMAC scan returns real
-> SSIDs; `wifi` + `wifi connect <n> <pass>` shell commands work; full Phase-A host-
-> command join: PHY ctx + MAC ctx + binding + ADD_STA + time-event all HW-confirmed).
-> **M74 in progress** — WPA2 PMK derivation working on live input (PBKDF2-SHA1, KAT'd);
-> PTK + EAPOL-MIC crypto + the RSN IE built & KAT-verified offline (2026-06-15);
-> blocked on **Phase-B first on-air frame TX** (the `0x1c` TX path: queue-enable +
-> off-channel-assert fixed, currently `consumed=0` SCD-scheduling fix is built but
-> unbooted — boot drives dead). Detail in the `semos-wifi` project memory; see also
-> `MASTER_ROADMAP_2026-06-15.md`.
+> **Status update 2026-06-23:** M72/M73 still DONE. M74 crypto and state machine
+> are wired into `iwlwifi_device::connect()` — open-auth, assoc-req with RSN IE,
+> EAPOL-Key RX parsing, and EAPOL Msg2/Msg4 TX are all implemented. The remaining
+> blocker is **Phase-B first on-air frame TX**: the data-queue TFD is built, the
+> SCD direct-register setup mirrors OpenBSD `iwm_enable_ac_txq`, and the
+> `SCD_QUEUE_CFG` (0x1d) host command binds queue 1 to station 0 / TID 8 / FIFO BE,
+> but `SCD_rdptr` stays at 0 and `consumed=0`. Attempted fixes to date:
+> - set/clear `SCD_ACT_EN` at bit 19 (not 5),
+> - set `SCD_ACTIVE` and `EN_CTRL` bits,
+> - move `TX_CMD` back onto data queue 1 (queue 0 is for host commands only),
+> - send `SCD_QUEUE_CFG` with `tid=8` and verify the response echoes queue 1.
+> Next: verify the TFD/TB layout matches firmware expectations, try a smaller
+> data-queue ring, or inspect the SCD translation-table entry after `SCD_QUEUE_CFG`.
+> Also stubbed the 86 MB `semos-rustc` include_bytes! again: the 102 MB kernel it
+> produced caused `user_task` page faults and a dead keyboard on boot.
 
 **Goal:** Semantic OS connects to WiFi networks directly, without requiring a paired phone for network access. The phone remains useful for everything else (identity, crypto, camera, etc.); networking becomes independent.
 

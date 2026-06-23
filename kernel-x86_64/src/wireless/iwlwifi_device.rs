@@ -1481,22 +1481,50 @@ impl IwlDevice {
             | ((frame_limit << scd::CTX_FRAME_LIMIT_POS) & 0x7F_0000));
         // Enable the queue.
         self.csr.write_prph(scd::queue_status(DATA_QUEUE), scd::queue_enable_val(TX_FIFO_BE));
-        // Make sure the SCD enable-control bit for this queue is set.
-        let en_ctrl = self.csr.read_prph(scd::EN_CTRL);
-        self.csr.write_prph(scd::EN_CTRL, en_ctrl | (1 << DATA_QUEUE));
-        // Also set the per-queue ACTIVE bit; queue_status alone does not raise
-        // the ACTIVE bitmask on this firmware, so the scheduler ignores the queue.
-        let active = self.csr.read_prph(scd::ACTIVE);
-        self.csr.write_prph(scd::ACTIVE, active | (1 << DATA_QUEUE));
 
         let q_stts = self.csr.read_prph(scd::queue_status(DATA_QUEUE));
         let txfact = self.csr.read_prph(scd::TXFACT);
         let active = self.csr.read_prph(scd::ACTIVE);
-        let en_ctrl_after = self.csr.read_prph(scd::EN_CTRL);
         self.release_nic_access();
         unsafe { TX1_WRITE_IDX = 0; }
-        println!("[iwlwifi] data TX queue {} enabled (FIFO BE) q_stts=0x{:08X} TXFACT=0x{:08X} ACTIVE=0x{:08X} EN_CTRL=0x{:08X}->0x{:08X}",
-            DATA_QUEUE, q_stts, txfact, active, en_ctrl, en_ctrl_after);
+        println!("[iwlwifi] data TX queue {} enabled (FIFO BE) q_stts=0x{:08X} TXFACT=0x{:08X} ACTIVE=0x{:08X}",
+            DATA_QUEUE, q_stts, txfact, active);
+
+        // For non-command queues the firmware also needs SCD_QUEUE_CFG (0x1d)
+        // to bind the queue to a station/TID/FIFO. Without this the scheduler
+        // has the context but never pulls the TFD.
+        let mut cfg = [0u8; 12];
+        cfg[0] = 0;                  // token
+        cfg[1] = 0;                  // sta_id (the AP, added as sta 0)
+        cfg[2] = 8;                  // tid = IWL_MAX_TID_COUNT for non-QoS mgmt/EAPOL
+        cfg[3] = DATA_QUEUE as u8;   // scd_queue
+        cfg[4] = 1;                  // enable
+        cfg[5] = 0;                  // aggregate
+        cfg[6] = TX_FIFO_BE as u8;   // tx_fifo
+        cfg[7] = frame_limit as u8;  // window
+        // ssn @8 is already zero; reserved @10 zero.
+        println!("[iwlwifi] SCD_QUEUE_CFG q={} sta=0 tid=8 fifo={}", DATA_QUEUE, TX_FIFO_BE);
+        if !self.send_cmd(0x1d, &cfg) {
+            println!("[iwlwifi] SCD_QUEUE_CFG command failed");
+            return false;
+        }
+        // The response payload starts at LAST_RESP[2] (8 bytes past the RX
+        // packet header). It is [token, sta_id, tid, scd_queue].
+        let rsp = unsafe { LAST_RESP };
+        let p = rsp[2].to_le_bytes();
+        println!("[iwlwifi] SCD_QUEUE_CFG resp token={} sta={} tid={} q={}",
+            p[0], p[1], p[2], p[3]);
+        if p[3] != DATA_QUEUE as u8 {
+            println!("[iwlwifi] SCD_QUEUE_CFG response queue mismatch");
+            return false;
+        }
+        if !self.grab_nic_access() { return false; }
+        let rd = self.csr.read_prph(scd::queue_rdptr(DATA_QUEUE));
+        let q_stts2 = self.csr.read_prph(scd::queue_status(DATA_QUEUE));
+        let active2 = self.csr.read_prph(scd::ACTIVE);
+        self.release_nic_access();
+        println!("[iwlwifi] post-CFG q{} rdptr={} q_stts=0x{:08X} ACTIVE=0x{:08X}",
+            DATA_QUEUE, rd, q_stts2, active2);
         true
     }
 
@@ -1507,6 +1535,9 @@ impl IwlDevice {
     /// `frame` = full 802.11 frame (header + body); `hdrlen` = 802.11 header len.
     pub fn tx_mgmt(&mut self, frame: &[u8], hdrlen: usize) -> bool {
         use super::iwlwifi_csr::{CSR_HBUS_TARG_WRPTR, scd};
+        // TX_CMD (0x1c) goes on a TX data queue, not the host-command queue.
+        // The TFD begins with [iwm_cmd_header(4) | iwm_tx_cmd(56) | 802.11 hdr |
+        // pad | body] and is bound to station 0 / FIFO BE via SCD_QUEUE_CFG.
         const DATA_QUEUE: u16 = 1;
         const TX_CMD_HDR: usize = 4;   // sizeof(iwm_cmd_header)
         const TX_CMD_SIZE: usize = 56; // sizeof(iwm_tx_cmd) v6 (packed)
@@ -1563,14 +1594,14 @@ impl IwlDevice {
             set_tb(tfd, 0, frame_phys, TB0_SIZE as u16);
             set_tb(tfd, 1, frame_phys + TB0_SIZE as u64, tb1_len);
             set_tb(tfd, 2, frame_phys + body_off, bodylen as u16);
-            // SCD byte-count for queue 1: val = sta_id<<12 | (totlen + CRC + delim).
+            // SCD byte-count for queue 1: val = (totlen + CRC + delim).
             let _ = hi;
             let bc = ((totlen + 8) & 0xFFF) as u16;
             TX_BC_TBL.0[320 + idx] = bc;
             if idx < 64 { TX_BC_TBL.0[320 + 256 + idx] = bc; }
         }
 
-        // ---- Advance + ring the queue-1 doorbell ----
+        // ---- Advance + ring the data-queue doorbell ----
         let new_idx = ((idx + 1) % TX_RING_SIZE) as u16;
         unsafe { TX1_WRITE_IDX = new_idx; }
         let stts_before = unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) };
