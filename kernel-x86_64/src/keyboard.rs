@@ -387,6 +387,19 @@ pub fn handle_scancode(scancode: u8) {
         // Only presses (bit 7 clear). Map the cursor keys to ANSI escapes the
         // TTY line discipline understands: ESC [ A/B/C/D.
         if scancode & 0x80 == 0 {
+            // Scrollback paging (consumed here, never sent to the shell). Extended
+            // scancode-set-1 codes: PageUp=0x49, PageDown=0x51, End=0x4F. The USB
+            // HID path scrolls via 0x4B/0x4E/0x4D; the PS/2 built-in keyboard uses
+            // these instead — without them PageUp/Down did nothing on real hardware.
+            // We run in IRQ context, so DON'T render here (scroll_view locks CONSOLE
+            // and could deadlock against an in-progress print!) — record a pending
+            // request and let the main loop apply it.
+            match scancode {
+                0x49 => { drop(kb); crate::framebuffer::request_scroll(15); return; }   // PageUp
+                0x51 => { drop(kb); crate::framebuffer::request_scroll(-15); return; }  // PageDown
+                0x4F => { drop(kb); crate::framebuffer::request_scroll(-1_000_000); return; } // End → live
+                _ => {}
+            }
             let letter = match scancode {
                 0x48 => Some(b'A'), // up
                 0x50 => Some(b'B'), // down
@@ -460,6 +473,12 @@ pub fn handle_scancode(scancode: u8) {
         // Feed the TTY line discipline (M19); it echoes to serial itself, so
         // drop the lock first to avoid holding KEYBOARD across the STDIN lock.
         drop(kb);
+        // If the user is scrolled back into history and starts typing, snap to
+        // the live view first so their keystrokes are visible. Deferred to the
+        // main loop (we're in IRQ context — see request_scroll).
+        if crate::framebuffer::is_scrolled() {
+            crate::framebuffer::request_scroll(-1_000_000);
+        }
         crate::tty::input_push(c);
     }
 }

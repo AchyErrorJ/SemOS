@@ -1614,6 +1614,9 @@ fn interactive_session() {
                 // pumps the HID ring itself) — else we'd steal/split keystrokes.
                 if !FULLSCREEN_APP_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
                     pump_console_input(&mut prev_keys);
+                    // Apply any scroll requested from the PS/2 keyboard IRQ
+                    // (PageUp/PageDown/End on the built-in keyboard).
+                    crate::framebuffer::apply_pending_scroll();
                 }
                 let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
                 kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));

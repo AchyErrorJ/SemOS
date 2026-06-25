@@ -427,7 +427,7 @@ struct ScrollbackBuf([u8; SCROLLBACK_SIZE]);
 static mut SCROLLBACK_BUF: ScrollbackBuf = ScrollbackBuf([0; SCROLLBACK_SIZE]);
 
 /// Monotonic write index (NOT modulo'd). Index into ring = HEAD % SCROLLBACK_SIZE.
-use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use core::sync::atomic::{AtomicU64, AtomicI64, Ordering as AtomicOrdering};
 static SCROLLBACK_HEAD: AtomicU64 = AtomicU64::new(0);
 
 /// Current monotonic write head into the scrollback ring (not modulo'd).
@@ -588,6 +588,26 @@ fn render_from_offset(offset: u64) {
             c.put_byte(byte);
             idx = idx.wrapping_add(1);
         }
+    }
+}
+
+/// Pending scroll request accumulated from IRQ context (PS/2 keyboard handler).
+/// The IRQ must NOT call scroll_view directly — it locks CONSOLE and re-renders,
+/// which would deadlock against an in-progress print!. Instead the IRQ adds a
+/// delta here and the main loop drains it via `apply_pending_scroll`.
+static PENDING_SCROLL: AtomicI64 = AtomicI64::new(0);
+
+/// Record a scroll request from any context (safe in IRQ). Saturating add so a
+/// jump-to-live (huge negative) isn't cancelled by a later small positive.
+pub fn request_scroll(lines: isize) {
+    PENDING_SCROLL.fetch_add(lines as i64, AtomicOrdering::Relaxed);
+}
+
+/// Apply any pending scroll request. Call from the main/shell loop (NOT an IRQ).
+pub fn apply_pending_scroll() {
+    let pending = PENDING_SCROLL.swap(0, AtomicOrdering::Relaxed);
+    if pending != 0 {
+        scroll_view(pending as isize);
     }
 }
 
