@@ -8,6 +8,22 @@ When you finish a milestone, flip its checkbox in this file and update the [Proj
 
 Phase 8 (network → first remote LLM call) is closed. See [`PHASE_8_ROADMAP.md`](PHASE_8_ROADMAP.md) for that phase's historical detail. The current frontier is Phase 9.
 
+> **2026-06-24 — new boot drives in hand; WiFi blocker localized; boot stamp.**
+> The dead boot drives (lost 2026-06-15) are replaced — the T540p boots live
+> again. A live `wifi connect` run re-confirmed **Phase A passes on metal** and
+> pinned the Phase-B blocker precisely: the open-auth frame is built and the
+> doorbell rings (`SCD_wrptr=1`) but **data queue 1 never activates** — the
+> global `SCD_ACTIVE` register's q1 bit stays 0 even though the per-queue
+> `QUEUE_STATUS` active bit (bit3) reads set, so `SCD_rdptr` stays pinned at 0
+> (`consumed=0`). An instrumented activation probe (explicit `SCD_ACTIVE` write +
+> readback, then an 8-pass re-assert/poll loop) was added to `enable_data_queue`
+> to decide whether the register is host-writable or firmware-driven — pending
+> the next boot. **Boot binary stamp:** the build tag (git hash + UTC build time +
+> toolchain, from `build.rs`) now prints in the *opening* banner, right after
+> serial init, so the first serial line identifies the exact image even if a later
+> init stage hangs. (Both changes built into an image, uncommitted, pending boot
+> validation — see `docs/PENDING_BOOT_VALIDATION.md`.)
+>
 > **2026-06-22 — on-metal milestones + dev-loop decision.** On real hardware
 > (T540p/W540) the **post-compile freeze is resolved**: `semos-rustc` compiled
 > `hello.rs` → 1024-byte ELF → `[exit] code=0` → **control returned to sem-sh**
@@ -28,7 +44,7 @@ Phase 8 (network → first remote LLM call) is closed. See [`PHASE_8_ROADMAP.md`
 > data queue 1 (queue-config + TFD-layout fixes built, under test).
 >
 > **2026-06-15 — combined view + thesis re-headline.** All seven planning docs are
-> now folded into one map: [`MASTER_ROADMAP_2026-06-15.md`](MASTER_ROADMAP_2026-06-15.md).
+> now folded into one map: [`MASTER_ROADMAP.md`](MASTER_ROADMAP.md) (+ themed files under `roadmap/`).
 > Headline reframed to **"agent-native, self-extending, sovereign OS"** after
 > on-device rustc compiled + ran a program on the T540p. Recent landings (not yet
 > rowed into the table below): **self-extension keystone** (hardcoded `/bin` spawn

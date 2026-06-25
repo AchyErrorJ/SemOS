@@ -18,8 +18,10 @@ LLM/semantic/process/namespace syscalls pervasively, and a child can never
 exceed its spawner's clearance — so agent-authored tools spawned at **tier 0**
 are sandboxed by construction until a human **vouches** them (`SYS_VOUCH`).
 
-See [`docs/MASTER_ROADMAP_2026-06-15.md`](docs/MASTER_ROADMAP_2026-06-15.md)
-for the full reframed thesis and the active/gated/next view.
+See [`docs/MASTER_ROADMAP.md`](docs/MASTER_ROADMAP.md) for the full reframed
+thesis and the active/gated/next view, with themed detail under `docs/roadmap/`.
+Any agent writing code should first read [`docs/semos-security-thesis.md`](docs/semos-security-thesis.md)
+and [`docs/provenance-commitment.md`](docs/provenance-commitment.md).
 
 ## The headline demo
 
@@ -50,11 +52,14 @@ DEMO 56 is the live agent version: a sandboxed shell at security tier 0
 provably **cannot read Secret files** and **cannot modify Public ones**
 even when the LLM driving it tries.
 
-## What runs today (2026-06-22)
+## What runs today (2026-06-24)
 
 > **On metal:** SemOS has booted on real hardware (ThinkPad T540p/W540) — not
 > just QEMU. On-device `rustc` compiled and ran a program on bare metal (DEMO 80);
 > the iwlwifi WiFi join and USB enumeration were brought up against real silicon.
+> Every boot now opens with a **build stamp** (git hash · UTC build time ·
+> toolchain) on the first serial line, so the exact image is identifiable even if
+> a later init stage hangs.
 
 ### Self-extension keystone (the headline since 2026-06-15)
 - **Any ramfs/namespace ELF runs by name** — the hardcoded `/bin` spawn table is
@@ -77,7 +82,7 @@ even when the LLM driving it tries.
 ### Drivers
 - **Storage**: VirtIO block + **NVMe** + **AHCI/SATA** + **USB Mass Storage** — behind one `BlockDevice` trait. Plus a **read-only FAT32 reader** and a raw sector-aligned **sysroot blob** loader (the on-disk store for the compiler's `*.rlib`s — see "On-device rustc").
 - **Network**: VirtIO-net + smoltcp + TLS 1.3 + cert-pinning. **Live HTTPS round-trip to api.anthropic.com** from bare metal.
-- **WiFi**: **iwlwifi (Intel 7260)** firmware bring-up → calibration → MAC → **live scan with real SSIDs** + interactive `wifi` / `wifi connect <n> <pass>` shell commands; WPA2 PMK/PTK/EAPOL-MIC crypto built and KAT-passing. 802.11 association TX is the in-progress frontier (hardware-gated).
+- **WiFi**: **iwlwifi (Intel 7260)** firmware bring-up → calibration → MAC → **live scan with real SSIDs** + interactive `wifi` / `wifi connect <n> <pass>` shell commands; WPA2 PMK/PTK/EAPOL-MIC crypto built and KAT-passing; open-auth/assoc/EAPOL frame TX wired into `connect()`. **Phase A (PHY+MAC+binding+ADD_STA+time-event) is hardware-confirmed**; the in-progress frontier is the first on-air frame — data queue 1 builds the auth TFD and rings the doorbell but the scheduler won't activate the queue (`consumed=0`), under active diagnosis (hardware-gated, not QEMU-testable).
 - **USB**: xHCI controller (incl. CSZ=1 / 64-byte contexts for Intel), **multi-slot enumeration + single-tier cascaded hubs**, HID boot keyboard, **live Mass Storage with bulk endpoints** (multiple MSC devices register as `usb0..usb3`). Standalone EHCI path enumerates an **iPhone tether** (ipheth).
 - **Audio**: Intel HD Audio controller + codec walk + 48 kHz 16-bit stereo PCM playback
 - **Framebuffer**: M6 drawing API, M7 TTF rasterization (ttf-parser), M8 2D vector (tiny-skia)

@@ -108,6 +108,19 @@ pub static BOOTLOADER_CONFIG: BootloaderConfig = {
 
 entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
+const SEMOS_BUILD_TAG: &str = match option_env!("SEMOS_BUILD_TAG") {
+    Some(value) => value,
+    None => "unknown",
+};
+const SEMOS_BUILD_DATE: &str = match option_env!("SEMOS_BUILD_DATE") {
+    Some(value) => value,
+    None => "unknown-date",
+};
+const SEMOS_RUSTC_VERSION: &str = match option_env!("SEMOS_RUSTC_VERSION") {
+    Some(value) => value,
+    None => "unknown-toolchain",
+};
+
 /// Kernel entry point - called by the bootloader after setting up Long Mode
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // Initialize serial output first (for debugging)
@@ -120,6 +133,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("====================================================================================================");
     println!("  Semantic OS v0.1.0 - x86_64 Bare Metal");
+    println!("  build {} · {} · rustc {}", SEMOS_BUILD_TAG, SEMOS_BUILD_DATE, SEMOS_RUSTC_VERSION);
     println!("====================================================================================================");
     println!();
     println!("Architecture: x86_64 (AMD64)");
@@ -517,6 +531,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // tests run on hardware or UEFI; for QEMU-BIOS leave the &[] in.
     // UN-STUBBED for the DEMO 80 post-compile-hang investigation (real HW /
     // UEFI boot). Re-stub to `&[]` for QEMU-BIOS validation sessions.
+    // UN-STUBBED for DEMO 80 hardware boots. Re-stub to `&[]` for QEMU-BIOS
+    // validation sessions (e.g. WiFi work) where the 89 MB include won't boot.
     static SEMOS_RUSTC_ELF: &[u8] = include_bytes!(
         "../../user-programs/semos-rustc/target/x86_64-unknown-none/release/semos-rustc"
     );
@@ -720,6 +736,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("====================================================================================================");
     println!("  Semantic OS x86_64 - Kernel initialized successfully!");
+    println!("  build {} · {} · rustc {}", SEMOS_BUILD_TAG, SEMOS_BUILD_DATE, SEMOS_RUSTC_VERSION);
     println!("  Timer-driven preemptive scheduling is now active.");
     println!("====================================================================================================");
 
@@ -1573,6 +1590,14 @@ fn interactive_session() {
         }
         let child = kernel_core::process::ProcessId(pid as u32);
         let cs = kernel_core::process::get(child).and_then(|p| p.task_id);
+        if let Some(slot) = cs {
+            // The human-driven interactive shell is the sole authority allowed
+            // to vouch runtime-created tools.  Without this, SYS_VOUCH always
+            // denies with "caller is not the interactive console" because the
+            // vouch authority remains usize::MAX.
+            kernel_core::syscall::set_vouch_authority(slot);
+            println!("  [interactive] sem-sh slot {} is vouch authority", slot);
+        }
 
         // Wait for the user to `exit`. While the shell blocks on SYS_READ(fd 0)
         // we must *service the USB keyboard*: QEMU (and real hardware) deliver

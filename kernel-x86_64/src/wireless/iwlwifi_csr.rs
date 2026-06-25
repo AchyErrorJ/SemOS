@@ -113,17 +113,56 @@ pub const fn fh_cbbc_queue(q: u64) -> u64 { 0x1000 + 0x9D0 + 4 * q }
 /// addresses; tx_init reads them back to confirm before trusting them.
 pub mod scd {
     pub const SRAM_BASE_ADDR: u32 = 0x0000_a02c00;
-    pub const DRAM_BASE_ADDR: u32 = 0x0000_a02b08;
+    // 2026-06-24: corrected from 0xa02b08 to 0xa02c08. The real
+    // SCD_DRAM_BASE_ADDR is SCD_BASE(0xa02c00) + 0x8; the old value sat *below*
+    // SRAM_BASE which is structurally impossible (same `c`→`b` off-by-0x100 typo
+    // as GP_CTRL). This register tells the scheduler where the byte-count tables
+    // live in host DRAM — if wrong, every queue's byte count reads 0, so queue 1
+    // never auto-activates (SCD_rdptr stuck at 0, consumed=0) even with
+    // AUTO_ACTIVE_MODE on and the write pointer advanced.
+    pub const DRAM_BASE_ADDR: u32 = 0x0000_a02c08;
     pub const AIT: u32 = 0x0000_a02c0c;
     pub const TXFACT: u32 = 0x0000_a02c10;
     pub const ACTIVE: u32 = 0x0000_a02c14;
     pub const QUEUECHAIN_SEL: u32 = 0x0000_a02ce8;
+    // NOTE 2026-06-24: a batch attempt to move these four to the iwm-canonical
+    // SCD_BASE+offset values regressed — EN_CTRL at base+0x254 (0xa02e54) read
+    // back 0xFFFFFFFF (undecoded), whereas the original 0xa03c00 decodes cleanly
+    // (reads 0x02). So these original addresses are kept; only the two
+    // probe/structure-PROVEN fixes (GP_CTRL=0xa02da8, DRAM_BASE=0xa02c08) stand.
+    // The remaining consumed=0 blocker is downstream of the SCD register set
+    // (FH TX-DMA channel / FH_CBBC_QUEUE(1) TFD-ring base / byte-count contents).
     pub const CHAINEXT_EN: u32 = 0x0000_a02d40;
-    pub const AGGR_SEL: u32 = 0x0000_a02d48;
+    // 2026-06-24: AGGR_SEL moved to the iwm-canonical base+0x248 (0xa02e48),
+    // which read back a clean 0x00 in the batch test (decoded correctly, unlike
+    // EN_CTRL). AGGR_SEL marks which queues are in aggregation (block-ack) mode;
+    // a queue in agg mode won't TX single frames (waits for a BA agreement). We
+    // write 0 to clear q1's bit — but at the OLD wrong address (0xa02d48) the
+    // REAL register never got cleared, so q1 may be stuck in agg mode → never
+    // activates for single-frame TX (consumed=0). Clean one-variable test.
+    pub const AGGR_SEL: u32 = 0x0000_a02e48;
     pub const INTERRUPT_MASK: u32 = 0x0000_a02e0c;
     pub const EN_CTRL: u32 = 0x0000_a03c00;
+    /// Scheduler general-purpose control. AUTO_ACTIVE_MODE lets queues become
+    /// active automatically when a TFD is posted; ENABLE_31_QUEUES exposes the
+    /// full queue range beyond the legacy 8. OpenBSD iwm_nic_tx_init sets both.
+    ///
+    /// 2026-06-24: corrected from 0xa02ca8 (base+0xa8) to base+0x1a8. A live
+    /// write-mask probe showed all-ones → 0x00000FFF at 0xa02ca8, meaning bit 18
+    /// (AUTO_ACTIVE_MODE) was NOT writable — so that address was never the real
+    /// SCD_GP_CTRL. The real Linux/OpenBSD offset is SCD_BASE + 0x1a8; the old
+    /// value was off by 0x100 (a dropped leading digit). This is the prime
+    /// suspect for queue 1 never auto-activating (SCD_rdptr stuck at 0).
+    pub const GP_CTRL: u32 = 0x0000_a02da8;
+    pub const GP_CTRL_ENABLE_31_QUEUES: u32 = 1 << 0;
+    pub const GP_CTRL_AUTO_ACTIVE_MODE: u32 = 1 << 18;
     /// Per-queue read pointer (queues 0-7 at +4 each).
     pub const fn queue_rdptr(q: u32) -> u32 { 0x0000_a02c00 + 0x68 + q * 4 }
+    /// Per-queue scheduler write pointer (IWM_SCD_QUEUE_WRPTR for q < 20).
+    /// This is the scheduler's own producer index, distinct from the HBUS
+    /// doorbell register.  Reset it together with RDPTR when enabling a legacy
+    /// AC queue so the SCD starts from a known empty ring.
+    pub const fn queue_wrptr(q: u32) -> u32 { 0x0000_a02c00 + 0x18 + q * 4 }
     /// Per-queue status bits.
     pub const fn queue_status(q: u32) -> u32 { 0x0000_a02c00 + 0x10c + q * 4 }
     /// Queue-status enable value: active(bit3) + TX-FIFO(bits0-2) +
@@ -168,7 +207,13 @@ pub mod fh {
 
     pub const TX_CONFIG_DMA_PAUSE: u32 = 0x0000_0000;
     pub const TX_CONFIG_DMA_ENABLE: u32 = 0x8000_0000;
+    pub const TX_CONFIG_DMA_CREDIT_ENABLE: u32 = 0x0000_0008;
     pub const TX_CONFIG_CIRQ_HOST_ENDTFD: u32 = 0x0010_0000;
+    // FH TX "chicken bits": iwl_pcie_tx_start sets SCD_AUTO_RETRY_EN, which
+    // couples the scheduler to the FH TX-DMA engine. Without it the SCD can have
+    // a pending TFD (WRPTR advanced) but the DMA never fetches it (RDPTR stuck).
+    pub const TX_CHICKEN_BITS_REG: u64 = MEM_LOWER + 0xE98;
+    pub const TX_CHICKEN_BITS_SCD_AUTO_RETRY_EN: u32 = 0x0000_0001;
     pub const BUF_STS_TB_NUM_POS: u32 = 20;
     pub const BUF_STS_TB_IDX_POS: u32 = 12;
     pub const BUF_STS_TFBD_VALID: u32 = 0x0000_4000;

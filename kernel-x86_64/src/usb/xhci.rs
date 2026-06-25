@@ -485,7 +485,7 @@ pub fn discover() -> Option<(pci::Location, u64)> {
     let bar1 = pci::read_u32(loc.bus, loc.slot, loc.func, pci::regs::BAR1);
 
     if bar0 & 1 != 0 {
-        println!("[xhci] BAR0 is I/O space (0x{:08X}); xHCI must be MMIO — abort", bar0);
+        crate::usb::usbdbg!("[xhci] BAR0 is I/O space (0x{:08X}); xHCI must be MMIO — abort", bar0);
         return None;
     }
     // Type field is bits 2:1. 0=32-bit, 2=64-bit. xHCI is always 64-bit.
@@ -548,7 +548,7 @@ fn halt_ehci_controllers() {
             let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
             let mmio_phys = (bar0 & !0xF) as u64;
             if mmio_phys == 0 {
-                println!("[ehci] {}:{:02X}.{} BAR0=0 — skipping", loc.bus, loc.slot, loc.func);
+                crate::usb::usbdbg!("[ehci] {}:{:02X}.{} BAR0=0 — skipping", loc.bus, loc.slot, loc.func);
                 continue;
             }
             // Enable MMIO + bus-master so we can talk to the controller.
@@ -580,7 +580,7 @@ fn halt_ehci_controllers() {
         }
     }
     if count == 0 {
-        println!("[ehci] no EHCI controllers found (QEMU/AMD or already disabled)");
+        crate::usb::usbdbg!("[ehci] no EHCI controllers found (QEMU/AMD or already disabled)");
     }
 }
 
@@ -654,7 +654,7 @@ pub fn ehci_dump() {
                     legctlsts
                 );
             } else {
-                println!("[ehci]   no LEGSUP (EECP={})", eecp);
+                crate::usb::usbdbg!("[ehci]   no LEGSUP (EECP={})", eecp);
             }
             for port in 1..=n_ports {
                 let portsc = unsafe { read_u32(op_base + EHCI_PORTSC_BASE + ((port - 1) as u64) * 4) };
@@ -672,7 +672,7 @@ pub fn ehci_dump() {
         }
     }
     if count == 0 {
-        println!("[ehci] no EHCI controllers found (QEMU/AMD or already disabled)");
+        crate::usb::usbdbg!("[ehci] no EHCI controllers found (QEMU/AMD or already disabled)");
     }
 }
 
@@ -760,7 +760,7 @@ pub fn start_ehci_clocks() {
                 if sts & EHCI_USBSTS_HCH == 0 { break; }
                 core::hint::spin_loop();
             }
-            println!("[ehci] {}:{:02X}.{} started (RS=1) for shared PHY clock",
+            crate::usb::usbdbg!("[ehci] {}:{:02X}.{} started (RS=1) for shared PHY clock",
                 loc.bus, loc.slot, loc.func);
         }
     }
@@ -828,7 +828,7 @@ pub fn reset_and_start_ehci_full() {
                 core::hint::spin_loop();
             }
 
-            println!("[ehci] {}:{:02X}.{} full reset+start (halt->HCRESET->RS=1)",
+            crate::usb::usbdbg!("[ehci] {}:{:02X}.{} full reset+start (halt->HCRESET->RS=1)",
                 loc.bus, loc.slot, loc.func);
         }
     }
@@ -884,7 +884,7 @@ fn bios_handoff(mmio: u64, hccparams1: u32) -> bool {
                         write_u32(cap_addr, (v & !xecp::LEGSUP_BIOS_OWNED)
                             | xecp::LEGSUP_OS_OWNED);
                     }
-                    println!("[xhci] BIOS handoff timeout — forced semaphore");
+                    crate::usb::usbdbg!("[xhci] BIOS handoff timeout — forced semaphore");
                     break;
                 }
                 core::hint::spin_loop();
@@ -896,7 +896,7 @@ fn bios_handoff(mmio: u64, hccparams1: u32) -> bool {
                 let masked = v & !xecp::LEGCTLSTS_SMI_ENABLES;
                 write_u32(ctlsts_addr, masked | xecp::LEGCTLSTS_SMI_EVENTS);
             }
-            println!("[xhci] BIOS->OS handoff complete (xECP @ +0x{:X})", off_dw * 4);
+            crate::usb::usbdbg!("[xhci] BIOS->OS handoff complete (xECP @ +0x{:X})", off_dw * 4);
             return true;
         }
         if next == 0 {
@@ -993,12 +993,12 @@ pub fn init() -> bool {
     let (loc, mmio_base) = match discover() {
         Some(x) => x,
         None => {
-            println!("[xhci] no qemu-xhci on PCI bus 0 (vendor 0x{:04X} device 0x{:04X})",
+            crate::usb::usbdbg!("[xhci] no qemu-xhci on PCI bus 0 (vendor 0x{:04X} device 0x{:04X})",
                 QEMU_XHCI_VENDOR, QEMU_XHCI_DEVICE);
             return false;
         }
     };
-    println!("[xhci] PCI 00:{:02X}.0  MMIO base = 0x{:016X}", loc.slot, mmio_base);
+    crate::usb::usbdbg!("[xhci] PCI 00:{:02X}.0  MMIO base = 0x{:016X}", loc.slot, mmio_base);
     println!("  [DEMO 18] PASS: xHCI controller found (PCI 00:{:02X}.{})",
         loc.slot, loc.func);
 
@@ -1013,13 +1013,13 @@ pub fn init() -> bool {
             if pci::class_triple(check) == (0x0C, 0x03, 0x30) {
                 xhci_count += 1;
                 if check.bus != loc.bus || check.slot != loc.slot || check.func != loc.func {
-                    println!("[xhci] WARNING: second xHCI controller at PCI 00:{:02X}.{} — devices may be on that one instead!",
+                    crate::usb::usbdbg!("[xhci] WARNING: second xHCI controller at PCI 00:{:02X}.{} — devices may be on that one instead!",
                         slot, func);
                 }
             }
         }
     }
-    println!("[xhci] {} xHCI controller(s) found on PCI bus 0", xhci_count);
+    crate::usb::usbdbg!("[xhci] {} xHCI controller(s) found on PCI bus 0", xhci_count);
 
     enable_pci(loc);
 
@@ -1065,9 +1065,9 @@ pub fn init() -> bool {
     let max_sp_hi = ((hcsparams2 >> 21) & 0x1F) as usize;
     let max_scratchpad_bufs = (max_sp_hi << 5) | max_sp_lo;
 
-    println!("[xhci] caplen={}  HCSPARAMS1=0x{:08X}  HCCPARAMS1=0x{:08X}  HCIVERSION=0x{:04X}",
+    crate::usb::usbdbg!("[xhci] caplen={}  HCSPARAMS1=0x{:08X}  HCCPARAMS1=0x{:08X}  HCIVERSION=0x{:04X}",
         caplen, hcsparams1, hccparams1, hciversion);
-    println!("[xhci] MaxSlots={} MaxPorts={} MaxIntrs={} CSZ={} ScratchpadBufs={}",
+    crate::usb::usbdbg!("[xhci] MaxSlots={} MaxPorts={} MaxIntrs={} CSZ={} ScratchpadBufs={}",
         max_slots, max_ports, max_intrs, if csz1 { 1 } else { 0 }, max_scratchpad_bufs);
 
     // Walk xECP list and dump ALL capabilities. Intel PCH often has
@@ -1093,7 +1093,7 @@ pub fn init() -> bool {
                     let dw2 = unsafe { read_u32(addr + 8) };
                     let port_off = (dw2 & 0xFF) as u8;
                     let port_cnt = ((dw2 >> 8) & 0xFF) as u8;
-                    println!("[xhci] xECP ID=0x{:02X} SupportedProtocol major=0x{:02X} minor=0x{:02X} ports {}-{}",
+                    crate::usb::usbdbg!("[xhci] xECP ID=0x{:02X} SupportedProtocol major=0x{:02X} minor=0x{:02X} ports {}-{}",
                         id, major, minor, port_off, port_off + port_cnt - 1);
                     "SupportedProtocol"
                 }
@@ -1103,10 +1103,10 @@ pub fn init() -> bool {
                 0x06 => "USBDebug",
                 0x07 => "ExtMsgIntr",
                 0x0A => "PortCap",
-                _ => { println!("[xhci] xECP ID=0x{:02X} @ offset 0x{:04X} dw0=0x{:08X}", id, cap_off * 4, dw0); "Vendor" }
+                _ => { crate::usb::usbdbg!("[xhci] xECP ID=0x{:02X} @ offset 0x{:04X} dw0=0x{:08X}", id, cap_off * 4, dw0); "Vendor" }
             };
             if id_name != "Vendor" && id != 0x02 {
-                println!("[xhci] xECP ID=0x{:02X} ({}) @ offset 0x{:04X}", id, id_name, cap_off * 4);
+                crate::usb::usbdbg!("[xhci] xECP ID=0x{:02X} ({}) @ offset 0x{:04X}", id, id_name, cap_off * 4);
             }
             if next == 0 { break; }
             cap_off += next;
@@ -1118,7 +1118,7 @@ pub fn init() -> bool {
     // are allocated at the max (64 B) stride; accessors honor this.
     crate::usb::device::set_ctx_size(if csz1 { 64 } else { 32 });
     if max_scratchpad_bufs > MAX_SCRATCHPAD_BUFS {
-        println!("[xhci] device asks for {} scratchpad bufs; we only allocated {} — abort",
+        crate::usb::usbdbg!("[xhci] device asks for {} scratchpad bufs; we only allocated {} — abort",
             max_scratchpad_bufs, MAX_SCRATCHPAD_BUFS);
         return false;
     }
@@ -1152,7 +1152,7 @@ pub fn init() -> bool {
             }
             spins += 1;
             if spins > 100_000_000 {
-                println!("[xhci] HCRST never cleared (USBCMD=0x{:08X} USBSTS=0x{:08X})",
+                crate::usb::usbdbg!("[xhci] HCRST never cleared (USBCMD=0x{:08X} USBSTS=0x{:08X})",
                     cmd_now, sts_now);
                 return false;
             }
@@ -1169,7 +1169,7 @@ pub fn init() -> bool {
         let usb2phycm = pci::read_u32(loc.bus, loc.slot, loc.func, 0xE0);
         pci::write_u32(loc.bus, loc.slot, loc.func, 0xE0, usb2phycm | (1 << 7));
         let after = pci::read_u32(loc.bus, loc.slot, loc.func, 0xE0);
-        println!("[xhci] USB2PHYCM 0x{:08X} -> 0x{:08X} (bit7 SET)", usb2phycm, after);
+        crate::usb::usbdbg!("[xhci] USB2PHYCM 0x{:08X} -> 0x{:08X} (bit7 SET)", usb2phycm, after);
     }
 
     // W540 USB-2 grind iter 2: disarm BIOS SMI on EHCI BEFORE touching it.
@@ -1192,7 +1192,7 @@ pub fn init() -> bool {
         if usb2phycm & (1 << 7) == 0 {
             pci::write_u32(loc.bus, loc.slot, loc.func, 0xE0, usb2phycm | (1 << 7));
             let after = pci::read_u32(loc.bus, loc.slot, loc.func, 0xE0);
-            println!("[xhci] USB2PHYCM re-set after EHCI start: 0x{:08X} -> 0x{:08X}", usb2phycm, after);
+            crate::usb::usbdbg!("[xhci] USB2PHYCM re-set after EHCI start: 0x{:08X} -> 0x{:08X}", usb2phycm, after);
         }
     }
 
@@ -1209,19 +1209,19 @@ pub fn init() -> bool {
     // ---- Resolve physical addresses of our static DMA structures ----
     let dcbaa_phys = match phys_of(unsafe { &raw const DCBAA } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] DCBAA phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] DCBAA phys translation failed"); return false; }
     };
     let cmd_ring_phys = match phys_of(unsafe { &raw const COMMAND_RING } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] CMD ring phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] CMD ring phys translation failed"); return false; }
     };
     let evt_ring_phys = match phys_of(unsafe { &raw const EVENT_RING } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] EVT ring phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] EVT ring phys translation failed"); return false; }
     };
     let erst_phys = match phys_of(unsafe { &raw const ERST } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] ERST phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] ERST phys translation failed"); return false; }
     };
 
     unsafe {
@@ -1233,13 +1233,13 @@ pub fn init() -> bool {
     if max_scratchpad_bufs > 0 {
         let sp_array_phys = match phys_of(unsafe { &raw const SCRATCHPAD_ARRAY } as u64) {
             Some(p) => p,
-            None => { println!("[xhci] scratchpad array phys translation failed"); return false; }
+            None => { crate::usb::usbdbg!("[xhci] scratchpad array phys translation failed"); return false; }
         };
         for i in 0..max_scratchpad_bufs {
             let page_virt = unsafe { &raw const SCRATCHPAD_PAGES.0[i] } as u64;
             let page_phys = match phys_of(page_virt) {
                 Some(p) => p,
-                None => { println!("[xhci] scratchpad page {} phys translation failed", i); return false; }
+                None => { crate::usb::usbdbg!("[xhci] scratchpad page {} phys translation failed", i); return false; }
             };
             unsafe { SCRATCHPAD_ARRAY.0[i] = page_phys; }
         }
@@ -1285,7 +1285,7 @@ pub fn init() -> bool {
         }
         read_u32(op_base + op_reg::USBSTS as u64)
     };
-    println!("[xhci] USBSTS after RS=1: 0x{:08X} HCH={} HSE={} PCD={} CNR={}",
+    crate::usb::usbdbg!("[xhci] USBSTS after RS=1: 0x{:08X} HCH={} HSE={} PCD={} CNR={}",
         usbsts_after_run,
         (usbsts_after_run & usbsts::HCH != 0) as u8,
         (usbsts_after_run & usbsts::HSE != 0) as u8,
@@ -1293,7 +1293,7 @@ pub fn init() -> bool {
         (usbsts_after_run & usbsts::CNR != 0) as u8,
     );
     if usbsts_after_run & usbsts::HSE != 0 {
-        println!("[xhci] CRITICAL: Host System Error detected — controller may be unusable");
+        crate::usb::usbdbg!("[xhci] CRITICAL: Host System Error detected — controller may be unusable");
     }
 
     // Detect the controller's initial event-ring cycle state.  Some
@@ -1315,12 +1315,12 @@ pub fn init() -> bool {
                 let ctrl = core::ptr::read_volatile(
                     &raw const EVENT_RING.trbs[EVT_CONS.dequeue].control);
                 let hw_cycle = (ctrl & 1) != 0;
-                println!("[xhci] first event cycle={} (assumed ccs={})",
+                crate::usb::usbdbg!("[xhci] first event cycle={} (assumed ccs={})",
                     if hw_cycle { 1 } else { 0 },
                     if EVT_CONS.ccs { 1 } else { 0 });
                 if hw_cycle != EVT_CONS.ccs {
                     EVT_CONS.ccs = hw_cycle;
-                    println!("[xhci] ccs corrected to match controller");
+                    crate::usb::usbdbg!("[xhci] ccs corrected to match controller");
                 }
                 break;
             }
@@ -1336,7 +1336,7 @@ pub fn init() -> bool {
             hciversion,
         });
     }
-    println!("[xhci] running. op_base=0x{:X} run_base=0x{:X} db_base=0x{:X}",
+    crate::usb::usbdbg!("[xhci] running. op_base=0x{:X} run_base=0x{:X} db_base=0x{:X}",
         op_base, run_base, db_base);
     println!("  [DEMO 18] PASS: xHCI reset complete (CRCR ready, ports up)");
 
@@ -1433,7 +1433,8 @@ pub fn poll_event() -> Option<Trb> {
 /// slot id reported by the completion. Bounded spin; returns
 /// `(0xFF, 0)` on timeout so callers can log a clear failure.
 pub fn wait_command_completion(cmd_trb_phys: u64) -> (u8, u8) {
-    for _ in 0..200_000_000u64 {
+    let deadline = kernel_core::platform::ticks() + kernel_core::scheduler::SCHEDULER_TICK_HZ; // ~1 s
+    while kernel_core::platform::ticks() < deadline {
         if let Some(evt) = poll_event() {
             if evt.trb_type() == trb_type::COMMAND_COMPLETION_EVENT {
                 if evt.parameter == cmd_trb_phys {
@@ -1501,7 +1502,7 @@ fn ring_doorbell(db_base: u64, slot_id: u8, target: u8) {
 /// the first pass is a no-op there.
 pub fn enumerate_ports() -> usize {
     let info = unsafe { match INFO { Some(i) => i, None => return 0 } };
-    println!("[xhci] enumerate_ports() ver=0x{:04X} pr_mask=0x{:08X} max_ports={}",
+    crate::usb::usbdbg!("[xhci] enumerate_ports() ver=0x{:04X} pr_mask=0x{:08X} max_ports={}",
         info.hciversion, pr_mask_for_version(info.hciversion), info.max_ports);
 
     // Pass 1: assert Port Power on every root-hub port.
@@ -1514,8 +1515,11 @@ pub fn enumerate_ports() -> usize {
             unsafe { write_u32(portsc_addr, preserve | portsc::PP); }
         }
     }
-    // Wait until all ports report PP=1.
-    for _ in 0..10_000_000u64 {
+    // Wait until all ports report PP=1, up to ~100 ms. Use the scheduler
+    // tick (62 Hz) instead of a fixed iteration count so this doesn't spin
+    // "a billion times" on a fast CPU or, worse, time out early on a slow one.
+    let pp_deadline = kernel_core::platform::ticks() + 7; // ~110 ms @ 62 Hz
+    loop {
         let mut all_powered = true;
         for port in 1..=info.max_ports {
             let portsc_addr = info.op_base + op_reg::PORTSC_BASE as u64
@@ -1527,18 +1531,34 @@ pub fn enumerate_ports() -> usize {
             }
         }
         if all_powered { break; }
+        if kernel_core::platform::ticks() >= pp_deadline {
+            crate::usb::usbdbg!("[xhci] PP wait timed out");
+            break;
+        }
         core::hint::spin_loop();
     }
-    // VBUS settle delay. USB 2.0 spec says PWRON2PWRGOOD ≥ 100 ms for
-    // hubs. iPhone 16 Pro (USB-C) has an internal PD controller that
-    // negotiates VBUS before asserting the USB 2.0 D+ pull-up;
-    // empirically the W540 + Lynx Point + Xbox cable seems to need >500ms,
-    // not the 200-400ms typical. Bump to ~2 s (124 ticks @ 62 Hz) for
-    // iPhone reliability. Cost is added 1.5s boot time on every boot,
-    // which is acceptable given USB is the primary IO.
-    let power_settle = kernel_core::platform::ticks() + 124;
-    while kernel_core::platform::ticks() < power_settle {
-        core::hint::spin_loop();
+    // VBUS settle delay. Only pay the ~2 s cost if at least one device is
+    // actually connected; otherwise this is pure boot-time dead weight.
+    let mut any_ccs = false;
+    for port in 1..=info.max_ports {
+        let portsc_addr = info.op_base + op_reg::PORTSC_BASE as u64
+            + ((port as u64 - 1) * 0x10);
+        if unsafe { read_u32(portsc_addr) } & portsc::CCS != 0 {
+            any_ccs = true;
+            break;
+        }
+    }
+    if any_ccs {
+        // USB VBUS power-good is spec'd at ~100 ms (bPwrOn2PwrGood); 1 s is still
+        // generous for a device's internal power-up. (Was 2 s — pure boot-time
+        // padding. Slow-to-signal devices are caught by the retry passes below.)
+        crate::usb::usbdbg!("[xhci] device connected — waiting 1 s for VBUS settle");
+        let power_settle = kernel_core::platform::ticks() + 62;
+        while kernel_core::platform::ticks() < power_settle {
+            core::hint::spin_loop();
+        }
+    } else {
+        crate::usb::usbdbg!("[xhci] no connected devices — skipping VBUS settle");
     }
 
     // Lynx Point gates the USB-2 PHY reference clock when EHCI is halted.
@@ -1553,7 +1573,7 @@ pub fn enumerate_ports() -> usize {
     let mut drained = 0u32;
     while poll_event().is_some() { drained += 1; }
     if drained > 0 {
-        println!("[xhci] drained {} stale event(s) from event ring before reset", drained);
+        crate::usb::usbdbg!("[xhci] drained {} stale event(s) from event ring before reset", drained);
     }
 
     let mut connected = 0;
@@ -1571,8 +1591,13 @@ pub fn enumerate_ports() -> usize {
     for pass in 0..4 {
         if crate::keyboard::abort_requested() { break; }
         if pass > 0 {
-            // Wait 1 second between passes for slow-signaling devices.
-            let retry_wait = kernel_core::platform::ticks() + 62;
+            // No point retrying if pass 0 never saw a device.
+            if connected == 0 { break; }
+            // Wait between passes for slow-signaling devices (e.g. an iPhone
+            // that takes 1-2 s to bring up its USB stack). 600 ms balances
+            // catching them against boot time; the loop breaks after the first
+            // pass that finds no new device, so this is paid at most a few times.
+            let retry_wait = kernel_core::platform::ticks() + 37;
             while kernel_core::platform::ticks() < retry_wait {
                 if crate::keyboard::abort_requested() { break; }
                 core::hint::spin_loop();
@@ -1596,9 +1621,9 @@ pub fn enumerate_ports() -> usize {
         new_ccs_found = true;
         connected += 1;
         if pass > 0 {
-            println!("[xhci] (retry pass {}) port {}: now connected (PORTSC=0x{:08X})", pass, port, portsc);
+            crate::usb::usbdbg!("[xhci] (retry pass {}) port {}: now connected (PORTSC=0x{:08X})", pass, port, portsc);
         } else {
-            println!("[xhci] port {}: connected (PORTSC=0x{:08X})", port, portsc);
+            crate::usb::usbdbg!("[xhci] port {}: connected (PORTSC=0x{:08X})", port, portsc);
         }
 
         // Reset the port. USB 2 ports latch PRC=1 + PED=1 simultaneously
@@ -1661,7 +1686,7 @@ pub fn enumerate_ports() -> usize {
                     // Snapshots at ~20ms (1 tick) and ~100ms (6 ticks)
                     let elapsed = kernel_core::platform::ticks() - (prc_deadline - 15);
                     if snapshot_at == 0 && elapsed >= 1 {
-                        println!("[xhci] port {} attempt {} t=20ms  PORTSC=0x{:08X} PLS={} PED={} PRC={} CSC={}",
+                        crate::usb::usbdbg!("[xhci] port {} attempt {} t=20ms  PORTSC=0x{:08X} PLS={} PED={} PRC={} CSC={}",
                             port, attempt, s,
                             (s & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
                             (s & portsc::PED != 0) as u8,
@@ -1670,7 +1695,7 @@ pub fn enumerate_ports() -> usize {
                         snapshot_at = 1;
                     }
                     if snapshot_at == 1 && elapsed >= 6 {
-                        println!("[xhci] port {} attempt {} t=100ms PORTSC=0x{:08X} PLS={} PED={} PRC={} CSC={}",
+                        crate::usb::usbdbg!("[xhci] port {} attempt {} t=100ms PORTSC=0x{:08X} PLS={} PED={} PRC={} CSC={}",
                             port, attempt, s,
                             (s & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
                             (s & portsc::PED != 0) as u8,
@@ -1682,7 +1707,7 @@ pub fn enumerate_ports() -> usize {
                 }
                 if !prc_seen {
                     let s = unsafe { read_u32(portsc_addr) };
-                    println!("[xhci] port {} attempt {} reset timed out pre=0x{:08X} post=0x{:08X} now=0x{:08X} pr_mask=0x{:08X} ver=0x{:04X}",
+                    crate::usb::usbdbg!("[xhci] port {} attempt {} reset timed out pre=0x{:08X} post=0x{:08X} now=0x{:08X} pr_mask=0x{:08X} ver=0x{:04X}",
                         port, attempt, pre, post_write, s, pr_mask, info.hciversion);
                     continue;
                 }
@@ -1701,12 +1726,12 @@ pub fn enumerate_ports() -> usize {
                     unsafe { write_u32(portsc_addr, (after & !portsc::RW1C_MASK) | portsc::RW1C_MASK); }
                     break; // success
                 }
-                println!("[xhci] port {} attempt {} PR cleared but PED=0 (PORTSC=0x{:08X} pr_mask=0x{:08X})", port, attempt, after, pr_mask);
+                crate::usb::usbdbg!("[xhci] port {} attempt {} PR cleared but PED=0 (PORTSC=0x{:08X} pr_mask=0x{:08X})", port, attempt, after, pr_mask);
 
                 // Failed — clear all RW1C bits before the next attempt or before WPR.
                 unsafe { write_u32(portsc_addr, (after & !portsc::RW1C_MASK) | portsc::RW1C_MASK); }
 
-                println!("[xhci] port {} attempt {} PR didn't enable (PORTSC=0x{:08X} PLS={} speed={} pr_mask=0x{:08X})",
+                crate::usb::usbdbg!("[xhci] port {} attempt {} PR didn't enable (PORTSC=0x{:08X} PLS={} speed={} pr_mask=0x{:08X})",
                     port, attempt, after,
                     (after & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
                     (after & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT, pr_mask);
@@ -1742,14 +1767,14 @@ pub fn enumerate_ports() -> usize {
 
         let portsc_after = unsafe { read_u32(portsc_addr) };
         if portsc_after & portsc::PED == 0 {
-            println!("[xhci] port {} not enabled after reset (PORTSC=0x{:08X} PLS={} speed={} pr_mask=0x{:08X})",
+            crate::usb::usbdbg!("[xhci] port {} not enabled after reset (PORTSC=0x{:08X} PLS={} speed={} pr_mask=0x{:08X})",
                 port, portsc_after,
                 (portsc_after & portsc::PLS_MASK) >> portsc::PLS_SHIFT,
                 (portsc_after & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT, pr_mask);
             continue;
         }
         let speed = ((portsc_after & portsc::SPEED_MASK) >> portsc::SPEED_SHIFT) as u8;
-        println!("[xhci] port {} enabled (PORTSC=0x{:08X} speed={})", port, portsc_after, speed);
+        crate::usb::usbdbg!("[xhci] port {} enabled (PORTSC=0x{:08X} speed={})", port, portsc_after, speed);
 
         // USB 3.0 devices (and some finicky USB 2.0 firmware) need a short
         // settle time after PED=1 before they reliably respond to SET_ADDRESS.
@@ -1774,7 +1799,7 @@ pub fn enumerate_ports() -> usize {
         // often recovers the link.  PR does an in-band hot reset; WPR
         // forces out-of-band LFPS retraining which some Apple SS PHYs need.
         if speed == 4 && !first_enum_ok {
-            println!("[xhci] port {} SS enumeration failed, trying warm reset", port);
+            crate::usb::usbdbg!("[xhci] port {} SS enumeration failed, trying warm reset", port);
             let s = unsafe { read_u32(portsc_addr) };
             let preserve = s
                 & !portsc::RW1C_MASK
@@ -1795,7 +1820,7 @@ pub fn enumerate_ports() -> usize {
             }
             let after_wpr = unsafe { read_u32(portsc_addr) };
             if after_wpr & portsc::PED != 0 {
-                println!("[xhci] port {} warm-reset enabled (PORTSC=0x{:08X})",
+                crate::usb::usbdbg!("[xhci] port {} warm-reset enabled (PORTSC=0x{:08X})",
                     port, after_wpr);
                 // Another settle delay before retry.
                 let settle2 = kernel_core::platform::ticks() + 10;
@@ -1820,7 +1845,7 @@ pub fn enumerate_ports() -> usize {
     } // end for pass
 
     if connected == 0 {
-        println!("[xhci] no connected devices on any of {} root-hub ports", info.max_ports);
+        crate::usb::usbdbg!("[xhci] no connected devices on any of {} root-hub ports", info.max_ports);
     }
     println!("  [DEMO 18] PASS: enumerated {} USB device(s)", enumerated);
     enumerated
@@ -1886,12 +1911,12 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     ring_doorbell(info.db_base, 0, 0);
     let (cc, slot_id) = wait_command_completion(cmd_phys);
     if cc != cc::SUCCESS || slot_id == 0 {
-        println!("[xhci] EnableSlot failed: cc={} slot={}", cc, slot_id);
+        crate::usb::usbdbg!("[xhci] EnableSlot failed: cc={} slot={}", cc, slot_id);
         return false;
     }
 
     if (slot_id as usize) > MAX_SLOTS {
-        println!("[xhci] EnableSlot returned slot_id={} > MAX_SLOTS={}", slot_id, MAX_SLOTS);
+        crate::usb::usbdbg!("[xhci] EnableSlot returned slot_id={} > MAX_SLOTS={}", slot_id, MAX_SLOTS);
         return false;
     }
     let si = slot_id as usize;
@@ -1899,14 +1924,14 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     // ---- Plug per-slot device context into DCBAA ----
     let dev_ctx_phys = match phys_of(unsafe { &raw const DEVICE_CTXS[si] } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] dev ctx phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] dev ctx phys translation failed"); return false; }
     };
     unsafe { DCBAA.0[si] = dev_ctx_phys; }
 
     // ---- Build the per-slot EP0 transfer ring ----
     let ep0_ring_phys = match phys_of(unsafe { &raw const EP0_TRANSFER_RINGS[si] } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] EP0 ring phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] EP0 ring phys translation failed"); return false; }
     };
     unsafe {
         init_command_ring(&raw mut EP0_TRANSFER_RINGS[si], ep0_ring_phys);
@@ -1949,7 +1974,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     }
     let input_phys = match phys_of(unsafe { &raw const INPUT_CTXS[si] } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] input ctx phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] input ctx phys translation failed"); return false; }
     };
 
     // ---- AddressDevice ----
@@ -1972,7 +1997,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             address_ok = true;
             break;
         }
-        println!("[xhci] AddressDevice attempt {} failed: cc={}", retry, cc);
+        crate::usb::usbdbg!("[xhci] AddressDevice attempt {} failed: cc={}", retry, cc);
         // Only retry on USB Transaction Error (cc=4); other codes are fatal.
         if cc != 4 || retry == 1 {
             return false;
@@ -1989,7 +2014,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     }
 
     let usb_addr = unsafe { DEVICE_CTXS[si].0.slot_read().usb_device_address() };
-    println!("[xhci] device addressed: slot={} usb_addr={} speed={} mps0={}",
+    crate::usb::usbdbg!("[xhci] device addressed: slot={} usb_addr={} speed={} mps0={}",
         slot_id, usb_addr, speed, mps0);
 
     // USB 2.0 spec §9.2.6.3: the device must respond to data transfers at
@@ -2011,12 +2036,12 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     if !control_in(slot_id, 0x80, request::GET_DESCRIPTOR,
                    (desc_type::DEVICE as u16) << 8, 0, 18,
                    &mut dev_desc as *mut _ as *mut u8, 18) {
-        println!("[xhci] GET_DESCRIPTOR(DEVICE) failed");
+        crate::usb::usbdbg!("[xhci] GET_DESCRIPTOR(DEVICE) failed");
         return false;
     }
     let id_vendor = dev_desc.id_vendor;
     let id_product = dev_desc.id_product;
-    println!("[xhci] device descriptor: vendor=0x{:04X} product=0x{:04X} class=0x{:02X} mps0={}",
+    crate::usb::usbdbg!("[xhci] device descriptor: vendor=0x{:04X} product=0x{:04X} class=0x{:02X} mps0={}",
         id_vendor, id_product,
         dev_desc.b_device_class, dev_desc.b_max_packet_size0);
     if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
@@ -2035,7 +2060,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             id_vendor, id_product
         );
         if id_vendor == 0x17EF {
-            println!("[xhci] Lenovo USB hub (matches Pro Dock 40A1 / ThinkPad dock family)");
+            crate::usb::usbdbg!("[xhci] Lenovo USB hub (matches Pro Dock 40A1 / ThinkPad dock family)");
         }
         // Read the hub descriptor so we can set Number of Ports in the
         // Evaluate Context Input Slot Context (required by spec §6.2.2).
@@ -2061,7 +2086,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         }
         let hub_input_phys = match phys_of(unsafe { &raw const INPUT_CTXS[si].0 } as u64) {
             Some(p) => p,
-            None => { println!("[xhci] hub input ctx phys translation failed"); return false; }
+            None => { crate::usb::usbdbg!("[xhci] hub input ctx phys translation failed"); return false; }
         };
         let idx = unsafe { CMD_PROD.enqueue };
         let eval_cmd_phys = cmd_trb_phys_at(idx);
@@ -2074,14 +2099,14 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         ring_doorbell(info.db_base, 0, 0);
         let (eval_cc, _) = wait_command_completion(eval_cmd_phys);
         if eval_cc != cc::SUCCESS {
-            println!("[xhci] EvaluateContext(is_hub) failed: cc={} — continuing anyway", eval_cc);
+            crate::usb::usbdbg!("[xhci] EvaluateContext(is_hub) failed: cc={} — continuing anyway", eval_cc);
         } else {
-            println!("[xhci] slot={} marked as hub in xHC context", slot_id);
+            crate::usb::usbdbg!("[xhci] slot={} marked as hub in xHC context", slot_id);
         }
 
         // Hubs may reject class requests until configured; set config 1.
         if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, 1, 0, 0) {
-            println!("[xhci-hub] SET_CONFIGURATION(1) failed for hub — continuing anyway");
+            crate::usb::usbdbg!("[xhci-hub] SET_CONFIGURATION(1) failed for hub — continuing anyway");
         }
 
         // USB 3.0 hubs need SetHubDepth so they know which nibble of the
@@ -2091,9 +2116,9 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         if speed == 4 {
             let depth = topology.depth;
             if !crate::usb::hub::set_hub_depth(slot_id, depth) {
-                println!("[xhci-hub] SET_HUB_DEPTH({}) failed — continuing anyway", depth);
+                crate::usb::usbdbg!("[xhci-hub] SET_HUB_DEPTH({}) failed — continuing anyway", depth);
             } else {
-                println!("[xhci-hub] SET_HUB_DEPTH({}) ok", depth);
+                crate::usb::usbdbg!("[xhci-hub] SET_HUB_DEPTH({}) ok", depth);
             }
         }
 
@@ -2117,7 +2142,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         }
         let connected_children = crate::usb::hub::bring_up_hub(slot_id, port, speed);
         if connected_children > 0 {
-            println!("[xhci] hub enumerated {} downstream device(s)",
+            crate::usb::usbdbg!("[xhci] hub enumerated {} downstream device(s)",
                 connected_children);
         }
         // Return true: hub itself is fully addressed.
@@ -2133,7 +2158,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
     let num_configs = dev_desc.b_num_configurations.max(1);
     let blob_phys = match phys_of(unsafe { &raw const DMA_BUF } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] DMA_BUF phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] DMA_BUF phys translation failed"); return false; }
     };
 
     let mut first_blob_ok = false;
@@ -2149,14 +2174,14 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
                 println!("[iphone] GET_DESCRIPTOR(CONFIG short, idx={}) failed — skipping", cfg_idx);
             } else {
-                println!("[xhci] GET_DESCRIPTOR(CONFIG short, idx={}) failed — skipping", cfg_idx);
+                crate::usb::usbdbg!("[xhci] GET_DESCRIPTOR(CONFIG short, idx={}) failed — skipping", cfg_idx);
             }
             continue;
         }
         let total_len = cfg_desc.w_total_length as usize;
         let read_len = total_len.min(SETUP_BUF_SIZE);
         if total_len > SETUP_BUF_SIZE {
-            println!("[xhci] config[{}] descriptor larger than buffer ({} > {}), truncating to {} bytes",
+            crate::usb::usbdbg!("[xhci] config[{}] descriptor larger than buffer ({} > {}), truncating to {} bytes",
                 cfg_idx, total_len, SETUP_BUF_SIZE, read_len);
         }
 
@@ -2167,7 +2192,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
                 println!("[iphone] GET_DESCRIPTOR(CONFIG full, idx={}) failed — skipping", cfg_idx);
             } else {
-                println!("[xhci] GET_DESCRIPTOR(CONFIG full, idx={}) failed — skipping", cfg_idx);
+                crate::usb::usbdbg!("[xhci] GET_DESCRIPTOR(CONFIG full, idx={}) failed — skipping", cfg_idx);
             }
             continue;
         }
@@ -2184,20 +2209,20 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
 
         // ---- Check for HID boot keyboard (highest priority) ----
         if let Some((kbd, iface_num, cfg_val)) = find_boot_keyboard(blob, cfg_desc.b_configuration_value) {
-            println!("[xhci] HID boot keyboard found in config[{}] value={}", cfg_idx, cfg_val);
+            crate::usb::usbdbg!("[xhci] HID boot keyboard found in config[{}] value={}", cfg_idx, cfg_val);
             // Keyboard path: SET_CONFIGURATION, SET_PROTOCOL, configure endpoints.
             if !control_out(slot_id, 0x00, request::SET_CONFIGURATION,
                             cfg_val as u16, 0, 0) {
-                println!("[xhci] SET_CONFIGURATION failed");
+                crate::usb::usbdbg!("[xhci] SET_CONFIGURATION failed");
                 return false;
             }
             if !control_out(slot_id, 0x21, request::HID_SET_PROTOCOL,
                             0, iface_num as u16, 0) {
-                println!("[xhci] HID SET_PROTOCOL(boot) failed (non-fatal on some devs)");
+                crate::usb::usbdbg!("[xhci] HID SET_PROTOCOL(boot) failed (non-fatal on some devs)");
             }
             let hid_ring_phys = match phys_of(unsafe { &raw const HID_TRANSFER_RINGS[si] } as u64) {
                 Some(p) => p,
-                None => { println!("[xhci] HID ring phys translation failed"); return false; }
+                None => { crate::usb::usbdbg!("[xhci] HID ring phys translation failed"); return false; }
             };
             let ep_num = kbd.b_endpoint_address & 0x0F;
             let dci = (ep_num * 2 + 1) as usize;
@@ -2225,10 +2250,10 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             ring_doorbell(info.db_base, 0, 0);
             let (cc, _) = wait_command_completion(cmd_phys);
             if cc != cc::SUCCESS {
-                println!("[xhci] ConfigureEndpoint (HID) failed: cc={}", cc);
+                crate::usb::usbdbg!("[xhci] ConfigureEndpoint (HID) failed: cc={}", cc);
                 return false;
             }
-            println!("[xhci] HID kbd configured: slot={} dci={} ep=0x{:02X} mps={} interval_log2={}",
+            crate::usb::usbdbg!("[xhci] HID kbd configured: slot={} dci={} ep=0x{:02X} mps={} interval_log2={}",
                 slot_id, dci, kbd.b_endpoint_address, max_packet, interval_log2);
             unsafe {
                 let dev = EnumeratedDevice {
@@ -2308,7 +2333,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         let _ = read_string_descriptor(slot_id, dev_desc.i_product,     "iProduct");
         let _ = read_string_descriptor(slot_id, dev_desc.i_serial_number, "iSerialNumber");
     }
-    println!("[xhci] no matching interface in any of {} config(s) for vendor=0x{:04X} product=0x{:04X}",
+    crate::usb::usbdbg!("[xhci] no matching interface in any of {} config(s) for vendor=0x{:04X} product=0x{:04X}",
         num_configs, id_vendor, id_product);
     unsafe {
         let dev = EnumeratedDevice {
@@ -2420,7 +2445,7 @@ pub(crate) fn control_in(
 ) -> bool {
     let phys = match phys_of(out_kvirt as u64) {
         Some(p) => p,
-        None => { println!("[xhci] control_in: phys translation failed"); return false; }
+        None => { crate::usb::usbdbg!("[xhci] control_in: phys translation failed"); return false; }
     };
     control_in_phys(slot_id, request_type, request, value, index, length, phys, copy_len)
 }
@@ -2486,7 +2511,8 @@ fn control_in_phys(
     // instead of the Status TRB, so we match by (slot_id, endpoint_id)
     // rather than exact TRB pointer — strict pointer equality caused an
     // infinite push/pop ping-pong with the event backlog.
-    for _ in 0..200_000_000u64 {
+    let deadline = kernel_core::platform::ticks() + 2 * kernel_core::scheduler::SCHEDULER_TICK_HZ; // ~2 s
+    while kernel_core::platform::ticks() < deadline {
         if let Some(evt) = poll_event() {
             if evt.trb_type() == trb_type::TRANSFER_EVENT {
                 if evt.slot_id() != slot_id || evt.endpoint_id() != 1 {
@@ -2498,17 +2524,17 @@ fn control_in_phys(
                     return true;
                 }
                 if cc == cc::STALL_ERROR {
-                    println!("[xhci] control_in stall (cc={})", cc);
+                    crate::usb::usbdbg!("[xhci] control_in stall (cc={})", cc);
                     return false;
                 }
-                println!("[xhci] control_in bad cc={} slot={} ep=1",
+                crate::usb::usbdbg!("[xhci] control_in bad cc={} slot={} ep=1",
                     cc, slot_id);
                 return false;
             }
         }
         core::hint::spin_loop();
     }
-    println!("[xhci] control_in timeout");
+    crate::usb::usbdbg!("[xhci] control_in timeout");
     false
 }
 
@@ -2531,7 +2557,7 @@ fn read_string_descriptor(slot_id: u8, idx: u8, label: &str) -> bool {
                         ((desc_type::STRING as u16) << 8) | (idx as u16),
                         0x0409, // US English language ID
                         MAX_STR as u16, blob_phys, MAX_STR) {
-        println!("[xhci] string descriptor {} (index {}) failed", label, idx);
+        crate::usb::usbdbg!("[xhci] string descriptor {} (index {}) failed", label, idx);
         return false;
     }
     let s = unsafe { &DMA_BUF.0[..MAX_STR] };
@@ -2554,7 +2580,7 @@ fn read_string_descriptor(slot_id: u8, idx: u8, label: &str) -> bool {
             i += 2;
         }
         if let Ok(str) = core::str::from_utf8(&ascii[..a]) {
-            println!("[xhci] string {} (index {}): \"{}\"", label, idx, str);
+            crate::usb::usbdbg!("[xhci] string {} (index {}): \"{}\"", label, idx, str);
         }
     }
     true
@@ -2597,7 +2623,8 @@ pub(crate) fn control_out(
     ring_doorbell(info.db_base, slot_id, 1);
 
     // Match by slot + EP0 rather than exact TRB pointer (see control_in).
-    for _ in 0..200_000_000u64 {
+    let deadline = kernel_core::platform::ticks() + 2 * kernel_core::scheduler::SCHEDULER_TICK_HZ; // ~2 s
+    while kernel_core::platform::ticks() < deadline {
         if let Some(evt) = poll_event() {
             if evt.trb_type() == trb_type::TRANSFER_EVENT {
                 if evt.slot_id() != slot_id || evt.endpoint_id() != 1 {
@@ -2610,7 +2637,7 @@ pub(crate) fn control_out(
         }
         core::hint::spin_loop();
     }
-    println!("[xhci] control_out timeout");
+    crate::usb::usbdbg!("[xhci] control_out timeout");
     false
 }
 
@@ -2625,11 +2652,11 @@ fn arm_hid_read(slot_id: u8, dci: u8) {
     let info = unsafe { match INFO { Some(i) => i, None => return } };
     let buf_phys = match phys_of(unsafe { &raw const HID_REPORT_BUFS[si] } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] HID_REPORT_BUFS phys translation failed"); return; }
+        None => { crate::usb::usbdbg!("[xhci] HID_REPORT_BUFS phys translation failed"); return; }
     };
     let hid_ring_phys = match phys_of(unsafe { &raw const HID_TRANSFER_RINGS[si] } as u64) {
         Some(p) => p,
-        None => { println!("[xhci] HID ring phys translation failed"); return; }
+        None => { crate::usb::usbdbg!("[xhci] HID ring phys translation failed"); return; }
     };
     // Normal TRB: parameter=buf phys, status=length (8), control:
     // trb_type=Normal, IOC=1, ISP=1 (interrupt on short packet).
@@ -2754,13 +2781,13 @@ fn bulk_xfer(
                     let remaining = evt.transfer_remaining();
                     return Some(len.saturating_sub(remaining));
                 }
-                println!("[xhci] bulk_xfer cc={} dci={} is_in={}", cc, dci, is_in);
+                crate::usb::usbdbg!("[xhci] bulk_xfer cc={} dci={} is_in={}", cc, dci, is_in);
                 return None;
             }
         }
         spins = spins.wrapping_add(1);
         if spins > 200_000_000 {
-            println!("[xhci] bulk_xfer timeout dci={} is_in={}", dci, is_in);
+            crate::usb::usbdbg!("[xhci] bulk_xfer timeout dci={} is_in={}", dci, is_in);
             return None;
         }
         core::hint::spin_loop();
@@ -3644,7 +3671,7 @@ fn configure_bulk_endpoints(
     ring_doorbell(info.db_base, 0, 0);
     let (cc, _) = wait_command_completion(cmd_phys);
     if cc != cc::SUCCESS {
-        println!("[xhci] ConfigureEndpoint(bulk) failed: cc={}", cc);
+        crate::usb::usbdbg!("[xhci] ConfigureEndpoint(bulk) failed: cc={}", cc);
         return None;
     }
     Some((in_dci, out_dci))
