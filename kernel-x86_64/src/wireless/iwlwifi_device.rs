@@ -1453,11 +1453,11 @@ impl IwlDevice {
             cmd[o + 5] = 1 << i; // fifos_mask
             put16(&mut cmd, o + 6, txop);
         }
-        // qos_flags @56 = 0: the node has NOT negotiated QoS yet (UPDATE_EDCA is
-        // only set post-assoc). STA union @100 stays ENTIRELY ZEROED for the ADD
-        // — the reference iwm_mac_ctxt_cmd does NOT fill bi/dtim until the node
-        // is associated (is_assoc=0 means the firmware never touches the timing
-        // math, so there is no divide-by-zero to guard against).
+        // qos_flags @56 = 0: node has not negotiated QoS yet. (Tested 2026-06-25:
+        // setting UPDATE_EDCA(1<<0) did NOT unstick the TX — ruled out.) STA union
+        // @100 stays ENTIRELY ZEROED for the ADD — the reference iwm_mac_ctxt_cmd
+        // does NOT fill bi/dtim until the node is associated (is_assoc=0 means the
+        // firmware never touches the timing math, so no divide-by-zero to guard).
         println!("[iwlwifi] MAC_CONTEXT_CMD action={} BSS_STA node={:02X}:..:{:02X} bssid={:02X}:..:{:02X} (148B)",
             action, self.sm.sta_mac[0], self.sm.sta_mac[5], bssid[0], bssid[5]);
         self.send_cmd(0x28, &cmd)
@@ -1485,6 +1485,29 @@ impl IwlDevice {
         put32(&mut cmd, 20, 0);
         println!("[iwlwifi] BINDING_CONTEXT_CMD action={} mac0->phy0 (24B)", action);
         self.send_cmd(0x2b, &cmd)
+    }
+
+    /// TIME_QUOTA_CMD (0x2c) — allocate airtime quota to our binding
+    /// (iwm_time_quota_cmd). The TIME_EVENT grants an on-channel *window*, but the
+    /// firmware's MAC scheduler ALSO needs an airtime *quota* per binding or it
+    /// allocates zero air-time and never transmits — even with the frame staged in
+    /// the hardware TX FIFO, on-channel (proven 2026-06-25: TXF FIFO-BE
+    /// item_cnt=96, rd=0, fence=0 → SCD scheduled, MAC won't key the air). 4
+    /// bindings × 12 bytes = 48B; our single binding (id_and_color 0) takes it all.
+    pub fn time_quota_cmd(&mut self) -> bool {
+        let mut cmd = [0u8; 48];
+        let put32 = |c: &mut [u8], o: usize, v: u32| c[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        // quotas[0]: our binding (id_and_color 0) gets the full quota.
+        put32(&mut cmd, 0, 0);    // id_and_color = binding 0
+        put32(&mut cmd, 4, 128);  // quota = IWM_MAX_QUOTA (all air-time)
+        put32(&mut cmd, 8, 0);    // max_duration = 0 (no cap)
+        // quotas[1..4]: unused bindings = IWM_FW_CTXT_INVALID, quota 0.
+        for i in 1..4 {
+            let o = i * 12;
+            put32(&mut cmd, o, 0xFFFF_FFFF);
+        }
+        println!("[iwlwifi] TIME_QUOTA_CMD binding0 quota=128/128 (48B)");
+        self.send_cmd(0x2c, &cmd)
     }
 
     /// ADD_STA (0x18) — register the AP itself as a station in the firmware's
@@ -1776,6 +1799,8 @@ impl IwlDevice {
         let rd_before = self.csr.read_prph(scd::queue_rdptr(DATA_QUEUE as u32));
         self.csr.write32(CSR_HBUS_TARG_WRPTR, ((DATA_QUEUE as u32) << 8) | new_idx as u32);
         self.release_nic_access();
+        // (2026-06-25: holding the NIC awake across the wait — apmg_wake_up_wa —
+        // did NOT unstick the TX; reverted to the immediate release.)
         // Wait briefly for the SCD to consume the TFD (read-ptr advance) and/or
         // the firmware to push a TX-status notification (rb_stts advance).
         let mut responded = false;
@@ -1825,6 +1850,24 @@ impl IwlDevice {
         let chain_tx = self.csr.read_prph(scd::QUEUECHAIN_SEL);
         let aggr_tx = self.csr.read_prph(scd::AGGR_SEL);
         let dram_base_tx = self.csr.read_prph(scd::DRAM_BASE_ADDR);
+        // DECISIVE LOCALIZATION (2026-06-25): peek the firmware TX FIFO for FIFO-BE
+        // (1) — where the SCD should deposit q1's frame. Select the FIFO via
+        // TXF_LARC_NUM, then read item-count + rd/wr/fence pointers. If item_cnt>0
+        // the SCD DID schedule the frame into the FIFO and the MAC won't put it on
+        // air (firmware/MAC/air issue); if item_cnt==0 the SCD never scheduled it
+        // (scheduler issue). Compare against FIFO-7 (command) which works.
+        const TXF_LARC_NUM: u32 = 0xa0043c;
+        const TXF_FIFO_ITEM_CNT: u32 = 0xa00438;
+        const TXF_WR_PTR: u32 = 0xa00414;
+        const TXF_RD_PTR: u32 = 0xa00410;
+        const TXF_FENCE_PTR: u32 = 0xa00418;
+        self.csr.write_prph(TXF_LARC_NUM, 1); // select FIFO BE
+        let txf_be_cnt = self.csr.read_prph(TXF_FIFO_ITEM_CNT);
+        let txf_be_wr = self.csr.read_prph(TXF_WR_PTR);
+        let txf_be_rd = self.csr.read_prph(TXF_RD_PTR);
+        let txf_be_fence = self.csr.read_prph(TXF_FENCE_PTR);
+        self.csr.write_prph(TXF_LARC_NUM, 7); // select FIFO CMD (control)
+        let txf_cmd_cnt = self.csr.read_prph(TXF_FIFO_ITEM_CNT);
         self.release_nic_access();
         // bc-table alignment: DRAM_BASE = bc_phys>>10 drops the low 10 bits, so the
         // table MUST be 1024-byte aligned or the SCD reads bc from a shifted addr.
@@ -1848,6 +1891,11 @@ impl IwlDevice {
         println!("[iwlwifi]   bc-tbl @TX: phys=0x{:08X} aligned1024={} DRAM_BASE=0x{:08X} (=phys>>10? {}) bc[q1,idx{}]=0x{:04X}",
             bc_phys as u32, (bc_phys & 0x3FF == 0) as u8, dram_base_tx,
             (dram_base_tx == (bc_phys >> 10) as u32) as u8, idx, bc_q1_readback);
+        println!("[iwlwifi]   TXF peek: FIFO-BE item_cnt={} wr={} rd={} fence={} | FIFO-CMD item_cnt={}  ({})",
+            txf_be_cnt, txf_be_wr, txf_be_rd, txf_be_fence, txf_cmd_cnt,
+            if txf_be_cnt != 0 { "frame STAGED but MAC won't drain (off-air)" }
+            else if txf_be_wr != 0 && txf_be_rd == txf_be_wr { "FIFO DRAINED -> frame TRANSMITTED on air" }
+            else { "FIFO empty (not scheduled)" });
         if e[0] != 0 {
             // iwm_error_event_table: [1]error_id [7]data1 [20]log_pc [23]hcmd
             // [29]last_cmd_id [16]major [17]minor. hcmd/last_cmd_id tell us WHICH
@@ -2187,6 +2235,13 @@ impl IwlDevice {
         if !self.binding_context(1 /* ADD */) {
             println!("[wifi] connect: BINDING FAILED");
             return false;
+        }
+        // Allocate airtime quota to the binding. Without it the firmware MAC
+        // scheduler gives the binding zero air-time and never transmits, even with
+        // the frame staged in the on-channel TX FIFO (the FIFO-BE/rd=0 wall).
+        println!("[wifi] allocating airtime quota...");
+        if !self.time_quota_cmd() {
+            println!("[wifi] connect: TIME_QUOTA got no response — continuing");
         }
         // Phase A step 3: register the AP as the real station (sta_id 0).
         println!("[wifi] adding AP as station...");
