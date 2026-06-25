@@ -1518,6 +1518,36 @@ impl IwlDevice {
         ok
     }
 
+    /// LQ_CMD (0x4e) — install a link-quality / rate-scale table for station 0
+    /// (iwm_lq_cmd, 88 bytes). Some firmware will not schedule a station's TX
+    /// queue until the station has a rate context, even for management frames —
+    /// which would explain a correctly-configured, on-channel queue whose
+    /// SCD_rdptr never advances. Minimal table: all 16 retry slots = the same
+    /// 1 Mbps CCK / antenna-A rate our mgmt tx_cmd uses (robust + slow).
+    pub fn lq_cmd(&mut self) -> bool {
+        // struct iwm_lq_cmd layout (little-endian, packed):
+        //  0 sta_id | 1 reduced_tpc | 2..4 control
+        //  4 flags | 5 mimo_delim | 6 single_stream_ant_msk | 7 dual_stream_ant_msk
+        //  8..12 initial_rate_index[4]
+        // 12..14 agg_time_limit | 14 agg_disable_start_th | 15 agg_frame_cnt_limit
+        // 16..20 reserved2
+        // 20..84 rs_table[16] (rate_n_flags each)
+        // 84..88 ss_params
+        let mut cmd = [0u8; 88];
+        cmd[0] = 0;          // sta_id = IWM_STATION_ID
+        cmd[6] = 1;          // single_stream_ant_msk = ANT_A
+        cmd[15] = 0x3F;      // agg_frame_cnt_limit = IWM_LINK_QUAL_AGG_FRAME_LIMIT_DEF
+        let rate: u32 = 10 | (1 << 9) | (1 << 14); // 1 Mbps CCK, antenna A
+        for i in 0..16 {
+            let o = 20 + i * 4;
+            cmd[o..o + 4].copy_from_slice(&rate.to_le_bytes());
+        }
+        println!("[iwlwifi] LQ_CMD sta_id=0 rate=1MbpsCCK(0x{:08X}) x16 (88B)", rate);
+        let responded = self.send_cmd(0x4e, &cmd);
+        println!("[iwlwifi] LQ_CMD -> {}", if responded { "sent" } else { "NO RESPONSE" });
+        responded
+    }
+
     /// TIME_EVENT_CMD (0x29) — reserve a protected on-channel air-time window so
     /// the firmware won't wander off-channel during auth/assoc (iwm_protect_
     /// session). 36-byte iwm_time_event_cmd. Durations are in TU; we assume the
@@ -1579,100 +1609,65 @@ impl IwlDevice {
         running
     }
 
-    /// Enable the data/management TX queue (queue 1, TX FIFO BE) for the station.
-    /// Enable the data/management TX queue (queue 1, TX FIFO BE) for the station.
-    /// Use the firmware SCD_QUEUE_CFG (0x1d) command to configure the queue, plus
-    /// the minimal host-side setup OpenBSD does for data queues: CBBC ring base,
-    /// HBUS write pointer, and SCD_EN_CTRL. The earlier direct register sequence
-    /// duplicated firmware work and left the scheduler ignoring queue 1.
+    /// Enable the data/management TX queue (queue 1, FIFO BE) via the MINIMAL
+    /// direct-register sequence — NO `SCD_QUEUE_CFG (0x1d)` host command and NO
+    /// `QUEUECHAIN_SEL` membership.
+    ///
+    /// 2026-06-25 REGRESSION REVERT. git `f7f9ada` (the "0x90A era") used exactly
+    /// this minimal enable and the firmware DID service q1 — the frame reached the
+    /// air stage (off-channel `0x90A` assert). `df967b3` then ADDED the `0x1d`
+    /// command + chain membership to match the *generic* Linux gen1 driver, and q1
+    /// went silent: `SCD_rdptr` stuck at 0, no fault — the EXACT symptom f7f9ada's
+    /// own comment blamed on `0x1d` ("SCD_QUEUE_CFG does NOT configure the SCD
+    /// context on this firmware, so the scheduler never serviced the queue"). The
+    /// station↔queue binding comes purely from ADD_STA's `tfd_queue_msk`, so no
+    /// host command is needed; we drive the SCD registers directly and toggle
+    /// TXFACT around the per-queue setup. Pairs with the (new this session)
+    /// working on-channel time-event — minimal-enable + on-channel has never been
+    /// tried together.
     pub fn enable_data_queue(&mut self) -> bool {
         use super::iwlwifi_csr::{scd, fh_cbbc_queue, CSR_HBUS_TARG_WRPTR};
         const DATA_QUEUE: u32 = 1;
         const TX_FIFO_BE: u32 = 1;
+        let frame_limit: u32 = 64;
         let tfd_phys = match phys_of(unsafe { &raw const TX1_TFD_RING } as u64) { Some(p)=>p, None=>return false };
 
         if !self.grab_nic_access() { return false; }
-        // Reset the host write pointer so the first TFD lands at index 0.
-        self.csr.write32(CSR_HBUS_TARG_WRPTR, DATA_QUEUE << 8);
-        // Point the FH at our TFD ring (256-byte aligned).
-        self.csr.write32(fh_cbbc_queue(DATA_QUEUE as u64), (tfd_phys >> 8) as u32);
-        // 2026-06-24: per ground-truth iwl_trans_pcie_txq_enable, SCD_EN_CTRL is
-        // written ONLY for the command queue (scd_set_active) — data queues never
-        // touch it. Our previous q1 EN_CTRL write (and the 0xa02e54 probe) were
-        // both wrong. Removed.
-        self.release_nic_access();
-        unsafe { TX1_WRITE_IDX = 0; }
-        println!("[iwlwifi] data TX queue {} primed (FH CBBC set)", DATA_QUEUE);
-
-        let frame_limit: u32 = 64;
-        // 2026-06-24 (Option A): RESTORED the SCD_QUEUE_CFG (0x1d) firmware
-        // queue-config. Removing it earlier this session regressed q1 to
-        // consumed=0; the firmware path is what once got the queue to actually
-        // TX (the err_id 0x90A OFF-CHANNEL assert proves the frame reached the
-        // air stage — i.e. the queue activated). The blocker on this path is air/
-        // MAC timing (off-channel), not SCD plumbing. Keep it + the direct
-        // register fixes (set_chain, correct addrs, chicken bits) below.
-        let mut cfg = [0u8; 12];
-        cfg[0] = 0;                  // token
-        cfg[1] = 0;                  // sta_id (the AP, added as sta 0)
-        cfg[2] = 8;                  // tid = IWL_MAX_TID_COUNT for non-QoS mgmt
-        cfg[3] = DATA_QUEUE as u8;   // scd_queue
-        cfg[4] = 1;                  // enable
-        cfg[5] = 0;                  // aggregate
-        cfg[6] = TX_FIFO_BE as u8;   // tx_fifo
-        cfg[7] = frame_limit as u8;  // window
-        println!("[iwlwifi] SCD_QUEUE_CFG q={} sta=0 tid=8 fifo={}", DATA_QUEUE, TX_FIFO_BE);
-        if !self.send_cmd(0x1d, &cfg) {
-            println!("[iwlwifi] SCD_QUEUE_CFG command failed");
-            return false;
-        }
-        println!("[iwlwifi] enable q{} via direct SCD registers (gen1, no 0x1d) fifo={}",
-            DATA_QUEUE, TX_FIFO_BE);
-        // Host-side legacy AC-queue reset: no chaining, no aggregation, and
-        // both SCD read/write pointers reset to zero.  The previous boot showed
-        // q1 status/EN_CTRL configured but SCD_rdptr stuck at 0; if HBUS rings
-        // but SCD_WRPTR stays 0, the issue is the doorbell path.  If WR advances
-        // but RD does not, the issue is scheduler queue mapping.
-        if !self.grab_nic_access() { return false; }
         let scd_base = self.scd_base_ptr;
-        // set_inactive: stop the queue before configuring it.
-        self.csr.write_prph(scd::queue_status(DATA_QUEUE),
-            (0 << scd::STTS_POS_ACTIVE) | (1 << scd::STTS_POS_SCD_ACT_EN));
-        // 2026-06-24 KEY FIX: iwl_scd_txq_set_chain SETS the queue's bit in
-        // SCD_QUEUECHAIN_SEL for every non-command queue (a data queue must be a
-        // chain-building queue). We had been CLEARING it — the scheduler ignores
-        // a queue that isn't in the chain, which is why q1 never activated
-        // (SCD_rdptr stuck at 0). disable_agg still CLEARS the AGGR_SEL bit.
-        self.csr.set_bits_prph(scd::QUEUECHAIN_SEL, 1 << DATA_QUEUE);
+        // Disable the scheduler while we (re)configure the queue (mirrors tx_init).
+        self.csr.write_prph(scd::TXFACT, 0);
+        // Per-queue setup, identical to what tx_init does for q0 (which schedules
+        // reliably): CBBC ring base, clear aggregation + chain-ext, explicitly
+        // CLEAR q1 from the chain (the single-variable revert vs df967b3), reset
+        // the SCD read ptr, reset the HW write ptr to index 0, write the SCD
+        // context (win/frame-limit), then mark the queue active on FIFO BE.
+        self.csr.write32(fh_cbbc_queue(DATA_QUEUE as u64), (tfd_phys >> 8) as u32);
         self.csr.clear_bits_prph(scd::AGGR_SEL, 1 << DATA_QUEUE);
+        self.csr.clear_bits_prph(scd::QUEUECHAIN_SEL, 1 << DATA_QUEUE);
+        self.csr.write_prph(scd::CHAINEXT_EN, 0);
         self.csr.write_prph(scd::queue_rdptr(DATA_QUEUE), 0);
-        self.csr.write_prph(scd::queue_wrptr(DATA_QUEUE), 0);
+        self.csr.write32(CSR_HBUS_TARG_WRPTR, DATA_QUEUE << 8);
         self.csr.mem_write32(scd_base + scd::context_queue_offset(DATA_QUEUE), 0);
         self.csr.mem_write32(scd_base + scd::context_queue_offset(DATA_QUEUE) + 4,
             ((frame_limit << scd::CTX_WIN_SIZE_POS) & 0x7F)
             | ((frame_limit << scd::CTX_FRAME_LIMIT_POS) & 0x7F_0000));
-        // Final step (matches iwl_trans_pcie_txq_enable): map to Tx DMA/FIFO and
-        // activate via QUEUE_STATUS_BITS = active | fifo | WSL | MSK. GP_CTRL
-        // auto-active mode is already set once at tx_init; no INTERRUPT_MASK /
-        // per-queue TXFACT / EN_CTRL writes here — none are in the gen1 data-queue
-        // enable path.
         self.csr.write_prph(scd::queue_status(DATA_QUEUE), scd::queue_enable_val(TX_FIFO_BE));
+        // Re-enable all FIFOs now that q1 is configured.
+        self.csr.write_prph(scd::TXFACT, 0xFF);
 
         let rd = self.csr.read_prph(scd::queue_rdptr(DATA_QUEUE));
         let wr = self.csr.read_prph(scd::queue_wrptr(DATA_QUEUE));
         let q_stts = self.csr.read_prph(scd::queue_status(DATA_QUEUE));
         let active = self.csr.read_prph(scd::ACTIVE);
-        let en_ctrl = self.csr.read_prph(scd::EN_CTRL);
         let chain = self.csr.read_prph(scd::QUEUECHAIN_SEL);
-        let chainext = self.csr.read_prph(scd::CHAINEXT_EN);
         let aggr = self.csr.read_prph(scd::AGGR_SEL);
-        let int_mask = self.csr.read_prph(scd::INTERRUPT_MASK);
         let txfact = self.csr.read_prph(scd::TXFACT);
         let ctx0 = self.csr.mem_read32(scd_base + scd::context_queue_offset(DATA_QUEUE));
         let ctx1 = self.csr.mem_read32(scd_base + scd::context_queue_offset(DATA_QUEUE) + 4);
         self.release_nic_access();
-        println!("[iwlwifi] post-CFG q{} rdptr={} wrptr={} q_stts=0x{:08X} ACTIVE=0x{:08X} EN_CTRL=0x{:08X} CHAIN=0x{:08X} CHAINEXT=0x{:08X} AGGR=0x{:08X} INT_MASK=0x{:08X} TXFACT=0x{:08X} ctx=0x{:08X}/0x{:08X}",
-            DATA_QUEUE, rd, wr, q_stts, active, en_ctrl, chain, chainext, aggr, int_mask, txfact, ctx0, ctx1);
+        unsafe { TX1_WRITE_IDX = 0; }
+        println!("[iwlwifi] enable q{} MINIMAL (no 0x1d, no chain): rdptr={} wrptr={} q_stts=0x{:08X} ACTIVE=0x{:08X} CHAIN=0x{:08X} AGGR=0x{:08X} TXFACT=0x{:08X} ctx=0x{:08X}/0x{:08X}",
+            DATA_QUEUE, rd, wr, q_stts, active, chain, aggr, txfact, ctx0, ctx1);
         true
     }
 
@@ -2199,6 +2194,10 @@ impl IwlDevice {
             println!("[wifi] connect: ADD_STA FAILED");
             return false;
         }
+        // NOTE: LQ_CMD (rate table) is intentionally NOT sent here. The 7260
+        // firmware rejects it pre-association (err_id=0x207A "command rejected")
+        // and the fault poisons the rest of the connect sequence. lq_cmd() is
+        // retained for the post-association data path. (Tested 2026-06-25.)
         // Enable the data/mgmt TX queue NOW (before the time event), because
         // SCD_QUEUE_CFG waits ~hundreds of ms for its response. If we scheduled
         // the protected window first, it would expire during that wait and the
