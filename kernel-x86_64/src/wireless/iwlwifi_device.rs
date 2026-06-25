@@ -1543,14 +1543,27 @@ impl IwlDevice {
         println!("[iwlwifi] data TX queue {} primed (FH CBBC set)", DATA_QUEUE);
 
         let frame_limit: u32 = 64;
-        // 2026-06-24: REMOVED the SCD_QUEUE_CFG (0x1d) firmware command. 0x1d is
-        // the gen2 (22000-series) SCD_QUEUE_CONFIG_CMD; the 7260 is GEN1, where
-        // TX queues are enabled PURELY by direct SCD register programming (the
-        // same path that makes the command queue q0 work) and the firmware learns
-        // the queue<->station binding from ADD_STA + the sta_id in each TX_CMD.
-        // Sending 0x1d here put q1 in a firmware-owned state that fought the
-        // direct-register setup below — q0 (no 0x1d) activates, q1 (with 0x1d)
-        // never did. Mirror q0: direct registers only.
+        // 2026-06-24 (Option A): RESTORED the SCD_QUEUE_CFG (0x1d) firmware
+        // queue-config. Removing it earlier this session regressed q1 to
+        // consumed=0; the firmware path is what once got the queue to actually
+        // TX (the err_id 0x90A OFF-CHANNEL assert proves the frame reached the
+        // air stage — i.e. the queue activated). The blocker on this path is air/
+        // MAC timing (off-channel), not SCD plumbing. Keep it + the direct
+        // register fixes (set_chain, correct addrs, chicken bits) below.
+        let mut cfg = [0u8; 12];
+        cfg[0] = 0;                  // token
+        cfg[1] = 0;                  // sta_id (the AP, added as sta 0)
+        cfg[2] = 8;                  // tid = IWL_MAX_TID_COUNT for non-QoS mgmt
+        cfg[3] = DATA_QUEUE as u8;   // scd_queue
+        cfg[4] = 1;                  // enable
+        cfg[5] = 0;                  // aggregate
+        cfg[6] = TX_FIFO_BE as u8;   // tx_fifo
+        cfg[7] = frame_limit as u8;  // window
+        println!("[iwlwifi] SCD_QUEUE_CFG q={} sta=0 tid=8 fifo={}", DATA_QUEUE, TX_FIFO_BE);
+        if !self.send_cmd(0x1d, &cfg) {
+            println!("[iwlwifi] SCD_QUEUE_CFG command failed");
+            return false;
+        }
         println!("[iwlwifi] enable q{} via direct SCD registers (gen1, no 0x1d) fifo={}",
             DATA_QUEUE, TX_FIFO_BE);
         // Host-side legacy AC-queue reset: no chaining, no aggregation, and
@@ -1721,12 +1734,39 @@ impl IwlDevice {
         let q_stts = self.csr.read_prph(scd::queue_status(DATA_QUEUE as u32));
         let active_after = self.csr.read_prph(scd::ACTIVE);
         let en_ctrl_after = self.csr.read_prph(scd::EN_CTRL);
+        // Option B — localize the stall along SCD -> FH-DMA -> FIFO -> air:
+        //   FH_TSSR_TX_STATUS: per-channel FH TX-DMA idle/active bits (did the
+        //     DMA engine touch q1's channel?)
+        //   CSR_FH_INT_STATUS: FH interrupt status (TX-DMA completion bits)
+        //   SCD tx_stts SRAM (scd_base+0x6A0+q*16): the scheduler's own per-queue
+        //     TX status — if this stays 0 the SCD never started the queue.
+        //   SCD ctx SRAM: byte-count/window the SCD currently sees for q1.
+        let scd_base = self.scd_base_ptr;
+        let fh_tssr = self.csr.read32(super::iwlwifi_csr::fh::TSSR_TX_STATUS);
+        let fh_int = self.csr.read32(super::iwlwifi_csr::CSR_FH_INT_STATUS);
+        let scd_txstts = self.csr.mem_read32(scd_base + 0x6A0 + (DATA_QUEUE as u32) * 16);
+        let scd_ctx0 = self.csr.mem_read32(scd_base + scd::context_queue_offset(DATA_QUEUE as u32));
+        let scd_ctx1 = self.csr.mem_read32(scd_base + scd::context_queue_offset(DATA_QUEUE as u32) + 4);
+        // q0-vs-q1 SCD comparison: q0 (command queue) DOES start; q1 doesn't.
+        // The field that differs between them is the answer.
+        //   txstts: SCD internal per-queue TX status (q0 should be non-zero)
+        //   q_stts: QUEUE_STATUS_BITS (active/fifo) — should look the same
+        //   trans_tbl dword @0x7E0: queue->FIFO translate entries, q0=low16 q1=high16
+        let q0_txstts = self.csr.mem_read32(scd_base + 0x6A0);
+        let q0_stts = self.csr.read_prph(scd::queue_status(0));
+        let q0_rd = self.csr.read_prph(scd::queue_rdptr(0));
+        let q1_rd = self.csr.read_prph(scd::queue_rdptr(DATA_QUEUE as u32));
+        let trans_tbl = self.csr.mem_read32(scd_base + 0x7E0);
         self.release_nic_access();
         super::wifidbg!("[iwlwifi] TX frame on q{}: {} bytes (hdr {} body {}), TBs {}/{}/{}",
             DATA_QUEUE, totlen, hdrlen, bodylen, IWL_FIRST_TB_SIZE, tb1_len, bodylen);
         println!("[iwlwifi]   TX diag: SCD_rdptr {}->{} SCD_wrptr={} (consumed={}) q_stts=0x{:08X} ACTIVE=0x{:08X} EN_CTRL=0x{:08X} responded={} TBs {}/{}/{}",
             rd_before, rd_after, wr_after, (rd_after != rd_before) as u8, q_stts, active_after, en_ctrl_after, responded as u8,
             IWL_FIRST_TB_SIZE, tb1_len, bodylen);
+        println!("[iwlwifi]   TX pipe: FH_TSSR=0x{:08X} FH_INT=0x{:08X} SCD_txstts(q1)=0x{:08X} SCD_ctx(q1)=0x{:08X}/0x{:08X}",
+            fh_tssr, fh_int, scd_txstts, scd_ctx0, scd_ctx1);
+        println!("[iwlwifi]   q0-vs-q1: txstts q0=0x{:08X} q1=0x{:08X} | q_stts q0=0x{:08X} q1=0x{:08X} | rdptr q0={} q1={} | trans_tbl@7E0=0x{:08X} (q0=0x{:04X} q1=0x{:04X})",
+            q0_txstts, scd_txstts, q0_stts, q_stts, q0_rd, q1_rd, trans_tbl, trans_tbl & 0xFFFF, trans_tbl >> 16);
         if e[0] != 0 {
             // iwm_error_event_table: [1]error_id [7]data1 [20]log_pc [23]hcmd
             // [29]last_cmd_id [16]major [17]minor. hcmd/last_cmd_id tell us WHICH
