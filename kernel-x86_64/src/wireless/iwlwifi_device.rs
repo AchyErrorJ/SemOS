@@ -302,6 +302,11 @@ static mut EAPOL_QTAIL: usize = 0;
 static mut AUTH_SUCCESS: bool = false;
 static mut ASSOC_SUCCESS: bool = false;
 static mut LAST_DEAUTH_REASON: u16 = 0;
+/// Set true when a TIME_EVENT_NOTIF (0x29) reports the protected session has
+/// actually STARTED (action & HOST_EVENT_START, status==1). The firmware only
+/// guarantees the MAC is on-channel once this fires; transmitting auth before
+/// it is what trips the err_id 0x90A OFF-CHANNEL assert.
+static mut TE_RUNNING: bool = false;
 
 fn clear_connect_events() {
     unsafe {
@@ -311,6 +316,7 @@ fn clear_connect_events() {
         AUTH_SUCCESS = false;
         ASSOC_SUCCESS = false;
         LAST_DEAUTH_REASON = 0;
+        TE_RUNNING = false;
     }
 }
 
@@ -343,6 +349,10 @@ fn was_auth_success() -> bool {
 
 fn was_assoc_success() -> bool {
     unsafe { core::mem::replace(&mut ASSOC_SUCCESS, false) }
+}
+
+fn is_te_running() -> bool {
+    unsafe { core::ptr::read_volatile(&raw const TE_RUNNING) }
 }
 
 /// Translate a kernel-virtual address to physical via the active PML4.
@@ -1042,6 +1052,14 @@ impl IwlDevice {
     /// buffer descriptors, so it relies on the 256-deep ring being enough for
     /// one short scan.
     pub fn drain_rx(&mut self, from: usize, budget_ms: u32) {
+        self.drain_rx_ex(from, budget_ms, false);
+    }
+
+    /// As `drain_rx`, but when `stop_on_te_running` is set it returns the instant
+    /// a TIME_EVENT START notif latches `TE_RUNNING` — so the caller can transmit
+    /// while the protected on-channel window is still fresh instead of burning the
+    /// whole budget (which let the window expire before the auth TX: off-channel).
+    pub fn drain_rx_ex(&mut self, from: usize, budget_ms: u32, stop_on_te_running: bool) {
         let read_stts = || (unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) } & 0xFFFF) as usize;
         // Start from `from` (RX count before the SCAN was sent) so we don't
         // miss the SCAN_COMPLETE / beacons that landed while send_cmd was still
@@ -1160,6 +1178,29 @@ impl IwlDevice {
                             }
                         }
                         0xC0 => phy += 1, // RX PHY info — radio received a frame
+                        0x2A => {
+                            // TIME_EVENT_NOTIFICATION (iwm_time_event_notif): data
+                            // dwords [0]timestamp [1]session_id [2]unique_id
+                            // [3]id_and_color [4]action [5]status. pkt->data is at
+                            // off+8. The session is on-channel once action has
+                            // HOST_EVENT_START(BIT0) and status==1 (iwl_mvm_te_handle_
+                            // notif → te_data->running). NOTE: the *command* is 0x29;
+                            // this async *notification* is the distinct 0x2A opcode.
+                            let uid = rd32(off + 8 + 8);
+                            let action = rd32(off + 8 + 16);
+                            let status = rd32(off + 8 + 20);
+                            let started = (action & 0x1) != 0 && status == 1;
+                            // START latches running true; END (action bit1) clears it
+                            // so is_te_running() reflects the LIVE session state.
+                            if started { unsafe { TE_RUNNING = true; } }
+                            else if (action & 0x2) != 0 { unsafe { TE_RUNNING = false; } }
+                            other += 1;
+                            println!("[iwlwifi] TIME_EVENT_NOTIF uid=0x{:08X} action=0x{:08X} status=0x{:08X} -> {}",
+                                uid, action, status,
+                                if started { "SESSION RUNNING (on-channel)" }
+                                else if (action & 0x2) != 0 { "session END" }
+                                else { "(other)" });
+                        }
                         _ => {
                             other += 1;
                             if other <= 12 {
@@ -1170,6 +1211,12 @@ impl IwlDevice {
                     off += (total + 0x3F) & !0x3F; // next packet (64-byte aligned)
                 }
                 last = (last + 1) & 0xFFFF;
+            }
+            // Early-out: the protected window is live — return NOW so the caller
+            // transmits before the session expires.
+            if stop_on_te_running && is_te_running() {
+                println!("[iwlwifi] drain_rx: TE session running — early exit ({} beacon(s) seen)", frames);
+                return;
             }
             for _ in 0..5000 { for _ in 0..100 { core::hint::spin_loop(); } } // ~5 ms
         }
@@ -1488,16 +1535,21 @@ impl IwlDevice {
         put32(&mut cmd, 16, bi / 2); // max_delay = bi/2
         // depends_on @20 = 0
         put32(&mut cmd, 24, 1); // interval = 1 (iwm sets this even though one-shot)
-        // duration: iwm uses 2*bi (~205ms). We widen to ~1 s so the auth/assoc
-        // frames + their responses all land inside the on-channel window even
-        // with our slower host-command timing.
-        let duration = 1024u32;
+        // duration: iwm uses 2*bi (~205ms). Our host-command path is much slower
+        // (each frame build + drain takes hundreds of ms), and a ~1 s window was
+        // empirically dead by the time the auth frame TXed (at-TX running=false →
+        // off-channel). Widen to ~4 s (4096 TU) so auth+assoc both land inside.
+        let duration = 4096u32;
         put32(&mut cmd, 28, duration);
         cmd[32] = 1; // repeat
         cmd[33] = 0; // max_frags = IWM_TE_V2_FRAG_NONE
         // policy @34 = HOST_EVENT_START | HOST_EVENT_END | START_IMMEDIATELY
         put16(&mut cmd, 34, (1 << 0) | (1 << 1) | (1 << 11));
         println!("[iwlwifi] TIME_EVENT_CMD action=ADD id=AGGRESSIVE_ASSOC dur={} TU (36B)", duration);
+        // Reset the running flag and remember where the RX ring stands so the
+        // post-send drain only inspects notifications produced by THIS event.
+        unsafe { TE_RUNNING = false; }
+        let from = self.rx_count();
         let responded = self.send_cmd(0x29, &cmd);
         // TIME_EVENT (0x29) returns TWO 0x29 packets: the immediate
         // iwm_time_event_resp {status, id, unique_id, id_and_color} AND — because
@@ -1510,11 +1562,21 @@ impl IwlDevice {
         // response as success — the air-time reservation is best-effort anyway.
         let (resp_status, resp_uid) = unsafe { (LAST_RESP[2], LAST_RESP[4]) };
         let notif_status = unsafe { LAST_RESP[7] };
-        let ok = responded; // got a 0x29 packet back ⇒ event accepted
         println!("[iwlwifi] TIME_EVENT resp.status=0x{:08X} uid=0x{:08X} notif.status=0x{:08X} -> {}",
             resp_status, resp_uid, notif_status,
-            if ok { "scheduled (best-effort)" } else { "NO RESPONSE" });
-        ok
+            if responded { "accepted" } else { "NO RESPONSE" });
+        // The accept (resp.status==0) only means the event was QUEUED. The MAC is
+        // not on-channel until the async HOST_EVENT_START notification fires. Drain
+        // the RX ring (start-immediately should make it land within ~tens of ms;
+        // budget generously) until the 0x29 handler latches TE_RUNNING. TXing auth
+        // before this is the off-channel (err_id 0x90A) bug we are fixing.
+        if responded && !is_te_running() {
+            self.drain_rx_ex(from, 1000, true); // early-exit the instant START latches
+        }
+        let running = is_te_running();
+        println!("[iwlwifi] TIME_EVENT session {} on-channel",
+            if running { "CONFIRMED RUNNING —" } else { "NOT confirmed — auth may go off-channel;" });
+        running
     }
 
     /// Enable the data/management TX queue (queue 1, TX FIFO BE) for the station.
@@ -1757,7 +1819,22 @@ impl IwlDevice {
         let q0_rd = self.csr.read_prph(scd::queue_rdptr(0));
         let q1_rd = self.csr.read_prph(scd::queue_rdptr(DATA_QUEUE as u32));
         let trans_tbl = self.csr.mem_read32(scd_base + 0x7E0);
+        // Assumption probes (2026-06-25) — read the scheduler-gating state at the
+        // ACTUAL moment of TX, not at tx_init:
+        //   GP_CTRL: must still have AUTO_ACTIVE_MODE(bit18) for wrptr>rdptr to
+        //     auto-trigger scheduling; ENABLE_31_QUEUES(bit0) for q1 to exist.
+        //   TXFACT: FIFO/queue activation mask — bit for FIFO-BE(1)/q1 must be set.
+        //   CHAIN/AGGR: q1 must be in QUEUECHAIN_SEL and out of AGGR_SEL.
+        let gp_ctrl_tx = self.csr.read_prph(scd::GP_CTRL);
+        let txfact_tx = self.csr.read_prph(scd::TXFACT);
+        let chain_tx = self.csr.read_prph(scd::QUEUECHAIN_SEL);
+        let aggr_tx = self.csr.read_prph(scd::AGGR_SEL);
+        let dram_base_tx = self.csr.read_prph(scd::DRAM_BASE_ADDR);
         self.release_nic_access();
+        // bc-table alignment: DRAM_BASE = bc_phys>>10 drops the low 10 bits, so the
+        // table MUST be 1024-byte aligned or the SCD reads bc from a shifted addr.
+        let bc_phys = phys_of(unsafe { &raw const TX_BC_TBL } as u64).unwrap_or(0);
+        let bc_q1_readback = unsafe { core::ptr::read_volatile(&raw const TX_BC_TBL.0[320 + idx]) };
         super::wifidbg!("[iwlwifi] TX frame on q{}: {} bytes (hdr {} body {}), TBs {}/{}/{}",
             DATA_QUEUE, totlen, hdrlen, bodylen, IWL_FIRST_TB_SIZE, tb1_len, bodylen);
         println!("[iwlwifi]   TX diag: SCD_rdptr {}->{} SCD_wrptr={} (consumed={}) q_stts=0x{:08X} ACTIVE=0x{:08X} EN_CTRL=0x{:08X} responded={} TBs {}/{}/{}",
@@ -1767,6 +1844,15 @@ impl IwlDevice {
             fh_tssr, fh_int, scd_txstts, scd_ctx0, scd_ctx1);
         println!("[iwlwifi]   q0-vs-q1: txstts q0=0x{:08X} q1=0x{:08X} | q_stts q0=0x{:08X} q1=0x{:08X} | rdptr q0={} q1={} | trans_tbl@7E0=0x{:08X} (q0=0x{:04X} q1=0x{:04X})",
             q0_txstts, scd_txstts, q0_stts, q_stts, q0_rd, q1_rd, trans_tbl, trans_tbl & 0xFFFF, trans_tbl >> 16);
+        println!("[iwlwifi]   sched-gate @TX: GP_CTRL=0x{:08X} (auto_active={} en31q={}) TXFACT=0x{:08X} (fifo1={}) CHAIN=0x{:08X} (q1={}) AGGR=0x{:08X} (q1={})",
+            gp_ctrl_tx,
+            (gp_ctrl_tx >> 18) & 1, gp_ctrl_tx & 1,
+            txfact_tx, (txfact_tx >> 1) & 1,
+            chain_tx, (chain_tx >> 1) & 1,
+            aggr_tx, (aggr_tx >> 1) & 1);
+        println!("[iwlwifi]   bc-tbl @TX: phys=0x{:08X} aligned1024={} DRAM_BASE=0x{:08X} (=phys>>10? {}) bc[q1,idx{}]=0x{:04X}",
+            bc_phys as u32, (bc_phys & 0x3FF == 0) as u8, dram_base_tx,
+            (dram_base_tx == (bc_phys >> 10) as u32) as u8, idx, bc_q1_readback);
         if e[0] != 0 {
             // iwm_error_event_table: [1]error_id [7]data1 [20]log_pc [23]hcmd
             // [29]last_cmd_id [16]major [17]minor. hcmd/last_cmd_id tell us WHICH
@@ -1899,6 +1985,11 @@ impl IwlDevice {
                 self.error_table_ptr, pre_valid, pre_id,
                 if pre_valid != 0 { "0x1d FAULTED" } else { "clean — TX is next" });
         }
+        // Probe the protected-session state at the EXACT moment of TX: if this
+        // reads false, the time-event window has already ended (the session was
+        // confirmed RUNNING earlier but expired during the pre-TX work) and the
+        // MAC is off-channel again — which would explain consumed=0 with no 0x90A.
+        println!("[iwlwifi]   at-TX time-event session running = {}", is_te_running());
         let from = self.rx_count();
         // 2026-06-24: the queue-0 TX_CMD pivot (tx_mgmt_cmdq) reached the fw
         // (consumed=1, responded=1) but the fw rejected it as err_id=0x38
@@ -2058,6 +2149,11 @@ impl IwlDevice {
             println!("[wifi] connect: hidden SSID (#{}) not supported yet", idx);
             return false;
         }
+        // Reset all connect-event mailboxes (auth/assoc/EAPOL/TE_RUNNING) up front
+        // so a retry never sees stale state. TE_RUNNING is re-latched later by the
+        // time_event() 0x29→0x2A notif, and we deliberately do NOT clear it again
+        // afterward — send_auth reports it at TX time.
+        clear_connect_events();
         let ssid = &net.ssid[..net.ssid_len as usize];
         let ssid_str = core::str::from_utf8(ssid).unwrap_or("<non-utf8>");
         println!("[wifi] connect: \"{}\"  BSSID {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}  ch{}",
@@ -2117,12 +2213,22 @@ impl IwlDevice {
         // Phase A step 4: reserve a protected on-channel window, then TX the auth
         // frame RIGHT AWAY so it goes out while the radio is still on ch{}.
         println!("[wifi] reserving air-time (time event)...");
-        if !self.time_event() {
-            println!("[wifi] connect: TIME_EVENT got no response — continuing without protection");
+        // Gate the auth TX on the protected session actually being RUNNING: the
+        // MAC is only guaranteed on-channel after the HOST_EVENT_START notif. If
+        // it never confirms we still proceed (to capture the 0x90A diagnostic),
+        // but flag it so the off-channel case is unambiguous in the log.
+        let on_channel = self.time_event();
+        if !on_channel {
+            println!("[wifi] connect: WARNING — time-event session not confirmed on-channel; auth may trip the 0x90A off-channel assert");
         }
-        println!("[wifi] *** Phase A complete: MAC+binding+station+queue+air-time up on ch{}. ***", net.channel);
+        println!("[wifi] *** Phase A complete: MAC+binding+station+queue+air-time up on ch{} (on-channel={}). ***",
+            net.channel, on_channel);
 
-        clear_connect_events();
+        // NB: do NOT clear_connect_events() here — it would wipe TE_RUNNING, and we
+        // want send_auth to be able to report whether the protected session is
+        // still live AT THE MOMENT it transmits (the session may END during the
+        // pre-TX work). The auth/assoc/EAPOL mailboxes were already reset at the
+        // start of connect(), so there is nothing stale to clear at this point.
 
         // Phase B: open-system auth, then association, then WPA2 4-way handshake.
         if !self.send_auth(&net.bssid) {
