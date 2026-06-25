@@ -1068,6 +1068,7 @@ impl IwlDevice {
         let mut frames = 0u32;
         let mut phy = 0u32;
         let mut other = 0u32;
+        let mut serviced = from;
         let iters = (budget_ms / 5).max(1);
         for _ in 0..iters {
             let cur = read_stts();
@@ -1230,6 +1231,18 @@ impl IwlDevice {
                 }
                 last = (last + 1) & 0xFFFF;
             }
+            // RX descriptor recycling: advance the NIC's free-buffer write pointer
+            // so it always has ~248 fresh descriptors to write into. The WPTR is
+            // set ONCE at init and never moved, so the 256-entry ring fills over a
+            // boot (scan + drains) and the NIC then STOPS delivering ALL RX —
+            // beacons, TX_RESP, auth response (the post-TX RX-silence wall). WPTR
+            // must trail the consumed index by 8 and be 8-aligned.
+            if last != serviced {
+                let cur_idx = last % RX_RING_SIZE;
+                let wptr = ((cur_idx + RX_RING_SIZE - 8) % RX_RING_SIZE) & 0xF8;
+                self.csr.write32(super::iwlwifi_csr::fh_rx::RSCSR_CHNL0_WPTR, wptr as u32);
+                serviced = last;
+            }
             // Early-out: the protected window is live — return NOW so the caller
             // transmits before the session expires.
             if stop_on_te_running && is_te_running() {
@@ -1290,6 +1303,26 @@ impl IwlDevice {
     /// later drain can scan every notification that landed since.
     fn rx_count(&self) -> usize {
         (unsafe { core::ptr::read_volatile(&raw const RB_STTS.0[0]) } & 0xFFFF) as usize
+    }
+
+    /// Quiet RX-liveness probe: spin `ms` (recycling RX descriptors) and report
+    /// how many RX buffers the NIC filled. Used to pinpoint WHICH connect step
+    /// kills RX (beacons stop) — without the per-frame beacon spam of drain_rx.
+    fn rx_probe(&mut self, label: &str) {
+        let from = self.rx_count();
+        let mut last = from;
+        for _ in 0..60 { // ~300 ms
+            let cur = self.rx_count();
+            if cur != last {
+                let wptr = (((cur % RX_RING_SIZE) + RX_RING_SIZE - 8) % RX_RING_SIZE) & 0xF8;
+                self.csr.write32(super::iwlwifi_csr::fh_rx::RSCSR_CHNL0_WPTR, wptr as u32);
+                last = cur;
+            }
+            for _ in 0..5000 { for _ in 0..100 { core::hint::spin_loop(); } } // ~5 ms
+        }
+        let delta = self.rx_count().wrapping_sub(from) & 0xFFFF;
+        println!("[rxprobe] after {}: +{} RX bufs/300ms -> {}",
+            label, delta, if delta > 0 { "RX ALIVE" } else { "RX DEAD" });
     }
 
     /// Drain the RX ring during INIT-ucode calibration and capture each
@@ -1515,16 +1548,20 @@ impl IwlDevice {
     pub fn time_quota_cmd(&mut self) -> bool {
         let mut cmd = [0u8; 48];
         let put32 = |c: &mut [u8], o: usize, v: u32| c[o..o + 4].copy_from_slice(&v.to_le_bytes());
-        // quotas[0]: our binding (id_and_color 0) gets the full quota.
-        put32(&mut cmd, 0, 0);    // id_and_color = binding 0
-        put32(&mut cmd, 4, 128);  // quota = IWM_MAX_QUOTA (all air-time)
-        put32(&mut cmd, 8, 0);    // max_duration = 0 (no cap)
+        // quotas[0]: our binding (id_and_color 0). 2026-06-25: quota=128 (100% of
+        // IWM_MAX_QUOTA) lets the frame TX but starves the firmware of air-time to
+        // RX (0 beacons, no TX_RESP). Use ~half so TX has slots AND the fw keeps
+        // listening for the AP's beacons + auth response.
+        const QUOTA_PARTIAL: u32 = 64; // 50% of IWM_MAX_QUOTA(128)
+        put32(&mut cmd, 0, 0);             // id_and_color = binding 0
+        put32(&mut cmd, 4, QUOTA_PARTIAL); // quota
+        put32(&mut cmd, 8, QUOTA_PARTIAL); // max_duration (TU the binding may hold)
         // quotas[1..4]: unused bindings = IWM_FW_CTXT_INVALID, quota 0.
         for i in 1..4 {
             let o = i * 12;
             put32(&mut cmd, o, 0xFFFF_FFFF);
         }
-        println!("[iwlwifi] TIME_QUOTA_CMD binding0 quota=128/128 (48B)");
+        println!("[iwlwifi] TIME_QUOTA_CMD binding0 quota={}/128 (48B)", QUOTA_PARTIAL);
         self.send_cmd(0x2c, &cmd)
     }
 
@@ -1606,11 +1643,11 @@ impl IwlDevice {
         put32(&mut cmd, 16, bi / 2); // max_delay = bi/2
         // depends_on @20 = 0
         put32(&mut cmd, 24, 1); // interval = 1 (iwm sets this even though one-shot)
-        // duration: iwm uses 2*bi (~205ms). Our host-command path is much slower
-        // (each frame build + drain takes hundreds of ms), and a ~1 s window was
-        // empirically dead by the time the auth frame TXed (at-TX running=false →
-        // off-channel). Widen to ~4 s (4096 TU) so auth+assoc both land inside.
-        let duration = 4096u32;
+        // duration: iwm uses 2*bi (~205ms). Our host path is far slower and the
+        // 4x auth-retransmit loop (~7-8 s) was overrunning a 4 s window → the
+        // post-TX drain ran OFF-CHANNEL (no TX_RESP, no beacons, no response).
+        // Widen to ~8.4 s (8192 TU) so the entire auth loop stays on-channel.
+        let duration = 8192u32;
         put32(&mut cmd, 28, duration);
         cmd[32] = 1; // repeat
         cmd[33] = 0; // max_frags = IWM_TE_V2_FRAG_NONE
@@ -1746,13 +1783,22 @@ impl IwlDevice {
             let put16 = |b: &mut [u8], o: usize, v: u16| b[o..o+2].copy_from_slice(&v.to_le_bytes());
             let put32 = |b: &mut [u8], o: usize, v: u32| b[o..o+4].copy_from_slice(&v.to_le_bytes());
             put16(b, tx + 0, totlen as u16); // len = full frame length
-            // tx_flags @tx+4: ACK | BT_DIS | SEQ_CTL (fw owns the seqno)
-            put32(b, tx + 4, (1 << 3) | (1 << 12) | (1 << 13));
+            // tx_flags @tx+4: BT_DIS | SEQ_CTL. 2026-06-25 EXPERIMENT: ACK bit
+            // (1<<3) CLEARED. With ACK set, after transmitting the MAC waits for
+            // the AP's link-layer ACK; with none coming it retries/stalls and
+            // suppresses RX, and the TX never completes (no TX_RESP, RX dead).
+            // No-ACK makes the MAC transmit once and return to RX immediately.
+            put32(b, tx + 4, (1 << 12) | (1 << 13));
             // rate_n_flags @tx+12: 1 Mbps CCK on antenna A (mgmt frames go slow+robust)
             put32(b, tx + 12, 10 | (1 << 9) | (1 << 14));
             b[tx + 16] = 0; // sta_id = IWM_STATION_ID (the AP)
             // sec_ctl @tx+17 = 0 (no encryption on auth/assoc)
-            put32(b, tx + 40, 0xFFFF_FFFF); // life_time = INFINITE @ tx+40
+            // life_time @tx+40: SHORT finite. While an un-ACKed frame is retrying,
+            // the MAC suppresses RX; a ~2 s lifetime kept RX dead for the whole
+            // 1 s drain and the TX_RESP fired after we stopped looking. Use ~260 ms
+            // so the frame completes (success or expire) WELL within the drain —
+            // RX then recovers and the TX_RESP (ACK status) is visible.
+            put32(b, tx + 40, 0x0004_0000);
             // scratch dram ptr @tx+44/48: point at the tx_cmd.scratch area (tx+8)
             let scratch_phys = frame_phys + (TX_CMD_HDR + 8) as u64;
             put32(b, tx + 44, (scratch_phys & 0xFFFF_FFFF) as u32);
@@ -1868,24 +1914,12 @@ impl IwlDevice {
         let chain_tx = self.csr.read_prph(scd::QUEUECHAIN_SEL);
         let aggr_tx = self.csr.read_prph(scd::AGGR_SEL);
         let dram_base_tx = self.csr.read_prph(scd::DRAM_BASE_ADDR);
-        // DECISIVE LOCALIZATION (2026-06-25): peek the firmware TX FIFO for FIFO-BE
-        // (1) — where the SCD should deposit q1's frame. Select the FIFO via
-        // TXF_LARC_NUM, then read item-count + rd/wr/fence pointers. If item_cnt>0
-        // the SCD DID schedule the frame into the FIFO and the MAC won't put it on
-        // air (firmware/MAC/air issue); if item_cnt==0 the SCD never scheduled it
-        // (scheduler issue). Compare against FIFO-7 (command) which works.
-        const TXF_LARC_NUM: u32 = 0xa0043c;
-        const TXF_FIFO_ITEM_CNT: u32 = 0xa00438;
-        const TXF_WR_PTR: u32 = 0xa00414;
-        const TXF_RD_PTR: u32 = 0xa00410;
-        const TXF_FENCE_PTR: u32 = 0xa00418;
-        self.csr.write_prph(TXF_LARC_NUM, 1); // select FIFO BE
-        let txf_be_cnt = self.csr.read_prph(TXF_FIFO_ITEM_CNT);
-        let txf_be_wr = self.csr.read_prph(TXF_WR_PTR);
-        let txf_be_rd = self.csr.read_prph(TXF_RD_PTR);
-        let txf_be_fence = self.csr.read_prph(TXF_FENCE_PTR);
-        self.csr.write_prph(TXF_LARC_NUM, 7); // select FIFO CMD (control)
-        let txf_cmd_cnt = self.csr.read_prph(TXF_FIFO_ITEM_CNT);
+        // 2026-06-25: TXF peek REMOVED. The rxprobe instrumentation showed RX is
+        // ALIVE through every connect step and only dies at the auth TX — and this
+        // TXF_LARC_NUM peek (a debug mechanism for HALTED devices) writes the FH on
+        // a LIVE NIC, which can lock the FH that drives BOTH TX and RX DMA. Testing
+        // whether removing it keeps RX alive after TX.
+        let (txf_be_cnt, txf_be_wr, txf_be_rd, txf_be_fence, txf_cmd_cnt) = (0u32, 0u32, 0u32, 0u32, 0u32);
         self.release_nic_access();
         // bc-table alignment: DRAM_BASE = bc_phys>>10 drops the low 10 bits, so the
         // table MUST be 1024-byte aligned or the SCD reads bc from a shifted addr.
@@ -2057,8 +2091,9 @@ impl IwlDevice {
         for attempt in 1..=4 {
             let from = self.rx_count();
             if !self.tx_mgmt(&frame, 24) { return false; }
-            println!("[wifi] auth attempt {} sent — waiting for AP response", attempt);
-            self.drain_rx(from, 1500);
+            println!("[wifi] auth attempt {} sent (te_running={}) — waiting for AP response",
+                attempt, is_te_running());
+            self.drain_rx(from, 1000);
             // Peek (don't consume) — connect() reads AUTH_SUCCESS after this.
             if unsafe { core::ptr::read_volatile(&raw const AUTH_SUCCESS) } {
                 println!("[wifi] AP answered on auth attempt {}", attempt);
@@ -2240,34 +2275,45 @@ impl IwlDevice {
             c.ssid = net.ssid;
         }
 
+        self.rx_probe("baseline (pre-connect)");
         // Step 1: retune PHY context 0 from the scan default to the AP channel.
         println!("[wifi] retuning radio to ch{}...", net.channel);
         if !self.phy_context(2 /* MODIFY */, net.channel) {
             println!("[wifi] connect: PHY-context retune FAILED");
             return false;
         }
+        self.rx_probe("PHY_CONTEXT");
         // Phase A step 1: add the station MAC context for the AP.
         println!("[wifi] adding MAC context...");
         if !self.mac_context(1 /* ADD */, &net.bssid) {
             println!("[wifi] connect: MAC_CONTEXT FAILED");
             return false;
         }
+        self.rx_probe("MAC_CONTEXT");
         // Phase A step 2: bind the MAC to PHY context 0.
         println!("[wifi] binding MAC to radio...");
         if !self.binding_context(1 /* ADD */) {
             println!("[wifi] connect: BINDING FAILED");
             return false;
         }
-        // NB: TIME_QUOTA_CMD is sent LATER, AFTER the time event confirms — sending
-        // it here (before the time event) deterministically blocks the time event
-        // from scheduling (NO RESPONSE), leaving the radio off-channel. Order:
-        // time-event (park on-channel) → quota (airtime) → auth TX.
+        self.rx_probe("BINDING");
+        // Allocate airtime quota to the binding. This grants the MAC air-time to
+        // transmit (without it the auth frame LIFE_EXPIREs). 2026-06-25: quota=128
+        // (100%) makes the frame TX but KILLS RX (no air-time left for the fw to
+        // listen — 0 beacons, no TX_RESP). Use a PARTIAL quota so TX works AND RX
+        // survives. No time event needed — quota alone grants the TX air-time.
+        println!("[wifi] allocating airtime quota (partial, RX-safe)...");
+        if !self.time_quota_cmd() {
+            println!("[wifi] connect: TIME_QUOTA got no response — continuing");
+        }
+        self.rx_probe("TIME_QUOTA");
         // Phase A step 3: register the AP as the real station (sta_id 0).
         println!("[wifi] adding AP as station...");
         if !self.add_station(&net.bssid) {
             println!("[wifi] connect: ADD_STA FAILED");
             return false;
         }
+        self.rx_probe("ADD_STA");
         // NOTE: LQ_CMD (rate table) is intentionally NOT sent here. The 7260
         // firmware rejects it pre-association (err_id=0x207A "command rejected")
         // and the fault poisons the rest of the connect sequence. lq_cmd() is
@@ -2283,6 +2329,7 @@ impl IwlDevice {
             println!("[wifi] connect: data TX queue enable FAILED");
             return false;
         }
+        self.rx_probe("ENABLE_QUEUE");
         // Phase A step 4: reserve a protected on-channel window, then TX the auth
         // frame RIGHT AWAY so it goes out while the radio is still on ch{}.
         println!("[wifi] reserving air-time (time event)...");
@@ -2290,32 +2337,13 @@ impl IwlDevice {
         // MAC is only guaranteed on-channel after the HOST_EVENT_START notif. If
         // it never confirms we still proceed (to capture the 0x90A diagnostic),
         // but flag it so the off-channel case is unambiguous in the log.
-        // Retry the time event until the session confirms RUNNING (radio parked
-        // on-channel). It has been flaky boot-to-boot — and on-channel is now the
-        // ONLY thing between a transmitted auth frame (quota works → consumed=1)
-        // and the AP actually hearing it. Up to 3 attempts.
-        let mut on_channel = false;
-        for attempt in 1..=3 {
-            on_channel = self.time_event();
-            if on_channel {
-                println!("[wifi] time-event confirmed on-channel (attempt {})", attempt);
-                break;
-            }
-            println!("[wifi] time-event attempt {} not confirmed — retrying", attempt);
-        }
-        if !on_channel {
-            println!("[wifi] connect: WARNING — time-event never confirmed on-channel after 3 tries; auth will likely go off-channel (no AP response)");
-        }
-        // Allocate airtime quota NOW — after the time event is live — so the MAC
-        // has both an on-channel window AND air-time when it transmits. Sending
-        // quota BEFORE the time event blocks the event from scheduling (proven
-        // 2026-06-25: NO RESPONSE ×3, off-channel); after it, the window persists.
-        println!("[wifi] allocating airtime quota...");
-        if !self.time_quota_cmd() {
-            println!("[wifi] connect: TIME_QUOTA got no response — continuing");
-        }
-        println!("[wifi] *** Phase A complete: MAC+binding+station+queue+air-time up on ch{} (on-channel={}). ***",
-            net.channel, on_channel);
+        // 2026-06-25: TIME EVENT REMOVED. The 8 s AGGRESSIVE_ASSOC protected
+        // session put the firmware into a host-blocking mode (quota NO RESPONSE,
+        // no TX_RESP, no beacons). Skipping it restores RX fully (beacons flow),
+        // and the auth frame now reports a real TX_RESP. On-channel is held by
+        // PHY-context(ch9) + binding; airtime by the quota sent above (quota-first).
+        let on_channel = false;
+        println!("[wifi] *** Phase A complete: MAC+binding+station+queue (no time event); on-channel via binding. ***");
 
         // NB: do NOT clear_connect_events() here — it would wipe TE_RUNNING, and we
         // want send_auth to be able to report whether the protected session is
