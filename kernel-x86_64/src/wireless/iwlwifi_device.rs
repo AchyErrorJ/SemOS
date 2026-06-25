@@ -1201,6 +1201,24 @@ impl IwlDevice {
                                 else if (action & 0x2) != 0 { "session END" }
                                 else { "(other)" });
                         }
+                        0x1C => {
+                            // TX_RESP (REPLY_TX) — the firmware's report on OUR TX.
+                            // The decisive question: did the AP ACK our auth frame?
+                            // frame_count@0, failure_rts@2, failure_frame@3,
+                            // initial_rate@4; the per-frame status (iwm_agg_tx_status)
+                            // sits after the ~36-byte fixed header — low byte == 0x01
+                            // (TX_STATUS_SUCCESS) means the AP acknowledged us.
+                            let fc = rb(off + 8);
+                            let fail_rts = rb(off + 8 + 2);
+                            let fail_frame = rb(off + 8 + 3);
+                            let init_rate = rd32(off + 8 + 4);
+                            let status = rd32(off + 8 + 36) & 0xFFFF;
+                            other += 1;
+                            println!("[iwlwifi] TX_RESP: frame_count={} fail_rts={} fail_frame={} init_rate=0x{:08X} status=0x{:04X} ({}) [also raw@32/40=0x{:08X}/0x{:08X}]",
+                                fc, fail_rts, fail_frame, init_rate, status,
+                                if status & 0xFF == 0x01 { "ACKED by AP" } else { "NO ACK (AP did not hear us)" },
+                                rd32(off + 8 + 32), rd32(off + 8 + 40));
+                        }
                         _ => {
                             other += 1;
                             if other <= 12 {
@@ -2033,16 +2051,20 @@ impl IwlDevice {
         // confirmed RUNNING earlier but expired during the pre-TX work) and the
         // MAC is off-channel again — which would explain consumed=0 with no 0x90A.
         println!("[iwlwifi]   at-TX time-event session running = {}", is_te_running());
-        let from = self.rx_count();
-        // 2026-06-24: the queue-0 TX_CMD pivot (tx_mgmt_cmdq) reached the fw
-        // (consumed=1, responded=1) but the fw rejected it as err_id=0x38
-        // BAD_COMMAND — TX_CMD is not valid on the command FIFO. So TX must use a
-        // real TX queue: stay on the data-queue-1 path. (tx_mgmt_cmdq retained as
-        // the diagnostic that proved this.) Remaining work is queue-1 activation,
-        // now with the SCD register addresses corrected (GP_CTRL/DRAM_BASE).
-        if !self.tx_mgmt(&frame, 24) { return false; }
-        // The AP should answer with an auth response (seq 2). Watch the RX ring.
-        self.drain_rx(from, 2000);
+        // The TX path works (consumed=1, on-channel), but a single 1 Mbps auth
+        // frame can be missed by the AP. Retransmit up to 4 times, draining for the
+        // seq-2 auth response after each; stop as soon as the AP answers.
+        for attempt in 1..=4 {
+            let from = self.rx_count();
+            if !self.tx_mgmt(&frame, 24) { return false; }
+            println!("[wifi] auth attempt {} sent — waiting for AP response", attempt);
+            self.drain_rx(from, 1500);
+            // Peek (don't consume) — connect() reads AUTH_SUCCESS after this.
+            if unsafe { core::ptr::read_volatile(&raw const AUTH_SUCCESS) } {
+                println!("[wifi] AP answered on auth attempt {}", attempt);
+                return true;
+            }
+        }
         true
     }
 
@@ -2236,13 +2258,10 @@ impl IwlDevice {
             println!("[wifi] connect: BINDING FAILED");
             return false;
         }
-        // Allocate airtime quota to the binding. Without it the firmware MAC
-        // scheduler gives the binding zero air-time and never transmits, even with
-        // the frame staged in the on-channel TX FIFO (the FIFO-BE/rd=0 wall).
-        println!("[wifi] allocating airtime quota...");
-        if !self.time_quota_cmd() {
-            println!("[wifi] connect: TIME_QUOTA got no response — continuing");
-        }
+        // NB: TIME_QUOTA_CMD is sent LATER, AFTER the time event confirms — sending
+        // it here (before the time event) deterministically blocks the time event
+        // from scheduling (NO RESPONSE), leaving the radio off-channel. Order:
+        // time-event (park on-channel) → quota (airtime) → auth TX.
         // Phase A step 3: register the AP as the real station (sta_id 0).
         println!("[wifi] adding AP as station...");
         if !self.add_station(&net.bssid) {
@@ -2271,9 +2290,29 @@ impl IwlDevice {
         // MAC is only guaranteed on-channel after the HOST_EVENT_START notif. If
         // it never confirms we still proceed (to capture the 0x90A diagnostic),
         // but flag it so the off-channel case is unambiguous in the log.
-        let on_channel = self.time_event();
+        // Retry the time event until the session confirms RUNNING (radio parked
+        // on-channel). It has been flaky boot-to-boot — and on-channel is now the
+        // ONLY thing between a transmitted auth frame (quota works → consumed=1)
+        // and the AP actually hearing it. Up to 3 attempts.
+        let mut on_channel = false;
+        for attempt in 1..=3 {
+            on_channel = self.time_event();
+            if on_channel {
+                println!("[wifi] time-event confirmed on-channel (attempt {})", attempt);
+                break;
+            }
+            println!("[wifi] time-event attempt {} not confirmed — retrying", attempt);
+        }
         if !on_channel {
-            println!("[wifi] connect: WARNING — time-event session not confirmed on-channel; auth may trip the 0x90A off-channel assert");
+            println!("[wifi] connect: WARNING — time-event never confirmed on-channel after 3 tries; auth will likely go off-channel (no AP response)");
+        }
+        // Allocate airtime quota NOW — after the time event is live — so the MAC
+        // has both an on-channel window AND air-time when it transmits. Sending
+        // quota BEFORE the time event blocks the event from scheduling (proven
+        // 2026-06-25: NO RESPONSE ×3, off-channel); after it, the window persists.
+        println!("[wifi] allocating airtime quota...");
+        if !self.time_quota_cmd() {
+            println!("[wifi] connect: TIME_QUOTA got no response — continuing");
         }
         println!("[wifi] *** Phase A complete: MAC+binding+station+queue+air-time up on ch{} (on-channel={}). ***",
             net.channel, on_channel);
