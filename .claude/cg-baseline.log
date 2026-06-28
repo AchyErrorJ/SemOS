@@ -1,0 +1,90 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-rustc-src\compiler\rustc_codegen_gcc\Cargo.toml
+workspace: F:\Software\ArmKernel3\user-programs\semos-rustc\Cargo.toml
+    Updating crates.io index
+       Fetch [=====>                           ] 0 comple…       Fetch [========>                        ] 1 comple…       Fetch [========>                        ] 72 compl…       Fetch [========>                        ] 90 compl…       Fetch [========>                        ] 92 compl…       Fetch [===========>                     ] 93 compl…       Fetch [===========>                     ] 175 comp…       Fetch [==============>                  ] 190 comp…       Fetch [==============>                  ] 225 comp…       Fetch [=================>               ] 244 comp…       Fetch [=======================>         ] 251 comp…     Locking 16 packages to latest compatible versions
+ Downgrading cranelift-assembler-x64 v0.127.4 -> v0.122.0
+ Downgrading cranelift-assembler-x64-meta v0.127.4 -> v0.122.0
+      Adding cranelift-bforest v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-bforest)
+      Adding cranelift-bitset v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-bitset)
+ Downgrading cranelift-codegen v0.127.4 -> v0.122.0 (available: v0.132.0)
+ Downgrading cranelift-codegen-meta v0.127.4 -> v0.122.0
+      Adding cranelift-codegen-shared v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-codegen-shared)
+      Adding cranelift-control v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-control)
+      Adding cranelift-entity v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-entity)
+ Downgrading cranelift-frontend v0.127.4 -> v0.122.0 (available: v0.132.0)
+ Downgrading cranelift-isle v0.127.4 -> v0.122.0
+ Downgrading cranelift-module v0.127.4 -> v0.122.0 (available: v0.132.0)
+ Downgrading cranelift-object v0.127.4 -> v0.122.0 (available: v0.132.0)
+ Downgrading cranelift-srcgen v0.127.4 -> v0.122.0
+ Downgrading regalloc2 v0.13.5 -> v0.12.2
+ Downgrading wasmtime-internal-math v40.0.4 -> v35.0.0
+   Compiling cranelift-srcgen v0.122.0
+   Compiling cranelift-isle v0.122.0
+   Compiling cranelift-codegen-shared v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-codegen-shared)
+   Compiling libm v0.2.16
+   Compiling target-lexicon v0.13.5
+   Compiling anyhow v1.0.102
+   Compiling crc32fast v1.5.0
+   Compiling object v0.36.7
+    Checking allocator-api2 v0.2.21
+    Checking cranelift-bitset v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-bitset)
+    Checking indexmap v2.14.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\indexmap)
+    Checking log v0.4.30
+    Checking rustc-hash v2.1.2
+    Checking smallvec v1.15.1
+    Checking cranelift-control v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-control)
+    Checking memchr v2.8.1
+    Building [===>                       ] 10/57: craneli…error[E0463]: can't find crate for `std`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\rustc-hash-2.1.2\src\lib.rs:25:1
+   |
+25 | extern crate std;
+   | ^^^^^^^^^^^^^^^^^ can't find crate
+   |
+   = note: the `x86_64-unknown-none` target may not support the standard library
+   = help: consider building the standard library from source with `cargo build -Zbuild-std`
+
+error[E0463]: can't find crate for `std`
+  |
+  = note: the `x86_64-unknown-none` target may not support the standard library
+  = note: `std` is required by `cranelift_codegen_shared` because it does not declare `#![no_std]`
+  = help: consider building the standard library from source with `cargo build -Zbuild-std`
+
+error: cannot resolve a prelude import
+
+error: cannot find macro `env` in this scope
+  --> vendor-externals\cranelift-codegen-shared\src\lib.rs:10:27
+   |
+10 | pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+   |                           ^^^
+   |
+help: consider importing this macro
+   |
+ 6 + use core::env;
+   |
+
+For more information about this error, try `rustc --explain E0463`.
+error: could not compile `rustc-hash` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `cranelift-codegen-shared` (lib) due to 3 previous errors
+    Building [====>                      ] 12/57: craneli…    Building [=====>                     ] 13/57: libm(bu…error[E0463]: can't find crate for `std`
+   --> vendor-externals\indexmap\src\lib.rs:106:1
+    |
+106 | extern crate std;
+    | ^^^^^^^^^^^^^^^^^ can't find crate
+    |
+    = note: the `x86_64-unknown-none` target may not support the standard library
+    = help: consider building the standard library from source with `cargo build -Zbuild-std`
+
+    Building [=====>                     ] 14/57: libm(bu…    Building [======>                    ] 15/57: libm(bu…    Building [======>                    ] 16/57: libm(bu…    Building [=======>                   ] 17/57: libm(bu…error[E0463]: can't find crate for `std`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\memchr-2.8.1\src\lib.rs:198:1
+    |
+198 | extern crate std;
+    | ^^^^^^^^^^^^^^^^^ can't find crate
+    |
+    = note: the `x86_64-unknown-none` target may not support the standard library
+    = help: consider building the standard library from source with `cargo build -Zbuild-std`
+
+    Building [=======>                   ] 18/57: libm(bu…    Building [========>                  ] 19/57: libm(bu…error: could not compile `memchr` (lib) due to 1 previous error
+    Building [========>                  ] 20/57: libm(bu…error: could not compile `indexmap` (lib) due to 1 previous error
+    Building [========>                  ] 21/57: libm(bu…    Building [=========>                 ] 22/57: libm(bu…    Building [=========>                 ] 23/57: target-…    Building [==========>                ] 24/57: target-…    Building [==========>                ] 25/57: target-…    Building [===========>               ] 26/57: target-…

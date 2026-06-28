@@ -19,6 +19,19 @@
 //! `init_and_enumerate()` which does the full bring-up and reports
 //! a single struct describing what it found.
 
+/// Verbose USB boot-enumeration logging. The routine xHCI/EHCI/hub bring-up
+/// works, so its per-step log just pushes the shell off-screen. Set this back
+/// to `true` to restore the full enumeration trace for debugging. The
+/// `[DEMO …] PASS` summary lines print regardless of this flag.
+pub const USB_VERBOSE: bool = false;
+
+/// `println!` that only fires when `USB_VERBOSE`. Used for the xHCI/EHCI/hub
+/// enumeration trace so it can be silenced/restored with one flag.
+macro_rules! usbdbg {
+    ($($arg:tt)*) => {{ if $crate::usb::USB_VERBOSE { $crate::println!($($arg)*); } }};
+}
+pub(crate) use usbdbg;
+
 pub mod ring;
 pub mod device;
 pub mod hid;

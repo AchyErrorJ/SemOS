@@ -24,11 +24,22 @@ use crate::serialize::{Encodable, Encoder};
 #[cfg(not(target_os = "none"))]
 const BUF_SIZE: usize = 8192;
 
+// M27 DEMO 80: SemOS uses a Vec-backed FileEncoder because semos_std lacks
+// true mmap and the rmeta path is single-crate/single-process. The Vec is
+// written to the requested path after encoding finishes.
+#[cfg(target_os = "none")]
+use semos_std::path::{Path, PathBuf};
+#[cfg(target_os = "none")]
+use crate::serialize::{Encodable, Encoder};
+
 pub mod mem_encoder;
 
 // -----------------------------------------------------------------------------
 // Encoder (FileEncoder removed — see §1.3 note below)
 // -----------------------------------------------------------------------------
+
+#[cfg(not(target_os = "none"))]
+pub type FileEncodeResult = core::result::Result<usize, (std::path::PathBuf, std::io::Error)>;
 
 pub const MAGIC_END_BYTES: &[u8] = b"rust-end-file";
 
@@ -39,40 +50,146 @@ pub const MAGIC_END_BYTES: &[u8] = b"rust-end-file";
 // stubs return Err/no-op if any method is invoked at runtime.
 // option B: target-only — host uses the REAL FileEncoder (enabled below) so it
 // can actually write rmeta/rlib to disk.
-#[cfg(target_os = "none")]
-pub struct FileEncoder;
-// Matches the upstream shape `Result<usize, (PathBuf, io::Error)>`, so
-// callers like `if let Err((path, error)) = ...` type-check on SemOS.
-#[cfg(not(target_os = "none"))]
-pub type FileEncodeResult = core::result::Result<usize, (std::path::PathBuf, std::io::Error)>;
+// M27 DEMO 80: real Vec-backed FileEncoder for SemOS. The metadata encoder
+// writes into a Vec, then the caller flushes it to the requested path.
 #[cfg(target_os = "none")]
 pub type FileEncodeResult = core::result::Result<usize, (semos_std::path::PathBuf, semos_std::io::Error)>;
+
 #[cfg(target_os = "none")]
-impl FileEncoder {
-    /// std-compat constructor. Path is ignored on SemOS — the stub
-    /// never opens a file (rmeta-to-disk dropped per M27 §1.3) but
-    /// callers in rustc_codegen_ssa expect the io::Result<Self> shape.
-    pub fn new(_path: impl AsRef<semos_std::path::Path>) -> semos_std::io::Result<Self> { Ok(Self) }
-    pub fn finish(&mut self) -> FileEncodeResult { Ok(0) }
-    pub fn position(&self) -> usize { 0 }
-    pub fn flush(&mut self) {}
-    pub fn emit_raw_bytes(&mut self, _bytes: &[u8]) {}
+pub struct FileEncoder {
+    data: Vec<u8>,
+    path: PathBuf,
+    #[cfg(debug_assertions)]
+    finished: bool,
 }
 
 #[cfg(target_os = "none")]
-impl crate::Encoder for FileEncoder {
-    fn emit_usize(&mut self, _v: usize) {}
-    fn emit_u128(&mut self, _v: u128) {}
-    fn emit_u64(&mut self, _v: u64) {}
-    fn emit_u32(&mut self, _v: u32) {}
-    fn emit_u16(&mut self, _v: u16) {}
-    fn emit_u8(&mut self, _v: u8) {}
-    fn emit_isize(&mut self, _v: isize) {}
-    fn emit_i128(&mut self, _v: i128) {}
-    fn emit_i64(&mut self, _v: i64) {}
-    fn emit_i32(&mut self, _v: i32) {}
-    fn emit_i16(&mut self, _v: i16) {}
-    fn emit_raw_bytes(&mut self, _bytes: &[u8]) {}
+impl FileEncoder {
+    pub fn new<P: AsRef<Path>>(path: P) -> semos_std::io::Result<Self> {
+        Ok(FileEncoder {
+            data: Vec::new(),
+            path: path.as_ref().to_path_buf(),
+            #[cfg(debug_assertions)]
+            finished: false,
+        })
+    }
+
+    #[inline]
+    pub fn position(&self) -> usize {
+        self.data.len()
+    }
+
+    #[inline]
+    pub fn flush(&mut self) {}
+
+    #[inline]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Patch the root-position slot at byte offset `header_len`..`header_len+8`.
+    /// Called by `rustc_metadata::encode_root_position` on SemOS.
+    pub fn patch_root_position(&mut self, header_len: usize, pos: usize) {
+        if header_len + 8 <= self.data.len() {
+            self.data[header_len..header_len + 8].copy_from_slice(&pos.to_le_bytes());
+        }
+    }
+
+    /// Write the accumulated bytes to the path given at construction.
+    pub fn write_out(&self) -> semos_std::io::Result<()> {
+        semos_std::fs::write(self.path.as_str(), &self.data)
+    }
+
+    #[inline]
+    pub fn write_with<const N: usize>(&mut self, visitor: impl FnOnce(&mut [u8; N]) -> usize) {
+        self.data.reserve(N);
+        let old_len = self.data.len();
+        // SAFETY: reserve(N) guarantees room for N more bytes.
+        let buf = unsafe {
+            let buf = self.data.as_mut_ptr().add(old_len) as *mut [u8; N];
+            *buf = [0; N];
+            &mut *buf
+        };
+        let written = visitor(buf);
+        if written > N {
+            Self::panic_invalid_write::<N>(written);
+        }
+        unsafe { self.data.set_len(old_len + written) };
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn panic_invalid_write<const N: usize>(written: usize) {
+        panic!("FileEncoder::write_with::<{N}> cannot be used to write {written} bytes");
+    }
+
+    #[inline]
+    pub fn write_array<const N: usize>(&mut self, buf: [u8; N]) {
+        self.write_with(|dest| {
+            *dest = buf;
+            N
+        })
+    }
+
+    pub fn finish(&mut self) -> FileEncodeResult {
+        self.emit_raw_bytes(MAGIC_END_BYTES);
+        #[cfg(debug_assertions)]
+        {
+            self.finished = true;
+        }
+        Ok(self.position())
+    }
+}
+
+#[cfg(target_os = "none")]
+impl Encoder for FileEncoder {
+    fn emit_usize(&mut self, v: usize) { self.write_with(|buf| leb128::write_usize_leb128(buf, v)) }
+    fn emit_u128(&mut self, v: u128) { self.write_with(|buf| leb128::write_u128_leb128(buf, v)) }
+    fn emit_u64(&mut self, v: u64) { self.write_with(|buf| leb128::write_u64_leb128(buf, v)) }
+    fn emit_u32(&mut self, v: u32) { self.write_with(|buf| leb128::write_u32_leb128(buf, v)) }
+
+    #[inline]
+    fn emit_u16(&mut self, v: u16) {
+        self.write_array(v.to_le_bytes());
+    }
+
+    #[inline]
+    fn emit_u8(&mut self, v: u8) {
+        self.write_array([v]);
+    }
+
+    fn emit_isize(&mut self, v: isize) { self.write_with(|buf| leb128::write_isize_leb128(buf, v)) }
+    fn emit_i128(&mut self, v: i128) { self.write_with(|buf| leb128::write_i128_leb128(buf, v)) }
+    fn emit_i64(&mut self, v: i64) { self.write_with(|buf| leb128::write_i64_leb128(buf, v)) }
+    fn emit_i32(&mut self, v: i32) { self.write_with(|buf| leb128::write_i32_leb128(buf, v)) }
+
+    #[inline]
+    fn emit_i16(&mut self, v: i16) {
+        self.write_array(v.to_le_bytes());
+    }
+
+    #[inline]
+    fn emit_raw_bytes(&mut self, s: &[u8]) {
+        self.data.extend_from_slice(s);
+    }
+}
+
+// M27 DEMO 80: re-enable [u8] specialization for SemOS FileEncoder.
+#[cfg(target_os = "none")]
+impl Encodable<FileEncoder> for [u8] {
+    fn encode(&self, e: &mut FileEncoder) {
+        Encoder::emit_usize(e, self.len());
+        e.emit_raw_bytes(self);
+    }
+}
+
+// M27 DEMO 80: real fixed-size integer encoding for SemOS FileEncoder.
+#[cfg(target_os = "none")]
+impl crate::Encodable<FileEncoder> for IntEncodedWithFixedSize {
+    #[inline]
+    fn encode(&self, e: &mut FileEncoder) {
+        e.write_array(self.0.to_le_bytes());
+    }
 }
 
 // M27 §1.3: incremental compilation dropped — `FileEncoder` cfg'd out.
@@ -498,12 +615,6 @@ impl IntEncodedWithFixedSize {
     pub const ENCODED_SIZE: usize = 8;
 }
 
-// Stage F10: no-op stub impl on target; real impl on host writes 8 fixed bytes.
-#[cfg(target_os = "none")]
-impl crate::Encodable<FileEncoder> for IntEncodedWithFixedSize {
-    #[inline]
-    fn encode(&self, _e: &mut FileEncoder) {}
-}
 #[cfg(not(target_os = "none"))]
 impl crate::Encodable<FileEncoder> for IntEncodedWithFixedSize {
     #[inline]

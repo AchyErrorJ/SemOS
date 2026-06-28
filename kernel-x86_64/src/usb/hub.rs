@@ -108,7 +108,7 @@ pub fn read_hub_descriptor(slot_id: u8, speed: u8) -> Option<HubDescriptor> {
         buf.len(),
     );
     if !ok {
-        println!("[xhci-hub] slot={} GET_DESCRIPTOR(Hub, type=0x{:02X}, speed={}) failed",
+        crate::usb::usbdbg!("[xhci-hub] slot={} GET_DESCRIPTOR(Hub, type=0x{:02X}, speed={}) failed",
             slot_id, dtype, speed);
         return None;
     }
@@ -197,13 +197,15 @@ pub fn get_port_status(slot_id: u8, port_num: u8, hub_speed: u8) -> Option<PortS
     })
 }
 
-/// Spin-wait `cycles` arbitrary CPU cycles. We don't have a precise
-/// millisecond timer wired into this code path; the existing xHCI bring-up
-/// uses the same pattern (`for _ in 0..N { spin_loop() }`). 200M ≈ a few
-/// ms on a modern CPU, fine for `bPwrOn2PwrGood` waits (typical value: 50,
-/// i.e. 100 ms).
-fn spin_for(cycles: u64) {
-    for _ in 0..cycles {
+/// Sleep at least `ms` milliseconds using the scheduler tick (62 Hz, ~16 ms
+/// resolution; rounds up). Tick-based so a 100 ms power-good wait is actually
+/// ~100 ms instead of a multi-billion-cycle guess that ran for seconds. Ctrl+C
+/// cuts the wait short so a runaway enumeration can be aborted.
+fn sleep_ms(ms: u64) {
+    let ticks_needed = (ms * 62).div_ceil(1000) + 1;
+    let end = kernel_core::platform::ticks() + ticks_needed;
+    while kernel_core::platform::ticks() < end {
+        if crate::keyboard::abort_requested() { return; }
         core::hint::spin_loop();
     }
 }
@@ -222,13 +224,13 @@ fn spin_for(cycles: u64) {
 ///
 /// Returns the number of downstream ports successfully enumerated.
 pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
-    println!("[xhci-hub] slot={} bringing up hub", slot_id);
+    crate::usb::usbdbg!("[xhci-hub] slot={} bringing up hub", slot_id);
 
     let desc = match read_hub_descriptor(slot_id, speed) {
         Some(d) => d,
         None => return 0,
     };
-    println!("[xhci-hub] slot={} ports={} pwr2good={}ms hub-chars=0x{:04X}",
+    crate::usb::usbdbg!("[xhci-hub] slot={} ports={} pwr2good={}ms hub-chars=0x{:04X}",
         slot_id, desc.b_nbr_ports,
         desc.b_pwr_on_2_pwr_good as u32 * 2,
         desc.w_hub_characteristics);
@@ -236,14 +238,14 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
     // ---- Power up every downstream port ----
     for port in 1..=desc.b_nbr_ports {
         if !set_port_power(slot_id, port) {
-            println!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_POWER) failed",
+            crate::usb::usbdbg!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_POWER) failed",
                 slot_id, port);
         }
     }
     // Wait the spec-mandated power-on-to-power-good time. The hub guarantees
     // PortPower=1 status reflects reality after this delay. We multiply by
     // a generous spin scale since we don't have a real ms timer here.
-    spin_for(50_000_000u64 * desc.b_pwr_on_2_pwr_good.max(1) as u64);
+    sleep_ms(desc.b_pwr_on_2_pwr_good.max(1) as u64 * 2); // bPwrOn2PwrGood is in 2 ms units
 
     // ---- Per-port: status check, reset if connected ----
     let mut connected = 0u8;
@@ -252,7 +254,7 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
         let st = match get_port_status(slot_id, port, speed) {
             Some(s) => s,
             None => {
-                println!("[xhci-hub] slot={} port={} GET_PORT_STATUS failed",
+                crate::usb::usbdbg!("[xhci-hub] slot={} port={} GET_PORT_STATUS failed",
                     slot_id, port);
                 continue;
             }
@@ -260,7 +262,7 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
         if !st.connected() {
             continue;
         }
-        println!("[xhci-hub] slot={} port={} CONNECTED status=0x{:04X} change=0x{:04X} powered={} enabled={}",
+        crate::usb::usbdbg!("[xhci-hub] slot={} port={} CONNECTED status=0x{:04X} change=0x{:04X} powered={} enabled={}",
             slot_id, port, st.status, st.change, st.powered(), st.enabled());
 
         // USB 3.0 hub ports train their link automatically. We must wait
@@ -270,13 +272,11 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
         // Rx.Detect (0) or Polling (1).
         let mut child_speed = st.xhci_speed();
         if hub_is_ss {
-            let mut link_ok = false;
-            for _ in 0..100 {
-                if st.link_state() == 3 {
-                    link_ok = true;
-                    break;
-                }
-                spin_for(2_000_000); // ~2 ms per poll
+            // Poll for U0 using the scheduler tick (62 Hz) instead of a fixed
+            // iteration count so the wait scales with CPU speed. ~64 ms window.
+            let mut link_ok = st.link_state() == 3;
+            let link_deadline = kernel_core::platform::ticks() + 4;
+            while !link_ok && kernel_core::platform::ticks() < link_deadline {
                 if let Some(st2) = get_port_status(slot_id, port, speed) {
                     if st2.link_state() == 3 {
                         link_ok = true;
@@ -285,22 +285,23 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
                 } else {
                     break;
                 }
+                core::hint::spin_loop();
             }
             if !link_ok {
-                println!("[xhci-hub] slot={} port={} SS link did not reach U0 (link_state={}) — falling back to reset path",
+                crate::usb::usbdbg!("[xhci-hub] slot={} port={} SS link did not reach U0 (link_state={}) — falling back to reset path",
                     slot_id, port, st.link_state());
                 // fall through to the USB-2-style reset path below
             } else {
-                println!("[xhci-hub] slot={} port={} SS link in U0 — skipping reset", slot_id, port);
+                crate::usb::usbdbg!("[xhci-hub] slot={} port={} SS link in U0 — skipping reset", slot_id, port);
                 let _ = clear_port_feature(slot_id, port, port_feature::C_PORT_CONNECTION);
-                spin_for(5_000_000);
+                sleep_ms(1); // ~16-32 ms tick-based pause before child enum
                 if crate::usb::xhci::enumerate_child_of_hub(
                     slot_id, port, root_hub_port, child_speed,
                 ) {
-                    println!("[xhci-hub] slot={} port={} child enumerated", slot_id, port);
+                    crate::usb::usbdbg!("[xhci-hub] slot={} port={} child enumerated", slot_id, port);
                     connected += 1;
                 } else {
-                    println!("[xhci-hub] slot={} port={} child enumeration FAILED", slot_id, port);
+                    crate::usb::usbdbg!("[xhci-hub] slot={} port={} child enumeration FAILED", slot_id, port);
                 }
                 continue;
             }
@@ -308,36 +309,36 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
 
         // ---- USB 2.0 / fallback path: power + reset ----
         if !st.powered() {
-            println!("[xhci-hub] slot={} port={} not powered — retrying PORT_POWER", slot_id, port);
+            crate::usb::usbdbg!("[xhci-hub] slot={} port={} not powered — retrying PORT_POWER", slot_id, port);
             if !set_port_power(slot_id, port) {
-                println!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_POWER) failed, skipping",
+                crate::usb::usbdbg!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_POWER) failed, skipping",
                     slot_id, port);
                 continue;
             }
-            spin_for(50_000_000u64 * desc.b_pwr_on_2_pwr_good.max(1) as u64);
+            sleep_ms(desc.b_pwr_on_2_pwr_good.max(1) as u64 * 2); // bPwrOn2PwrGood is in 2 ms units
         }
 
         // Small delay before the next class request so the hub isn't back-to-back.
-        spin_for(5_000_000);
+        sleep_ms(1);
 
         // Clear the C_PORT_CONNECTION change bit before resetting.
         let _ = clear_port_feature(slot_id, port, port_feature::C_PORT_CONNECTION);
-        spin_for(5_000_000);
+        sleep_ms(1);
 
         if !set_port_reset(slot_id, port) {
-            println!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_RESET) failed",
+            crate::usb::usbdbg!("[xhci-hub] slot={} port={} SET_FEATURE(PORT_RESET) failed",
                 slot_id, port);
             continue;
         }
 
-        // Poll up to ~200 ms for C_PORT_RESET. USB 2.0 spec requires the
-        // hub to report reset complete within 20 ms; we give a wider window.
+        // Poll up to ~200 ms for C_PORT_RESET, using the scheduler tick so the
+        // timeout is wall-clock based rather than a cycle-count guess.
         let mut reset_ok = false;
-        for _ in 0..50 {
-            spin_for(2_000_000);
+        let reset_deadline = kernel_core::platform::ticks() + 13; // ~210 ms @ 62 Hz
+        while kernel_core::platform::ticks() < reset_deadline {
             if let Some(st2) = get_port_status(slot_id, port, speed) {
                 if (st2.change & (1 << 4)) != 0 /* C_PORT_RESET */ {
-                    println!("[xhci-hub] slot={} port={} reset complete status=0x{:04X} change=0x{:04X} speed={}",
+                    crate::usb::usbdbg!("[xhci-hub] slot={} port={} reset complete status=0x{:04X} change=0x{:04X} speed={}",
                         slot_id, port, st2.status, st2.change, st2.xhci_speed());
                     let _ = clear_port_feature(slot_id, port, port_feature::C_PORT_RESET);
                     reset_ok = true;
@@ -345,33 +346,34 @@ pub fn bring_up_hub(slot_id: u8, root_hub_port: u8, speed: u8) -> u8 {
                     break;
                 }
             }
+            core::hint::spin_loop();
         }
         if !reset_ok {
-            println!("[xhci-hub] slot={} port={} reset did not complete within ~200 ms",
+            crate::usb::usbdbg!("[xhci-hub] slot={} port={} reset did not complete within ~200 ms",
                 slot_id, port);
             continue;
         }
 
         // USB 2.0 spec §9.1.1.5: host must wait ≥10 ms after reset before
         // the device will respond to data transfers. Give a generous margin.
-        spin_for(20_000_000);
+        sleep_ms(12); // USB 2.0 §9.1.1.5: ≥10 ms after reset before data
 
         // Now actually enumerate the child: EnableSlot, build input ctx
         // with route string + TT info, AddressDevice, dispatch to class.
         if crate::usb::xhci::enumerate_child_of_hub(
             slot_id, port, root_hub_port, child_speed,
         ) {
-            println!("[xhci-hub] slot={} port={} child enumerated", slot_id, port);
+            crate::usb::usbdbg!("[xhci-hub] slot={} port={} child enumerated", slot_id, port);
             connected += 1;
         } else {
-            println!("[xhci-hub] slot={} port={} child enumeration FAILED", slot_id, port);
+            crate::usb::usbdbg!("[xhci-hub] slot={} port={} child enumeration FAILED", slot_id, port);
         }
     }
 
     if connected > 0 {
-        println!("[xhci-hub] slot={} {} downstream device(s) enumerated", slot_id, connected);
+        crate::usb::usbdbg!("[xhci-hub] slot={} {} downstream device(s) enumerated", slot_id, connected);
     } else {
-        println!("[xhci-hub] slot={} no downstream devices enumerated", slot_id);
+        crate::usb::usbdbg!("[xhci-hub] slot={} no downstream devices enumerated", slot_id);
     }
     connected
 }

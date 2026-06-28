@@ -1,10 +1,10 @@
-[build]
-target = "aarch64-unknown-none"
-
-[target.aarch64-unknown-none]
-rustflags = [
-  "-C", "link-arg=-Tkernel-bare/linker.ld",
-]
+# NOTE (2026-06-15): the old `kernel` / `kernel-bare` workspace members + the
+# `-Tkernel-bare/linker.ld` aarch64 rustflag here were STALE — those directories
+# don't exist. The live kernels are `kernel-x86_64` (standalone) + `kernel-core`,
+# and now `kernel-aarch64` (standalone, ARM HAL skeleton). Each standalone crate
+# carries its OWN .cargo/config.toml with its target + linker script, so this
+# root config no longer forces a target or a (broken) linker script. Left only
+# the QEMU env var, which is harmless.
 
 [env]
 QEMU_SYSTEM_AARCH64 = "qemu-system-aarch64"

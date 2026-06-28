@@ -16,6 +16,14 @@ qemu-stderr.log
 gdb-out.log
 gdb-trace.log
 
+# Runtime screenshots / serial logs / scratch files
+screen*.png
+screen*.ppm
+serial-*.log
+other.txt
+salloc.log
+test_assert.rs
+
 # Editor / OS noise
 .vscode/
 .idea/

@@ -97,12 +97,33 @@ pub trait Platform: Send + Sync + 'static {
     /// Default: unavailable.
     fn run_pong(&self) -> u64 { 0 }
 
+    /// SYS_TETRIS: run the fullscreen tetris game until the user hits Esc/Q.
+    /// Same shape as `run_pong`. Default: unavailable.
+    fn run_tetris(&self) -> u64 { 0 }
+
+    /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
+    /// list to the TTY (`wifi` shell command). Blocks for the scan duration.
+    /// Returns the number of unique networks found. Default: unavailable.
+    fn run_wifi_scan(&self) -> u64 { 0 }
+
+    /// SYS_WIFI_CONNECT: connect to scan-list network `idx` using the password
+    /// at the user pointer/len (`wifi connect <idx> <password>`). Derives the
+    /// WPA2 PMK and runs the association engine. Returns 1 on success, 0 on
+    /// failure. Default: unavailable.
+    fn run_wifi_connect(&self, _idx: u64, _pass_ptr: u64, _pass_len: u64) -> u64 { 0 }
+
     /// SYS_TTY_SUPPRESS: set/clear the cooked-mode line-discipline's
     /// input-suppression flag. `on=true` drops keystrokes from feeding
     /// the pend buffer (they're still mirrored to serial). sem-sh sets
     /// this around external commands so keys typed during a child run
     /// don't buffer into the next prompt. Returns 0. Default: no-op.
     fn tty_suppress(&self, _on: bool) -> u64 { 0 }
+
+    /// Reset any console/TTY state that a user process may have left set
+    /// (e.g. input suppression or fullscreen flags). Called from SYS_EXIT
+    /// so a crashing or exiting process cannot permanently silence the shell.
+    /// Default: no-op.
+    fn reset_tty_flags(&self) {}
 
     /// Map a segment of an ELF binary into a user address space.
     ///

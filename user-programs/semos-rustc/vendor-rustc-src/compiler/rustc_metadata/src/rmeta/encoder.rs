@@ -18,6 +18,8 @@ use std::io::{Read, Seek, Write};
 #[cfg(not(target_os = "none"))]
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "none")]
+use semos_std::fs;
+#[cfg(target_os = "none")]
 use semos_std::fs::File;
 // M27 R4 B5 TODO(Phase 5): semos_std::io::Seek not yet exposed. Encoder uses
 // File::seek to rewrite the root position header (encode_root_position). Until
@@ -2369,7 +2371,10 @@ pub struct EncodedMetadata {
     // The header should be very small, so we load it directly into memory.
     stub_metadata: Option<Vec<u8>>,
     // The path containing the metadata, to record as work product.
+    #[cfg(not(target_os = "none"))]
     path: Option<Box<Path>>,
+    #[cfg(target_os = "none")]
+    path: Option<PathBuf>,
     // We need to carry MaybeTempDir to avoid deleting the temporary
     // directory while accessing the Mmap.
     _temp_dir: Option<MaybeTempDir>,
@@ -2412,11 +2417,32 @@ impl EncodedMetadata {
     #[cfg(target_os = "none")]
     #[inline]
     pub fn from_path(
-        _path: PathBuf,
-        _stub_path: Option<PathBuf>,
-        _temp_dir: Option<MaybeTempDir>,
+        path: PathBuf,
+        stub_path: Option<PathBuf>,
+        temp_dir: Option<MaybeTempDir>,
     ) -> semos_std::io::Result<Self> {
-        Err(semos_std::io::Error::other())
+        let len = fs::metadata(path.as_str())?.len();
+        if len == 0 {
+            return Ok(Self {
+                full_metadata: None,
+                stub_metadata: None,
+                path: None,
+                _temp_dir: None,
+            });
+        }
+        let file = fs::File::open(path.as_str())?;
+        let full_mmap = unsafe { Some(Mmap::map(file)?) };
+        let stub = if let Some(stub_path) = stub_path {
+            Some(fs::read(stub_path.as_str())?)
+        } else {
+            None
+        };
+        Ok(Self {
+            full_metadata: full_mmap,
+            stub_metadata: stub,
+            path: Some(path),
+            _temp_dir: temp_dir,
+        })
     }
 
     #[inline]
@@ -2548,15 +2574,55 @@ pub fn encode_metadata(tcx: TyCtxt<'_>, path: &Path, ref_path: Option<&Path>) {
 
 #[cfg(target_os = "none")]
 fn with_encode_metadata_header(
-    _tcx: TyCtxt<'_>,
-    _path: &Path,
-    _f: impl FnOnce(&mut EncodeContext<'_, '_>) -> usize,
+    tcx: TyCtxt<'_>,
+    path: &Path,
+    f: impl FnOnce(&mut EncodeContext<'_, '_>) -> usize,
 ) {
-    // M27 §1.3: rmeta-to-disk dropped on SemOS — we use MemEncoder
-    // (mem_encoder.rs) and hand the rmeta blob to the kernel directly.
-    // The FileEncoder-backed `with_encode_metadata_header` body is dead
-    // code on this target; gating it keeps the FileEncoder stub surface
-    // small.
+    let mut encoder = opaque::FileEncoder::new(path)
+        .unwrap_or_else(|err| tcx.dcx().emit_fatal(FailCreateFileEncoder { err }));
+    encoder.emit_raw_bytes(METADATA_HEADER);
+
+    // Will be filled with the root position after encoding everything.
+    encoder.emit_raw_bytes(&0u64.to_le_bytes());
+
+    let source_map_files = tcx.sess.source_map().files();
+    let source_file_cache = (Arc::clone(&source_map_files[0]), 0);
+    let required_source_files = Some(FxIndexSet::default());
+    drop(source_map_files);
+
+    let hygiene_ctxt = HygieneEncodeContext::default();
+
+    let mut ecx = EncodeContext {
+        opaque: encoder,
+        tcx,
+        feat: tcx.features(),
+        tables: Default::default(),
+        lazy_state: LazyState::NoNode,
+        span_shorthands: Default::default(),
+        type_shorthands: Default::default(),
+        predicate_shorthands: Default::default(),
+        source_file_cache,
+        interpret_allocs: Default::default(),
+        required_source_files,
+        is_proc_macro: tcx.crate_types().contains(&CrateType::ProcMacro),
+        hygiene_ctxt: &hygiene_ctxt,
+        symbol_index_table: Default::default(),
+    };
+
+    // Encode the rustc version string in a predictable location.
+    rustc_version(tcx.sess.cfg_version).encode(&mut ecx);
+
+    let root_position = f(&mut ecx);
+
+    // Finish writes the trailing MAGIC_END_BYTES; then patch the root
+    // position slot and flush the Vec to disk.
+    if let Err((path, err)) = ecx.opaque.finish() {
+        tcx.dcx().emit_fatal(FailWriteFile { path: &path, err });
+    }
+    ecx.opaque.patch_root_position(METADATA_HEADER.len(), root_position);
+    if let Err(err) = ecx.opaque.write_out() {
+        tcx.dcx().emit_fatal(FailWriteFile { path, err });
+    }
 }
 
 #[cfg(not(target_os = "none"))]

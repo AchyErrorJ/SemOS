@@ -1834,9 +1834,15 @@ fn spawn_namespace_elf(path: &str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
     };
     let fenced_tier = spawn_tier.min(exec_cap);
     if fenced_tier != spawn_tier {
-        crate::platform::log("[syscall] spawn: unvouched tool fenced to tier 0: ");
-        crate::platform::log(path);
-        crate::platform::log("\n");
+        if exec_cap == 0 {
+            crate::platform::log("[syscall] spawn: unvouched tool fenced to tier 0: ");
+            crate::platform::log(path);
+            crate::platform::log("\n");
+        } else {
+            crate::platform::log("[syscall] spawn: vouched tool capped below caller tier: ");
+            crate::platform::log(path);
+            crate::platform::log("\n");
+        }
     }
     spawn_elf_bytes(elf_data, "user-app", fenced_tier, spawn_args_ptr)
 }

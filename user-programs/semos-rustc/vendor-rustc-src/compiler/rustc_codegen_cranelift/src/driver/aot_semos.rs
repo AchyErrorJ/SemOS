@@ -205,12 +205,41 @@ pub(crate) fn run_aot(tcx: TyCtxt<'_>) -> Box<OngoingCodegen> {
 // x86-64 relocation kinds against defined symbols, and emits ONE R+W+X
 // PT_LOAD segment (file offset 0 == vaddr base, so the ELF headers map too).
 //
-// Scope (DEMO 80): single static executable, no dynamic linking, no external
-// (undefined) symbols, no TLS, no COMDAT. Sufficient for a `#![no_std]
-// #![no_main]` program whose `_start` is self-contained; richer programs will
-// surface an explicit error here naming the unsupported case.
+// External (undefined) symbols are resolved against a tiny built-in runtime:
+// well-known `sys_*` names get pre-assembled stubs injected into .text (cg_clif
+// on SemOS has no assembler, so programs can't write inline `asm!` themselves).
+//
+// Scope (DEMO 80): single static executable, no dynamic linking, no TLS, no
+// COMDAT, only the built-in syscall stubs as externals. Anything else surfaces
+// an explicit error here naming the unsupported case.
 
 const LINK_BASE: u64 = 0x40_0000; // user_layout::USER_CODE_BASE (4 MiB)
+
+/// Pre-assembled machine code for well-known external syscall symbols. The
+/// SysV arg registers (rdi/rsi/rdx) already match the SemOS syscall ABI for
+/// <=3 args, so each stub just loads the syscall number into eax and issues
+/// `syscall`, then returns (rax already holds the kernel's return value).
+fn known_stub(name: &str) -> Option<&'static [u8]> {
+    match name {
+        // sys_write(fd, buf, len): use SYS_FWRITE = 13, not SYS_WRITE = 0.
+        //
+        // SemOS SYS_WRITE is a 2-arg convenience syscall:
+        //   SYS_WRITE(buf, len) -> writes to the current task's fd 1
+        //
+        // The tiny extern ABI exposed to DEMO 80's generated programs is the
+        // POSIX-shaped:
+        //   sys_write(fd, buf, len)
+        //
+        // SysV argument registers already line up with SemOS SYS_FWRITE's
+        // syscall ABI: rdi=fd, rsi=buf, rdx=len.  Using SYS_WRITE here would
+        // make the kernel interpret fd=1 as buf_ptr=0x1 and buf as len, so the
+        // generated ELF would run and exit 0 but print nothing.
+        "sys_write" => Some(&[0xB8, 0x0D, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xC3]),
+        // sys_exit(code): SYS_EXIT = 2 (noreturn; ret never reached)
+        "sys_exit" => Some(&[0xB8, 0x02, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xC3]),
+        _ => None,
+    }
+}
 
 #[inline]
 fn rd_u16(b: &[u8], o: usize) -> u16 { u16::from_le_bytes([b[o], b[o + 1]]) }
@@ -269,60 +298,7 @@ fn link_object_to_executable(obj: &[u8]) -> Result<Vec<u8>, String> {
     const SHT_SYMTAB: u32 = 2;
     const SHT_RELA: u32 = 4;
 
-    // ---- Lay out SHF_ALLOC sections contiguously from LINK_BASE ----
-    // File layout: [64 ehdr][56 phdr] then section data. vaddr = LINK_BASE +
-    // file_off, so the single PT_LOAD with p_offset=0 maps headers+data.
-    let headers_end = 64 + 56;
-    let mut cursor = (headers_end + 15) & !15;
-    let mut alloc_secs: Vec<AllocSec> = Vec::new();
-    let mut shndx_to_alloc: BTreeMap<usize, usize> = BTreeMap::new();
-    // PROGBITS-type alloc sections first (file-backed), NOBITS last.
-    for pass_nobits in [false, true] {
-        for i in 0..e_shnum {
-            if sh_flags(i) & SHF_ALLOC == 0 {
-                continue;
-            }
-            let is_nobits = sh_type(i) == SHT_NOBITS;
-            if is_nobits != pass_nobits {
-                continue;
-            }
-            let align = sh_addralign(i).max(1);
-            cursor = (cursor + align - 1) & !(align - 1);
-            let vaddr = LINK_BASE + cursor as u64;
-            shndx_to_alloc.insert(i, alloc_secs.len());
-            alloc_secs.push(AllocSec {
-                file_off: sh_offset(i),
-                size: sh_size(i),
-                is_nobits,
-                out_off: cursor,
-                vaddr,
-            });
-            cursor += sh_size(i);
-        }
-    }
-    if alloc_secs.is_empty() {
-        return Err(String::from("no SHF_ALLOC sections to load"));
-    }
-    // filesz stops after the last file-backed (non-NOBITS) section.
-    let mut filesz = headers_end;
-    for s in &alloc_secs {
-        if !s.is_nobits {
-            filesz = filesz.max(s.out_off + s.size);
-        }
-    }
-    let memsz = cursor;
-
-    // ---- Build the output image and copy section bytes ----
-    let mut out = alloc::vec![0u8; filesz];
-    for s in &alloc_secs {
-        if !s.is_nobits && s.size > 0 {
-            out[s.out_off..s.out_off + s.size]
-                .copy_from_slice(&obj[s.file_off..s.file_off + s.size]);
-        }
-    }
-
-    // ---- Resolve symbols: name -> absolute vaddr (defined symbols only) ----
-    // Find the symbol table and its string table.
+    // ---- Symbol table + string table ----
     let mut symtab = None;
     for i in 0..e_shnum {
         if sh_type(i) == SHT_SYMTAB {
@@ -344,15 +320,144 @@ fn link_object_to_executable(obj: &[u8]) -> Result<Vec<u8>, String> {
     let sym_off = sh_offset(symtab);
     let sym_ent = sh_entsize(symtab).max(24);
     let sym_count = sh_size(symtab) / sym_ent;
-    // sym index -> resolved vaddr (None if undefined/unsupported)
+    let sym_name = |idx: usize| -> String { str_at(rd_u32(obj, sym_off + idx * sym_ent) as usize) };
+    let sym_undef = |idx: usize| -> bool { rd_u16(obj, sym_off + idx * sym_ent + 6) == 0 };
+
+    // Relocation kinds that load a symbol's address via the GOT.
+    const R_X86_64_GOTPCREL: u32 = 9;
+    const R_X86_64_GOTPCRELX: u32 = 41;
+    const R_X86_64_REX_GOTPCRELX: u32 = 42;
+    let is_got = |t: u32| matches!(t, R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX);
+
+    // ---- Prescan relocations: collect UNDEFINED syms → stubs, GOT syms → slots ----
+    let mut needed_stubs: BTreeMap<String, &'static [u8]> = BTreeMap::new();
+    let mut got_slot: BTreeMap<usize, usize> = BTreeMap::new(); // sym_idx -> slot index
+    for i in 0..e_shnum {
+        if sh_type(i) != SHT_RELA {
+            continue;
+        }
+        let r_off = sh_offset(i);
+        let r_ent = sh_entsize(i).max(24);
+        for r in 0..(sh_size(i) / r_ent) {
+            let r_info = rd_u64(obj, r_off + r * r_ent + 8);
+            let r_sym = (r_info >> 32) as usize;
+            let r_type = (r_info & 0xffff_ffff) as u32;
+            if is_got(r_type) {
+                let next = got_slot.len();
+                got_slot.entry(r_sym).or_insert(next);
+            }
+            if sym_undef(r_sym) {
+                let name = sym_name(r_sym);
+                if let Some(bytes) = known_stub(&name) {
+                    needed_stubs.insert(name, bytes);
+                } else if !name.is_empty() && !is_got(r_type) {
+                    return Err(alloc::format!(
+                        "unresolved external symbol `{}` (no built-in stub; cg_clif on SemOS \
+                         has no assembler — use a known sys_* stub)",
+                        name
+                    ));
+                }
+            }
+        }
+    }
+
+    // ---- Lay out: [ehdr+phdr] PROGBITS sections, injected stubs, then NOBITS ----
+    // File layout vaddr = LINK_BASE + out_off, single PT_LOAD with p_offset=0.
+    // Stubs are file-backed executable bytes and MUST precede NOBITS (.bss),
+    // which occupies memsz-only space past filesz.
+    let headers_end = 64 + 56;
+    let mut cursor = (headers_end + 15) & !15;
+    let mut alloc_secs: Vec<AllocSec> = Vec::new();
+    let mut shndx_to_alloc: BTreeMap<usize, usize> = BTreeMap::new();
+    let lay_progbits = |is_nobits_pass: bool,
+                        cursor: &mut usize,
+                        alloc_secs: &mut Vec<AllocSec>,
+                        shndx_to_alloc: &mut BTreeMap<usize, usize>| {
+        for i in 0..e_shnum {
+            if sh_flags(i) & SHF_ALLOC == 0 {
+                continue;
+            }
+            let is_nobits = sh_type(i) == SHT_NOBITS;
+            if is_nobits != is_nobits_pass {
+                continue;
+            }
+            let align = sh_addralign(i).max(1);
+            *cursor = (*cursor + align - 1) & !(align - 1);
+            shndx_to_alloc.insert(i, alloc_secs.len());
+            alloc_secs.push(AllocSec {
+                file_off: sh_offset(i),
+                size: sh_size(i),
+                is_nobits,
+                out_off: *cursor,
+                vaddr: LINK_BASE + *cursor as u64,
+            });
+            *cursor += sh_size(i);
+        }
+    };
+    lay_progbits(false, &mut cursor, &mut alloc_secs, &mut shndx_to_alloc);
+    // Inject syscall stubs (file-backed, executable) after PROGBITS, packed
+    // contiguously from one aligned base so blob-offset == vaddr - base.
+    let mut stub_addr: BTreeMap<String, u64> = BTreeMap::new();
+    let mut stub_blob: Vec<u8> = Vec::new();
+    let stub_blob_base = (cursor + 15) & !15;
+    for (name, bytes) in &needed_stubs {
+        let vaddr = LINK_BASE + (stub_blob_base + stub_blob.len()) as u64;
+        stub_addr.insert(name.clone(), vaddr);
+        stub_blob.extend_from_slice(bytes);
+    }
+    cursor = stub_blob_base + stub_blob.len();
+    // Inject the GOT (8-byte slots, file-backed) after the stubs. Filled with
+    // resolved symbol addresses once layout is known.
+    let got_base = (cursor + 7) & !7;
+    let got_vaddr = LINK_BASE + got_base as u64;
+    cursor = got_base + got_slot.len() * 8;
+    lay_progbits(true, &mut cursor, &mut alloc_secs, &mut shndx_to_alloc);
+
+    if alloc_secs.is_empty() {
+        return Err(String::from("no SHF_ALLOC sections to load"));
+    }
+    // filesz stops after the last file-backed byte (sections or stubs).
+    let mut filesz = headers_end;
+    for s in &alloc_secs {
+        if !s.is_nobits {
+            filesz = filesz.max(s.out_off + s.size);
+        }
+    }
+    filesz = filesz.max(stub_blob_base + stub_blob.len());
+    filesz = filesz.max(got_base + got_slot.len() * 8);
+    let memsz = cursor;
+
+    // ---- Build the output image and copy section + stub bytes ----
+    let mut out = alloc::vec![0u8; filesz];
+    for s in &alloc_secs {
+        if !s.is_nobits && s.size > 0 {
+            out[s.out_off..s.out_off + s.size]
+                .copy_from_slice(&obj[s.file_off..s.file_off + s.size]);
+        }
+    }
+    if !stub_blob.is_empty() {
+        out[stub_blob_base..stub_blob_base + stub_blob.len()].copy_from_slice(&stub_blob);
+    }
+
+    // ---- Symbol resolution: defined → section vaddr, undefined → stub ----
     let sym_addr = |idx: usize| -> Option<u64> {
         let so = sym_off + idx * sym_ent;
         let st_shndx = rd_u16(obj, so + 6) as usize;
         let st_value = rd_u64(obj, so + 8);
-        shndx_to_alloc
-            .get(&st_shndx)
-            .map(|&ai| alloc_secs[ai].vaddr + st_value)
+        if let Some(&ai) = shndx_to_alloc.get(&st_shndx) {
+            return Some(alloc_secs[ai].vaddr + st_value);
+        }
+        stub_addr.get(&sym_name(idx)).copied()
     };
+
+    // ---- Fill the GOT: each slot holds its symbol's absolute address ----
+    for (&sym_idx, &slot) in &got_slot {
+        let addr = sym_addr(sym_idx).ok_or_else(|| {
+            alloc::format!("GOT symbol `{}` unresolved", sym_name(sym_idx))
+        })?;
+        let off = got_base + slot * 8;
+        out[off..off + 8].copy_from_slice(&addr.to_le_bytes());
+    }
 
     // Entry point: the `_start` symbol.
     let mut entry: Option<u64> = None;
@@ -419,6 +524,16 @@ fn link_object_to_executable(obj: &[u8]) -> Result<Vec<u8>, String> {
                     let val = (s as i64 + r_addend) as u32;
                     out[patch..patch + 4].copy_from_slice(&val.to_le_bytes());
                 }
+                // GOT-relative: patch is PC-relative to the symbol's GOT slot
+                // (which we filled with the symbol's absolute address). We don't
+                // relax the mov→lea form; the indirection through the GOT slot
+                // is correct as-is.
+                R_X86_64_GOTPCREL | R_X86_64_GOTPCRELX | R_X86_64_REX_GOTPCRELX => {
+                    let slot = got_slot[&r_sym];
+                    let got_entry = got_vaddr + (slot * 8) as u64;
+                    let val = (got_entry as i64 + r_addend - p_vaddr as i64) as i32;
+                    out[patch..patch + 4].copy_from_slice(&val.to_le_bytes());
+                }
                 other => {
                     return Err(alloc::format!(
                         "unsupported relocation type {} (extend link_object_to_executable)",
@@ -461,8 +576,8 @@ fn link_object_to_executable(obj: &[u8]) -> Result<Vec<u8>, String> {
     out[ph + 48..ph + 56].copy_from_slice(&0x1000u64.to_le_bytes()); // p_align
 
     semos_std::println!(
-        "[aot_semos] linked {} alloc section(s), {} reloc(s); entry=0x{:x} filesz={} memsz={}",
-        alloc_secs.len(), reloc_count, entry, filesz, memsz
+        "[aot_semos] linked {} alloc section(s), {} stub(s), {} GOT slot(s), {} reloc(s); entry=0x{:x} filesz={} memsz={}",
+        alloc_secs.len(), needed_stubs.len(), got_slot.len(), reloc_count, entry, filesz, memsz
     );
     Ok(out)
 }

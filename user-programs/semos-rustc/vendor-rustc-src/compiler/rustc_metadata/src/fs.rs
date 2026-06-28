@@ -13,7 +13,7 @@ use semos_std::path::{Path, PathBuf};
 use semos_std::{fs, io};
 
 #[cfg_attr(target_os = "none", allow(unused_imports))]
-use rustc_data_structures::temp_dir::MaybeTempDir;
+use rustc_data_structures::temp_dir::{MaybeTempDir, TempDir};
 #[cfg(not(target_os = "none"))]
 use rustc_fs_util::TempDirBuilder;
 use rustc_middle::ty::TyCtxt;
@@ -143,14 +143,70 @@ pub fn encode_and_write_metadata(tcx: TyCtxt<'_>) -> EncodedMetadata {
     metadata
 }
 
-// M27 R4 B5 TODO(Phase 5): SemOS-target rmeta encoding currently aborts —
-// the host body above uses tempfile::TempDir + fs::rename + buffered open,
-// none of which semos_std::fs exposes yet. semos-rustc on SemOS doesn't yet
-// emit rmeta (single-crate hello-world target). When it does, the SemOS arm
-// will need fs::rename + a tempdir RAII surface in semos_std.
+// M27 DEMO 80: SemOS rmeta encoding. We create a temp directory under /tmp,
+// write full.rmeta (+ stub.rmeta if needed) there, then load it back. If the
+// user asked for metadata output, rename it to the final path.
 #[cfg(target_os = "none")]
 pub fn encode_and_write_metadata(tcx: TyCtxt<'_>) -> EncodedMetadata {
-    tcx.dcx().emit_fatal(FailedCreateTempdir { err: io::Error::other() })
+    let out_filename = filename_for_metadata(tcx.sess, tcx.output_filenames(()));
+
+    let metadata_tmpdir = {
+        let base = out_filename.parent().unwrap_or_else(|| Path::new(""));
+        let tmp = base.join("rmeta");
+        let _ = fs::create_dir(tmp.as_str());
+        MaybeTempDir::new(TempDir::new_in(tmp), tcx.sess.opts.cg.save_temps)
+    };
+
+    let metadata_filename = metadata_tmpdir.as_ref().join("full.rmeta");
+    let metadata_stub_filename = if !tcx.sess.opts.unstable_opts.embed_metadata
+        && !tcx.crate_types().contains(&CrateType::ProcMacro)
+    {
+        Some(metadata_tmpdir.as_ref().join("stub.rmeta"))
+    } else {
+        None
+    };
+
+    if tcx.needs_metadata() {
+        encode_metadata(tcx, &metadata_filename, metadata_stub_filename.as_deref());
+    } else {
+        fs::File::create(metadata_filename.as_str()).unwrap_or_else(|err| {
+            tcx.dcx().emit_fatal(FailedCreateFile { filename: &metadata_filename, err });
+        });
+        if let Some(metadata_stub_filename) = &metadata_stub_filename {
+            fs::File::create(metadata_stub_filename.as_str()).unwrap_or_else(|err| {
+                tcx.dcx().emit_fatal(FailedCreateFile { filename: metadata_stub_filename, err });
+            });
+        }
+    }
+
+    let need_metadata_file = tcx.sess.opts.output_types.contains_key(&OutputType::Metadata);
+    let (metadata_filename, metadata_tmpdir) = if need_metadata_file {
+        let filename = match out_filename {
+            OutFileName::Real(ref path) => {
+                if let Err(err) = non_durable_rename(&metadata_filename, path) {
+                    tcx.dcx().emit_fatal(FailedWriteError { filename: path.to_path_buf(), err });
+                }
+                path.clone()
+            }
+            OutFileName::Stdout => {
+                if out_filename.is_tty() {
+                    tcx.dcx().emit_err(BinaryOutputToTty);
+                } else if let Err(err) = copy_to_stdout(&metadata_filename) {
+                    tcx.dcx()
+                        .emit_err(FailedCopyToStdout { filename: metadata_filename.clone(), err });
+                }
+                metadata_filename
+            }
+        };
+        (filename, None)
+    } else {
+        (metadata_filename, Some(metadata_tmpdir))
+    };
+
+    EncodedMetadata::from_path(metadata_filename, metadata_stub_filename, metadata_tmpdir)
+        .unwrap_or_else(|err| {
+            tcx.dcx().emit_fatal(FailedCreateEncodedMetadata { err });
+        })
 }
 
 #[cfg(all(not(target_os = "linux"), not(target_os = "none")))]
@@ -171,10 +227,12 @@ pub fn non_durable_rename(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::rename(src, dst)
 }
 
-// M27 R4 B5 TODO(Phase 5): semos_std::fs::rename not yet implemented.
+// M27 DEMO 80: real rename for SemOS. Remove destination first to match
+// the Linux non-durable-rename semantics.
 #[cfg(target_os = "none")]
-pub fn non_durable_rename(_src: &Path, _dst: &Path) -> io::Result<()> {
-    Err(io::Error::other())
+pub fn non_durable_rename(src: &Path, dst: &Path) -> io::Result<()> {
+    let _ = fs::remove_file(dst.as_str());
+    fs::rename(src.as_str(), dst.as_str())
 }
 
 #[cfg(not(target_os = "none"))]

@@ -132,3 +132,20 @@ broader auditability claim.
   documented vulnerability while iwlwifi runs on the T540p: a compromised NIC
   firmware can read/write all physical memory (no IOMMU). Accepted, here, by
   decision.**
+- **2026-06-15 — spawn surface is now the capability fence for agent modules.**
+  `SYS_SPAWN` (40) lost its hardcoded program table: any ELF in ramfs (`/bin/<name>`)
+  or the path namespace (`/apps/<name>`, e.g. one the on-device compiler just
+  produced) is now runnable by name, **tier-gated**. The tier check
+  (`spawn_tier = max_tier.min(caller_tier)`; namespace exec requires
+  `caller_tier ≥ obj.tier`) means a spawned module can never exceed its spawner's
+  clearance — so agent-authored modules spawned at **tier 0** are auto-sandboxed
+  (no LLM/secret/net access). This makes the existing tier system the capability
+  fence the re-headlined thesis needs (see `semos-security-thesis.md` 2026-06-15
+  note + `project_semos_module_loader` memory). Surface change: behavior of an
+  existing syscall (no new number); blast radius unchanged (tier-bounded).
+- **2026-06-15 — WiFi surface.** Active on-air work adds no new *syscall* numbers
+  (it's behind `run_wifi_scan`/`run_wifi_connect`, SYS 123/125). New kernel-side
+  device surface: a data/mgmt TX queue (queue 1, FIFO BE) + the `0x1c` TX_CMD
+  frame path. WPA2 4-way crypto (`wpa2::ptk`/`eapol_mic`) + the RSN IE are pure,
+  KAT-verified, no privileged surface. Firmware trust posture unchanged from the
+  2026-06-11 decision above.

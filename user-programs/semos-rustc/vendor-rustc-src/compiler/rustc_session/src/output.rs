@@ -46,9 +46,11 @@ pub fn check_file_is_writeable(file: &Path, sess: &Session) {
 
 fn is_writeable(p: &Path) -> bool {
     // Stage F9: semos_std::fs::StatX has no `permissions()` helper.
-    // On SemOS we currently treat the path as writeable if it exists.
+    // On SemOS we treat the path as writeable if it exists, OR if it doesn't
+    // exist yet (a new output file). Only an existing but unreadable entry
+    // should block us, which semos_std can't currently distinguish.
     #[cfg(target_os = "none")]
-    return p.metadata().is_ok();
+    return p.metadata().is_ok() || p.parent().map_or(true, |d| d.metadata().is_ok());
     #[cfg(not(target_os = "none"))]
     match p.metadata() {
         Err(..) => true,

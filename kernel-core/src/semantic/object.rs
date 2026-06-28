@@ -209,11 +209,18 @@ impl ObjectFlags {
     pub const IMMUTABLE: Self = Self { bits: 1 << 1 };
     pub const SYSTEM: Self = Self { bits: 1 << 2 };
     pub const DELETED: Self = Self { bits: 1 << 3 };
+    /// The object's ELF is vouched safe to execute at a non-zero tier. OFF by
+    /// default: a runtime/agent-created tool spawns at tier 0 (sandboxed) no
+    /// matter who launches it — "deny by default, earn trust". Only an explicit
+    /// vouch (a trusted review) sets this so the tool may run up to the
+    /// launcher's clearance. See `spawn_namespace_elf`.
+    pub const VOUCHED_EXEC: Self = Self { bits: 1 << 4 };
 
     pub fn is_encrypted(&self) -> bool { self.bits & Self::ENCRYPTED.bits != 0 }
     pub fn is_immutable(&self) -> bool { self.bits & Self::IMMUTABLE.bits != 0 }
     pub fn is_system(&self) -> bool { self.bits & Self::SYSTEM.bits != 0 }
     pub fn is_deleted(&self) -> bool { self.bits & Self::DELETED.bits != 0 }
+    pub fn is_vouched_exec(&self) -> bool { self.bits & Self::VOUCHED_EXEC.bits != 0 }
 
     pub fn set(&mut self, flag: Self) { self.bits |= flag.bits; }
     pub fn clear(&mut self, flag: Self) { self.bits &= !flag.bits; }

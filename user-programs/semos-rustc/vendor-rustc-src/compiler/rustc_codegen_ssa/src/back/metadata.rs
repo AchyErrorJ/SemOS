@@ -11,6 +11,8 @@ use std::fs::File;
 #[cfg(not(target_os = "none"))]
 use std::path::Path;
 #[cfg(target_os = "none")]
+use semos_std::fs;
+#[cfg(target_os = "none")]
 use semos_std::path::Path;
 
 use itertools::Itertools;
@@ -67,20 +69,18 @@ fn load_metadata_with(
         .and_then(|mmap| try_slice_owned(mmap, |mmap| f(mmap)))
 }
 
-// M27 R4 B5 TODO(Phase 5): SemOS-side metadata load needs (a) Path→str bridge,
-// (b) semos_std::fs::Mmap (or read-to-Vec fallback). For now, fail closed so
-// the metadata loader rejects unknown rlibs at SemOS runtime; the sysroot
-// bake is the integration follow-up that decides whether to materialize a
-// Mmap shim or pre-decompress on disk.
+// M27 DEMO 80: SemOS-side metadata load. There is no kernel mmap, so read the
+// whole file into a Vec and wrap the requested sub-slice as an OwnedSlice. The
+// rlib is at most ~60 MB and the user heap is 4 GiB, so this is fine for v1.
 #[cfg(target_os = "none")]
 fn load_metadata_with(
     path: &Path,
-    _f: impl for<'a> FnOnce(&'a [u8]) -> Result<&'a [u8], String>,
+    f: impl for<'a> FnOnce(&'a [u8]) -> Result<&'a [u8], String>,
 ) -> Result<OwnedSlice, String> {
-    let _ = path;
-    Err(alloc::string::String::from(
-        "M27 R4 B5: load_metadata_with not yet implemented on SemOS (needs Mmap shim)",
-    ))
+    let bytes = fs::read(path.as_str())
+        .map_err(|_| format!("failed to read metadata file '{}' on SemOS", path.as_str()))?;
+    try_slice_owned(bytes, |data| f(data))
+        .map_err(|_| format!("failed to extract metadata slice from '{}'", path.as_str()))
 }
 
 impl MetadataLoader for DefaultMetadataLoader {

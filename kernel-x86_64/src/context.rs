@@ -564,6 +564,7 @@ pub fn spawn_ring3_thread_in_cr3(
     }
     init_fxsave_for(slot);
     scheduler::mark_ready(slot);
+    crate::println!("[thread-spawn] slot={} parent_slot={}", slot, scheduler::current_task_index());
     Some(slot)
 }
 
@@ -951,6 +952,7 @@ pub fn spawn_isolated_task(
     }
     init_fxsave_for(slot);
     scheduler::mark_ready(slot);
+    crate::println!("[thread-spawn] slot={} parent_slot={}", slot, scheduler::current_task_index());
     Some(slot)
 }
 

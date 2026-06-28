@@ -20,6 +20,21 @@
 // two-machine plan (T440p first, then P1 Gen 6).
 pub const INTEL_VENDOR_ID: u16 = 0x8086;
 
+/// Verbose iwlwifi bring-up trace. The full firmware-load → ALIVE → calibration
+/// → MAC → scan-setup sequence prints ~50 lines + per-command `send_cmd` register
+/// dumps every boot. Once it works, that's just noise before the shell. Flip to
+/// `true` + rebuild to restore the trace when debugging the device. The `wifi`
+/// shell command's own progress (`[wifi] ...`) and any FIRMWARE FAULT line print
+/// regardless — only the routine bring-up chatter is gated.
+pub const WIFI_VERBOSE: bool = false;
+
+/// `wifidbg!(...)` — `println!` only when `WIFI_VERBOSE` is set. Used for the
+/// boot bring-up trace and the routine `send_cmd` register dumps.
+macro_rules! wifidbg {
+    ($($arg:tt)*) => {{ if $crate::wireless::WIFI_VERBOSE { $crate::println!($($arg)*); } }};
+}
+pub(crate) use wifidbg;
+
 /// (device_id, family_name) — extend as needed for other chips.
 pub const IWLWIFI_DEVICES: &[(u16, &str)] = &[
     // ThinkPad T440p stage 1 — Intel Wireless 7260 family (mini-PCIe).
@@ -189,6 +204,42 @@ pub fn build_association_request(
     Some(cur)
 }
 
+/// The RSN Information Element for **WPA2-PSK with CCMP** — the suite we support.
+/// The STA must advertise this in its Association Request or the AP won't begin
+/// the 4-way handshake (it'd treat us as an open/legacy client). IEEE 802.11i
+/// RSN IE (element id 48), 20-byte value. The `00 0F AC` prefix is the IEEE OUI;
+/// the trailing byte is the suite selector (04 = CCMP, 02 = PSK).
+pub const RSN_IE_WPA2_PSK_CCMP: [u8; 22] = [
+    48,                     // Element ID = RSN
+    20,                     // Length of what follows
+    0x01, 0x00,             // RSN Version = 1
+    0x00, 0x0F, 0xAC, 0x04, // Group Cipher Suite      = CCMP
+    0x01, 0x00,             // Pairwise Cipher count   = 1
+    0x00, 0x0F, 0xAC, 0x04, // Pairwise Cipher Suite   = CCMP
+    0x01, 0x00,             // AKM Suite count         = 1
+    0x00, 0x0F, 0xAC, 0x02, // AKM Suite               = PSK
+    0x00, 0x00,             // RSN Capabilities
+];
+
+/// Association Request for a **WPA2-PSK/CCMP** network: same as
+/// `build_association_request` but appends the RSN IE so the AP starts the
+/// 4-way handshake. This is the assoc frame the connect() path sends after the
+/// open-auth exchange succeeds.
+pub fn build_association_request_wpa2(
+    out: &mut [u8],
+    src: &MacAddr,
+    bssid: &MacAddr,
+    ssid: &[u8],
+) -> Option<usize> {
+    let mut cur = build_association_request(out, src, bssid, ssid)?;
+    if cur + RSN_IE_WPA2_PSK_CCMP.len() > out.len() {
+        return None;
+    }
+    out[cur..cur + RSN_IE_WPA2_PSK_CCMP.len()].copy_from_slice(&RSN_IE_WPA2_PSK_CCMP);
+    cur += RSN_IE_WPA2_PSK_CCMP.len();
+    Some(cur)
+}
+
 // ============================================================================
 // WPA2 EAPOL-Key (four-way handshake)
 // ============================================================================
@@ -269,6 +320,123 @@ pub fn build_eapol_msg2(
     Some(total)
 }
 
+/// Compute + insert the EAPOL-Key MIC (key-descriptor version 2 = HMAC-SHA1-128)
+/// over a fully-built EAPOL-Key frame, in place. The MIC covers the entire frame
+/// with its own 16-byte MIC field (bytes 81..97) treated as zero — so we zero it
+/// first, then HMAC-SHA1(KCK, frame)[..16] back into it.
+pub fn finalize_eapol_mic(frame: &mut [u8], kck: &[u8]) {
+    if frame.len() < 97 {
+        return;
+    }
+    for b in &mut frame[81..97] {
+        *b = 0;
+    }
+    let mic = wpa2::eapol_mic(kck, frame);
+    frame[81..97].copy_from_slice(&mic);
+}
+
+/// Build EAPOL-Key Msg4 (STA → AP, the handshake-completing ACK). Same layout as
+/// Msg2 but: SNonce zeroed (Msg4 carries no nonce), SECURE bit set, no key data.
+/// MIC left zero — caller runs `finalize_eapol_mic` with the KCK.
+pub fn build_eapol_msg4(out: &mut [u8], replay: u64) -> Option<usize> {
+    let body_len: usize = 1 + 2 + 2 + 8 + 32 + 16 + 8 + 8 + 16 + 2;
+    let total = 4 + body_len;
+    if out.len() < total {
+        return None;
+    }
+    for b in &mut out[..total] {
+        *b = 0;
+    }
+    let ki = KeyInfo::KEY_DESC_VER_AES_CMAC
+        | KeyInfo::KEY_TYPE_PAIRWISE
+        | KeyInfo::MIC
+        | KeyInfo::SECURE;
+    out[0] = EAPOL_VERSION;
+    out[1] = EAPOL_TYPE_KEY;
+    out[2..4].copy_from_slice(&(body_len as u16).to_be_bytes());
+    out[4] = EAPOL_KEY_DESC_RSN;
+    out[5..7].copy_from_slice(&ki.bits().to_be_bytes());
+    // key_len(0) + replay + zero nonce/IV/RSC/rsvd/MIC + key_data_len(0).
+    out[9..17].copy_from_slice(&replay.to_be_bytes());
+    Some(total)
+}
+
+/// Parsed fields of an inbound EAPOL-Key frame (AP → STA, Msg1 or Msg3).
+pub struct EapolKey<'a> {
+    pub key_info: u16,
+    pub replay: u64,
+    /// ANonce (Msg1) or the same ANonce echoed in Msg3.
+    pub nonce: [u8; 32],
+    pub mic: [u8; 16],
+    /// Encrypted key data (the GTK KDE in Msg3); empty in Msg1.
+    pub key_data: &'a [u8],
+}
+
+impl EapolKey<'_> {
+    /// True if this is Msg3 (has the MIC + KEY bits set, key data present).
+    /// Msg1 has ACK set but no MIC; Msg3 has ACK+MIC+INSTALL+SECURE.
+    pub fn has_mic(&self) -> bool {
+        self.key_info & KeyInfo::MIC.bits() != 0
+    }
+}
+
+/// Parse an inbound EAPOL-Key frame. Returns None if it is too short or not an
+/// EAPOL-Key packet. Borrows the key-data slice from `frame`.
+pub fn parse_eapol_key(frame: &[u8]) -> Option<EapolKey<'_>> {
+    if frame.len() < 99 || frame[1] != EAPOL_TYPE_KEY {
+        return None;
+    }
+    let key_info = u16::from_be_bytes([frame[5], frame[6]]);
+    let mut replay = [0u8; 8];
+    replay.copy_from_slice(&frame[9..17]);
+    let mut nonce = [0u8; 32];
+    nonce.copy_from_slice(&frame[17..49]);
+    let mut mic = [0u8; 16];
+    mic.copy_from_slice(&frame[81..97]);
+    let kd_len = u16::from_be_bytes([frame[97], frame[98]]) as usize;
+    let key_data = frame.get(99..99 + kd_len)?;
+    Some(EapolKey {
+        key_info,
+        replay: u64::from_be_bytes(replay),
+        nonce,
+        mic,
+        key_data,
+    })
+}
+
+/// EAPOL handshake KAT: build Msg2 with the wpa2 PTK test vector's KCK + SNonce,
+/// finalize the MIC, and check it against a Python-reference value (cross-impl,
+/// so it catches frame-layout / MIC-coverage bugs a round trip would not).
+pub fn eapol_self_test() -> bool {
+    let kck = [
+        0x4a, 0x7d, 0x0f, 0x9a, 0xd3, 0x0e, 0xf8, 0x50, 0x33, 0x15, 0x80, 0x26, 0x63, 0x82,
+        0x77, 0xe3,
+    ];
+    let mut snonce = [0u8; 32];
+    for i in 0..32 {
+        snonce[i] = (0xa0 + i) as u8;
+    }
+    let mut frame = [0u8; 256];
+    let n = match build_eapol_msg2(&mut frame, &snonce, 1, &RSN_IE_WPA2_PSK_CCMP) {
+        Some(n) => n,
+        None => {
+            crate::println!("[wpa2] EAPOL self-test: Msg2 build FAIL");
+            return false;
+        }
+    };
+    finalize_eapol_mic(&mut frame[..n], &kck);
+    let expect = [
+        0xa5, 0x97, 0xf3, 0xa2, 0x18, 0xc1, 0x06, 0xbe, 0xe1, 0xde, 0x7b, 0x6f, 0x8c, 0x5f,
+        0x2d, 0xfd,
+    ];
+    let len_ok = n == 121;
+    let mic_ok = frame[81..97] == expect;
+    crate::println!("[wpa2] EAPOL self-test: Msg2 len {}, MIC {}",
+        if len_ok { "PASS" } else { "FAIL" },
+        if mic_ok { "PASS" } else { "FAIL" });
+    len_ok && mic_ok
+}
+
 // M11 device bring-up stubs (PCI probe, firmware skeleton, NetDevice wiring).
 pub mod iwlwifi_pci;
 pub mod iwlwifi_csr;
@@ -277,4 +445,6 @@ pub mod iwlwifi_fw;
 pub mod iwlwifi_fw_image;
 pub mod iwlwifi_device;
 pub mod iwlwifi_net;
+pub mod iwlwifi_scan;
 pub mod iwlwifi_sm;
+pub mod wpa2;

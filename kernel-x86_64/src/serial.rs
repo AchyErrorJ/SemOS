@@ -156,11 +156,11 @@ pub fn _print(args: fmt::Arguments) {
     // Disable interrupts while printing to avoid deadlock
     x86_64::instructions::interrupts::without_interrupts(|| {
         SERIAL.lock().write_fmt(args).unwrap();
-        // Mirror to framebuffer (no-op if not yet initialized). Skip when
-        // a fullscreen kernel app (pong) owns the screen, otherwise
-        // periodic kernel logs (`[ps/2 poll] ...`, heartbeats, etc.)
-        // paint text over the game frame.
-        if !crate::tty::SUPPRESS_TTY_INPUT.load(core::sync::atomic::Ordering::Relaxed) {
+        // Mirror to framebuffer (no-op if not yet initialized). Skip only when
+        // a fullscreen kernel app (agent/editor/pong/tetris) owns the screen;
+        // `SUPPRESS_TTY_INPUT` is for keyboard echo only, so user-space output
+        // (shell prompts, command output, rustc diagnostics) stays visible.
+        if !crate::FULLSCREEN_APP_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
             crate::framebuffer::_print(args);
         }
     });

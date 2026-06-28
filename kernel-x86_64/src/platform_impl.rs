@@ -239,6 +239,11 @@ impl Platform for X86Platform {
         0
     }
 
+    fn reset_tty_flags(&self) {
+        crate::tty::SUPPRESS_TTY_INPUT.store(false, core::sync::atomic::Ordering::Release);
+        crate::FULLSCREEN_APP_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
+    }
+
     fn enable_interrupts(&self) {
         x86_64::instructions::interrupts::enable();
     }
@@ -280,6 +285,31 @@ impl Platform for X86Platform {
         crate::usb::xhci::print_usbinfo()
     }
 
+    fn run_wifi_scan(&self) -> u64 {
+        // The scan is poll-based (busy-wait drain), so no interrupts needed.
+        match crate::wireless::iwlwifi_device::device() {
+            Some(dev) => dev.scan_and_list() as u64,
+            None => {
+                crate::println!("[wifi] no wireless device on this machine");
+                0
+            }
+        }
+    }
+
+    fn run_wifi_connect(&self, idx: u64, pass_ptr: u64, pass_len: u64) -> u64 {
+        // Read the password from the user buffer (trust the VA, as the rest of
+        // the syscall layer does). Bound the length defensively.
+        let len = (pass_len as usize).min(63);
+        let pass = unsafe { core::slice::from_raw_parts(pass_ptr as *const u8, len) };
+        match crate::wireless::iwlwifi_device::device() {
+            Some(dev) => dev.connect(idx as usize, pass) as u64,
+            None => {
+                crate::println!("[wifi] no wireless device on this machine");
+                0
+            }
+        }
+    }
+
     fn run_usbenum(&self) -> u64 {
         // The port-reset wait loops use kernel_core::platform::ticks() to
         // measure ~48ms wall time. Without interrupts enabled, the timer
@@ -309,6 +339,11 @@ impl Platform for X86Platform {
         // Ring-3 caller's flags on return.
         x86_64::instructions::interrupts::enable();
         crate::pong::run()
+    }
+
+    fn run_tetris(&self) -> u64 {
+        x86_64::instructions::interrupts::enable();
+        crate::tetris::run()
     }
 
     fn map_elf_segment(

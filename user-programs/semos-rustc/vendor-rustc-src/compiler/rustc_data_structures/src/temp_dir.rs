@@ -85,6 +85,10 @@ mod imp_none {
             TempDir { path: PathBuf::from("/tmp") }
         }
 
+        pub fn new_in(path: impl Into<PathBuf>) -> Self {
+            TempDir { path: path.into() }
+        }
+
         pub fn into_path(self) -> PathBuf {
             self.path
         }

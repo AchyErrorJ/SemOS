@@ -1,0 +1,4623 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-rustc-src\compiler\rustc_codegen_gcc\Cargo.toml
+workspace: F:\Software\ArmKernel3\user-programs\semos-rustc\Cargo.toml
+    Updating crates.io index
+       Fetch [========>                        ] 87 compl…       Fetch [===========>                     ] 128 comp…       Fetch [=================>               ] 137 comp…       Fetch [=======================>         ] 149 comp…       Fetch [=============================>   ] 150 comp…       Fetch [=============================>   ] 152 comp…   Compiling anyhow v1.0.102 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\anyhow)
+    Checking cranelift-assembler-x64 v0.122.0
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> vendor-externals\regalloc2\src\fastalloc\vregset.rs:61:17
+   |
+61 |     pub fn iter(&self) -> VRegSetIter {
+   |                 ^^^^^     ^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+   = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+   |
+61 |     pub fn iter(&self) -> VRegSetIter<'_> {
+   |                                      ++++
+
+    Checking gimli v0.31.1 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\gimli)
+warning: `regalloc2` (lib) generated 1 warning (run `cargo fix --lib -p regalloc2` to apply 1 suggestion)
+    Building [=====================>     ] 48/57: anyhow(…    Building [======================>    ] 49/57: gimli, …error[E0463]: can't find crate for `std`
+  |
+  = note: the `x86_64-unknown-none` target may not support the standard library
+  = note: `std` is required by `cranelift_assembler_x64` because it does not declare `#![no_std]`
+  = help: consider building the standard library from source with `cargo build -Zbuild-std`
+
+error: cannot resolve a prelude import
+
+error[E0463]: can't find crate for `std`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:194:9
+    |
+194 |     use std::fmt;
+    |         ^^^ can't find crate
+    |
+    = note: the `x86_64-unknown-none` target may not support the standard library
+    = help: consider building the standard library from source with `cargo build -Zbuild-std`
+
+error[E0432]: unresolved import `inst::Inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\lib.rs:69:9
+   |
+69 | pub use inst::Inst;
+   |         ^^^^^^^^^^ no `Inst` in `inst`
+
+error[E0432]: unresolved import `inst::Feature`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\lib.rs:78:9
+   |
+78 | pub use inst::Feature;
+   |         ^^^^^^^^^^^^^ no `Feature` in `inst`
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+174 |     lock!(lock_cmpxchg16b_m => "cmpxchg16b");
+    |     ---------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:200:13
+    |
+200 |             write!(f, "callq {displacement:}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:202:13
+    |
+202 |             write!(f, "callq {displacement:#x}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:209:9
+    |
+209 |         write!(f, "callq *{op}")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `panic` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:224:18
+    |
+224 |             _ => panic!("not a valid predicate for `cmp*`"),
+    |                  ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::panic;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:234:13
+    |
+234 |             write!(f, "cmpss {imm8}, {xmm_m32}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:236:13
+    |
+236 |             write!(f, "cmp{}ss {xmm_m32}, {xmm1}", pred_as_str(pred))
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:246:13
+    |
+246 |             write!(f, "cmpsd {imm8}, {xmm_m64}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:248:13
+    |
+248 |             write!(f, "cmp{}sd {xmm_m64}, {xmm1}", pred_as_str(pred))
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:258:13
+    |
+258 |             write!(f, "cmpps {imm8}, {xmm_m128}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:260:13
+    |
+260 |             write!(f, "cmp{}ps {xmm_m128}, {xmm1}", pred_as_str(pred))
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:270:13
+    |
+270 |             write!(f, "cmppd {imm8}, {xmm_m128}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:272:13
+    |
+272 |             write!(f, "cmp{}pd {xmm_m128}, {xmm1}", pred_as_str(pred))
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `panic` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:312:18
+    |
+312 |             _ => panic!("not a valid predicate for `cmp*`"),
+    |                  ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::panic;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:323:13
+    |
+323 |             write!(f, "vcmpss {imm8}, {xmm_m32}, {xmm2}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:325:13
+    |
+325 |             write!(
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:340:13
+    |
+340 |             write!(f, "vcmpsd {imm8}, {xmm_m64}, {xmm2}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:342:13
+    |
+342 |             write!(
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:357:13
+    |
+357 |             write!(f, "vcmpps {imm8}, {xmm_m128}, {xmm2}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:359:13
+    |
+359 |             write!(
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:374:13
+    |
+374 |             write!(f, "vcmppd {imm8}, {xmm_m128}, {xmm2}, {xmm1}")
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:376:13
+    |
+376 |             write!(
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:385:9
+    |
+385 |         write!(f, "nop")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:389:9
+    |
+389 |         write!(f, "nop")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:393:9
+    |
+393 |         write!(f, "nopl (%rax)")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:397:9
+    |
+397 |         write!(f, "nopl (%rax)")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:401:9
+    |
+401 |         write!(f, "nopl (%rax, %rax)")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:405:9
+    |
+405 |         write!(f, "nopw (%rax, %rax)")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:409:9
+    |
+409 |         write!(f, "nopl (%rax)")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:413:9
+    |
+413 |         write!(f, "nopl (%rax, %rax)")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:417:9
+    |
+417 |         write!(f, "nopw (%rax, %rax)")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:467:9
+    |
+467 |         write!(f, "xchg{suffix} {reg}, {mem}")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:578:31
+    |
+578 |             GprMem::Gpr(_) => write!(f, "{mnemonic} $1, {reg}"),
+    |                               ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:579:31
+    |
+579 |             GprMem::Mem(_) => write!(f, "{mnemonic} {reg}"),
+    |                               ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:586:9
+    |
+586 |         write!(f, "jmpq *{rm64}")
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+192 +     use core::write;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+173 |     lock!(lock_cmpxchgq_mr => "cmpxchgq");
+    |     ------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+172 |     lock!(lock_cmpxchgl_mr => "cmpxchgl");
+    |     ------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+171 |     lock!(lock_cmpxchgw_mr => "cmpxchgw");
+    |     ------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+170 |     lock!(lock_cmpxchgb_mr => "cmpxchgb");
+    |     ------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+168 |     lock!(lock_xaddq_mr => "xaddq");
+    |     ------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+167 |     lock!(lock_xaddl_mr => "xaddl");
+    |     ------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error[E0463]: can't find crate for `std`
+  --> vendor-externals\gimli\src\lib.rs:53:1
+   |
+53 | extern crate std;
+   | ^^^^^^^^^^^^^^^^^ can't find crate
+   |
+   = note: the `x86_64-unknown-none` target may not support the standard library
+   = help: consider building the standard library from source with `cargo build -Zbuild-std`
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+166 |     lock!(lock_xaddw_mr => "xaddw");
+    |     ------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+165 |     lock!(lock_xaddb_mr => "xaddb");
+    |     ------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+163 |     lock!(lock_xorq_mr => "xorq");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+162 |     lock!(lock_xorl_mr => "xorl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+161 |     lock!(lock_xorw_mr => "xorw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+160 |     lock!(lock_xorb_mr => "xorb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+159 |     lock!(lock_xorq_mi_sxb => "xorq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+158 |     lock!(lock_xorl_mi_sxb => "xorl");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+157 |     lock!(lock_xorq_mi_sxl => "xorq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+156 |     lock!(lock_xorl_mi => "xorl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+155 |     lock!(lock_xorw_mi => "xorw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+154 |     lock!(lock_xorb_mi => "xorb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+152 |     lock!(lock_orq_mr => "orq");
+    |     --------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+151 |     lock!(lock_orl_mr => "orl");
+    |     --------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+150 |     lock!(lock_orw_mr => "orw");
+    |     --------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+149 |     lock!(lock_orb_mr => "orb");
+    |     --------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+148 |     lock!(lock_orq_mi_sxb => "orq");
+    |     ------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+147 |     lock!(lock_orl_mi_sxb => "orl");
+    |     ------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+146 |     lock!(lock_orq_mi_sxl => "orq");
+    |     ------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+145 |     lock!(lock_orl_mi => "orl");
+    |     --------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+144 |     lock!(lock_orw_mi => "orw");
+    |     --------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+143 |     lock!(lock_orb_mi => "orb");
+    |     --------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+141 |     lock!(lock_andq_mr => "andq");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+140 |     lock!(lock_andl_mr => "andl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+139 |     lock!(lock_andw_mr => "andw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+138 |     lock!(lock_andb_mr => "andb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+137 |     lock!(lock_andq_mi_sxb => "andq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+136 |     lock!(lock_andl_mi_sxb => "andl");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+135 |     lock!(lock_andq_mi_sxl => "andq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+134 |     lock!(lock_andl_mi => "andl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+133 |     lock!(lock_andw_mi => "andw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+132 |     lock!(lock_andb_mi => "andb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+130 |     lock!(lock_sbbq_mr => "sbbq");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+129 |     lock!(lock_sbbl_mr => "sbbl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+128 |     lock!(lock_sbbw_mr => "sbbw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+127 |     lock!(lock_sbbb_mr => "sbbb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+126 |     lock!(lock_sbbq_mi_sxb => "sbbq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+125 |     lock!(lock_sbbl_mi_sxb => "sbbl");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+124 |     lock!(lock_sbbq_mi_sxl => "sbbq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+123 |     lock!(lock_sbbl_mi => "sbbl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+122 |     lock!(lock_sbbw_mi => "sbbw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+121 |     lock!(lock_sbbb_mi => "sbbb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+119 |     lock!(lock_subq_mr => "subq");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+118 |     lock!(lock_subl_mr => "subl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+117 |     lock!(lock_subw_mr => "subw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+116 |     lock!(lock_subb_mr => "subb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+115 |     lock!(lock_subq_mi_sxb => "subq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+114 |     lock!(lock_subl_mi_sxb => "subl");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+113 |     lock!(lock_subq_mi_sxl => "subq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+112 |     lock!(lock_subl_mi => "subl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+111 |     lock!(lock_subw_mi => "subw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+110 |     lock!(lock_subb_mi => "subb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+108 |     lock!(lock_adcq_mr => "adcq");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+107 |     lock!(lock_adcl_mr => "adcl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+106 |     lock!(lock_adcw_mr => "adcw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+105 |     lock!(lock_adcb_mr => "adcb");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+104 |     lock!(lock_adcq_mi_sxb => "adcq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+103 |     lock!(lock_adcl_mi_sxb => "adcl");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+102 |     lock!(lock_adcq_mi_sxl => "adcq");
+    |     --------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+101 |     lock!(lock_adcl_mi => "adcl");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+    |
+ 83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+    |                               ^^^^^^
+...
+100 |     lock!(lock_adcw_mi => "adcw");
+    |     ----------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+    |
+ 76 +     use core::concat;
+    |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+99 |     lock!(lock_adcb_mi => "adcb");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+97 |     lock!(lock_addq_mr => "addq");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+96 |     lock!(lock_addl_mr => "addl");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+95 |     lock!(lock_addw_mr => "addw");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+94 |     lock!(lock_addb_mr => "addb");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+93 |     lock!(lock_addq_mi_sxb => "addq");
+   |     --------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+92 |     lock!(lock_addl_mi_sxb => "addl");
+   |     --------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+91 |     lock!(lock_addq_mi_sxl => "addq");
+   |     --------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+90 |     lock!(lock_addl_mi => "addl");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+89 |     lock!(lock_addw_mi => "addw");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `concat` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:83:31
+   |
+83 |                 Cow::Borrowed(concat!("lock ", $mnemonic))
+   |                               ^^^^^^
+...
+88 |     lock!(lock_addb_mi => "addb");
+   |     ----------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `lock` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this macro
+   |
+76 +     use core::concat;
+   |
+
+error: cannot find macro `panic` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:109:18
+    |
+109 |             _ => panic!("%invalid{enc}"),
+    |                  ^^^^^
+    |
+help: consider importing this macro
+    |
+ 69 +     use core::panic;
+    |
+
+error: cannot find macro `assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:23:9
+   |
+23 |         assert!(enc < 16, "invalid register: {enc}");
+   |         ^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::assert;
+   |
+
+error: cannot find attribute `derive` in this scope
+ --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:6:3
+  |
+6 | #[derive(Clone, Copy, Debug)]
+  |   ^^^^^^
+  |
+help: consider importing this attribute macro
+  |
+3 + use core::prelude::rust_2024::derive;
+  |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:77:13
+   |
+77 |             debug_assert!(pp <= 0b11);
+   |             ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:76:13
+   |
+76 |             debug_assert!(l <= 0b1);
+   |             ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:75:13
+   |
+75 |             debug_assert!(vvvv <= 0b1111);
+   |             ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:72:13
+   |
+72 |             debug_assert!(mmmmm >= 0b01 && mmmmm <= 0b11);
+   |             ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:62:13
+   |
+62 |             debug_assert!(pp <= 0b11);
+   |             ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:61:13
+   |
+61 |             debug_assert!(l <= 0b1);
+   |             ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:60:13
+   |
+60 |             debug_assert!(vvvv <= 0b1111);
+   |             ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:168:3
+    |
+168 | #[derive(Copy, Clone)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:49:3
+   |
+49 | #[derive(Clone, Copy)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:23:5
+   |
+23 |     debug_assert!(enc_base < 8);
+   |     ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:22:5
+   |
+22 |     debug_assert!(enc_index < 8);
+   |     ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:21:5
+   |
+21 |     debug_assert!(scale < 4);
+   |     ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:14:5
+   |
+14 |     debug_assert!(rm_e < 8);
+   |     ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:13:5
+   |
+13 |     debug_assert!(enc_reg_g < 8);
+   |     ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `debug_assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:12:5
+   |
+12 |     debug_assert!(m0d < 4);
+   |     ^^^^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::debug_assert;
+   |
+
+error: cannot find macro `assert` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:446:13
+    |
+446 |             assert!(enc_index != gpr::enc::RSP);
+    |             ^^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::assert;
+    |
+
+    Building [======================>    ] 50/57: gimli, …error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:322:3
+    |
+322 | #[derive(Copy, Clone, Debug)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:254:3
+    |
+254 | #[derive(Copy, Clone, Debug, PartialEq)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `panic` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:229:18
+    |
+229 |             _ => panic!("invalid scale encoding: {enc}"),
+    |                  ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::panic;
+    |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:207:3
+    |
+207 | #[derive(Copy, Clone, Debug, PartialEq)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:201:42
+    |
+201 |             Amode::RipRelative { .. } => write!(f, "(%rip)"),
+    |                                          ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:198:21
+    |
+198 |                     write!(f, "{simm32:x}({base}, {index})")
+    |                     ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:196:21
+    |
+196 |                     write!(f, "{simm32:x}({base}, {index}, {shift})")
+    |                     ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:183:17
+    |
+183 |                 write!(f, "{simm32:x}({base})")
+    |                 ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:167:3
+    |
+167 | #[derive(Copy, Clone, Debug, PartialEq)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:160:13
+    |
+160 |             write!(f, "<offset:{offset}>+")?;
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:130:3
+    |
+130 | #[derive(Copy, Clone, Debug, PartialEq)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:113:13
+    |
+113 |             write!(f, "0x")?;
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:110:13
+    |
+110 |             write!(f, "-")?;
+    |             ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:78:3
+   |
+78 | #[derive(Clone, Copy, Debug, PartialEq)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find attribute `derive` in this scope
+ --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:8:3
+  |
+8 | #[derive(Copy, Clone, Debug, PartialEq)]
+  |   ^^^^^^
+  |
+help: consider importing this attribute macro
+  |
+3 + use core::prelude::rust_2024::derive;
+  |
+
+error: cannot find macro `include` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\inst.rs:16:1
+   |
+16 | include!(concat!(env!("OUT_DIR"), "/assembler.rs"));
+   | ^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 6 + use core::include;
+   |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:316:3
+    |
+316 | #[derive(Clone, Copy, Debug)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:311:9
+    |
+311 |         write!(f, "$0x{:x}", self.0)
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:283:3
+    |
+283 | #[derive(Copy, Clone, Debug)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `format` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:20:9
+    |
+ 20 |         format!("$0x{:x}", to)
+    |         ^^^^^^
+...
+269 |             SignExtendQuad => hexify_sign_extend!(self.0, i32 => i64),
+    |                               --------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `hexify_sign_extend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find macro `unreachable` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:268:31
+    |
+268 |             SignExtendLong => unreachable!("the 32-bit value is already 32 bits"),
+    |                               ^^^^^^^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::unreachable;
+    |
+
+error: cannot find macro `unreachable` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:267:31
+    |
+267 |             SignExtendWord => unreachable!("cannot sign extend a 32-bit value to 16 bits"),
+    |                               ^^^^^^^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::unreachable;
+    |
+
+error: cannot find macro `format` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:11:9
+    |
+ 11 |         format!("$0x{:x}", $n)
+    |         ^^^^^^
+...
+266 |             None => hexify!(self.0),
+    |                     --------------- in this macro invocation
+    |
+    = note: this error originates in the macro `hexify` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:243:3
+    |
+243 | #[derive(Copy, Clone, Debug)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:234:9
+    |
+234 |         write!(f, "$0x{:x}", self.0)
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:199:3
+    |
+199 | #[derive(Copy, Clone, Debug)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `format` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:20:9
+    |
+ 20 |         format!("$0x{:x}", to)
+    |         ^^^^^^
+...
+176 |             SignExtendQuad => hexify_sign_extend!(self.0, i16 => i64),
+    |                               --------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `hexify_sign_extend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find macro `format` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:20:9
+    |
+ 20 |         format!("$0x{:x}", to)
+    |         ^^^^^^
+...
+175 |             SignExtendLong => hexify_sign_extend!(self.0, i16 => i32),
+    |                               --------------------------------------- in this macro invocation
+    |
+    = note: this error originates in the macro `hexify_sign_extend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find macro `unreachable` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:174:31
+    |
+174 |             SignExtendWord => unreachable!("the 16-bit value is already 16 bits"),
+    |                               ^^^^^^^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::unreachable;
+    |
+
+error: cannot find macro `format` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:11:9
+    |
+ 11 |         format!("$0x{:x}", $n)
+    |         ^^^^^^
+...
+173 |             None => hexify!(self.0),
+    |                     --------------- in this macro invocation
+    |
+    = note: this error originates in the macro `hexify` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:150:3
+    |
+150 | #[derive(Copy, Clone, Debug)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `write` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:145:9
+    |
+145 |         write!(f, "$0x{:x}", self.0)
+    |         ^^^^^
+    |
+help: consider importing this macro
+    |
+  3 + use core::write;
+    |
+
+error: cannot find attribute `derive` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:110:3
+    |
+110 | #[derive(Copy, Clone, Debug)]
+    |   ^^^^^^
+    |
+help: consider importing this attribute macro
+    |
+  3 + use core::prelude::rust_2024::derive;
+    |
+
+error: cannot find macro `format` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:20:9
+   |
+20 |         format!("$0x{:x}", to)
+   |         ^^^^^^
+...
+91 |             SignExtendQuad => hexify_sign_extend!(self.0, i8 => i64),
+   |                               -------------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `hexify_sign_extend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find macro `format` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:20:9
+   |
+20 |         format!("$0x{:x}", to)
+   |         ^^^^^^
+...
+90 |             SignExtendLong => hexify_sign_extend!(self.0, i8 => i32),
+   |                               -------------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `hexify_sign_extend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find macro `format` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:20:9
+   |
+20 |         format!("$0x{:x}", to)
+   |         ^^^^^^
+...
+89 |             SignExtendWord => hexify_sign_extend!(self.0, i8 => i16),
+   |                               -------------------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `hexify_sign_extend` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find macro `format` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:11:9
+   |
+11 |         format!("$0x{:x}", $n)
+   |         ^^^^^^
+...
+88 |             None => hexify!(self.0),
+   |                     --------------- in this macro invocation
+   |
+   = note: this error originates in the macro `hexify` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:65:3
+   |
+65 | #[derive(Clone, Copy, Debug)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find macro `write` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:60:9
+   |
+60 |         write!(f, "$0x{:x}", self.0)
+   |         ^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::write;
+   |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:25:3
+   |
+25 | #[derive(Clone, Copy, Debug)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find macro `panic` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:242:18
+    |
+242 |             _ => panic!("%invalid{enc}"),
+    |                  ^^^^^
+    |
+help: consider importing this macro
+    |
+119 +     use core::panic;
+    |
+
+error: cannot find macro `assert_ne` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:94:9
+   |
+94 |         assert_ne!(enc, enc::RSP, "invalid register: %rsp");
+   |         ^^^^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::assert_ne;
+   |
+
+error: cannot find macro `assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:93:9
+   |
+93 |         assert!(enc < 16, "invalid register: {enc}");
+   |         ^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::assert;
+   |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:72:3
+   |
+72 | #[derive(Clone, Copy, Debug, PartialEq)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:56:3
+   |
+56 | #[derive(Copy, Clone, Debug)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find macro `assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:27:9
+   |
+27 |         assert!(enc < 16, "invalid register: {enc}");
+   |         ^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::assert;
+   |
+
+error: cannot find attribute `derive` in this scope
+ --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:9:3
+  |
+9 | #[derive(Clone, Copy, Debug, PartialEq)]
+  |   ^^^^^^
+  |
+help: consider importing this attribute macro
+  |
+3 + use core::prelude::rust_2024::derive;
+  |
+
+error: cannot find macro `assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\fixed.rs:53:9
+   |
+53 |         assert!(self.0.enc() == E);
+   |         ^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::assert;
+   |
+
+error: cannot find macro `assert` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\fixed.rs:48:9
+   |
+48 |         assert!(reg == E);
+   |         ^^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::assert;
+   |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\fixed.rs:25:3
+   |
+25 | #[derive(Copy, Clone, Debug, PartialEq)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find macro `write` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:82:9
+   |
+82 |         write!(f, "trap={}", self.0)
+   |         ^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::write;
+   |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:76:3
+   |
+76 | #[derive(Debug, Clone, Copy, PartialEq)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:71:3
+   |
+71 | #[derive(Debug, Copy, Clone, PartialEq)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find attribute `derive` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:66:3
+   |
+66 | #[derive(Debug, Copy, Clone, PartialEq)]
+   |   ^^^^^^
+   |
+help: consider importing this attribute macro
+   |
+ 3 + use core::prelude::rust_2024::derive;
+   |
+
+error: cannot find macro `panic` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:61:9
+   |
+61 |         panic!("unknown offset {offset:?}")
+   |         ^^^^^
+   |
+help: consider importing this macro
+   |
+ 3 + use core::panic;
+   |
+
+For more information about this error, try `rustc --explain E0463`.
+error: could not compile `gimli` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+    Building [=======================>   ] 51/57: craneli…error[E0405]: cannot find trait `Copy` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:116:18
+    |
+116 | pub trait AsReg: Copy + Clone + std::fmt::Debug + PartialEq {
+    |                  ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::marker::Copy;
+    |
+
+error[E0405]: cannot find trait `Clone` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:116:25
+    |
+116 | pub trait AsReg: Copy + Clone + std::fmt::Debug + PartialEq {
+    |                         ^^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::clone::Clone;
+    |
+
+error[E0405]: cannot find trait `PartialEq` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:116:51
+    |
+116 | pub trait AsReg: Copy + Clone + std::fmt::Debug + PartialEq {
+    |                                                   ^^^^^^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::cmp::PartialEq;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:127:31
+    |
+127 |     fn to_string(&self, size: Option<gpr::Size>) -> String {
+    |                               ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0425]: cannot find type `String` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:127:53
+    |
+127 |     fn to_string(&self, size: Option<gpr::Size>) -> String {
+    |                                                     ^^^^^^ not found in this scope
+
+error[E0531]: cannot find tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:129:13
+    |
+129 |             Some(size) => gpr::enc::to_string(self.enc(), size).into(),
+    |             ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find type `nop_1b` in module `inst`
+ --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:5:29
+  |
+5 |     pub fn nop_1b(_: &inst::nop_1b, buf: &mut impl CodeSink) {
+  |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_2b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:10:29
+   |
+10 |     pub fn nop_2b(_: &inst::nop_2b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_3b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:16:29
+   |
+16 |     pub fn nop_3b(_: &inst::nop_3b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_4b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:23:29
+   |
+23 |     pub fn nop_4b(_: &inst::nop_4b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_5b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:31:29
+   |
+31 |     pub fn nop_5b(_: &inst::nop_5b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_6b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:39:29
+   |
+39 |     pub fn nop_6b(_: &inst::nop_6b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_7b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:48:29
+   |
+48 |     pub fn nop_7b(_: &inst::nop_7b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_8b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:56:29
+   |
+56 |     pub fn nop_8b(_: &inst::nop_8b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_9b` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:65:29
+   |
+65 |     pub fn nop_9b(_: &inst::nop_9b, buf: &mut impl CodeSink) {
+   |                             ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addb_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addw_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addl_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addq_mi_sxl` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addl_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addq_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_addq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcb_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcw_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcl_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcq_mi_sxl` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcl_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcq_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_adcq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subb_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subw_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subl_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subq_mi_sxl` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subl_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subq_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_subq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbb_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbw_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbl_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbq_mi_sxl` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbl_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbq_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_sbbq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andb_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andw_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andl_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andq_mi_sxl` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andl_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andq_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_andq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orb_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orw_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orl_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orq_mi_sxl` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orl_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orq_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_orq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorb_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorw_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorl_mi` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorq_mi_sxl` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorl_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorq_mi_sxb` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xorq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xaddb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xaddw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xaddl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_xaddq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_cmpxchgb_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_cmpxchgw_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_cmpxchgl_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_cmpxchgq_mr` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `lock_cmpxchg16b_m` in module `inst`
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:82:50
+   |
+82 |             pub fn $name<R: Registers>(_: &inst::$name<R>) -> Cow<'static, str> {
+   |                                                  ^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `vcvtpd2ps_a` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:176:51
+    |
+176 |     pub fn vcvtpd2ps_a<R: Registers>(inst: &inst::vcvtpd2ps_a<R>) -> Cow<'static, str> {
+    |                                                   ^^^^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `vcvttpd2dq_a` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:183:52
+    |
+183 |     pub fn vcvttpd2dq_a<R: Registers>(inst: &inst::vcvttpd2dq_a<R>) -> Cow<'static, str> {
+    |                                                    ^^^^^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `callq_d` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:196:57
+    |
+196 |     pub fn callq_d(f: &mut fmt::Formatter, inst: &inst::callq_d) -> fmt::Result {
+    |                                                         ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `callq_d` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:197:19
+    |
+197 |         let inst::callq_d { imm32 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `callq_m` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:206:71
+    |
+206 |     pub fn callq_m<R: Registers>(f: &mut fmt::Formatter, inst: &inst::callq_m<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `callq_m` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:207:19
+    |
+207 |         let inst::callq_m { rm64 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `cmpss_a` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:228:71
+    |
+228 |     pub fn cmpss_a<R: Registers>(f: &mut fmt::Formatter, inst: &inst::cmpss_a<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `cmpsd_a` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:240:71
+    |
+240 |     pub fn cmpsd_a<R: Registers>(f: &mut fmt::Formatter, inst: &inst::cmpsd_a<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `cmpps_a` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:252:71
+    |
+252 |     pub fn cmpps_a<R: Registers>(f: &mut fmt::Formatter, inst: &inst::cmpps_a<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `cmppd_a` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:264:71
+    |
+264 |     pub fn cmppd_a<R: Registers>(f: &mut fmt::Formatter, inst: &inst::cmppd_a<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `vcmpss_b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:316:72
+    |
+316 |     pub fn vcmpss_b<R: Registers>(f: &mut fmt::Formatter, inst: &inst::vcmpss_b<R>) -> fmt::Result {
+    |                                                                        ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `vcmpsd_b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:333:72
+    |
+333 |     pub fn vcmpsd_b<R: Registers>(f: &mut fmt::Formatter, inst: &inst::vcmpsd_b<R>) -> fmt::Result {
+    |                                                                        ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `vcmpps_b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:350:72
+    |
+350 |     pub fn vcmpps_b<R: Registers>(f: &mut fmt::Formatter, inst: &inst::vcmpps_b<R>) -> fmt::Result {
+    |                                                                        ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `vcmppd_b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:367:72
+    |
+367 |     pub fn vcmppd_b<R: Registers>(f: &mut fmt::Formatter, inst: &inst::vcmppd_b<R>) -> fmt::Result {
+    |                                                                        ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_1b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:384:53
+    |
+384 |     pub fn nop_1b(f: &mut fmt::Formatter, _: &inst::nop_1b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_2b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:388:53
+    |
+388 |     pub fn nop_2b(f: &mut fmt::Formatter, _: &inst::nop_2b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_3b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:392:53
+    |
+392 |     pub fn nop_3b(f: &mut fmt::Formatter, _: &inst::nop_3b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_4b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:396:53
+    |
+396 |     pub fn nop_4b(f: &mut fmt::Formatter, _: &inst::nop_4b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_5b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:400:53
+    |
+400 |     pub fn nop_5b(f: &mut fmt::Formatter, _: &inst::nop_5b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_6b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:404:53
+    |
+404 |     pub fn nop_6b(f: &mut fmt::Formatter, _: &inst::nop_6b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_7b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:408:53
+    |
+408 |     pub fn nop_7b(f: &mut fmt::Formatter, _: &inst::nop_7b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_8b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:412:53
+    |
+412 |     pub fn nop_8b(f: &mut fmt::Formatter, _: &inst::nop_8b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `nop_9b` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:416:53
+    |
+416 |     pub fn nop_9b(f: &mut fmt::Formatter, _: &inst::nop_9b) -> fmt::Result {
+    |                                                     ^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `xchgb_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:422:22
+    |
+422 |         inst: &inst::xchgb_rm<R>,
+    |                      ^^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `xchgb_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:424:19
+    |
+424 |         let inst::xchgb_rm { r8, m8 } = inst;
+    |                   ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `xchgw_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:430:22
+    |
+430 |         inst: &inst::xchgw_rm<R>,
+    |                      ^^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `xchgw_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:432:19
+    |
+432 |         let inst::xchgw_rm { r16, m16 } = inst;
+    |                   ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `xchgl_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:438:22
+    |
+438 |         inst: &inst::xchgl_rm<R>,
+    |                      ^^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `xchgl_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:440:19
+    |
+440 |         let inst::xchgl_rm { r32, m32 } = inst;
+    |                   ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `xchgq_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:446:22
+    |
+446 |         inst: &inst::xchgq_rm<R>,
+    |                      ^^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `xchgq_rm` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:448:19
+    |
+448 |         let inst::xchgq_rm { r64, m64 } = inst;
+    |                   ^^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `sarb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:470:71
+    |
+470 |     pub fn sarb_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::sarb_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `sarb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:471:19
+    |
+471 |         let inst::sarb_m1 { rm8 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `sarw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:475:71
+    |
+475 |     pub fn sarw_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::sarw_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `sarw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:476:19
+    |
+476 |         let inst::sarw_m1 { rm16 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `sarl_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:480:71
+    |
+480 |     pub fn sarl_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::sarl_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `sarl_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:481:19
+    |
+481 |         let inst::sarl_m1 { rm32 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `sarq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:485:71
+    |
+485 |     pub fn sarq_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::sarq_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `sarq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:486:19
+    |
+486 |         let inst::sarq_m1 { rm64 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shlb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:490:71
+    |
+490 |     pub fn shlb_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shlb_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shlb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:491:19
+    |
+491 |         let inst::shlb_m1 { rm8 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shlw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:495:71
+    |
+495 |     pub fn shlw_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shlw_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shlw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:496:19
+    |
+496 |         let inst::shlw_m1 { rm16 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shll_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:500:71
+    |
+500 |     pub fn shll_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shll_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shll_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:501:19
+    |
+501 |         let inst::shll_m1 { rm32 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shlq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:505:71
+    |
+505 |     pub fn shlq_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shlq_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shlq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:506:19
+    |
+506 |         let inst::shlq_m1 { rm64 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shrb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:510:71
+    |
+510 |     pub fn shrb_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shrb_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shrb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:511:19
+    |
+511 |         let inst::shrb_m1 { rm8 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shrw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:515:71
+    |
+515 |     pub fn shrw_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shrw_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shrw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:516:19
+    |
+516 |         let inst::shrw_m1 { rm16 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shrl_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:520:71
+    |
+520 |     pub fn shrl_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shrl_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shrl_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:521:19
+    |
+521 |         let inst::shrl_m1 { rm32 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `shrq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:525:71
+    |
+525 |     pub fn shrq_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::shrq_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `shrq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:526:19
+    |
+526 |         let inst::shrq_m1 { rm64 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `rorb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:530:71
+    |
+530 |     pub fn rorb_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::rorb_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `rorb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:531:19
+    |
+531 |         let inst::rorb_m1 { rm8 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `rorw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:535:71
+    |
+535 |     pub fn rorw_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::rorw_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `rorw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:536:19
+    |
+536 |         let inst::rorw_m1 { rm16 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `rorl_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:540:71
+    |
+540 |     pub fn rorl_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::rorl_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `rorl_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:541:19
+    |
+541 |         let inst::rorl_m1 { rm32 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `rorq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:545:71
+    |
+545 |     pub fn rorq_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::rorq_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `rorq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:546:19
+    |
+546 |         let inst::rorq_m1 { rm64 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `rolb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:550:71
+    |
+550 |     pub fn rolb_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::rolb_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `rolb_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:551:19
+    |
+551 |         let inst::rolb_m1 { rm8 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `rolw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:555:71
+    |
+555 |     pub fn rolw_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::rolw_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `rolw_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:556:19
+    |
+556 |         let inst::rolw_m1 { rm16 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `roll_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:560:71
+    |
+560 |     pub fn roll_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::roll_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `roll_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:561:19
+    |
+561 |         let inst::roll_m1 { rm32 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `rolq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:565:71
+    |
+565 |     pub fn rolq_m1<R: Registers>(f: &mut fmt::Formatter, inst: &inst::rolq_m1<R>) -> fmt::Result {
+    |                                                                       ^^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `rolq_m1` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:566:19
+    |
+566 |         let inst::rolq_m1 { rm64 } = inst;
+    |                   ^^^^^^^ not found in `inst`
+
+error[E0425]: cannot find type `jmpq_m` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:583:73
+    |
+583 |     pub fn jmpq_m<R: Registers>(f: &mut fmt::Formatter<'_>, jmp: &inst::jmpq_m<R>) -> fmt::Result {
+    |                                                                         ^^^^^^ not found in `inst`
+
+error[E0422]: cannot find struct, variant or union type `jmpq_m` in module `inst`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:584:19
+    |
+584 |         let inst::jmpq_m { rm64 } = jmp;
+    |                   ^^^^^^ not found in `inst`
+
+error[E0573]: expected type, found function `mulxl_rvm`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:594:47
+    |
+594 |     pub fn mulxl_rvm<R: Registers>(mulx: &mut mulxl_rvm<R>, visitor: &mut impl RegisterVisitor<R>) {
+    |                                               ^^^^^^^^^^^^ not a type
+
+error[E0573]: expected type, found function `mulxq_rvm`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:604:47
+    |
+604 |     pub fn mulxq_rvm<R: Registers>(mulx: &mut mulxq_rvm<R>, visitor: &mut impl RegisterVisitor<R>) {
+    |                                               ^^^^^^^^^^^^ not a type
+
+error[E0573]: expected type, found function `lock_xaddb_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:638:25
+    |
+638 |         lock_xadd: &mut lock_xaddb_mr<R>,
+    |                         ^^^^^^^^^^^^^^^^ not a type
+
+error[E0574]: expected struct, variant or union type, found function `lock_xaddb_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:641:13
+    |
+641 |         let lock_xaddb_mr { r8, m8 } = lock_xadd;
+    |             ^^^^^^^^^^^^^ not a struct, variant or union type
+
+error[E0573]: expected type, found function `lock_xaddw_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:646:25
+    |
+646 |         lock_xadd: &mut lock_xaddw_mr<R>,
+    |                         ^^^^^^^^^^^^^^^^ not a type
+
+error[E0574]: expected struct, variant or union type, found function `lock_xaddw_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:649:13
+    |
+649 |         let lock_xaddw_mr { r16, m16 } = lock_xadd;
+    |             ^^^^^^^^^^^^^ not a struct, variant or union type
+
+error[E0573]: expected type, found function `lock_xaddl_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:654:25
+    |
+654 |         lock_xadd: &mut lock_xaddl_mr<R>,
+    |                         ^^^^^^^^^^^^^^^^ not a type
+
+error[E0574]: expected struct, variant or union type, found function `lock_xaddl_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:657:13
+    |
+657 |         let lock_xaddl_mr { r32, m32 } = lock_xadd;
+    |             ^^^^^^^^^^^^^ not a struct, variant or union type
+
+error[E0573]: expected type, found function `lock_xaddq_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:662:25
+    |
+662 |         lock_xadd: &mut lock_xaddq_mr<R>,
+    |                         ^^^^^^^^^^^^^^^^ not a type
+
+error[E0574]: expected struct, variant or union type, found function `lock_xaddq_mr`
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\custom.rs:665:13
+    |
+665 |         let lock_xaddq_mr { r64, m64 } = lock_xadd;
+    |             ^^^^^^^^^^^^^ not a struct, variant or union type
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\fixed.rs:38:35
+   |
+38 |     pub fn to_string(&self, size: Option<Size>) -> String
+   |                                   ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `String` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\fixed.rs:38:52
+   |
+38 |     pub fn to_string(&self, size: Option<Size>) -> String
+   |                                                    ^^^^^^ not found in this scope
+
+error[E0405]: cannot find trait `AsRef` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\fixed.rs:58:22
+    |
+ 58 | impl<R, const E: u8> AsRef<R> for Fixed<R, E> {
+    |                      ^^^^^
+    |
+   ::: C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:116:1
+    |
+116 | pub trait AsReg: Copy + Clone + std::fmt::Debug + PartialEq {
+    | ----------------------------------------------------------- similarly named trait `AsReg` defined here
+    |
+help: a trait with a similar name exists
+    |
+ 58 - impl<R, const E: u8> AsRef<R> for Fixed<R, E> {
+ 58 + impl<R, const E: u8> AsReg<R> for Fixed<R, E> {
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::AsRef;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\fixed.rs:64:22
+   |
+64 | impl<R, const E: u8> From<R> for Fixed<R, E> {
+   |                      ^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::From;
+   |
+
+error[E0425]: cannot find type `String` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:32:44
+   |
+32 |     pub fn to_string(&self, size: Size) -> String {
+   |                                            ^^^^^^ not found in this scope
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:33:26
+   |
+33 |         self.0.to_string(Some(size))
+   |                          ^^^^ not found in this scope
+   |
+help: consider importing this tuple variant
+   |
+ 3 + use core::option::Option::Some;
+   |
+
+error[E0405]: cannot find trait `AsRef` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:37:16
+    |
+ 37 | impl<R: AsReg> AsRef<R> for Gpr<R> {
+    |                ^^^^^
+    |
+   ::: C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:116:1
+    |
+116 | pub trait AsReg: Copy + Clone + std::fmt::Debug + PartialEq {
+    | ----------------------------------------------------------- similarly named trait `AsReg` defined here
+    |
+help: a trait with a similar name exists
+    |
+ 37 - impl<R: AsReg> AsRef<R> for Gpr<R> {
+ 37 + impl<R: AsReg> AsReg<R> for Gpr<R> {
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::AsRef;
+    |
+
+error[E0405]: cannot find trait `AsMut` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:43:16
+   |
+43 | impl<R: AsReg> AsMut<R> for Gpr<R> {
+   |                ^^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::AsMut;
+   |
+
+error[E0405]: cannot find trait `From` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:49:16
+   |
+49 | impl<R: AsReg> From<R> for Gpr<R> {
+   |                ^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::From;
+   |
+
+error[E0425]: cannot find type `String` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:82:44
+   |
+82 |     pub fn to_string(&self, size: Size) -> String {
+   |                                            ^^^^^^ not found in this scope
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:83:26
+   |
+83 |         self.0.to_string(Some(size))
+   |                          ^^^^ not found in this scope
+   |
+help: consider importing this tuple variant
+   |
+ 3 + use core::option::Option::Some;
+   |
+
+error[E0405]: cannot find trait `AsRef` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:99:16
+    |
+ 99 | impl<R: AsReg> AsRef<R> for NonRspGpr<R> {
+    |                ^^^^^
+    |
+   ::: C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:116:1
+    |
+116 | pub trait AsReg: Copy + Clone + std::fmt::Debug + PartialEq {
+    | ----------------------------------------------------------- similarly named trait `AsReg` defined here
+    |
+help: a trait with a similar name exists
+    |
+ 99 - impl<R: AsReg> AsRef<R> for NonRspGpr<R> {
+ 99 + impl<R: AsReg> AsReg<R> for NonRspGpr<R> {
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::AsRef;
+    |
+
+error[E0405]: cannot find trait `AsMut` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:105:16
+    |
+105 | impl<R: AsReg> AsMut<R> for NonRspGpr<R> {
+    |                ^^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::AsMut;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\gpr.rs:111:16
+    |
+111 | impl<R: AsReg> From<R> for NonRspGpr<R> {
+    |                ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:45:6
+   |
+45 | impl From<u8> for Imm8 {
+   |      ^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::From;
+   |
+
+error[E0405]: cannot find trait `TryFrom` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:51:6
+   |
+51 | impl TryFrom<i32> for Imm8 {
+   |      ^^^^^^^ not found in this scope
+   |
+   = note: 'core::convert::TryFrom' is included in the prelude starting in Edition 2021
+help: consider importing this trait
+   |
+ 3 + use core::convert::TryFrom;
+   |
+
+error[E0425]: cannot find type `Result` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:53:33
+   |
+53 |     fn try_from(simm32: i32) -> Result<Self, Self::Error> {
+   |                                 ^^^^^^ not found in this scope
+   |
+help: consider importing one of these items
+   |
+ 3 + use core::fmt::Result;
+   |
+ 3 + use core::result::Result;
+   |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Ok` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:54:9
+   |
+54 |         Ok(Self(u8::try_from(simm32)?))
+   |         ^^ not found in this scope
+   |
+help: consider importing this tuple variant
+   |
+ 3 + use core::result::Result::Ok;
+   |
+
+error[E0425]: cannot find type `String` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:85:51
+   |
+85 |     pub fn to_string(&self, extend: Extension) -> String {
+   |                                                   ^^^^^^ not found in this scope
+
+error[E0405]: cannot find trait `From` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:96:6
+   |
+96 | impl From<i8> for Simm8 {
+   |      ^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::From;
+   |
+
+error[E0405]: cannot find trait `TryFrom` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:102:6
+    |
+102 | impl TryFrom<i32> for Simm8 {
+    |      ^^^^^^^ not found in this scope
+    |
+    = note: 'core::convert::TryFrom' is included in the prelude starting in Edition 2021
+help: consider importing this trait
+    |
+  3 + use core::convert::TryFrom;
+    |
+
+error[E0425]: cannot find type `Result` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:104:33
+    |
+104 |     fn try_from(simm32: i32) -> Result<Self, Self::Error> {
+    |                                 ^^^^^^ not found in this scope
+    |
+help: consider importing one of these items
+    |
+  3 + use core::fmt::Result;
+    |
+  3 + use core::result::Result;
+    |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Ok` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:105:9
+    |
+105 |         Ok(Self(i8::try_from(simm32)?))
+    |         ^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::result::Result::Ok;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:130:6
+    |
+130 | impl From<u16> for Imm16 {
+    |      ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0405]: cannot find trait `TryFrom` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:136:6
+    |
+136 | impl TryFrom<i32> for Imm16 {
+    |      ^^^^^^^ not found in this scope
+    |
+    = note: 'core::convert::TryFrom' is included in the prelude starting in Edition 2021
+help: consider importing this trait
+    |
+  3 + use core::convert::TryFrom;
+    |
+
+error[E0425]: cannot find type `Result` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:138:33
+    |
+138 |     fn try_from(simm32: i32) -> Result<Self, Self::Error> {
+    |                                 ^^^^^^ not found in this scope
+    |
+help: consider importing one of these items
+    |
+  3 + use core::fmt::Result;
+    |
+  3 + use core::result::Result;
+    |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Ok` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:139:9
+    |
+139 |         Ok(Self(u16::try_from(simm32)?))
+    |         ^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::result::Result::Ok;
+    |
+
+error[E0425]: cannot find type `String` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:170:51
+    |
+170 |     pub fn to_string(&self, extend: Extension) -> String {
+    |                                                   ^^^^^^ not found in this scope
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:181:6
+    |
+181 | impl From<i16> for Simm16 {
+    |      ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0405]: cannot find trait `TryFrom` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:187:6
+    |
+187 | impl TryFrom<i32> for Simm16 {
+    |      ^^^^^^^ not found in this scope
+    |
+    = note: 'core::convert::TryFrom' is included in the prelude starting in Edition 2021
+help: consider importing this trait
+    |
+  3 + use core::convert::TryFrom;
+    |
+
+error[E0425]: cannot find type `Result` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:189:33
+    |
+189 |     fn try_from(simm32: i32) -> Result<Self, Self::Error> {
+    |                                 ^^^^^^ not found in this scope
+    |
+help: consider importing one of these items
+    |
+  3 + use core::fmt::Result;
+    |
+  3 + use core::result::Result;
+    |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Ok` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:190:9
+    |
+190 |         Ok(Self(i16::try_from(simm32)?))
+    |         ^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::result::Result::Ok;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:219:6
+    |
+219 | impl From<u32> for Imm32 {
+    |      ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:225:6
+    |
+225 | impl From<i32> for Imm32 {
+    |      ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0425]: cannot find type `String` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:263:51
+    |
+263 |     pub fn to_string(&self, extend: Extension) -> String {
+    |                                                   ^^^^^^ not found in this scope
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:274:6
+    |
+274 | impl From<i32> for Simm32 {
+    |      ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\imm.rs:303:6
+    |
+303 | impl From<u64> for Imm64 {
+    |      ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:14:15
+   |
+14 |         trap: Option<TrapCode>,
+   |               ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:21:15
+   |
+21 |         trap: Option<TrapCode>,
+   |               ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:30:32
+   |
+30 |     pub fn trap_code(&self) -> Option<TrapCode> {
+   |                                ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find value `None` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:33:42
+   |
+33 |             Amode::RipRelative { .. } => None,
+   |                                          ^^^^ not found in this scope
+   |
+help: consider importing one of these unit variants
+   |
+ 3 + use crate::DeferredTarget::None;
+   |
+ 3 + use crate::Extension::None;
+   |
+ 3 + use crate::rex::Disp::None;
+   |
+ 3 + use core::option::Option::None;
+   |
+
+error[E0425]: cannot find value `None` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:59:64
+   |
+59 |         emit_modrm_sib_disp(sink, enc_reg, self, bytes_at_end, None);
+   |                                                                ^^^^ not found in this scope
+   |
+help: consider importing one of these unit variants
+   |
+ 3 + use crate::DeferredTarget::None;
+   |
+ 3 + use crate::Extension::None;
+   |
+ 3 + use crate::rex::Disp::None;
+   |
+ 3 + use core::option::Option::None;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:68:45
+   |
+68 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+   |                                             ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:68:57
+   |
+68 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+   |                                                         ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:70:44
+   |
+70 |             Amode::ImmReg { base, .. } => (Some(base.enc()), None),
+   |                                            ^^^^ not found in this scope
+   |
+help: consider importing this tuple variant
+   |
+ 3 + use core::option::Option::Some;
+   |
+
+error[E0425]: cannot find value `None` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:70:62
+   |
+70 |             Amode::ImmReg { base, .. } => (Some(base.enc()), None),
+   |                                                              ^^^^ not found in this scope
+   |
+help: consider importing one of these unit variants
+   |
+ 3 + use crate::DeferredTarget::None;
+   |
+ 3 + use crate::Extension::None;
+   |
+ 3 + use crate::rex::Disp::None;
+   |
+ 3 + use core::option::Option::None;
+   |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:71:59
+   |
+71 |             Amode::ImmRegRegShift { base, index, .. } => (Some(base.enc()), Some(index.enc())),
+   |                                                           ^^^^ not found in this scope
+   |
+help: consider importing this tuple variant
+   |
+ 3 + use core::option::Option::Some;
+   |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:71:77
+   |
+71 |             Amode::ImmRegRegShift { base, index, .. } => (Some(base.enc()), Some(index.enc())),
+   |                                                                             ^^^^ not found in this scope
+   |
+help: consider importing this tuple variant
+   |
+ 3 + use core::option::Option::Some;
+   |
+
+error[E0425]: cannot find value `None` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:72:43
+   |
+72 |             Amode::RipRelative { .. } => (None, None),
+   |                                           ^^^^ not found in this scope
+   |
+help: consider importing one of these unit variants
+   |
+ 3 + use crate::DeferredTarget::None;
+   |
+ 3 + use crate::Extension::None;
+   |
+ 3 + use crate::rex::Disp::None;
+   |
+ 3 + use core::option::Option::None;
+   |
+
+error[E0425]: cannot find value `None` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:72:49
+   |
+72 |             Amode::RipRelative { .. } => (None, None),
+   |                                                 ^^^^ not found in this scope
+   |
+help: consider importing one of these unit variants
+   |
+ 3 + use crate::DeferredTarget::None;
+   |
+ 3 + use crate::Extension::None;
+   |
+ 3 + use crate::rex::Disp::None;
+   |
+ 3 + use core::option::Option::None;
+   |
+
+error[E0405]: cannot find trait `From` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:96:6
+   |
+96 | impl From<i32> for AmodeOffset {
+   |      ^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::From;
+   |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Ok` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:107:20
+    |
+107 |             return Ok(());
+    |                    ^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::result::Result::Ok;
+    |
+
+error[E0531]: cannot find tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:116:13
+    |
+116 |             Some(i) => i,
+    |             ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:133:17
+    |
+133 |     pub offset: Option<KnownOffset>,
+    |                 ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0425]: cannot find value `None` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:139:17
+    |
+139 |         offset: None,
+    |                 ^^^^ not found in this scope
+    |
+help: consider importing one of these unit variants
+    |
+  3 + use crate::DeferredTarget::None;
+    |
+  3 + use crate::Extension::None;
+    |
+  3 + use crate::rex::Disp::None;
+    |
+  3 + use core::option::Option::None;
+    |
+
+error[E0531]: cannot find tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:148:13
+    |
+148 |             Some(offset) => sink.known_offset(offset),
+    |             ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0531]: cannot find tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:159:16
+    |
+159 |         if let Some(offset) = self.offset {
+    |                ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:182:43
+    |
+182 |                 let base = base.to_string(Some(pointer_width));
+    |                                           ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:192:43
+    |
+192 |                 let base = base.to_string(Some(pointer_width));
+    |                                           ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find type `String` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:267:44
+    |
+267 |     pub fn to_string(&self, size: Size) -> String {
+    |                                            ^^^^^^ not found in this scope
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:269:47
+    |
+269 |             GprMem::Gpr(gpr) => gpr.to_string(Some(size)),
+    |                                               ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:301:45
+    |
+301 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+    |                                             ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:301:57
+    |
+301 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+    |                                                         ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:303:34
+    |
+303 |             GprMem::Gpr(reg) => (Some(reg.enc()), None),
+    |                                  ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find value `None` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:303:51
+    |
+303 |             GprMem::Gpr(reg) => (Some(reg.enc()), None),
+    |                                                   ^^^^ not found in this scope
+    |
+help: consider importing one of these unit variants
+    |
+  3 + use crate::DeferredTarget::None;
+    |
+  3 + use crate::Extension::None;
+    |
+  3 + use crate::rex::Disp::None;
+    |
+  3 + use core::option::Option::None;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:309:26
+    |
+309 | impl<R: AsReg, M: AsReg> From<R> for GprMem<R, M> {
+    |                          ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:315:26
+    |
+315 | impl<R: AsReg, M: AsReg> From<Amode<M>> for GprMem<R, M> {
+    |                          ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0425]: cannot find type `String` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:335:32
+    |
+335 |     pub fn to_string(&self) -> String {
+    |                                ^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `None` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:337:47
+    |
+337 |             XmmMem::Xmm(xmm) => xmm.to_string(None),
+    |                                               ^^^^ not found in this scope
+    |
+help: consider importing one of these unit variants
+    |
+  3 + use crate::DeferredTarget::None;
+    |
+  3 + use crate::Extension::None;
+    |
+  3 + use crate::rex::Disp::None;
+    |
+  3 + use core::option::Option::None;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:374:45
+    |
+374 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+    |                                             ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:374:57
+    |
+374 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+    |                                                         ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:376:34
+    |
+376 |             XmmMem::Xmm(reg) => (Some(reg.enc()), None),
+    |                                  ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0425]: cannot find value `None` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:376:51
+    |
+376 |             XmmMem::Xmm(reg) => (Some(reg.enc()), None),
+    |                                                   ^^^^ not found in this scope
+    |
+help: consider importing one of these unit variants
+    |
+  3 + use crate::DeferredTarget::None;
+    |
+  3 + use crate::Extension::None;
+    |
+  3 + use crate::rex::Disp::None;
+    |
+  3 + use core::option::Option::None;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:382:26
+    |
+382 | impl<R: AsReg, M: AsReg> From<R> for XmmMem<R, M> {
+    |                          ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0405]: cannot find trait `From` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:388:26
+    |
+388 | impl<R: AsReg, M: AsReg> From<Amode<M>> for XmmMem<R, M> {
+    |                          ^^^^ not found in this scope
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::From;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\mem.rs:400:19
+    |
+400 |     evex_scaling: Option<i8>,
+    |                   ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:189:40
+    |
+189 |     pub fn new(val: i32, evex_scaling: Option<i8>) -> Disp {
+    |                                        ^^^^^^ not found in this scope
+    |
+help: consider importing this enum
+    |
+  3 + use core::option::Option;
+    |
+
+error[E0531]: cannot find tuple struct or tuple variant `Some` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:194:13
+    |
+194 |             Some(scaling) => {
+    |             ^^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::option::Option::Some;
+    |
+
+error[E0531]: cannot find tuple struct or tuple variant `Ok` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:204:17
+    |
+204 |                 Ok(val) => Disp::Imm8(val),
+    |                 ^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::result::Result::Ok;
+    |
+
+error[E0531]: cannot find tuple struct or tuple variant `Err` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\rex.rs:205:17
+    |
+205 |                 Err(_) => Disp::Imm32(val),
+    |                 ^^^ not found in this scope
+    |
+help: consider importing this tuple variant
+    |
+  3 + use core::result::Result::Err;
+    |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:44:18
+   |
+44 |         (b, x): (Option<u8>, Option<u8>),
+   |                  ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:44:30
+   |
+44 |         (b, x): (Option<u8>, Option<u8>),
+   |                              ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:92:18
+   |
+92 |         (b, x): (Option<u8>, Option<u8>),
+   |                  ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\vex.rs:92:30
+   |
+92 |         (b, x): (Option<u8>, Option<u8>),
+   |                              ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `String` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:28:32
+   |
+28 |     pub fn to_string(&self) -> String {
+   |                                ^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `None` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:29:26
+   |
+29 |         self.0.to_string(None)
+   |                          ^^^^ not found in this scope
+   |
+help: consider importing one of these unit variants
+   |
+ 3 + use crate::DeferredTarget::None;
+   |
+ 3 + use crate::Extension::None;
+   |
+ 3 + use crate::rex::Disp::None;
+   |
+ 3 + use core::option::Option::None;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:44:45
+   |
+44 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+   |                                             ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find type `Option` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:44:57
+   |
+44 |     pub(crate) fn encode_bx_regs(&self) -> (Option<u8>, Option<u8>) {
+   |                                                         ^^^^^^ not found in this scope
+   |
+help: consider importing this enum
+   |
+ 3 + use core::option::Option;
+   |
+
+error[E0425]: cannot find function, tuple struct or tuple variant `Some` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:45:10
+   |
+45 |         (Some(self.enc()), None)
+   |          ^^^^ not found in this scope
+   |
+help: consider importing this tuple variant
+   |
+ 3 + use core::option::Option::Some;
+   |
+
+error[E0425]: cannot find value `None` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:45:28
+   |
+45 |         (Some(self.enc()), None)
+   |                            ^^^^ not found in this scope
+   |
+help: consider importing one of these unit variants
+   |
+ 3 + use crate::DeferredTarget::None;
+   |
+ 3 + use crate::Extension::None;
+   |
+ 3 + use crate::rex::Disp::None;
+   |
+ 3 + use core::option::Option::None;
+   |
+
+error[E0405]: cannot find trait `AsRef` in this scope
+   --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:49:16
+    |
+ 49 | impl<R: AsReg> AsRef<R> for Xmm<R> {
+    |                ^^^^^
+    |
+   ::: C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\api.rs:116:1
+    |
+116 | pub trait AsReg: Copy + Clone + std::fmt::Debug + PartialEq {
+    | ----------------------------------------------------------- similarly named trait `AsReg` defined here
+    |
+help: a trait with a similar name exists
+    |
+ 49 - impl<R: AsReg> AsRef<R> for Xmm<R> {
+ 49 + impl<R: AsReg> AsReg<R> for Xmm<R> {
+    |
+help: consider importing this trait
+    |
+  3 + use core::convert::AsRef;
+    |
+
+error[E0405]: cannot find trait `AsMut` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:55:16
+   |
+55 | impl<R: AsReg> AsMut<R> for Xmm<R> {
+   |                ^^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::AsMut;
+   |
+
+error[E0405]: cannot find trait `From` in this scope
+  --> C:\Users\jerro\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cranelift-assembler-x64-0.122.0\src\xmm.rs:61:16
+   |
+61 | impl<R: AsReg> From<R> for Xmm<R> {
+   |                ^^^^ not found in this scope
+   |
+help: consider importing this trait
+   |
+ 3 + use core::convert::From;
+   |
+
+Some errors have detailed explanations: E0405, E0422, E0425, E0432, E0463, E0531, E0573, E0574.
+For more information about an error, try `rustc --explain E0405`.
+error: could not compile `cranelift-assembler-x64` (lib) due to 462 previous errors

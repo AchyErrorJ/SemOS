@@ -19,6 +19,27 @@ pub const CSR_INT_COALESCING:     u64 = 0x004;
 pub const CSR_INT:                u64 = 0x008;
 pub const CSR_INT_MASK:           u64 = 0x00C;
 pub const CSR_FH_INT_STATUS:      u64 = 0x010;
+
+// ---- CSR_INT (0x008) bits — iwl-csr.h (write-1-to-clear) ------------------
+// These let us decode + ACK the legacy interrupt status during the post-TX
+// RX-halt diagnosis (the on-air TX kills RX-DMA; suspect an unacked int wedges
+// the device's interrupt logic so it stops DMA-ing RB_STTS).
+pub const CSR_INT_BIT_FH_RX:   u32 = 1 << 31; // RX DMA, cmd responses, FH_INT[17:16]
+pub const CSR_INT_BIT_HW_ERR:  u32 = 1 << 29;
+pub const CSR_INT_BIT_RX_PERIODIC: u32 = 1 << 28;
+pub const CSR_INT_BIT_FH_TX:   u32 = 1 << 27; // TX DMA FH_INT[1:0]
+pub const CSR_INT_BIT_SCD:     u32 = 1 << 26;
+pub const CSR_INT_BIT_SW_ERR:  u32 = 1 << 25; // uCode error
+pub const CSR_INT_BIT_RF_KILL: u32 = 1 << 7;
+pub const CSR_INT_BIT_CT_KILL: u32 = 1 << 6;
+pub const CSR_INT_BIT_SW_RX:   u32 = 1 << 3;  // Rx, command responses
+pub const CSR_INT_BIT_ALIVE:   u32 = 1 << 0;  // uCode interrupt
+
+// ---- CSR_FH_INT_STATUS (0x010) bits — iwl-csr.h (write-1-to-clear) --------
+pub const CSR_FH_INT_BIT_ERR:      u32 = 1 << 31;
+pub const CSR_FH_INT_BIT_HI_PRIOR: u32 = 1 << 30;
+pub const CSR_FH_INT_BIT_RX_CHNL0: u32 = 1 << 16;
+pub const CSR_FH_INT_BIT_TX_CHNL0: u32 = 1 << 0;
 pub const CSR_GPIO_IN:            u64 = 0x018;
 pub const CSR_RESET:              u64 = 0x020;
 pub const CSR_GP_CNTRL:           u64 = 0x024;

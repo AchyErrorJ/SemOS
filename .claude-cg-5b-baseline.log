@@ -1,0 +1,27 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-rustc-src\compiler\rustc_codegen_gcc\Cargo.toml
+workspace: F:\Software\ArmKernel3\user-programs\semos-rustc\Cargo.toml
+   Compiling cranelift-assembler-x64 v0.122.0
+    Checking gimli v0.31.1 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\gimli)
+warning: hiding a lifetime that's elided elsewhere is confusing
+  --> vendor-externals\regalloc2\src\fastalloc\vregset.rs:61:17
+   |
+61 |     pub fn iter(&self) -> VRegSetIter {
+   |                 ^^^^^     ^^^^^^^^^^^ the same lifetime is hidden here
+   |                 |
+   |                 the lifetime is elided here
+   |
+   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
+   = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
+help: use `'_` for type paths
+   |
+61 |     pub fn iter(&self) -> VRegSetIter<'_> {
+   |                                      ++++
+
+warning: `regalloc2` (lib) generated 1 warning (run `cargo fix --lib -p regalloc2` to apply 1 suggestion)
+   Compiling cranelift-codegen v0.122.0
+    Checking object v0.36.7
+    Building [===================>       ] 40/52: object,…vendor-externals\gimli\src\lib.rs:53:1: error[E0463]: can't find crate for `std`: can't find crate
+    Building [====================>      ] 41/52: object,…error: could not compile `gimli` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+    Building [====================>      ] 42/52: object,…    Building [=====================>     ] 43/52: object,…    Building [=====================>     ] 44/52: object  

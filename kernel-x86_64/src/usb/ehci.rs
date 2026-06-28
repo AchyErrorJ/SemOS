@@ -266,11 +266,11 @@ fn phys32_of(virt: u64) -> Option<u32> {
     match phys_of(virt) {
         Some(p) if p < 0x1_0000_0000 => Some(p as u32),
         Some(p) => {
-            println!("[ehci] FATAL: structure at phys 0x{:X} is above 4 GiB", p);
+            crate::usb::usbdbg!("[ehci] FATAL: structure at phys 0x{:X} is above 4 GiB", p);
             None
         }
         None => {
-            println!("[ehci] FATAL: phys translation failed for 0x{:X}", virt);
+            crate::usb::usbdbg!("[ehci] FATAL: phys translation failed for 0x{:X}", virt);
             None
         }
     }
@@ -316,7 +316,7 @@ fn bios_handoff(loc: pci::Location, mmio: u64) {
             core::hint::spin_loop();
         }
         if !bios_cleared {
-            println!("[ehci] {}:{:02X}.{} BIOS refused handoff (LEGSUP stuck) — continuing",
+            crate::usb::usbdbg!("[ehci] {}:{:02X}.{} BIOS refused handoff (LEGSUP stuck) — continuing",
                 loc.bus, loc.slot, loc.func);
         }
     }
@@ -333,7 +333,7 @@ fn init_controller(loc: pci::Location, page: usize) -> Option<Ctl> {
     let bar0 = pci::read_u32(loc.bus, loc.slot, loc.func, 0x10);
     let mmio_phys = (bar0 & !0xF) as u64;
     if mmio_phys == 0 {
-        println!("[ehci] {}:{:02X}.{} BAR0=0 — skipping", loc.bus, loc.slot, loc.func);
+        crate::usb::usbdbg!("[ehci] {}:{:02X}.{} BAR0=0 — skipping", loc.bus, loc.slot, loc.func);
         return None;
     }
     loc.enable_io_and_bus_master();
@@ -370,7 +370,7 @@ fn init_controller(loc: pci::Location, page: usize) -> Option<Ctl> {
         core::hint::spin_loop();
     }
     if !reset_done {
-        println!("[ehci] {}:{:02X}.{} HCRESET never completed — skipping",
+        crate::usb::usbdbg!("[ehci] {}:{:02X}.{} HCRESET never completed — skipping",
             loc.bus, loc.slot, loc.func);
         return None;
     }
@@ -415,7 +415,7 @@ fn init_controller(loc: pci::Location, page: usize) -> Option<Ctl> {
     // CONFIGFLAG=1: route all ports to EHCI (away from any companions).
     unsafe { write_u32(op_base + op::CONFIGFLAG, 1); }
 
-    println!("[ehci] {}:{:02X}.{} up: mmio=0x{:X} n_ports={} ppc={} 64bit={}",
+    crate::usb::usbdbg!("[ehci] {}:{:02X}.{} up: mmio=0x{:X} n_ports={} ppc={} 64bit={}",
         loc.bus, loc.slot, loc.func, mmio_phys, n_ports, ppc as u8, addr64 as u8);
 
     Some(Ctl {
@@ -437,7 +437,7 @@ pub fn init() -> usize {
                 continue;
             }
             if count >= MAX_CTLS {
-                println!("[ehci] more than {} controllers — ignoring extras", MAX_CTLS);
+                crate::usb::usbdbg!("[ehci] more than {} controllers — ignoring extras", MAX_CTLS);
                 break;
             }
             if let Some(ctl) = init_controller(loc, count) {
@@ -447,7 +447,7 @@ pub fn init() -> usize {
         }
     }
     if count == 0 {
-        println!("[ehci] no EHCI controllers found");
+        crate::usb::usbdbg!("[ehci] no EHCI controllers found");
     }
     count
 }
@@ -713,7 +713,7 @@ pub fn control(
     let res = unsafe { run_xfer(&ctl, dw1, dw2, ctl.qtd_phys[0], status_idx, 1000) };
     if let Err(e) = res {
         let tok = unsafe { LAST_ERR_TOKEN };
-        println!("[ehci] control failed ({}, tok=0x{:08X} {}): req=0x{:02X}/0x{:02X} val=0x{:04X} idx={} addr={}",
+        crate::usb::usbdbg!("[ehci] control failed ({}, tok=0x{:08X} {}): req=0x{:02X}/0x{:02X} val=0x{:04X} idx={} addr={}",
             e, tok, err_token_name(tok),
             bm_req_type, b_request, w_value, w_index, dev.addr);
         return None;
@@ -805,7 +805,7 @@ fn reset_root_port(ctl: &Ctl, port: u8) -> Option<u32> {
     // are HS-only on EHCI). Behind the RMH this never happens — the hub
     // does the rate matching.
     if sc & portsc::LINE_MASK == portsc::LINE_K {
-        println!("[ehci]   port {}: low-speed device on root port — unsupported (no companion)", port);
+        crate::usb::usbdbg!("[ehci]   port {}: low-speed device on root port — unsupported (no companion)", port);
         return None;
     }
     // Debounce, then reset: PR=1 with PED cleared, ≥50 ms, PR=0, wait
@@ -821,7 +821,7 @@ fn reset_root_port(ctl: &Ctl, port: u8) -> Option<u32> {
         core::hint::spin_loop();
     }
     if !cleared {
-        println!("[ehci]   port {}: PR stuck at 1", port);
+        crate::usb::usbdbg!("[ehci]   port {}: PR stuck at 1", port);
         return None;
     }
     sleep_ms(20); // reset recovery
@@ -832,7 +832,7 @@ fn reset_root_port(ctl: &Ctl, port: u8) -> Option<u32> {
         // Full-speed device: EHCI can't run it on a root port without a
         // companion controller. (QEMU pure-EHCI has none; Lynx Point
         // jacks are behind the RMH so this is root-port-only.)
-        println!("[ehci]   port {}: full-speed device on root port — unsupported (PORTSC=0x{:08X})", port, after);
+        crate::usb::usbdbg!("[ehci]   port {}: full-speed device on root port — unsupported (PORTSC=0x{:08X})", port, after);
         None
     }
 }
@@ -868,7 +868,7 @@ fn hub_clear_port_feature(ctl_idx: usize, dev: &DevCtx, port: u8, feature: u16) 
 /// external hub) and enumerate every connected downstream port.
 fn bring_up_hub(ctl_idx: usize, hub: &DevCtx, depth: u8) -> usize {
     if depth > 3 {
-        println!("[ehci] hub depth > 3 — not descending further");
+        crate::usb::usbdbg!("[ehci] hub depth > 3 — not descending further");
         return 0;
     }
     // Hub descriptor (class type 0x29 — HS hub; the RMH is one).
@@ -876,13 +876,13 @@ fn bring_up_hub(ctl_idx: usize, hub: &DevCtx, depth: u8) -> usize {
     match control(ctl_idx, hub, 0xA0, 6 /*GET_DESCRIPTOR*/, 0x2900, 0, Some(&mut desc)) {
         Some(n) if n >= 5 => {}
         _ => {
-            println!("[ehci] hub addr={} descriptor read failed", hub.addr);
+            crate::usb::usbdbg!("[ehci] hub addr={} descriptor read failed", hub.addr);
             return 0;
         }
     }
     let n_ports = desc[2];
     let pwr_good_ms = (desc[5] as u64) * 2;
-    println!("[ehci] hub addr={}: {} downstream ports (pwr-good {} ms)",
+    crate::usb::usbdbg!("[ehci] hub addr={}: {} downstream ports (pwr-good {} ms)",
         hub.addr, n_ports, pwr_good_ms);
 
     // Power every port first, then wait once.
@@ -919,14 +919,14 @@ fn bring_up_hub_port(ctl_idx: usize, hub: &DevCtx, port: u8, depth: u8) -> bool 
     let (status, change) = match hub_get_port_status(ctl_idx, hub, port) {
         Some(s) => s,
         None => {
-            println!("[ehci] hub addr={} port {}: GET_PORT_STATUS failed", hub.addr, port);
+            crate::usb::usbdbg!("[ehci] hub addr={} port {}: GET_PORT_STATUS failed", hub.addr, port);
             return false;
         }
     };
     if status & 0x0001 == 0 {
         return false; // nothing connected
     }
-    println!("[ehci] hub addr={} port {}: connected (status=0x{:04X} change=0x{:04X})",
+    crate::usb::usbdbg!("[ehci] hub addr={} port {}: connected (status=0x{:04X} change=0x{:04X})",
         hub.addr, port, status, change);
     let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_CONNECTION);
 
@@ -951,7 +951,7 @@ fn bring_up_hub_port(ctl_idx: usize, hub: &DevCtx, port: u8, depth: u8) -> bool 
     // retry enumerate_device once more before giving up. Covers the
     // iPhone-behind-dock case where the first enumerate raced the
     // device's own re-attach.
-    println!("[ehci] hub addr={} port {}: enumerate failed — re-resetting once and retrying", hub.addr, port);
+    crate::usb::usbdbg!("[ehci] hub addr={} port {}: enumerate failed — re-resetting once and retrying", hub.addr, port);
     let child_eps2 = match hub_reset_port(ctl_idx, hub, port) {
         Some(eps) => eps,
         None => return false,
@@ -965,14 +965,12 @@ fn bring_up_hub_port(ctl_idx: usize, hub: &DevCtx, port: u8, depth: u8) -> bool 
 /// the bus during reset — debounces and retries the reset once. Assumes
 /// the caller already cleared C_PORT_CONNECTION.
 fn hub_reset_port(ctl_idx: usize, hub: &DevCtx, port: u8) -> Option<u32> {
-    // Reset the port; wait for C_PORT_RESET.
-    if !hub_set_port_feature(ctl_idx, hub, port, hub_feature::PORT_RESET) {
-        println!("[ehci] hub addr={} port {}: SET_FEATURE(PORT_RESET) failed", hub.addr, port);
-        return None;
-    }
+    // Reset the port; wait for C_PORT_RESET using a tick deadline so we
+    // don't burn ~2.4 s (50 × 3 ticks) when the reset actually completes
+    // in 20 ms.
     let mut reset_done = false;
-    for _ in 0..50 {
-        sleep_ms(20);
+    let reset_deadline = kernel_core::platform::ticks() + 7; // ~110 ms @ 62 Hz
+    while kernel_core::platform::ticks() < reset_deadline {
         if let Some((_s, c)) = hub_get_port_status(ctl_idx, hub, port) {
             if c & 0x0010 != 0 { // C_PORT_RESET
                 reset_done = true;
@@ -981,9 +979,10 @@ fn hub_reset_port(ctl_idx: usize, hub: &DevCtx, port: u8) -> Option<u32> {
         } else {
             break;
         }
+        sleep_ms(1); // ~16-32 ms poll interval
     }
     if !reset_done {
-        println!("[ehci] hub addr={} port {}: reset never completed", hub.addr, port);
+        crate::usb::usbdbg!("[ehci] hub addr={} port {}: reset never completed", hub.addr, port);
         return None;
     }
     let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
@@ -994,7 +993,7 @@ fn hub_reset_port(ctl_idx: usize, hub: &DevCtx, port: u8) -> Option<u32> {
         // Device dropped off the bus during reset (seen on W540 RMH
         // port 6). Give it a long debounce and one more try — some
         // devices disconnect/reconnect on their first reset.
-        println!("[ehci] hub addr={} port {}: device vanished during reset (status=0x{:04X}) — re-checking",
+        crate::usb::usbdbg!("[ehci] hub addr={} port {}: device vanished during reset (status=0x{:04X}) — re-checking",
             hub.addr, port, status2);
         sleep_ms(300);
         match hub_get_port_status(ctl_idx, hub, port) {
@@ -1002,11 +1001,12 @@ fn hub_reset_port(ctl_idx: usize, hub: &DevCtx, port: u8) -> Option<u32> {
                 let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_CONNECTION);
                 if hub_set_port_feature(ctl_idx, hub, port, hub_feature::PORT_RESET) {
                     let mut ok = false;
-                    for _ in 0..50 {
-                        sleep_ms(20);
+                    let retry_deadline = kernel_core::platform::ticks() + 7; // ~110 ms
+                    while kernel_core::platform::ticks() < retry_deadline {
                         if let Some((_s, c)) = hub_get_port_status(ctl_idx, hub, port) {
                             if c & 0x0010 != 0 { ok = true; break; }
                         } else { break; }
+                        sleep_ms(1);
                     }
                     if ok {
                         let _ = hub_clear_port_feature(ctl_idx, hub, port, hub_feature::C_PORT_RESET);
@@ -1021,7 +1021,7 @@ fn hub_reset_port(ctl_idx: usize, hub: &DevCtx, port: u8) -> Option<u32> {
         }
     }
     if status2 & 0x0002 == 0 {
-        println!("[ehci] hub addr={} port {}: not enabled after reset (status=0x{:04X})",
+        crate::usb::usbdbg!("[ehci] hub addr={} port {}: not enabled after reset (status=0x{:04X})",
             hub.addr, port, status2);
         return None;
     }
@@ -1136,14 +1136,14 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
             Some(n) if n >= 8 => { got_first8 = true; break; }
             other => {
                 if VERBOSE_ENUM {
-                    println!("[ehci] GET_DESCRIPTOR(8) at addr 0 attempt {} failed ({:?})", attempt, other);
+                    crate::usb::usbdbg!("[ehci] GET_DESCRIPTOR(8) at addr 0 attempt {} failed ({:?})", attempt, other);
                 }
                 sleep_ms(50);
             }
         }
     }
     if !got_first8 {
-        println!("[ehci] GET_DESCRIPTOR(8) at addr 0 failed after 3 attempts — giving up on this port");
+        crate::usb::usbdbg!("[ehci] GET_DESCRIPTOR(8) at addr 0 failed after 3 attempts — giving up on this port");
         return false;
     }
     dev.mps0 = first8[7] as u16;
@@ -1156,7 +1156,7 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
         }
     };
     if control(ctl_idx, &dev, 0x00, 5 /*SET_ADDRESS*/, new_addr as u16, 0, None).is_none() {
-        println!("[ehci] SET_ADDRESS({}) failed", new_addr);
+        crate::usb::usbdbg!("[ehci] SET_ADDRESS({}) failed", new_addr);
         return false;
     }
     dev.addr = new_addr;
@@ -1166,7 +1166,7 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
     match control(ctl_idx, &dev, 0x80, 6, 0x0100, 0, Some(&mut dd)) {
         Some(n) if n >= 18 => {}
         other => {
-            println!("[ehci] full device descriptor failed ({:?})", other);
+            crate::usb::usbdbg!("[ehci] full device descriptor failed ({:?})", other);
             return false;
         }
     }
@@ -1174,7 +1174,7 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
     let product = u16::from_le_bytes([dd[10], dd[11]]);
     let class = dd[4];
     let speed_name = match eps { EPS_HS => "HS", EPS_LS => "LS", _ => "FS" };
-    println!("[ehci] enumerated addr={} vendor=0x{:04X} product=0x{:04X} class=0x{:02X} speed={} mps0={}",
+    crate::usb::usbdbg!("[ehci] enumerated addr={} vendor=0x{:04X} product=0x{:04X} class=0x{:02X} speed={} mps0={}",
         new_addr, vendor, product, class, speed_name, dev.mps0);
 
     // Config descriptor: header first for wTotalLength, then the blob.
@@ -1182,7 +1182,7 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
     match control(ctl_idx, &dev, 0x80, 6, 0x0200, 0, Some(&mut cfg9)) {
         Some(n) if n >= 9 => {}
         other => {
-            println!("[ehci] config header failed ({:?})", other);
+            crate::usb::usbdbg!("[ehci] config header failed ({:?})", other);
             return false;
         }
     }
@@ -1193,7 +1193,7 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
     let got = match control(ctl_idx, &dev, 0x80, 6, 0x0200, 0, Some(&mut blob[..want])) {
         Some(n) => n,
         None => {
-            println!("[ehci] full config read failed");
+            crate::usb::usbdbg!("[ehci] full config read failed");
             return false;
         }
     };
@@ -1211,14 +1211,14 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
     if class == 0x09 {
         // A hub (the RMH, or something the user plugged in).
         if vendor == 0x8087 {
-            println!("[ehci] Intel Rate Matching Hub — physical jacks are its downstream ports");
+            crate::usb::usbdbg!("[ehci] Intel Rate Matching Hub — physical jacks are its downstream ports");
         }
         if control(ctl_idx, &dev, 0x00, 9 /*SET_CONFIGURATION*/, cfg_value as u16, 0, None).is_none() {
-            println!("[ehci] hub SET_CONFIGURATION failed");
+            crate::usb::usbdbg!("[ehci] hub SET_CONFIGURATION failed");
             return false;
         }
         let children = bring_up_hub(ctl_idx, &dev, depth + 1);
-        println!("[ehci] hub addr={}: {} children enumerated", new_addr, children);
+        crate::usb::usbdbg!("[ehci] hub addr={}: {} children enumerated", new_addr, children);
         return true;
     }
 
@@ -1230,7 +1230,7 @@ fn enumerate_device(ctl_idx: usize, eps: u32, hub_addr: u8, hub_port: u8, depth:
         // configuration, not just the one already in `blob`. Mirrors
         // the xHCI-side lesson from commit 4dd07c2.
         let num_configs = dd[17].max(1);
-        println!("[ehci] *** APPLE DEVICE on EHCI — {} configuration(s), searching for ipheth ***",
+        crate::usb::usbdbg!("[ehci] *** APPLE DEVICE on EHCI — {} configuration(s), searching for ipheth ***",
             num_configs);
         for cfg_idx in 0..num_configs {
             let mut h9 = [0u8; 9];
@@ -1326,7 +1326,7 @@ fn enumerate_all_full_inner() -> usize {
                 unsafe { write_u32(addr, sc); }
             }
             if sc & portsc::CCS == 0 { continue; }
-            println!("[ehci] ctl{} root port {}: connected (PORTSC=0x{:08X})", ctl_idx, port, sc);
+            crate::usb::usbdbg!("[ehci] ctl{} root port {}: connected (PORTSC=0x{:08X})", ctl_idx, port, sc);
             if let Some(eps) = reset_root_port(&ctl, port) {
                 // Record the root port in `hub_port` (hub_addr stays 0, so
                 // split-transaction routing + usbinfo "behind hub" logic
@@ -1472,12 +1472,12 @@ fn enumerate_incremental_inner() -> usize {
                             .map(|d| d.addr)
                     };
                     if let Some(a) = victim {
-                        println!("[ehci] ctl{} root port {}: disconnected — removing addr={}", ctl_idx, port, a);
+                        crate::usb::usbdbg!("[ehci] ctl{} root port {}: disconnected — removing addr={}", ctl_idx, port, a);
                         remove_subtree(ctl_idx, a);
                     }
                     continue;
                 }
-                println!("[ehci] ctl{} root port {}: change/new (PORTSC=0x{:08X}) — re-enumerating", ctl_idx, port, sc);
+                crate::usb::usbdbg!("[ehci] ctl{} root port {}: change/new (PORTSC=0x{:08X}) — re-enumerating", ctl_idx, port, sc);
                 // A port reset invalidates addresses on this controller's
                 // bus — if the ipheth device lives here, tear it down first.
                 if ipheth_on_ctl(ctl_idx) {
@@ -1522,7 +1522,7 @@ fn enumerate_incremental_inner() -> usize {
         let n_ports = match control(ctl_idx, &hub, 0xA0, 6 /*GET_DESCRIPTOR*/, 0x2900, 0, Some(&mut desc)) {
             Some(n) if n >= 5 => desc[2],
             _ => {
-                println!("[ehci] hub addr={}: descriptor re-read failed in incremental scan", hub.addr);
+                crate::usb::usbdbg!("[ehci] hub addr={}: descriptor re-read failed in incremental scan", hub.addr);
                 continue;
             }
         };
@@ -1557,7 +1557,7 @@ fn enumerate_incremental_inner() -> usize {
                 let _ = hub_clear_port_feature(ctl_idx, &hub, port, hub_feature::C_PORT_CONNECTION);
             }
             if now_connected {
-                println!("[ehci] hub addr={} port {}: connect-change/new, now connected — enumerating", hub.addr, port);
+                crate::usb::usbdbg!("[ehci] hub addr={} port {}: connect-change/new, now connected — enumerating", hub.addr, port);
                 // Replace any stale record first.
                 if let Some(a) = existing {
                     remove_subtree(ctl_idx, a);
@@ -1566,7 +1566,7 @@ fn enumerate_incremental_inner() -> usize {
                     total += 1;
                 }
             } else if let Some(a) = existing {
-                println!("[ehci] hub addr={} port {}: disconnected — removing addr={}", hub.addr, port, a);
+                crate::usb::usbdbg!("[ehci] hub addr={} port {}: disconnected — removing addr={}", hub.addr, port, a);
                 remove_subtree(ctl_idx, a);
             }
         }
@@ -1581,7 +1581,7 @@ pub fn init_and_enumerate() -> usize {
         return 0;
     }
     let n = enumerate_all();
-    println!("[ehci] enumeration complete: {} device tree(s)", n);
+    crate::usb::usbdbg!("[ehci] enumeration complete: {} device tree(s)", n);
     n
 }
 

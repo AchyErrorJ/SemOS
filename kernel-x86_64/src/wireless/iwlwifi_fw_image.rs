@@ -42,11 +42,16 @@ mod tlv {
     pub const FLAGS: u32 = 18;
     pub const SEC_RT: u32 = 19;
     pub const SEC_INIT: u32 = 20;
-    pub const PHY_SKU: u32 = 23;
+    pub const DEF_CALIB: u32 = 22; // default calibration trigger masks
+    pub const PHY_SKU: u32 = 23;   // u32 phy_config (TX/RX chain + radio cfg)
     pub const NUM_OF_CPU: u32 = 27;
     pub const API_CHANGES_SET: u32 = 29;
     pub const ENABLED_CAPABILITIES: u32 = 30;
 }
+
+/// `iwl_ucode_type` index used by DEF_CALIB entries — we want the INIT ucode's
+/// calibration triggers for the init-firmware PHY_CFG flow.
+const UCODE_TYPE_INIT: u32 = 1;
 
 // 7000-series implied load addresses for old-style INST/DATA TLVs
 // (IWLAGN_RTC_{INST,DATA}_LOWER_BOUND).
@@ -99,6 +104,13 @@ pub struct ParsedFw {
     pub runtime: FwImage,
     pub num_cpus: u32,
     pub api_flags: u32,
+    /// `phy_config` from the PHY_SKU TLV — TX/RX antenna chains + radio config,
+    /// the first u32 of the PHY_CONFIGURATION_CMD (0x6a) payload.
+    pub phy_config: u32,
+    /// INIT-ucode calibration trigger masks from the DEF_CALIB TLV — the second
+    /// and third u32 of the PHY_CFG payload (`flow_trigger`, `event_trigger`).
+    pub calib_flow: u32,
+    pub calib_event: u32,
 }
 
 fn rd32(b: &[u8], off: usize) -> u32 {
@@ -130,6 +142,9 @@ pub fn parse() -> Option<ParsedFw> {
         runtime: FwImage::new(),
         num_cpus: 1,
         api_flags: 0,
+        phy_config: 0,
+        calib_flow: 0,
+        calib_event: 0,
     };
 
     let mut p = HEADER_LEN;
@@ -159,7 +174,15 @@ pub fn parse() -> Option<ParsedFw> {
             tlv::INIT_DATA => parsed.init.push(FwSection { addr: RTC_DATA_ADDR, off: data, len: tlen }),
             tlv::NUM_OF_CPU if tlen >= 4 => parsed.num_cpus = rd32(b, data),
             tlv::FLAGS if tlen >= 4 => parsed.api_flags = rd32(b, data),
-            tlv::PHY_SKU | tlv::API_CHANGES_SET | tlv::ENABLED_CAPABILITIES => {}
+            // PHY_SKU is a single u32 phy_config.
+            tlv::PHY_SKU if tlen >= 4 => parsed.phy_config = rd32(b, data),
+            // DEF_CALIB: [ucode_type, flow_trigger, event_trigger]. Capture the
+            // INIT-ucode entry's triggers for the init PHY_CFG.
+            tlv::DEF_CALIB if tlen >= 12 && rd32(b, data) == UCODE_TYPE_INIT => {
+                parsed.calib_flow = rd32(b, data + 4);
+                parsed.calib_event = rd32(b, data + 8);
+            }
+            tlv::API_CHANGES_SET | tlv::ENABLED_CAPABILITIES => {}
             _ => {}
         }
         // Advance to the next TLV, padding length up to a 4-byte boundary.
@@ -170,6 +193,8 @@ pub fn parse() -> Option<ParsedFw> {
         parsed.init.count, parsed.init.total_bytes(),
         parsed.runtime.count, parsed.runtime.total_bytes(),
         parsed.num_cpus, parsed.api_flags);
+    println!("[iwlwifi-fw] phy_config=0x{:08X} calib_flow=0x{:08X} calib_event=0x{:08X}",
+        parsed.phy_config, parsed.calib_flow, parsed.calib_event);
     // Dump section load addresses so the boot log shows the layout we'll DMA.
     for (i, s) in parsed.init.sections[..parsed.init.count].iter().enumerate() {
         println!("[iwlwifi-fw]   INIT[{}] addr=0x{:08X} len={}", i, s.addr, s.len);

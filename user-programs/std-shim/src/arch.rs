@@ -71,6 +71,11 @@ pub const SYS_USBINFO:      u64 = 114; // () -> 0; dumps every USB port + enum'd
 pub const SYS_USBENUM:      u64 = 115; // () -> port_count; re-runs xHCI port enumeration
 pub const SYS_PONG:         u64 = 116; // () -> 0/err; runs the fullscreen pong game
 pub const SYS_TTY_SUPPRESS: u64 = 117; // (on: u64) -> 0; toggles kbd input drop for cooked-mode
+pub const SYS_WIFI_SCAN:    u64 = 123; // () -> n; scans WiFi, prints numbered network list
+pub const SYS_TETRIS:       u64 = 124; // () -> 0/err; runs the fullscreen tetris game
+pub const SYS_WIFI_CONNECT: u64 = 125; // (idx, pass_ptr, pass_len) -> 1/0; connect to network idx
+pub const SYS_VOUCH:        u64 = 126; // (path_ptr, path_len, grant_tier) -> 1/0; vouch a tool safe (console only)
+pub const SYS_VOUCHES:      u64 = 127; // () -> count; print the active vouch grants
 
 /// SYS_TCP_READ/WRITE return this when the socket isn't ready yet (retry
 /// after yielding). Distinct from 0 (EOF) and u64::MAX (hard error).

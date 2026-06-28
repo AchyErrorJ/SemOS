@@ -83,9 +83,13 @@ pub fn probe() -> Option<IwlPciInfo> {
     let name = device_name(device).unwrap_or("iwlwifi");
     let loc = pci::Location { bus, slot, func };
 
-    // Enable bus-master + memory-space.
+    // Enable bus-master + memory-space (bits 1,2) AND set Interrupt Disable
+    // (bit 10): this driver POLLS rb_stts, so we never want the card asserting
+    // its legacy INTx line. Once the radio gets active (scan running) it would
+    // raise IRQ7 → IDT[0x27], which has no handler → #NP. Masking INTx at the
+    // PCI level prevents that regardless of the firmware's internal int state.
     let cmd = pci::read_u32(bus, slot, func, pci::regs::COMMAND);
-    pci::write_u32(bus, slot, func, pci::regs::COMMAND, cmd | 0x0006);
+    pci::write_u32(bus, slot, func, pci::regs::COMMAND, (cmd | 0x0006) | 0x0400);
 
     let bar0_raw = pci::read_u32(bus, slot, func, pci::regs::BAR0);
     if bar0_raw & 0x1 != 0 {

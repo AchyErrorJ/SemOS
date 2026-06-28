@@ -1,0 +1,11 @@
+[build]
+target = "aarch64-unknown-none"
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+
+[target.aarch64-unknown-none]
+# Link with our bare-metal script. aarch64-unknown-none uses rust-lld.
+rustflags = ["-C", "link-arg=-Tlinker.ld"]
+runner = "qemu-system-aarch64 -M virt -cpu cortex-a53 -nographic -kernel"
