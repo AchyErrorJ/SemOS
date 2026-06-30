@@ -56,7 +56,8 @@ DHCPDISCOVER → OFFER parse → REQUEST/ACK → apply IP/gw/DNS, T1 renewal. RF
 
 ### M53 — Real-world TLS validation `[NEXT — unblocked once tether traffic validates]`
 Hardening pass against real Anthropic servers (cert paths, extensions, edge cases
-QEMU never sees).
+QEMU never sees) over whichever USB network path comes up first: ipheth tether,
+CDC-ECM/NCM/RNDIS dongle, or a simple vendor USB NIC.
 - [ ] real Anthropic cert chain validates on bare metal
 - [ ] SNI sent for `api.anthropic.com`; TLS 1.3 handshake completes
 - [ ] HTTP/2 negotiation works or cleanly falls back to HTTP/1.1
@@ -107,47 +108,46 @@ APIs; buffered send/recv; concurrent connections; background networking mode.
 
 ---
 
-## Phase 20 — Bare-Metal WiFi (Intel 7260) — ACTIVE MAIN TRACK
+## Phase 20 - Bare-Metal WiFi (Intel 7260) - PAUSED AT AP-ACK WALL
 
 **Goal:** SemOS connects to WiFi directly, no phone required for network access.
 Start with one chip — Intel Wireless 7260 (PCI `8086:08B1`) in the W540/T540p.
 WiFi from scratch is 3-6 months; it runs as a long-lived track. Depends only on a
 working compiler.
 
-> **STATUS 2026-06-24.** Replacement boot drives in hand; the T540p boots again.
-> A live `wifi connect` re-confirmed **Phase A on metal** (PHY ctx + MAC ctx +
-> binding + ADD_STA status=1 + time-event all HW-confirmed) and pinned the
-> Phase-B blocker precisely: the open-auth TFD is built and the doorbell rings
-> (`SCD_wrptr=1`) but **data queue 1 never activates** — global `SCD_ACTIVE` q1
-> bit stays 0 even though the per-queue `QUEUE_STATUS` active bit (bit3) reads
-> set, so `SCD_rdptr` stays 0 (`consumed=0`). An instrumented activation probe
-> (explicit `SCD_ACTIVE` write+readback, then an 8-pass re-assert/poll loop) was
-> added to `enable_data_queue` to decide host-writable vs firmware-driven —
-> pending the next boot. See the `semos-wifi-scd-q1-stuck` memory for the
-> blow-by-blow and the `SCD_GP_CTRL` write-mask probe as the fallback diagnostic.
-> Attempts to date: OpenBSD-style `iwm_enable_ac_txq` direct-register setup,
-> `SCD_ACT_EN` at bit 19, setting `SCD_ACTIVE`/`EN_CTRL`, `TX_CMD` on data queue 1
-> (not host queue 0), `SCD_QUEUE_CFG` (0x1d) binding queue 1 to sta 0 / TID 8 /
-> FIFO BE (response echoes q1). NOT QEMU-testable.
+> **STATUS 2026-06-28 - pinned and paused.** Replacement-drive bring-up proved
+> the 7260 path is much further than the old queue-activation wall: firmware
+> ALIVE, live scan, Phase-A join plumbing, protected time-event, quota, q1 data
+> TX, and firmware `TX_RESP` all work. The current blocker is over-the-air:
+> auth TX completes far enough to get `TX_RESP`, but the AP reports **NO ACK / did
+> not hear us**. We tried protected-window/quota ordering, longer RX-survival
+> probing, MCC capability-gating (this `-17` ucode does not advertise LAR), and
+> an auth rate/antenna sweep (1M CCK A/B/A|B, 6M OFDM A/B). Decision: **pause
+> native PCI iwlwifi** and stop burning project time on RF/firmware bring-up.
+>
+> Resume point when desired: AP-ACK wall. Useful next data would be Linux-side
+> captures of the same card/AP, antenna-chain sanity on the mini-PCIe card, AP
+> channel/basic-rate/PMF configuration, and/or a second 7260 card. Until then,
+> use USB dongle/tether networking for real metal online work.
 
 ### M72 — WiFi chip enumeration + firmware load `[x — DONE 2026-06-13]`
 - [x] PCI 7260 detected, firmware blob loaded, chip alive via mailbox
 - [x] DEMO 96: "Intel Wireless 7260 detected and initialized"
 
-### M73 — 802.11 management state machine `[x — scan + Phase-A join DONE 2026-06-15; on-air assoc pending Phase-B TX]`
+### M73 - 802.11 management state machine `[x/paused - scan + Phase-A join + auth TX_RESP; AP no-ACK]`
 - [x] `wifi_scan()` returns nearby networks (live, real SSIDs)
 - [x] `wifi` / `wifi connect <n> <pass>` shell commands
-- [ ] on-air association (blocked on Phase-B frame TX)
+- [PAUSED] on-air association (blocked because AP does not ACK/hear auth TX)
 
-### M74 — WPA2 / WPA3 authentication `[🔨 — PMK/PTK/EAPOL-MIC + RSN IE built & KAT'd 2026-06-15; 4-way blocked on Phase-B TX]`
+### M74 - WPA2 / WPA3 authentication `[PAUSED - PMK/PTK/EAPOL-MIC + RSN IE built & KAT'd; 4-way blocked by AP no-ACK]`
 PBKDF2 + AES-CCMP for WPA2-PSK; open-auth, assoc-req w/ RSN IE, EAPOL-Key RX parse
 and Msg2/Msg4 TX all implemented and wired into `connect()`. WPA3-SAE deferred.
-- [ ] WPA2-PSK 4-way completes (gated on `consumed=1`)
+- [PAUSED] WPA2-PSK 4-way completes (gated on AP ACK/auth response)
 - [ ] encrypted data frames send/receive
 
-### M75 — WiFi as primary network interface `[  ]`
+### M75 - WiFi as primary network interface `[PAUSED]`
 - [ ] interface priority: WiFi if connected, phone bridge if not; shell override
-- [ ] DEMO 98: boot without phone, join WiFi, agent loop works
+- [PAUSED] DEMO 98: boot without phone, join WiFi, agent loop works - deferred
 
 ---
 

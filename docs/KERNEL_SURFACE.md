@@ -32,12 +32,12 @@ firmware is malicious or compromised.
 | SHA-256 | `5d81a6003df0228a497ad27f916ba2c979614b4c439b0f45a5f2873dc0607fe8` |
 | Vendored | In-tree at repo root (`iwlwifi-7260-17.ucode`); never fetched at build time |
 | Source | linux-firmware (GPL-redistributable) |
-| Loaded by | `kernel-x86_64/src/wireless/iwlwifi_*` (Stage 2b, pending) |
+| Loaded by | `kernel-x86_64/src/wireless/iwlwifi_*` (implemented for 7260 bring-up; native WiFi now paused at AP-ACK wall) |
 | Runs on | The NIC's own processor, not the host CPU |
 | **Bus access** | **Bus-master DMA, NOT IOMMU-contained — full physical memory** |
 | **Blast radius** | **Read/write of all physical RAM, including the kernel and the ring-0 LLM agent context.** A compromised or malicious firmware can exfiltrate or corrupt any kernel state via DMA. |
 | Containment status | **None.** IOMMU/VT-d is not implemented (see §2). Mitigation is deferred to the VT-d subsystem. |
-| Risk acceptance | Declared trust, accepted to proceed with the WiFi track. Documented per Commitment 6 ("declared trust, not silent trust"). To be revisited when §2 lands. |
+| Risk acceptance | Declared trust remains documented, but the native WiFi track is now **paused**. The blob/code stay in tree for later resume; near-term metal networking shifts to USB dongle/tether devices directed by our host USB stack. Revisit before making iwlwifi part of a daily-use path. |
 
 This is the project's first and (as of 2026-06-11) only opaque-firmware trust
 boundary. It is, by size, the largest single unauditable component in the
@@ -112,6 +112,14 @@ broader auditability claim.
 
 ## 4. Change log
 
+- **2026-06-28 - iwlwifi paused, USB network path chosen.** The 7260 firmware
+  path reached real hardware scan + join plumbing + auth TX_RESP, but the AP does
+  not link-layer ACK/hear the auth frame across antenna/rate sweeps. Decision:
+  park native PCI WiFi at the AP-ACK wall and use USB dongle/tether networking
+  for the first practical metal-online path. Security implication: the opaque
+  iwlwifi firmware remains an inventoried declared-trust surface, but it is no
+  longer the active near-term network path; USB NICs still DMA and must be
+  treated under the general no-IOMMU DMA posture above.
 - **2026-06-11** — Document created. §1.1 (iwlwifi firmware) and §2 (DMA/IOMMU
   posture) populated in full as the gate for Stage 2b firmware upload. §3
   syscall surface stubbed. Decision pending (user): proceed to Stage 2b under

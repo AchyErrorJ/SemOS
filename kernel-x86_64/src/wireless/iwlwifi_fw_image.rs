@@ -53,6 +53,23 @@ mod tlv {
 /// calibration triggers for the init-firmware PHY_CFG flow.
 const UCODE_TYPE_INIT: u32 = 1;
 
+/// Number of 32-bit pages we track for the TLV capability / API bitmaps.
+/// `iwl_ucode_capa` / `iwl_ucode_api` are stored as `{ api_index, flags }`
+/// pairs where `api_index` selects a 32-bit page, so capability/API bit `n`
+/// lives at `page[n / 32]`, bit `n % 32`. The 7260 only populates pages 0..2.
+pub const FW_CAPA_WORDS: usize = 8;
+
+/// Capability/API bit numbers we test (`enum iwl_ucode_tlv_capa` /
+/// `enum iwl_ucode_tlv_api` in iwl-fw-file.h).
+pub mod cap {
+    /// CAPA: firmware does Location Aware Regulatory; channel/TX-power limits
+    /// are driven at runtime by `MCC_UPDATE_CMD` instead of the static NVM.
+    pub const LAR_SUPPORT: u32 = 1;
+    /// API: `MCC_UPDATE_CMD` uses the v2 (8-byte, has `key`) payload. When
+    /// unset the firmware expects the 4-byte v1 struct.
+    pub const WIFI_MCC_UPDATE: u32 = 9;
+}
+
 // 7000-series implied load addresses for old-style INST/DATA TLVs
 // (IWLAGN_RTC_{INST,DATA}_LOWER_BOUND).
 const RTC_INST_ADDR: u32 = 0x0000_0000;
@@ -111,6 +128,31 @@ pub struct ParsedFw {
     /// and third u32 of the PHY_CFG payload (`flow_trigger`, `event_trigger`).
     pub calib_flow: u32,
     pub calib_event: u32,
+    /// Indexed API/capability bitmaps from TLV 29/30.
+    pub api: [u32; FW_CAPA_WORDS],
+    pub capa: [u32; FW_CAPA_WORDS],
+}
+
+impl ParsedFw {
+    /// Test an API bit from the TLV 29 bitmap.
+    pub fn has_api(&self, bit: u32) -> bool {
+        let idx = (bit / 32) as usize;
+        idx < FW_CAPA_WORDS && (self.api[idx] & (1u32 << (bit % 32))) != 0
+    }
+
+    /// Test a capability bit from the TLV 30 bitmap.
+    pub fn has_capa(&self, bit: u32) -> bool {
+        let idx = (bit / 32) as usize;
+        idx < FW_CAPA_WORDS && (self.capa[idx] & (1u32 << (bit % 32))) != 0
+    }
+
+    pub fn lar_supported(&self) -> bool {
+        self.has_capa(cap::LAR_SUPPORT)
+    }
+
+    pub fn mcc_update_v2(&self) -> bool {
+        self.has_api(cap::WIFI_MCC_UPDATE)
+    }
 }
 
 fn rd32(b: &[u8], off: usize) -> u32 {
@@ -145,6 +187,8 @@ pub fn parse() -> Option<ParsedFw> {
         phy_config: 0,
         calib_flow: 0,
         calib_event: 0,
+        api: [0; FW_CAPA_WORDS],
+        capa: [0; FW_CAPA_WORDS],
     };
 
     let mut p = HEADER_LEN;
@@ -182,7 +226,18 @@ pub fn parse() -> Option<ParsedFw> {
                 parsed.calib_flow = rd32(b, data + 4);
                 parsed.calib_event = rd32(b, data + 8);
             }
-            tlv::API_CHANGES_SET | tlv::ENABLED_CAPABILITIES => {}
+            tlv::API_CHANGES_SET if tlen >= 8 => {
+                let idx = rd32(b, data) as usize;
+                if idx < FW_CAPA_WORDS {
+                    parsed.api[idx] = rd32(b, data + 4);
+                }
+            }
+            tlv::ENABLED_CAPABILITIES if tlen >= 8 => {
+                let idx = rd32(b, data) as usize;
+                if idx < FW_CAPA_WORDS {
+                    parsed.capa[idx] = rd32(b, data + 4);
+                }
+            }
             _ => {}
         }
         // Advance to the next TLV, padding length up to a 4-byte boundary.
@@ -195,6 +250,8 @@ pub fn parse() -> Option<ParsedFw> {
         parsed.num_cpus, parsed.api_flags);
     println!("[iwlwifi-fw] phy_config=0x{:08X} calib_flow=0x{:08X} calib_event=0x{:08X}",
         parsed.phy_config, parsed.calib_flow, parsed.calib_event);
+    println!("[iwlwifi-fw] caps: api0=0x{:08X} capa0=0x{:08X} LAR={} MCC_UPDATE_v2={}",
+        parsed.api[0], parsed.capa[0], parsed.lar_supported() as u8, parsed.mcc_update_v2() as u8);
     // Dump section load addresses so the boot log shows the layout we'll DMA.
     for (i, s) in parsed.init.sections[..parsed.init.count].iter().enumerate() {
         println!("[iwlwifi-fw]   INIT[{}] addr=0x{:08X} len={}", i, s.addr, s.len);

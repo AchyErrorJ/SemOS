@@ -79,20 +79,23 @@ a later init stage hangs.
 
 ---
 
-## Active / gated / next (2026-06-24)
+## Active / gated / next (2026-06-28)
 
 **Boot drives are back** (the 2026-06-15 dead-drive period is over); the T540p
 boots on metal again. The three live threads:
 
-### A. Bare-metal WiFi (Intel 7260) — Phase B, narrowed
-Phase A is **hardware-confirmed**. The first on-air frame is blocked: data queue 1
-builds the auth TFD and rings the doorbell (`SCD_wrptr=1`) but the scheduler won't
-activate it (`SCD_rdptr` pinned at 0, `consumed=0`). A 2026-06-24 boot proved
-**`SCD_ACTIVE` is not host-writable** (`writable=false`; the bit never sets across
-8 re-assert/poll passes) — so activation must come from **auto-active mode**
-(`SCD_GP_CTRL` bit 18) or the FIFO mapping, not a missing host write. Next:
-`SCD_GP_CTRL` write-mask probe. Full detail: [networking.md](roadmap/map%20-%20networking.md),
-`semos-wifi-scd-q1-stuck` memory.
+### A. Bare-metal networking - USB dongle/tether active; PCI WiFi paused
+Native Intel 7260 WiFi made real progress (firmware ALIVE, scan, Phase-A join
+plumbing, data-queue TX and `TX_RESP`), but is now pinned at the over-the-air
+AP-ACK wall: the AP reports **NO ACK / did not hear us** across protected
+session/quota, RX-survival probing, and A/B/A|B + 1M/6M auth-rate sweeps. The
+project decision is to **pause native PCI iwlwifi** rather than burn more time on
+RF/firmware bring-up.
+
+Near-term online path: use a **USB network dongle / tether** through the existing
+`NetDevice` + smoltcp/TLS stack. Prefer class-style USB Ethernet (CDC-ECM/NCM /
+RNDIS where practical) or a simple vendor USB NIC (RTL8152/AX88179) before taking
+on another opaque USB WiFi firmware stack. Full detail: [networking.md](roadmap/map%20-%20networking.md).
 
 ### B. Self-extension loop (the thesis keystone) — ~80%
 On-device rustc compiles + runs a program; module loader keystone landed.
@@ -107,8 +110,9 @@ capabilities (crypto/identity/camera/GPS/mic/push) + LiDAR sensor offload.
 
 **Doable without the machine:** self-extension/loader, WPA2 crypto, assoc/EAPOL
 builders, dGPU groundwork, ARM HAL (QEMU), browser/HTML parser, agent context mgmt,
-security-doc maintenance. **Hard-gated on hardware:** WiFi Phase-B TX, iPhone
-tether traffic, iGPU/dGPU bring-up, NVMe real-hardware test.
+security-doc maintenance. **Hard-gated on hardware:** USB dongle/tether traffic,
+iGPU/dGPU bring-up, NVMe real-hardware test; native PCI WiFi is paused at the
+AP-ACK wall.
 
 ---
 
@@ -116,9 +120,9 @@ tether traffic, iGPU/dGPU bring-up, NVMe real-hardware test.
 
 ```
 NETWORKING & ONLINE                                   → roadmap/networking.md
-  Phase 15  USB tethering ........ ipheth landed; M53 real-world TLS / M54 first session NEXT
+  Phase 15  USB tethering ........ ipheth landed; USB dongle/tether traffic validation NEXT
   Phase 17  Layer-4 phone bridge . socket-forward over paired channel (cellular cost solved)
-  Phase 20  Bare-metal WiFi ...... ACTIVE; Phase A HW-confirmed; Phase-B q1 activation blocker
+  Phase 20  Bare-metal WiFi ...... PAUSED; 7260 reaches TX_RESP but AP gives no ACK
 
 SELF-EXTENSION (thesis core)                          → roadmap/self-extension.md
   M27       rustc-on-SemOS ....... compile+run works; sysroot polish (~80%)

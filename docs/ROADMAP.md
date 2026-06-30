@@ -8,6 +8,20 @@ When you finish a milestone, flip its checkbox in this file and update the [Proj
 
 Phase 8 (network → first remote LLM call) is closed. See [`PHASE_8_ROADMAP.md`](PHASE_8_ROADMAP.md) for that phase's historical detail. The current frontier is Phase 9.
 
+> **2026-06-28 - WiFi pin placed; near-term networking pivots to USB dongle.**
+> Native Intel 7260 `iwlwifi` is **paused deliberately**, not abandoned. The
+> driver now reaches real scan + firmware ALIVE + Phase-A join plumbing and the
+> auth TX path produces firmware `TX_RESP`, but the AP reports **NO ACK / did
+> not hear us** even after protected time-event, quota, RX-survival probing, and
+> A/B/A|B + 1M/6M auth-rate sweeps. That is a hardware/RF/firmware bring-up wall,
+> not the highest-leverage path to getting SemOS online. Preserve the code and
+> diagnostics; resume later from the AP-ACK wall with captures/antenna/channel
+> checks. **Immediate metal-network path:** use a USB network dongle (prefer
+> class-style USB Ethernet/CDC-ECM/NCM or a simple vendor USB NIC such as
+> RTL8152/AX88179 before another opaque WiFi stack) and route it through the
+> existing `NetDevice` + smoltcp/TLS stack. The roadmap's active networking work
+> is now USB dongle / tether traffic validation; native PCI WiFi moves to paused.
+>
 > **2026-06-24 — new boot drives in hand; WiFi blocker localized; boot stamp.**
 > The dead boot drives (lost 2026-06-15) are replaced — the T540p boots live
 > again. A live `wifi connect` run re-confirmed **Phase A passes on metal** and
@@ -344,8 +358,9 @@ hardware is present takes effect. See `kernel-x86_64/src/ahci.rs`.
 # Phase 10 — Bare-metal readiness + Wi-Fi
 
 Goal: the kernel boots on real hardware, runs the same DEMOs, and can
-reach api.anthropic.com over Wi-Fi (currently TLS works via QEMU SLIRP
-forwarding).
+reach api.anthropic.com over a practical metal network path. Near-term that is a
+USB network dongle / tether path through `NetDevice` + smoltcp/TLS; native PCI
+Wi-Fi is paused at the Intel 7260 AP-ACK wall and kept as a later resume track.
 
 **Two-machine bring-up (T540 on the way 2026-05-28):**
 - **Stage 1 — ThinkPad T540 (ACQUIRED, on the way).** i7-4600M Haswell,
@@ -409,21 +424,26 @@ the first real-hardware session. v1 landed `d77ba87` — audit + watchdog
       fine; `hlt`-only idle was just too coarse to give slot 6 forward
       progress. See [[bug_scheduler_picknext_freshly_spawned]] memory.
 
-## M11 — iwlwifi driver `[🔨 v1 protocol layer + PCI probe banner + CSR sanity read (HW_REV, RF_ID, HW_IF_CONFIG, GP_CNTRL); firmware upload next]`
+## M11 - native iwlwifi driver `[PAUSED at AP-ACK wall; USB dongle path is active]`
 
-802.11 over Intel WiFi. Two-stage hardware bring-up: T540 (7260/3160
-mini-PCIe) first, then P1 Gen 6 (AX211). v1 in-tree protocol scaffolding
-landed `a0d487b` (DEMO 65) since QEMU emulates no wireless — everything
-else here waits for a T540 in hand.
+802.11 over Intel WiFi. The Intel 7260 bring-up is **parked deliberately** after
+real hardware progress: firmware ALIVE, scan, Phase-A MAC/PHY/binding/station
+setup, time-event/quota, data queue TX, and firmware `TX_RESP` all exist. The
+current blocker is no longer queue activation; it is over-the-air: the auth frame
+gets a `TX_RESP` but the AP reports **NO ACK / did not hear us** across antenna
+and rate sweeps. Resume later from this exact AP-ACK wall. For near-term metal
+networking, pursue USB network dongle/tether under the CDC-ECM/NCM/vendor-USB-NIC
+items below.
 
 **Done when:**
 - [✅] **802.11 MAC: management frame builders** (Probe Request,
       Open Authentication, Association Request) + EAPOL-Key Msg2 —
       byte-validated against the spec layout in DEMO 65
 - [✅] iwlwifi PCI device-ID table (T540 7260 family + P1 AX211)
-- [ ] Intel firmware blobs (`iwlwifi-...ucode` + `.pnvm`) embedded
-- [ ] Firmware upload + secboot succeeds; ALIVE event received
-- [ ] PHY init: NVM + PNVM + regulatory + channel calibration
+- [done] Intel 7260 firmware blob (`iwlwifi-7260-17.ucode`) embedded and parsed
+- [done] Firmware upload succeeds; INIT/RUNTIME ALIVE received on metal
+- [done] PHY init/calibration + scan path sufficient for live beacon scans
+- [PAUSED] Open-auth AP ACK: auth TX produces `TX_RESP`, but AP does not ACK/hear it; paused
 - [ ] WPA2 four-way handshake in software (MIC over derived PTK),
       CCMP encrypt/decrypt offloaded to firmware after keys installed
 - [🔨 protocol; bulk now live] **CDC-ECM USB Ethernet path** as the
@@ -437,8 +457,10 @@ else here waits for a T540 in hand.
       alt, then push/pull Ethernet frames via `bulk_in_xfer` /
       `bulk_out_xfer`. Could ship now (QEMU has `-device usb-net`) or
       wait for the T540 hardware to decide on the exact NetDevice wiring.
-- [ ] DEMO repeats: associate to a hardcoded SSID, get DHCP, redo the
-      Anthropic TLS round-trip over real Wi-Fi
+- [PAUSED] Native PCI WiFi DEMO: associate to SSID + DHCP + Anthropic TLS over WiFi;
+      deferred until the AP-ACK/RF wall is worth revisiting
+- [ ] USB dongle DEMO: enumerate USB network dongle, DHCP/static IP, redo the
+      Anthropic TLS round-trip over real metal networking
 
 ## M12 — DNS resolver `[✅]`
 

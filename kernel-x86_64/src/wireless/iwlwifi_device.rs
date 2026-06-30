@@ -30,6 +30,20 @@ static mut KEEP_WARM: KeepWarm = KeepWarm([0; 4096]);
 /// received frames). gen1 RBD = 32-bit (buf_phys >> 8). 256 buffers ×
 /// 4 KiB = 1 MiB; the NIC DMAs received notifications into these.
 const RX_RING_SIZE: usize = 256;
+
+// Legacy `rate_n_flags` helpers for 7260 TX_CMD. PLCP values follow the
+// firmware's legacy-rate table; bit 9 marks CCK, bits 14/15 select antenna A/B.
+const RATE_FLAG_CCK: u32 = 1 << 9;
+const RATE_FLAG_ANT_A: u32 = 1 << 14;
+const RATE_FLAG_ANT_B: u32 = 1 << 15;
+const RATE_1M_PLCP: u32 = 10;
+const RATE_6M_PLCP: u32 = 13;
+const RATE_1M_CCK_A: u32 = RATE_1M_PLCP | RATE_FLAG_CCK | RATE_FLAG_ANT_A;
+const RATE_1M_CCK_B: u32 = RATE_1M_PLCP | RATE_FLAG_CCK | RATE_FLAG_ANT_B;
+const RATE_1M_CCK_AB: u32 = RATE_1M_PLCP | RATE_FLAG_CCK | RATE_FLAG_ANT_A | RATE_FLAG_ANT_B;
+const RATE_6M_OFDM_A: u32 = RATE_6M_PLCP | RATE_FLAG_ANT_A;
+const RATE_6M_OFDM_B: u32 = RATE_6M_PLCP | RATE_FLAG_ANT_B;
+
 #[repr(C, align(4096))]
 struct RxRbd([u32; RX_RING_SIZE]);
 static mut RX_RBD: RxRbd = RxRbd([0; RX_RING_SIZE]);
@@ -1345,6 +1359,69 @@ impl IwlDevice {
             label, delta, if delta > 0 { "RX ALIVE" } else { "RX DEAD" });
     }
 
+    /// Long post-TX RX-survival probe ? the decisive disambiguation for the
+    /// "no AP ACK" wall. After an on-air mgmt TX the notes describe two
+    /// conflicting failure modes:
+    ///   (1) "on-air TX kills RX": RB_STTS freezes and never moves again ? the
+    ///       host stops seeing ALL RX (even beacons) ? device/RX-DMA stuck.
+    ///   (2) "RF reach": RX keeps flowing but the AP never replies ? TX/antenna
+    ///       /channel/regulatory problem, not a host-side halt.
+    ///
+    /// The auth frame uses a ~260 ms life_time, so a 300 ms `rx_probe` can stop
+    /// looking before the frame even finishes retrying. This probe watches
+    /// RB_STTS for `budget_ms` (use 3000?5000) and reports: time-to-first-
+    /// revival and a per-500 ms histogram of how many RX buffers the NIC filled.
+    /// If the first non-zero bucket lands AFTER the frame's life_time, RX
+    /// "revived on its own" ? mode (2). If every bucket stays 0, RX is wedged ?
+    /// mode (1).
+    fn rx_survival_probe(&mut self, label: &str, budget_ms: u32) {
+        const BUCKET_MS: u32 = 500;
+        const NBUCKETS: usize = 12; // up to 6 s of history
+        let mut buckets = [0u16; NBUCKETS];
+        let from = self.rx_count();
+        let mut last = from;
+        let mut first_revival_ms: i32 = -1;
+        let iters = (budget_ms / 5).max(1);
+        for i in 0..iters {
+            let cur = self.rx_count();
+            if cur != last {
+                let gained = cur.wrapping_sub(last) & 0xFFFF;
+                let elapsed = i * 5;
+                if first_revival_ms < 0 {
+                    first_revival_ms = elapsed as i32;
+                }
+                let b = (elapsed / BUCKET_MS) as usize;
+                if b < NBUCKETS {
+                    buckets[b] = buckets[b].saturating_add(gained as u16);
+                }
+                // Recycle the free-buffer write pointer so the NIC keeps a full
+                // ring; otherwise the ring would starve and mask a real revival.
+                let wptr = (((cur % RX_RING_SIZE) + RX_RING_SIZE - 8) % RX_RING_SIZE) & 0xF8;
+                self.csr.write32(super::iwlwifi_csr::fh_rx::RSCSR_CHNL0_WPTR, wptr as u32);
+                last = cur;
+            }
+            for _ in 0..5000 { for _ in 0..100 { core::hint::spin_loop(); } } // ~5 ms
+        }
+        let total = self.rx_count().wrapping_sub(from) & 0xFFFF;
+        // Render the histogram (one cell per 500 ms window over the budget).
+        let cells = ((budget_ms / BUCKET_MS) as usize).min(NBUCKETS).max(1);
+        println!("[rxsurv] {}: budget={}ms total=+{} bufs first-revival={}",
+            label, budget_ms, total,
+            if first_revival_ms < 0 { -1 } else { first_revival_ms });
+        for b in 0..cells {
+            println!("[rxsurv]   t={:>4}-{:>4}ms : +{} bufs",
+                (b as u32) * BUCKET_MS, (b as u32 + 1) * BUCKET_MS, buckets[b]);
+        }
+        println!("[rxsurv] {} VERDICT: {}", label,
+            if total == 0 {
+                "RX WEDGED after TX (mode 1: on-air TX kills RX / RX-DMA halt)"
+            } else if first_revival_ms >= 0 && (first_revival_ms as u32) >= 200 {
+                "RX REVIVED after the frame lifetime (mode 2: TX/RF/AP-reach, RX path OK)"
+            } else {
+                "RX kept flowing across TX (mode 2: AP simply not answering)"
+            });
+    }
+
     /// Post-TX interrupt-ACK probe — the decisive experiment for the on-air-TX-
     /// kills-RX wall (see semos-wifi-scd-q1-stuck). This driver is fully POLLED:
     /// it reads RB_STTS and never services CSR_INT / CSR_FH_INT_STATUS. Linux is
@@ -1509,6 +1586,56 @@ impl IwlDevice {
         let cmd = [0x03u8, 0, 0, 0, 0x10, 0, 0, 0];
         println!("[iwlwifi] BT_CONFIG: coex mode=WIFI");
         self.send_cmd(0x9b, &cmd);
+    }
+
+    /// Send `MCC_UPDATE_CMD` (0xC8) when the loaded firmware advertises LAR.
+    ///
+    /// This is intentionally capability-gated. The 7260 `-17` blob currently
+    /// embedded in this tree reports `LAR_SUPPORT=0` and `WIFI_MCC_UPDATE=0`, so
+    /// an unconditional 0xC8 would be an unsupported host command and could poison
+    /// the connect sequence. If a newer/LAR-capable ucode is dropped in later, the
+    /// same path will send the right v1/v2 payload before scan/connect so the
+    /// firmware has a concrete regulatory country instead of the restrictive
+    /// world domain.
+    pub fn maybe_mcc_update(
+        &mut self,
+        fw: &super::iwlwifi_fw_image::ParsedFw,
+        alpha2: &[u8; 2],
+    ) -> bool {
+        if !fw.lar_supported() {
+            println!("[iwlwifi] MCC: LAR not advertised by this ucode; skipping MCC_UPDATE_CMD");
+            return true;
+        }
+
+        let upper = |c: u8| -> u8 {
+            if c >= b'a' && c <= b'z' { c - 32 } else { c }
+        };
+        let cc0 = upper(alpha2[0]);
+        let cc1 = upper(alpha2[1]);
+
+        // struct iwl_mcc_update_cmd_v1: le16 mcc, u8 source_id, u8 reserved.
+        // v2 adds a le32 key. The country is transmitted as ASCII bytes in the
+        // little-endian u16 (e.g. bytes ['U','S']). Source 5 is WIFI/driver.
+        const MCC_SOURCE_WIFI: u8 = 5;
+        let mut cmd = [0u8; 8];
+        cmd[0] = cc0;
+        cmd[1] = cc1;
+        cmd[2] = MCC_SOURCE_WIFI;
+        cmd[3] = 0;
+        let len = if fw.mcc_update_v2() {
+            // key = 0: no signed regulatory key; same default Linux path when the
+            // source doesn't provide one.
+            cmd[4..8].copy_from_slice(&0u32.to_le_bytes());
+            8
+        } else {
+            4
+        };
+
+        println!("[iwlwifi] MCC_UPDATE_CMD country={}{} source=WIFI payload={}B",
+            cc0 as char, cc1 as char, len);
+        let ok = self.send_cmd(0xC8, &cmd[..len]);
+        println!("[iwlwifi] MCC_UPDATE_CMD -> {}", if ok { "sent" } else { "NO RESPONSE" });
+        ok
     }
 
     /// Add PHY context 0 (`IWM_PHY_CONTEXT_CMD` 0x08) — defines the band /
@@ -1865,6 +1992,13 @@ impl IwlDevice {
     /// scheduler never consumed q1 (`RDPTR=0`).
     /// `frame` = full 802.11 frame (header + body); `hdrlen` = 802.11 header len.
     pub fn tx_mgmt(&mut self, frame: &[u8], hdrlen: usize) -> bool {
+        self.tx_mgmt_rate(frame, hdrlen, RATE_1M_CCK_AB, "default 1M-CCK A|B")
+    }
+
+    /// Same as `tx_mgmt`, but with an explicit legacy `rate_n_flags` word and a
+    /// human-readable label. Used by the auth path to sweep A/B antennas and
+    /// OFDM-vs-CCK when the AP does not link-layer ACK our auth frame.
+    pub fn tx_mgmt_rate(&mut self, frame: &[u8], hdrlen: usize, rate_n_flags: u32, rate_label: &str) -> bool {
         use super::iwlwifi_csr::{CSR_HBUS_TARG_WRPTR, scd};
         // TX_CMD (0x1c) goes on a TX data queue, not the host-command queue.
         // The TFD begins with [iwm_cmd_header(4) | iwm_tx_cmd(56) | 802.11 hdr |
@@ -1903,7 +2037,7 @@ impl IwlDevice {
             // LIFE_EXPIRE) but the AP never answers — an RF-reach problem. The 7260
             // is a 2-antenna part; TX on both chains (1<<14)|(1<<15) maximizes the
             // chance the AP hears our 1 Mbps auth frame.
-            put32(b, tx + 12, 10 | (1 << 9) | (1 << 14) | (1 << 15));
+            put32(b, tx + 12, rate_n_flags);
             b[tx + 16] = 0; // sta_id = IWM_STATION_ID (the AP)
             // sec_ctl @tx+17 = 0 (no encryption on auth/assoc)
             // life_time @tx+40: SHORT finite. While an un-ACKed frame is retrying,
@@ -1957,8 +2091,8 @@ impl IwlDevice {
             let bc = scd_bc_entry_gen1_data_tx(totlen, 0);
             TX_BC_TBL.0[Q1_BC_BASE + idx] = bc;
             if idx < 64 { TX_BC_TBL.0[Q1_BC_BASE + 256 + idx] = bc; }
-            println!("[iwlwifi]   TX build q{} idx{} frame_phys=0x{:08X} bc[{}]=0x{:04X} bc[{}]=0x{:04X} TBs {}/{}/{}",
-                DATA_QUEUE, idx, frame_phys, Q1_BC_BASE + idx, bc, Q1_BC_BASE + 256 + idx, bc,
+            println!("[iwlwifi]   TX build q{} idx{} rate={} flags=0x{:08X} frame_phys=0x{:08X} bc[{}]=0x{:04X} bc[{}]=0x{:04X} TBs {}/{}/{}",
+                DATA_QUEUE, idx, rate_label, rate_n_flags, frame_phys, Q1_BC_BASE + idx, bc, Q1_BC_BASE + 256 + idx, bc,
                 IWL_FIRST_TB_SIZE, tb1_len, bodylen);
             println!("[iwlwifi]   TFD[{}]: {:02X} {:02X} {:02X} {:02X} | {:02X}{:02X}{:02X}{:02X} {:02X}{:02X} | {:02X}{:02X}{:02X}{:02X} {:02X}{:02X} | {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}",
                 idx,
@@ -2234,17 +2368,36 @@ impl IwlDevice {
         // final long listen. Previously only attempt 1 was in-window (TE ~1s); 2-4
         // TX'd off-channel and were wasted. More in-window shots = more chances the
         // AP hears us AND that we catch a reply that lands just after any one TX.
-        for attempt in 1..=5 {
+        // Sweep antenna/rate variants. If exactly one of these gets ACKed, the
+        // TX path is fine and the antenna mask/rate was the issue. If NONE are
+        // ACKed while RX keeps flowing, focus on channel/PHY-context or RF reach.
+        let variants: &[(u32, &str)] = &[
+            (RATE_1M_CCK_A,  "1M-CCK antA"),
+            (RATE_1M_CCK_B,  "1M-CCK antB"),
+            (RATE_1M_CCK_AB, "1M-CCK antA|B"),
+            (RATE_6M_OFDM_A, "6M-OFDM antA"),
+            (RATE_6M_OFDM_B, "6M-OFDM antB"),
+        ];
+        for (i, &(rate, label)) in variants.iter().enumerate() {
+            let attempt = i + 1;
             let from = self.rx_count();
-            if !self.tx_mgmt(&frame, 24) { return false; }
-            println!("[wifi] auth attempt {} sent (te_running={}) — short drain",
-                attempt, is_te_running());
+            println!("[wifi] auth attempt {} rate-sweep {} flags=0x{:08X} (te_running={})",
+                attempt, label, rate, is_te_running());
+            if !self.tx_mgmt_rate(&frame, 24, rate, label) { return false; }
+            println!("[wifi] auth attempt {} sent ({}) ? short drain", attempt, label);
             self.drain_rx(from, 180); // short: stay in-window for the next burst
             if unsafe { core::ptr::read_volatile(&raw const AUTH_SUCCESS) } {
-                println!("[wifi] AP answered on auth attempt {}", attempt);
+                println!("[wifi] AP answered on auth attempt {} ({})", attempt, label);
                 return true;
             }
         }
+        // 2026-06-28: post-TX RX-survival probe. The auth frame uses a ~260 ms
+        // life_time, so the short in-burst drains can stop looking before the
+        // frame finishes retrying. Watch RB_STTS for several seconds to settle
+        // the core question: does host RX ever come back after the on-air TX?
+        //   - stays dead  -> "on-air TX kills RX" (device/RX-DMA halt)
+        //   - revives late -> RF/AP-reach issue, RX path itself is fine
+        self.rx_survival_probe("post-auth-TX", 5000);
         // Final long listen for a slow / buffered reply.
         let from = self.rx_count();
         println!("[wifi] auth bursts done — final long listen for AP response...");
@@ -2733,6 +2886,14 @@ pub fn init() -> bool {
                                                 phy[4..8].copy_from_slice(&fw.calib_flow.to_le_bytes());
                                                 phy[8..12].copy_from_slice(&fw.calib_event.to_le_bytes());
                                                 dev.send_cmd(0x6a, &phy);
+                                                // Regulatory/MCC setup. This is a
+                                                // no-op for the embedded 7260 -17
+                                                // ucode (LAR cap absent), but it
+                                                // becomes active automatically if
+                                                // a LAR-capable ucode is used.
+                                                // Use the lab regulatory domain;
+                                                // change this if testing elsewhere.
+                                                dev.maybe_mcc_update(&fw, b"US");
                                                 // BT coex config — the 7260 is a
                                                 // combo card; the radio won't
                                                 // scan without it (accepted but

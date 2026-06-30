@@ -8,13 +8,23 @@ but `consumed=0`). Everything below is unvalidated.
 
 Update this file as more changes land while the drives are out.
 
+> **2026-06-28 decision: native iwlwifi is paused.** The historical WiFi boot
+> validation items below are preserved as context, but they are no longer the
+> next-session gate. Latest metal result: auth TX reaches firmware `TX_RESP`, but
+> the AP reports **NO ACK / did not hear us** across protected time-event/quota,
+> RX-survival probe, and antenna/rate sweeps. Near-term validation moves to a USB
+> network dongle / tether path.
+
+
 ---
 
 ## How to validate
 Flash the **latest** image (highest timestamp), boot the T540p, then:
 1. Watch the early boot for the WPA2 crypto KAT lines (no command needed).
-2. At `sem-sh$`, run `wifi connect <n> <pass>` for 435Northshore.
-3. Check the specific lines called out per change below.
+2. For networking, prioritize USB dongle / tether validation (`usbinfo`, `usbenum`,
+   then the relevant USB NIC/tether command path) rather than native `wifi connect`.
+3. Only run `wifi connect <n> <pass>` if deliberately resuming the paused iwlwifi
+   AP-ACK investigation; capture `auth attempt`, `TX_RESP`, and `[rxsurv]` lines.
 
 ---
 
@@ -90,13 +100,14 @@ report at boot (`[*] Probing NVIDIA dGPU...`). MMIO chip-ID read gated off
 ---
 
 ## Quick pass/fail summary to capture on first boot
-- [ ] WiFi `TX diag: consumed=?`  → **the make-or-break number** (image 18:25)
-- [ ] `[wpa2] self-test ... PTK PASS, EAPOL-MIC PASS` (19:29)
-- [ ] `[wpa2] EAPOL self-test: Msg2 ... MIC PASS` (20:05)
+- [ ] USB network dongle/tether enumerates (`usbinfo`/`usbenum` show the device and endpoints)
+- [ ] USB network path can send/receive at least one frame or static-IP ping/fetch equivalent
+- [ ] `[wpa2] self-test ... PTK PASS, EAPOL-MIC PASS` (historical regression)
+- [ ] `[wpa2] EAPOL self-test: Msg2 ... MIC PASS` (historical regression)
 - [ ] existing `/bin` programs still spawn by name (loader regression, 19:29)
 - [ ] no unexpected `fenced to tier 0` on normal programs (20:17)
 
-If `consumed=1`: the on-air WiFi path is unblocked and the whole built-but-untested
-auth→assoc→4-way chain becomes testable in sequence. If `consumed=0`: WiFi stays
-blocked on the SCD scheduling fix, but everything else (KATs, loader, fence) is
-independently verifiable.
+Historical WiFi note: the `consumed=0` queue wall is no longer current; the latest
+state reaches TX_RESP, but AP no-ACKs the auth frame. Native PCI WiFi is paused.
+If deliberately resuming it, collect `auth attempt`, `TX_RESP`, and `[rxsurv]`
+logs and compare against the AP-ACK wall in the roadmap.
