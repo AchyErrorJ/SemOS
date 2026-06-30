@@ -1,0 +1,45 @@
+Failed to read "/boot/efi/EFI/systemd": Permission denied
+Failed to open '/boot/efi//loader/loader.conf': Permission denied
+[0mSystem:
+      Firmware: UEFI 2.31 (Lenovo 0.8448)
+ Firmware Arch: x64
+   Secure Boot: disabled
+  TPM2 Support: firmware only, driver unavailable
+  Measured UKI: no
+  Boot into FW: supported
+
+[0mCurrent Boot Loader:
+      Product: systemd-boot 255.4-1ubuntu8.15pop0~1778766128~24.04~85b5073
+     Features: ✓ Boot counting
+               ✓ Menu timeout control
+               ✓ One-shot menu timeout control
+               ✓ Default entry control
+               ✓ One-shot entry control
+               ✓ Support for XBOOTLDR partition
+               ✓ Support for passing random seed to OS
+               ✓ Load drop-in drivers
+               ✓ Support Type #1 sort-key field
+               ✓ Support @saved pseudo-entry
+               ✓ Support Type #1 devicetree field
+               ✓ Enroll SecureBoot keys
+               ✓ Retain SHIM protocols
+               ✓ Menu can be disabled
+               ✓ Boot loader sets ESP information
+          ESP: /dev/disk/by-partuuid/59c85b6f-250e-4007-b1e4-28e579329bd4
+         File: └─/EFI/systemd/systemd-bootx64.efi
+
+[0mRandom Seed:
+ System Token: set
+       Exists: no
+
+[0mAvailable Boot Loaders on ESP:
+          ESP: /boot/efi (/dev/disk/by-partuuid/59c85b6f-250e-4007-b1e4-28e579329bd4)
+         File: (can't access /boot/efi: Permission denied)
+
+[0mBoot Loaders Listed in EFI Variables:
+        Title: Pop!_OS 24.04 LTS
+           ID: 0x0016
+       Status: active, boot-order
+    Partition: /dev/disk/by-partuuid/59c85b6f-250e-4007-b1e4-28e579329bd4
+         File: └─/EFI/systemd/systemd-bootx64.efi
+

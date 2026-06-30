@@ -1,0 +1,3 @@
+/dev/mapper/control: open failed: Permission denied
+Failure to communicate with kernel device-mapper driver.
+Incompatible libdevmapper 1.02.185 (2022-05-18) and kernel driver (unknown version).

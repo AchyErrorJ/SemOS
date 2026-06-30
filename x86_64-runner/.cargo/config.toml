@@ -1,4 +1,3 @@
-# Override the workspace-level aarch64 default — this binary is a host tool
-# that runs on Windows to package the kernel into a bootable disk image.
-[build]
-target = "x86_64-pc-windows-msvc"
+# `x86_64-runner` is a HOST tool that wraps the kernel ELF into bootable
+# BIOS/UEFI disk images. Build it for the native host by default; pass an
+# explicit `--target` only when cross-compiling the wrapper itself.

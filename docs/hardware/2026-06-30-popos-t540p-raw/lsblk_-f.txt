@@ -1,0 +1,7 @@
+NAME   FSTYPE      FSVER LABEL UUID                                 FSAVAIL FSUSE% MOUNTPOINTS
+sda                                                                                
+├─sda1 vfat        FAT32       D9A4-783C                             721.2M    29% /boot/efi
+├─sda2 vfat        FAT32       D9A4-7865                             896.8M    78% /recovery
+├─sda3 crypto_LUKS 2           dded89bf-9e94-49be-a81f-8d5564272208                
+└─sda4 swap        1           cdbc82f8-0d88-4253-a50e-5d6c91c07f9c                
+zram0                                                                              [SWAP]

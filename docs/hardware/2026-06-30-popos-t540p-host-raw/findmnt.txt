@@ -1,0 +1,27 @@
+TARGET                         SOURCE                FSTYPE          OPTIONS
+/                              /dev/mapper/data-root ext4            rw,noatime,errors=remount-ro
+├─/sys                         sysfs                 sysfs           rw,nosuid,nodev,noexec,relatime
+│ ├─/sys/firmware/efi/efivars  efivarfs              efivarfs        rw,nosuid,nodev,noexec,relatime
+│ ├─/sys/kernel/security       securityfs            securityfs      rw,nosuid,nodev,noexec,relatime
+│ ├─/sys/fs/cgroup             cgroup2               cgroup2         rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot
+│ ├─/sys/fs/pstore             none                  pstore          rw,nosuid,nodev,noexec,relatime
+│ ├─/sys/fs/bpf                bpf                   bpf             rw,nosuid,nodev,noexec,relatime,mode=700
+│ ├─/sys/kernel/debug          debugfs               debugfs         rw,nosuid,nodev,noexec,relatime
+│ ├─/sys/kernel/tracing        tracefs               tracefs         rw,nosuid,nodev,noexec,relatime
+│ ├─/sys/fs/fuse/connections   fusectl               fusectl         rw,nosuid,nodev,noexec,relatime
+│ └─/sys/kernel/config         configfs              configfs        rw,nosuid,nodev,noexec,relatime
+├─/proc                        proc                  proc            rw,nosuid,nodev,noexec,relatime
+│ └─/proc/sys/fs/binfmt_misc   systemd-1             autofs          rw,relatime,fd=32,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=10288
+│   └─/proc/sys/fs/binfmt_misc binfmt_misc           binfmt_misc     rw,nosuid,nodev,noexec,relatime
+├─/dev                         udev                  devtmpfs        rw,nosuid,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│ ├─/dev/pts                   devpts                devpts          rw,nosuid,noexec,relatime,gid=5,mode=620,ptmxmode=000
+│ ├─/dev/shm                   tmpfs                 tmpfs           rw,nosuid,nodev,inode64
+│ ├─/dev/hugepages             hugetlbfs             hugetlbfs       rw,nosuid,nodev,relatime,pagesize=2M
+│ └─/dev/mqueue                mqueue                mqueue          rw,nosuid,nodev,noexec,relatime
+├─/run                         tmpfs                 tmpfs           rw,nosuid,nodev,noexec,relatime,size=800228k,mode=755,inode64
+│ ├─/run/lock                  tmpfs                 tmpfs           rw,nosuid,nodev,noexec,relatime,size=5120k,inode64
+│ └─/run/user/1000             tmpfs                 tmpfs           rw,nosuid,nodev,relatime,size=800224k,nr_inodes=200056,mode=700,uid=1000,gid=1000,inode64
+│   ├─/run/user/1000/gvfs      gvfsd-fuse            fuse.gvfsd-fuse rw,nosuid,nodev,relatime,user_id=1000,group_id=1000
+│   └─/run/user/1000/doc       portal                fuse.portal     rw,nosuid,nodev,relatime,user_id=1000,group_id=1000
+├─/boot/efi                    /dev/sda1             vfat            rw,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro
+└─/recovery                    /dev/sda2             vfat            rw,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro

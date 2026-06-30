@@ -1,0 +1,1 @@
+environment: line 29: nvidia-smi: command not found

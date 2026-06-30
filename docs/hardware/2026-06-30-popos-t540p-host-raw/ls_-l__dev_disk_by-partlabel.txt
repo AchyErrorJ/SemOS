@@ -1,0 +1,2 @@
+total 0
+lrwxrwxrwx 1 root root 10 Jun 30 08:58 recovery -> ../../sda2

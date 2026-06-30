@@ -186,33 +186,36 @@ bootloader-0.11 crate requires). A single boot runs ~69 demos and prints
 #    include_bytes!, so the kernel build below won't pick up changes
 #    until these are (re)built first.
 for p in hello hello-std sem-demo sem-sh net-demo std-demo \
-         thread-demo vec-demo spawn-demo exfil-demo; do
+         thread-demo vec-demo spawn-demo exfil-demo sync-demo; do
   ( cd user-programs/$p && cargo build --release )
 done
 
-# 2. (optional) bake an Anthropic API key for the LIVE agent demos
+# 2. Generate the tiny Cranelift-built SemOS ELF used by DEMO 72.
+( cd compiler && cargo run --release )
+
+# 3. (optional) bake an Anthropic API key for the LIVE agent demos
 #    (48 = 401 round-trip, 49 = agent tool loop, 54 = `ask`). Omit it
 #    and those self-skip / return "no key" — the rest of the suite is
 #    unaffected. The key only lands in the gitignored target/ binary.
 # export ANTHROPIC_KEY=sk-ant-...
 
-# 3. Build the kernel.
+# 4. Build the kernel.
 #    Add `--features interactive` to end boot by handing the keyboard
 #    to a live sem-sh shell instead of idling.
 ( cd kernel-x86_64 && cargo build --release )
 
-# 4. Wrap the kernel ELF into a bootable BIOS+UEFI image. MUST be from
+# 5. Wrap the kernel ELF into a bootable BIOS+UEFI image. MUST be from
 #    x86_64-runner/ (it's a host tool); running it from kernel-x86_64/
 #    leaves a STALE image.
 ( cd x86_64-runner && cargo run --release )
 
-# 5. (one-time) disk images for the storage demos.
+# 6. (one-time) disk images for the storage demos.
 qemu-img create -f raw vdisk.img       16M   # virtio block (persistence)
 qemu-img create -f raw nvme.img        32M   # NVMe (DEMO 62)
 qemu-img create -f raw sata.img        64M   # AHCI/SATA (DEMO 67)
 qemu-img create -f raw ustick.img     128M   # USB Mass Storage (DEMO 69)
 
-# 6. Boot. The full flag set runs ALL demos including networked + live USB.
+# 7. Boot. The full flag set runs ALL demos including networked + live USB.
 qemu-system-x86_64 -cpu max \
   -drive format=raw,file=kernel-x86_64/target/x86_64-unknown-none/release/semantic-os-x86_64-bios.img \
   -drive if=virtio,format=raw,file=vdisk.img,cache=writethrough \

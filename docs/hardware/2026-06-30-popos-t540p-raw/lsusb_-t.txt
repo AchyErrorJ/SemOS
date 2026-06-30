@@ -1,0 +1,12 @@
+/:  Bus 001.Port 001: Dev 001, Class=root_hub, Driver=ehci-pci/3p, 480M
+    |__ Port 001: Dev 002, If 0, Class=Hub, Driver=hub/6p, 480M
+/:  Bus 002.Port 001: Dev 001, Class=root_hub, Driver=xhci_hcd/15p, 480M
+    |__ Port 007: Dev 002, If 0, Class=Vendor Specific Class, Driver=[none], 12M
+    |__ Port 011: Dev 007, If 0, Class=Wireless, Driver=btusb, 12M
+    |__ Port 011: Dev 007, If 1, Class=Wireless, Driver=btusb, 12M
+    |__ Port 012: Dev 008, If 0, Class=Video, Driver=uvcvideo, 480M
+    |__ Port 012: Dev 008, If 1, Class=Video, Driver=uvcvideo, 480M
+/:  Bus 003.Port 001: Dev 001, Class=root_hub, Driver=ehci-pci/3p, 480M
+    |__ Port 001: Dev 002, If 0, Class=Hub, Driver=hub/8p, 480M
+/:  Bus 004.Port 001: Dev 001, Class=root_hub, Driver=xhci_hcd/6p, 5000M
+    |__ Port 005: Dev 002, If 0, Class=Hub, Driver=hub/4p, 5000M

@@ -1,0 +1,44 @@
+TARGET                                        SOURCE                                                   FSTYPE          OPTIONS
+/                                             /dev/mapper/data-root                                    ext4            ro,nosuid,nodev,noatime,errors=remount-ro
+├─/dev                                        udev                                                     devtmpfs        ro,nosuid,nodev,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│ ├─/dev/pts                                  devpts                                                   devpts          ro,nosuid,nodev,noexec,relatime,gid=5,mode=620,ptmxmode=000
+│ ├─/dev/shm                                  tmpfs                                                    tmpfs           ro,nosuid,nodev,inode64
+│ ├─/dev/hugepages                            hugetlbfs                                                hugetlbfs       ro,nosuid,nodev,relatime,pagesize=2M
+│ ├─/dev/mqueue                               mqueue                                                   mqueue          ro,nosuid,nodev,noexec,relatime
+│ └─/dev                                      tmpfs                                                    tmpfs           rw,nosuid,nodev,relatime,mode=755,uid=1000,gid=1000,inode64
+│   ├─/dev/null                               udev[/null]                                              devtmpfs        rw,nosuid,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│   ├─/dev/zero                               udev[/zero]                                              devtmpfs        rw,nosuid,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│   ├─/dev/full                               udev[/full]                                              devtmpfs        rw,nosuid,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│   ├─/dev/random                             udev[/random]                                            devtmpfs        rw,nosuid,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│   ├─/dev/urandom                            udev[/urandom]                                           devtmpfs        rw,nosuid,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│   ├─/dev/tty                                udev[/tty]                                               devtmpfs        rw,nosuid,relatime,size=3929324k,nr_inodes=982331,mode=755,inode64
+│   └─/dev/pts                                devpts                                                   devpts          rw,nosuid,noexec,relatime,mode=620,ptmxmode=666
+├─/run                                        tmpfs                                                    tmpfs           ro,nosuid,nodev,noexec,relatime,size=800228k,mode=755,inode64
+│ ├─/run/lock                                 tmpfs                                                    tmpfs           ro,nosuid,nodev,noexec,relatime,size=5120k,inode64
+│ └─/run/user/1000                            tmpfs                                                    tmpfs           ro,nosuid,nodev,relatime,size=800224k,nr_inodes=200056,mode=700,uid=1000,gid=1000,inode64
+│   ├─/run/user/1000/gvfs                     gvfsd-fuse                                               fuse.gvfsd-fuse ro,nosuid,nodev,relatime,user_id=1000,group_id=1000
+│   └─/run/user/1000/doc                      portal                                                   fuse.portal     ro,nosuid,nodev,relatime,user_id=1000,group_id=1000
+├─/sys                                        sysfs                                                    sysfs           ro,nosuid,nodev,noexec,relatime
+│ ├─/sys/firmware/efi/efivars                 efivarfs                                                 efivarfs        ro,nosuid,nodev,noexec,relatime
+│ ├─/sys/kernel/security                      securityfs                                               securityfs      ro,nosuid,nodev,noexec,relatime
+│ ├─/sys/fs/cgroup                            cgroup2                                                  cgroup2         ro,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot
+│ ├─/sys/fs/pstore                            none                                                     pstore          ro,nosuid,nodev,noexec,relatime
+│ ├─/sys/fs/bpf                               bpf                                                      bpf             ro,nosuid,nodev,noexec,relatime,mode=700
+│ ├─/sys/kernel/debug                         debugfs                                                  debugfs         ro,nosuid,nodev,noexec,relatime
+│ ├─/sys/kernel/tracing                       tracefs                                                  tracefs         ro,nosuid,nodev,noexec,relatime
+│ ├─/sys/fs/fuse/connections                  fusectl                                                  fusectl         ro,nosuid,nodev,noexec,relatime
+│ └─/sys/kernel/config                        configfs                                                 configfs        ro,nosuid,nodev,noexec,relatime
+├─/proc                                       proc                                                     proc            ro,nosuid,nodev,noexec,relatime
+│ ├─/proc/sys/fs/binfmt_misc                  systemd-1                                                autofs          rw,relatime,fd=32,pgrp=0,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=10288
+│ │ └─/proc/sys/fs/binfmt_misc                binfmt_misc                                              binfmt_misc     ro,nosuid,nodev,noexec,relatime
+│ └─/proc                                     proc                                                     proc            rw,nosuid,nodev,noexec,relatime
+├─/boot/efi                                   /dev/sda1                                                vfat            ro,nosuid,nodev,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro
+├─/recovery                                   /dev/sda2                                                vfat            ro,nosuid,nodev,relatime,fmask=0077,dmask=0077,codepage=437,iocharset=iso8859-1,shortname=mixed,errors=remount-ro
+├─/tmp                                        /dev/mapper/data-root[/tmp]                              ext4            rw,nosuid,nodev,noatime,errors=remount-ro
+│ ├─/tmp/.git                                 tmpfs                                                    tmpfs           ro,nosuid,nodev,relatime,mode=555,uid=1000,gid=1000,inode64
+│ ├─/tmp/.agents                              tmpfs                                                    tmpfs           ro,nosuid,nodev,relatime,mode=555,uid=1000,gid=1000,inode64
+│ └─/tmp/.codex                               tmpfs                                                    tmpfs           ro,nosuid,nodev,relatime,mode=555,uid=1000,gid=1000,inode64
+└─/home/jeremieroy/Desktop/Software           /dev/mapper/data-root[/home/jeremieroy/Desktop/Software] ext4            rw,nosuid,nodev,noatime,errors=remount-ro
+  ├─/home/jeremieroy/Desktop/Software/.git    tmpfs                                                    tmpfs           ro,nosuid,nodev,relatime,mode=555,uid=1000,gid=1000,inode64
+  ├─/home/jeremieroy/Desktop/Software/.agents tmpfs                                                    tmpfs           ro,nosuid,nodev,relatime,mode=555,uid=1000,gid=1000,inode64
+  └─/home/jeremieroy/Desktop/Software/.codex  tmpfs                                                    tmpfs           ro,nosuid,nodev,relatime,mode=555,uid=1000,gid=1000,inode64

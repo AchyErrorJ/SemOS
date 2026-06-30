@@ -118,6 +118,16 @@ The repo has toolchain files; let rustup install what Cargo asks for.
 ```sh
 git clone https://github.com/AchyErrorJ/SemOS.git
 cd SemOS
+
+# Build embedded Ring-3 programs first; the kernel include_bytes!s these.
+for p in hello hello-std sem-demo sem-sh net-demo std-demo \
+         thread-demo vec-demo spawn-demo exfil-demo sync-demo; do
+  ( cd user-programs/$p && cargo build --release )
+done
+
+# Generate the small host-compiled SemOS ELF used by DEMO 72.
+( cd compiler && cargo run --release )
+
 cd kernel-x86_64
 cargo build --release
 cd ../x86_64-runner

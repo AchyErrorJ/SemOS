@@ -1,0 +1,7 @@
+total 0
+lrwxrwxrwx 1 root root 10 Jun 30 08:58 4d52ab70-b718-4d8e-a55c-c8ea40efe9c5 -> ../../dm-2
+lrwxrwxrwx 1 root root 10 Jun 30 08:58 962bdb80-712a-4127-b679-35424a030a3b -> ../../dm-1
+lrwxrwxrwx 1 root root 10 Jun 30 08:58 D9A4-783C -> ../../sda1
+lrwxrwxrwx 1 root root 10 Jun 30 08:58 D9A4-7865 -> ../../sda2
+lrwxrwxrwx 1 root root 10 Jun 30 08:58 cdbc82f8-0d88-4253-a50e-5d6c91c07f9c -> ../../sda4
+lrwxrwxrwx 1 root root 10 Jun 30 08:58 dded89bf-9e94-49be-a81f-8d5564272208 -> ../../sda3
