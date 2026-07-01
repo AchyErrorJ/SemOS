@@ -271,3 +271,44 @@ blob, parsed both records with exact LBAs/sizes. The streaming `read()` + the
 **Next (DEMO 80 proper):** pack `.rlib` (+ no_std `ar` parse) and register the
 files in the `/sysroot/...` namespace so the rustc crate loader finds them, then
 compile `/hello.rs`.
+
+## 9. IMPLEMENTED — generated + flashed on Pop!_OS (2026-06-30)
+
+The whole Layer-A staging flow now runs natively on the T540p Pop!_OS
+workstation (previously Windows-only). Steps:
+
+1. Build the host driver for Linux:
+   `cd user-programs/rustc-host && cargo build --release --target x86_64-unknown-linux-gnu`
+   (uses the repo-pinned `nightly-2026-02-01`; the vendored rustc source is what
+   matters, not the stock toolchain).
+2. Fetch the base library source once:
+   `rustup toolchain install nightly-2025-12-23 --component rust-src`.
+3. Regenerate the patched sysroot source:
+   `bash user-programs/rustc-host/prepare-sysroot-src.sh nightly-2025-12-23-x86_64-unknown-linux-gnu`.
+4. Build `core` + the `compiler_builtins` stub into `.rmeta`:
+   `bash user-programs/rustc-host/build-core-linux.sh`
+   (Linux port of `build-core.sh`; the original still documents the Windows paths).
+5. Pack the blob:
+   `python3 tools/pack-sysroot-blob.py out/sysroot.img libcore-<hash>.rmeta=<deps>/libcore-<hash>.rmeta libcompiler_builtins-<hash>.rmeta=<deps>/libcompiler_builtins-<hash>.rmeta`.
+6. Flash to the named GPT partition (NOT LBA 0 of the OS disk):
+   `sudo dd if=out/sysroot.img of=/dev/disk/by-partlabel/SEMOS_SYSROOT bs=4M conv=fsync` after
+   confirming `PARTLABEL == SEMOS_SYSROOT`.
+
+Result on 2026-06-30: 59,579,904-byte blob (`SEMSYSR1`, 2 files —
+`libcore-53344cc650ffcdf9.rmeta` + `libcompiler_builtins-fb74582bf62b1baa.rmeta`)
+written to `/dev/sda5` (`SEMOS_SYSROOT`, 4 GiB). The self-test
+(`rustc-host` compiles a no_std prelude snippet against the produced core +
+compiler_builtins) passed.
+
+### Linux host-build fixes required (this session)
+
+The vendored rustc tree had only ever been built for the SemOS target or
+Windows host; a few host-path bits broke on Linux and were fixed:
+
+- `rustc_data_structures::temp_dir`: re-export `TempDir` (`pub use tempfile::TempDir`)
+  so `rustc_metadata` can import it on the std host arm.
+- `rustc_interface` + `rustc_driver_impl`: dropped dead `#[cfg(target_os = "none")]`
+  attributes that were left attached to disabled `PROBE-disabled` comment lines;
+  on a host build they cfg-ed out the following real statement.
+- `rustc-host/.cargo/config.toml`: dropped the MSVC-only `/STACK` + `/HEAP`
+  link-args (they were passed to Linux `cc` and failed the link).

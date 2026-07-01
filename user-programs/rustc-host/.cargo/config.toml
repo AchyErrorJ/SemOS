@@ -7,7 +7,7 @@ target = "x86_64-pc-windows-msvc"
 # proc_macro crate's bridge::server + proc_macro_internals feature changed in
 # nightly-2026-02-01). core needs no proc-macros, so use the same stub path the
 # SemOS target uses. -A unexpected_cfgs silences the lint for this custom cfg.
-rustflags = ["--cfg", "procmacro_stub", "-A", "unexpected_cfgs", "-C", "link-arg=/STACK:16777216", "-C", "link-arg=/HEAP:268435456,1048576"]
+rustflags = ["--cfg", "procmacro_stub", "-A", "unexpected_cfgs"]
 
 # Host build (target set above; no build-std).
 # Same CFG_* + RUSTC_BOOTSTRAP as semos-rustc so the produced rustc has the
