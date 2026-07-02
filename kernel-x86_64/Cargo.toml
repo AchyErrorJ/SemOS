@@ -16,6 +16,12 @@ description = "Semantic OS Kernel - x86_64 version"
 # `--no-default-features`.
 default = ["interactive"]
 interactive = []
+# `autocompile`: right before the interactive handoff, headlessly run the
+# DEMO 80 compile (`semos-rustc /hello.rs -o /tmp/hello.elf`) and print the
+# result to serial. Lets QEMU test the on-device compiler with no keyboard
+# (`-serial stdio`). Off by default so normal boots don't spawn the 88 MB
+# compiler every time.
+autocompile = []
 
 [dependencies]
 # Bootloader handles Real→Protected→Long mode transition

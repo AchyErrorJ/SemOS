@@ -1456,6 +1456,12 @@ fn init_loader_task() {
         kernel_core::scheduler::current_task_index() + 1);
     println!("================================================================");
 
+    // `--features autocompile`: headless DEMO 80 smoke for QEMU/serial runs.
+    // This avoids relying on the interactive keyboard path just to validate
+    // `semos-rustc` + the disk-backed sysroot blob.
+    #[cfg(feature = "autocompile")]
+    demo80_autocompile();
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1467,6 +1473,111 @@ fn init_loader_task() {
     // metal without serial, where a frozen framebuffer would otherwise be
     // indistinguishable from a panic'd or wedged kernel.
     idle_with_heartbeat();
+}
+
+/// Headless DEMO 80 runner:
+///   semos-rustc /hello.rs -o /tmp/hello.elf
+///
+/// Use with QEMU serial, e.g. `cargo build --release --features autocompile`
+/// and boot with a sysroot blob attached as AHCI. Success criteria:
+/// - `semos-rustc` exits 0,
+/// - `/tmp/hello.elf` exists and has non-zero size.
+#[cfg(feature = "autocompile")]
+fn demo80_autocompile() {
+    use alloc::vec::Vec;
+    use kernel_core::scheduler::{self, TaskState};
+    use kernel_core::syscall::{dispatch, numbers::*, SpawnArgs, StatX};
+
+    println!();
+    println!("================================================================");
+    println!("  DEMO 80 AUTOCOMPILE: semos-rustc /hello.rs -o /tmp/hello.elf");
+    println!("================================================================");
+
+    let items: [&str; 4] = ["/bin/semos-rustc", "/hello.rs", "-o", "/tmp/hello.elf"];
+    let mut argv_blob: Vec<u8> = Vec::new();
+    argv_blob.extend_from_slice(&(items.len() as u32).to_le_bytes());
+    for it in items {
+        argv_blob.extend_from_slice(&(it.len() as u32).to_le_bytes());
+        argv_blob.extend_from_slice(it.as_bytes());
+    }
+
+    let spawn_args = SpawnArgs {
+        argv_blob_ptr: argv_blob.as_ptr() as u64,
+        argv_blob_len: argv_blob.len() as u32,
+        envp_blob_ptr: 0,
+        envp_blob_len: 0,
+    };
+
+    let path = "/bin/semos-rustc";
+    let pid = dispatch(
+        SYS_SPAWN,
+        path.as_ptr() as u64,
+        path.len() as u64,
+        3, // trusted user tier, matching manual interactive-shell use
+        &spawn_args as *const SpawnArgs as u64,
+    );
+    if pid == u64::MAX {
+        println!("  [DEMO 80] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return;
+    }
+    println!("  [DEMO 80] spawned semos-rustc PID {}", pid);
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 80] FAIL: PID {} has no task_id", pid);
+            return;
+        }
+    };
+
+    let mut polled = 0u64;
+    loop {
+        if scheduler::task_state(slot) == TaskState::Exited {
+            break;
+        }
+        if polled > 120_000 {
+            println!("  [DEMO 80] FAIL: semos-rustc did not exit within 120000 ticks");
+            return;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+
+    let code = scheduler::task_exit_code(slot);
+    println!("  [DEMO 80] semos-rustc exited code={} after {} ticks", code, polled);
+    if code != 0 {
+        println!("  [DEMO 80] FAIL: compiler returned non-zero");
+        return;
+    }
+
+    let out_path = "/tmp/hello.elf";
+    let mut st = StatX {
+        size: 0,
+        suid_high: 0,
+        suid_low: 0,
+        created_at: 0,
+        modified_at: 0,
+        file_type: 0,
+        tier: 0,
+        _reserved: [0; 3],
+    };
+    let rc = dispatch(
+        SYS_STATX,
+        out_path.as_ptr() as u64,
+        out_path.len() as u64,
+        &mut st as *mut _ as u64,
+        0,
+    );
+    if rc != 0 {
+        println!("  [DEMO 80] FAIL: statx({}) returned {}", out_path, rc);
+        return;
+    }
+    if st.size == 0 {
+        println!("  [DEMO 80] FAIL: {} exists but size is 0", out_path);
+        return;
+    }
+    println!("  [DEMO 80] PASS: {} written ({} bytes)", out_path, st.size);
 }
 
 /// M10 watchdog: print "boot reached idle" once with the current tick count
