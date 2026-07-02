@@ -1,0 +1,32 @@
+Station 24:2f:d0:ec:83:87 (on wlp4s0)
+	inactive time:	18143 ms
+	rx bytes:	33824015
+	rx packets:	46958
+	tx bytes:	48558493
+	tx packets:	53598
+	tx retries:	1909
+	tx failed:	0
+	beacon loss:	0
+	beacon rx:	104841
+	rx drop misc:	1114
+	signal:  	-42 [-42] dBm
+	signal avg:	-41 [-41] dBm
+	beacon signal avg:	-41 dBm
+	tx bitrate:	866.7 MBit/s VHT-MCS 9 80MHz short GI VHT-NSS 2
+	tx duration:	0 us
+	rx bitrate:	325.0 MBit/s VHT-MCS 7 80MHz short GI VHT-NSS 1
+	rx duration:	0 us
+	authorized:	yes
+	authenticated:	yes
+	associated:	yes
+	preamble:	long
+	WMM/WME:	yes
+	MFP:		no
+	TDLS peer:	no
+	DTIM period:	1
+	beacon interval:100
+	short slot time:yes
+	connected time:	10909 seconds
+	associated at [boottime]:	6564.035s
+	associated at:	1783012769166 ms
+	current time:	1783023678134 ms

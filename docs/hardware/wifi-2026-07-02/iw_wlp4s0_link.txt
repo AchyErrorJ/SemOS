@@ -1,0 +1,11 @@
+Connected to 24:2f:d0:ec:83:87 (on wlp4s0)
+	SSID: 435Northshore
+	freq: 5745.0
+	RX: 33824015 bytes (46958 packets)
+	TX: 48558493 bytes (53598 packets)
+	signal: -42 dBm
+	rx bitrate: 325.0 MBit/s VHT-MCS 7 80MHz short GI VHT-NSS 1
+	tx bitrate: 866.7 MBit/s VHT-MCS 9 80MHz short GI VHT-NSS 2
+	bss flags: short-slot-time
+	dtim period: 1
+	beacon int: 100
