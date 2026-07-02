@@ -17,6 +17,14 @@ Intel iGPU (Iris Xe on the P1 / HD 4600 on Haswell) — the LegibleStudios CAD v
 video, games. Reference: the Linux `i915` driver. Prerequisite for QuickSync
 hardware video decode (see media in [platform.md](map%20-%20platform.md)).
 
+Current near-term target: **T540p Intel HD 4600 usability**, not full DRM/Mesa.
+Plan: keep the bootloader GOP framebuffer as the safe fallback, add read-only
+HD 4600 PCI/BAR diagnostics, make framebuffer/mode state visible, implement
+safe backlight control, then expose an app-facing framebuffer path. Native
+Haswell modesetting is a later sub-milestone only if GOP cannot provide the
+panel's usable/native mode. See
+[`M14_IGPU_HASWELL_PLAN.md`](../M14_IGPU_HASWELL_PLAN.md).
+
 ---
 
 ## Phase 12 — M18 NVIDIA dGPU COMPUTE `[  ]`

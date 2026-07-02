@@ -1,0 +1,63 @@
+# /sys/class/drm connector snapshot
+
+## card1-DP-1
+### status
+disconnected
+### enabled
+disabled
+### modes
+### dpms
+Off
+edid=absent_or_empty
+
+## card1-DP-2
+### status
+disconnected
+### enabled
+disabled
+### modes
+### dpms
+Off
+edid=absent_or_empty
+
+## card1-HDMI-A-1
+### status
+disconnected
+### enabled
+disabled
+### modes
+### dpms
+Off
+edid=absent_or_empty
+
+## card1-HDMI-A-2
+### status
+disconnected
+### enabled
+disabled
+### modes
+### dpms
+Off
+edid=absent_or_empty
+
+## card1-VGA-1
+### status
+disconnected
+### enabled
+disabled
+### modes
+### dpms
+Off
+edid=absent_or_empty
+
+## card1-eDP-1
+### status
+connected
+### enabled
+enabled
+### modes
+1920x1080
+### dpms
+On
+edid=absent_or_empty
+

@@ -60,6 +60,7 @@ mod pong;
 mod nvme;
 mod ahci;
 mod hda;
+mod igpu;
 mod wireless;
 mod panic_dump;
 mod tetris;
@@ -235,6 +236,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("[*] Scanning PCI bus 0...");
     pci::print_bus_0();
+    println!();
+
+    println!("[*] Probing Intel integrated graphics (read-only)...");
+    igpu::probe();
     println!();
 
     // Hardware RNG availability check. Required by TLS 1.3 for ClientHello

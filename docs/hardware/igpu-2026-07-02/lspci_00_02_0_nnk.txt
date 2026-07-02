@@ -1,0 +1,4 @@
+00:02.0 VGA compatible controller [0300]: Intel Corporation 4th Gen Core Processor Integrated Graphics Controller [8086:0416] (rev 06)
+	Subsystem: Lenovo 4th Gen Core Processor Integrated Graphics Controller [17aa:221e]
+	Kernel driver in use: i915
+	Kernel modules: i915

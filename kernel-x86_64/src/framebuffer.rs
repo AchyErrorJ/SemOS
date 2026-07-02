@@ -99,6 +99,19 @@ static CONSOLE: Mutex<Option<FramebufferConsole>> = Mutex::new(None);
 /// values (this `Color`) and the surface packs per the detected format.
 pub type Color = u32;
 
+/// Stable framebuffer metadata exported to driver/probe code without exposing
+/// the bootloader API type directly.
+#[derive(Clone, Copy)]
+pub struct FbInfo {
+    pub addr: usize,
+    pub byte_len: usize,
+    pub width: usize,
+    pub height: usize,
+    pub stride: usize,
+    pub bytes_per_pixel: usize,
+    pub format: PixelFormat,
+}
+
 /// Pack an (r, g, b) triple into the logical 0x00RRGGBB color the drawing
 /// API consumes. The surface re-orders bytes to BGR/RGB as needed at write
 /// time, so callers always speak RGB here regardless of hardware order.
@@ -399,6 +412,30 @@ pub fn fb_format() -> (usize, usize, bool) {
     match surface() {
         Some(s) => (s.bpp, s.stride, matches!(s.format, PixelFormat::Rgb)),
         None => (0, 0, false),
+    }
+}
+
+/// Full framebuffer metadata for diagnostics and read-only display probes.
+pub fn fb_info() -> Option<FbInfo> {
+    surface().map(|s| FbInfo {
+        addr: s.addr,
+        byte_len: s.len,
+        width: s.width,
+        height: s.height,
+        stride: s.stride,
+        bytes_per_pixel: s.bpp,
+        format: s.format,
+    })
+}
+
+/// Human-readable pixel-format name for boot logs and shell diagnostics.
+pub fn pixel_format_name(format: PixelFormat) -> &'static str {
+    match format {
+        PixelFormat::Rgb => "RGB",
+        PixelFormat::Bgr => "BGR",
+        PixelFormat::U8 => "U8",
+        PixelFormat::Unknown { .. } => "unknown",
+        _ => "other",
     }
 }
 

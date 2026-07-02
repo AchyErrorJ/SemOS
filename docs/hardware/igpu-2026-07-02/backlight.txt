@@ -1,0 +1,12 @@
+# /sys/class/backlight
+
+## intel_backlight
+path=/sys/class/backlight/intel_backlight
+type=raw
+max_brightness=4438
+brightness=4438
+actual_brightness=4438
+bl_power=0
+scale=unknown
+device_link=/sys/devices/pci0000:00/0000:00:02.0/drm/card1/card1-eDP-1
+

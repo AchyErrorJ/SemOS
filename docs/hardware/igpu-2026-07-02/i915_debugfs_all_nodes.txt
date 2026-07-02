@@ -1,0 +1,2 @@
+# i915 debugfs snapshot (all dri nodes)
+

@@ -1,0 +1,3 @@
+sudo lspci capture unavailable from the managed agent sandbox.
+Reason observed: sudo is blocked by no-new-privileges in this execution environment.
+Non-sudo lspci captured BAR bases/sizes and the active i915 driver in lspci_00_02_0.txt.

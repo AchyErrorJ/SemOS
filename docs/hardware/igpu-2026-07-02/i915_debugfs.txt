@@ -1,0 +1,14 @@
+# i915 debugfs snapshot
+
+## /sys/kernel/debug/dri/0/i915_display_info
+not readable without root or debugfs not mounted
+
+## /sys/kernel/debug/dri/0/i915_opregion
+not readable without root or debugfs not mounted
+
+## /sys/kernel/debug/dri/0/i915_frequency_info
+not readable without root or debugfs not mounted
+
+## /sys/kernel/debug/dri/0/i915_runtime_pm_status
+not readable without root or debugfs not mounted
+
