@@ -29,6 +29,16 @@ const PROBE_V1_LEN: usize = 528; // sizeof(iwm_scan_probe_req_v1)
 /// Total LMAC scan command payload length.
 pub const SCAN_CMD_LEN: usize = FIXED_LEN + N_SCAN_CHANNELS * CHAN_CFG + PROBE_V1_LEN;
 
+/// Passive oracle scan channels. The old bring-up scanned only 2.4 GHz channels
+/// 1..11, which meant SemOS never saw the Linux-proven 5 GHz AP on channel 149
+/// and kept testing the ch9 BSSID instead. Keep the initial 2.4 GHz coverage
+/// and add common 5 GHz non-DFS channels, including the T540p oracle target.
+pub const ORACLE_SCAN_CHANNELS: &[u8] = &[
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    36, 40, 44, 48,
+    149, 153, 157, 161,
+];
+
 // scan_flags (enum iwm_lmac_scan_flags)
 const FLAG_PASS_ALL: u32 = 1 << 0;
 const FLAG_PASSIVE: u32 = 1 << 1;
@@ -45,18 +55,19 @@ fn put32(o: &mut [u8], off: usize, v: u32) {
     o[off..off + 4].copy_from_slice(&v.to_le_bytes());
 }
 
-/// Build a PASSIVE LMAC scan over the first `channels` 2.4 GHz channels into
-/// `out`. Passive means the firmware only listens for beacons (no probe is
-/// transmitted), so this needs no aux-station / active-scan setup. Returns the
-/// command payload length (`SCAN_CMD_LEN`). `out` must be >= `SCAN_CMD_LEN`.
-pub fn build_passive_scan(out: &mut [u8], sta: &MacAddr, channels: u8) -> usize {
+/// Build a PASSIVE LMAC scan over the supplied channel list into `out`. Passive
+/// means the firmware only listens for beacons (no probe is transmitted), so
+/// this needs no aux-station / active-scan setup. Returns the command payload
+/// length (`SCAN_CMD_LEN`). `out` must be >= `SCAN_CMD_LEN`.
+pub fn build_passive_scan(out: &mut [u8], sta: &MacAddr, channels: &[u8]) -> usize {
     for b in out[..SCAN_CMD_LEN].iter_mut() {
         *b = 0;
     }
+    let n = channels.len().min(N_SCAN_CHANNELS);
 
     // --- fixed part (SCAN_REQUEST_FIXED_PART_API_S_VER_7) ---
     // off 0: reserved1 (already 0)
-    out[4] = channels; // n_channels
+    out[4] = n as u8; // n_channels
     out[5] = 10; // active_dwell  (unused for passive, kept for validity)
     out[6] = 150; // passive_dwell — longer so each channel reliably catches a beacon
     out[7] = 44; // fragmented_dwell
@@ -90,11 +101,10 @@ pub fn build_passive_scan(out: &mut [u8], sta: &MacAddr, channels: u8) -> usize 
 
     // --- data[]: channel cfg array (sized at N_SCAN_CHANNELS, fill `channels`) ---
     let data = FIXED_LEN;
-    let n = channels as usize;
     for i in 0..n {
         let c = data + i * CHAN_CFG;
         put32(out, c, UNIFIED_SCAN_CHANNEL_PARTIAL);
-        put16(out, c + 4, (i as u16) + 1); // channel_num 1..=channels
+        put16(out, c + 4, channels[i] as u16);
         put16(out, c + 6, 1); // iter_count
         // c+8: iter_interval = 0
     }

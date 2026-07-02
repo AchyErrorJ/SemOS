@@ -38,11 +38,65 @@ const RATE_FLAG_ANT_A: u32 = 1 << 14;
 const RATE_FLAG_ANT_B: u32 = 1 << 15;
 const RATE_1M_PLCP: u32 = 10;
 const RATE_6M_PLCP: u32 = 13;
+const RATE_12M_PLCP: u32 = 5;
+const RATE_24M_PLCP: u32 = 9;
 const RATE_1M_CCK_A: u32 = RATE_1M_PLCP | RATE_FLAG_CCK | RATE_FLAG_ANT_A;
 const RATE_1M_CCK_B: u32 = RATE_1M_PLCP | RATE_FLAG_CCK | RATE_FLAG_ANT_B;
 const RATE_1M_CCK_AB: u32 = RATE_1M_PLCP | RATE_FLAG_CCK | RATE_FLAG_ANT_A | RATE_FLAG_ANT_B;
 const RATE_6M_OFDM_A: u32 = RATE_6M_PLCP | RATE_FLAG_ANT_A;
 const RATE_6M_OFDM_B: u32 = RATE_6M_PLCP | RATE_FLAG_ANT_B;
+const RATE_6M_OFDM_AB: u32 = RATE_6M_PLCP | RATE_FLAG_ANT_A | RATE_FLAG_ANT_B;
+const RATE_12M_OFDM_AB: u32 = RATE_12M_PLCP | RATE_FLAG_ANT_A | RATE_FLAG_ANT_B;
+const RATE_24M_OFDM_AB: u32 = RATE_24M_PLCP | RATE_FLAG_ANT_A | RATE_FLAG_ANT_B;
+
+/// Channels above 14 are 5 GHz. CCK/1M/2M/5.5M/11M are 2.4 GHz DSSS/CCK rates
+/// and are invalid on 5 GHz, so management-frame fallback must use OFDM there.
+/// The Linux oracle on this T540p associates to the AP on channel 149.
+#[inline]
+fn is_5ghz_channel(channel: u8) -> bool {
+    channel > 14
+}
+
+#[inline]
+fn band_name(channel: u8) -> &'static str {
+    if is_5ghz_channel(channel) { "5GHz" } else { "2.4GHz/unknown" }
+}
+
+/// Default management-frame rate for assoc/EAPOL frames after auth. Auth itself
+/// sweeps several rates; follow-up frames must still avoid invalid 2.4 GHz CCK
+/// on 5 GHz APs.
+#[inline]
+fn default_mgmt_rate_for_channel(channel: u8) -> (u32, &'static str) {
+    if is_5ghz_channel(channel) {
+        (RATE_6M_OFDM_AB, "default 5GHz 6M-OFDM A|B")
+    } else {
+        (RATE_1M_CCK_AB, "default 2.4GHz 1M-CCK A|B")
+    }
+}
+
+#[inline]
+fn tx_status_name(status: u32) -> &'static str {
+    match status & 0xFF {
+        0x01 => "SUCCESS — ACKED by AP",
+        0x82 => "FAIL_SHORT_LIMIT — retry limit/no ACK",
+        0x83 => "FAIL_LONG_LIMIT — retry limit/no ACK",
+        0x84 => "FAIL_FIFO_UNDERRUN",
+        0x85 => "FAIL_DRAIN_FLOW",
+        0x86 => "FAIL_RFKILL_FLUSH",
+        0x87 => "FAIL_LIFE_EXPIRE — frame lifetime expired before success",
+        0x88 => "FAIL_DEST_PS — destination asleep/powersave",
+        0x89 => "FAIL_HOST_ABORTED",
+        0x8A => "FAIL_BT_RETRY",
+        0x8B => "FAIL_STA_INVALID",
+        0x8C => "FAIL_FRAG_DROPPED",
+        0x8D => "FAIL_TID_DISABLE",
+        0x8E => "FAIL_FIFO_FLUSHED",
+        0x8F => "FAIL_INSUFFICIENT_CF_POLL",
+        0x90 => "FAIL_PASSIVE_NO_RX",
+        0x91 => "FAIL_NO_BEACON_ON_RADAR",
+        _ => "non-success",
+    }
+}
 
 #[repr(C, align(4096))]
 struct RxRbd([u32; RX_RING_SIZE]);
@@ -262,9 +316,9 @@ fn net_print() {
             } else {
                 core::str::from_utf8(&e.ssid[..e.ssid_len as usize]).unwrap_or("<non-utf8>")
             };
-            println!("  [{}] {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}  ch{:<3} {}",
+            println!("  [{}] {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}  ch{:<3} {:<13} {}",
                 i, e.bssid[0], e.bssid[1], e.bssid[2], e.bssid[3], e.bssid[4], e.bssid[5],
-                e.channel, name);
+                e.channel, band_name(e.channel), name);
         }
     }
 }
@@ -1249,8 +1303,7 @@ impl IwlDevice {
                             let status = rd32(off + 8 + 36) & 0xFFFF;
                             other += 1;
                             println!("[iwlwifi] TX_RESP: frame_count={} fail_rts={} fail_frame={} init_rate=0x{:08X} status=0x{:04X} ({}) [also raw@32/40=0x{:08X}/0x{:08X}]",
-                                fc, fail_rts, fail_frame, init_rate, status,
-                                if status & 0xFF == 0x01 { "ACKED by AP" } else { "NO ACK (AP did not hear us)" },
+                                fc, fail_rts, fail_frame, init_rate, status, tx_status_name(status),
                                 rd32(off + 8 + 32), rd32(off + 8 + 40));
                         }
                         _ => {
@@ -1642,8 +1695,8 @@ impl IwlDevice {
     /// channel / antenna config the radio tunes to. `iwm_init_hw` adds the PHY
     /// contexts right after the aux station; without one the firmware accepts
     /// a scan but never goes on-channel (so: no beacons). Non-UHB 36-byte
-    /// variant (the 7260 has no ULTRA_HB_CHANNELS). 2.4 GHz / 20 MHz / channel
-    /// 1 (the scan overrides the channel per dwell), both chains valid.
+    /// variant (the 7260 has no ULTRA_HB_CHANNELS). Starts on 2.4 GHz / 20 MHz /
+    /// channel 1 (the scan overrides the channel per dwell), both chains valid.
     pub fn add_phy_context(&mut self) -> bool {
         self.phy_context(1, 1) // ADD, channel 1 (scan default)
     }
@@ -1656,13 +1709,18 @@ impl IwlDevice {
         // [0] id_and_color = ID_AND_COLOR(id 0, color 0) = 0
         put32(&mut cmd, 4, action);
         // [8] apply_time = 0 (immediate); [12] tx_param_color = 0
-        cmd[16] = 1; // ci.band = IWM_PHY_BAND_24
+        // ci.band: iwlwifi/iwm use 0 = 5 GHz, 1 = 2.4 GHz. The previous code
+        // hardcoded 2.4 GHz, so connecting to the Linux-proven ch149 BSSID sent
+        // `ch149 2.4GHz/20MHz`, after which TIME_EVENT/TIME_QUOTA were rejected
+        // and RX wedged. Management auth can stay 20 MHz, but the band must match.
+        cmd[16] = if is_5ghz_channel(channel) { 0 } else { 1 };
         cmd[17] = channel; // ci.channel
         cmd[18] = 0; // ci.width = IWM_PHY_VHT_CHANNEL_MODE20
         cmd[19] = 0; // ci.ctrl_pos = IWM_PHY_VHT_CTRL_POS_1_BELOW
         put32(&mut cmd, 20, 0x3); // txchain_info = valid_tx_ant (both)
         put32(&mut cmd, 24, (0x3 << 1) | (1 << 10) | (1 << 12)); // rxchain_info = 0x1406
-        println!("[iwlwifi] PHY_CONTEXT_CMD action={} id=0 ch={} 2.4GHz/20MHz", action, channel);
+        println!("[iwlwifi] PHY_CONTEXT_CMD action={} id=0 ch={} {}/20MHz",
+            action, channel, band_name(channel));
         self.send_cmd(0x08, &cmd)
     }
 
@@ -1853,14 +1911,12 @@ impl IwlDevice {
         put32(&mut cmd, 16, 500);
         // depends_on @20 = 0
         put32(&mut cmd, 24, 1); // interval = 1 (mvm sets this even though one-shot)
-        // duration @28: TE_BSS_STA_AGGRESSIVE_ASSOC is SOCIOPATHIC / high priority
-        // — the fw runs NOTHING else during it ("can't be too long", per the
-        // session-protect API doc). mvm uses ~600 TU. Our old 8192 TU (~8.4s) froze
-        // the whole firmware (RX dead from start, quota no-response). Use 1024 TU
-        // (~1.05s): short enough not to lock the fw, long enough to fit our slower
-        // host TX + ~600ms response drain. send_auth opens a FRESH window per
-        // attempt (like mvm's prepare_tx-before-each-mgmt-TX) so it never overruns.
-        let duration = 1024u32;
+        // duration @28: TE_BSS_STA_AGGRESSIVE_ASSOC is high priority ("can't be
+        // too long"). 8192 TU froze the firmware; 1024 TU was good for short
+        // bursts but is too tight now that we wait for a 750ms TX lifetime to
+        // settle. Use ~4.2s for the focused 5GHz OFDM sweep, still below the old
+        // 8.4s freeze point.
+        let duration = 4096u32;
         put32(&mut cmd, 28, duration);
         cmd[32] = 1; // repeat = 1
         cmd[33] = 0; // max_frags = TE_V2_FRAG_NONE
@@ -1992,7 +2048,9 @@ impl IwlDevice {
     /// scheduler never consumed q1 (`RDPTR=0`).
     /// `frame` = full 802.11 frame (header + body); `hdrlen` = 802.11 header len.
     pub fn tx_mgmt(&mut self, frame: &[u8], hdrlen: usize) -> bool {
-        self.tx_mgmt_rate(frame, hdrlen, RATE_1M_CCK_AB, "default 1M-CCK A|B")
+        let channel = unsafe { CONN.channel };
+        let (rate, label) = default_mgmt_rate_for_channel(channel);
+        self.tx_mgmt_rate(frame, hdrlen, rate, label)
     }
 
     /// Same as `tx_mgmt`, but with an explicit legacy `rate_n_flags` word and a
@@ -2032,20 +2090,20 @@ impl IwlDevice {
             // a TX_RESP reporting ACKED/not — the decisive "is the AP hearing us?"
             // signal. Real 802.11 auth frames MUST be ACKed anyway.
             put32(b, tx + 4, (1 << 3) | (1 << 12) | (1 << 13));
-            // rate_n_flags @tx+12: 1 Mbps CCK on BOTH antennas (A|B). 2026-06-28:
-            // was antenna A only (1<<14). The frame radiates (consumed=1, no
-            // LIFE_EXPIRE) but the AP never answers — an RF-reach problem. The 7260
-            // is a 2-antenna part; TX on both chains (1<<14)|(1<<15) maximizes the
-            // chance the AP hears our 1 Mbps auth frame.
+            // rate_n_flags @tx+12: caller-selected legacy rate + antenna mask.
+            // 2.4 GHz may use robust CCK; 5 GHz MUST use OFDM (CCK is invalid
+            // there). The auth path sweeps variants; assoc/EAPOL use the
+            // channel-aware default from tx_mgmt().
             put32(b, tx + 12, rate_n_flags);
             b[tx + 16] = 0; // sta_id = IWM_STATION_ID (the AP)
             // sec_ctl @tx+17 = 0 (no encryption on auth/assoc)
-            // life_time @tx+40: SHORT finite. While an un-ACKed frame is retrying,
-            // the MAC suppresses RX; a ~2 s lifetime kept RX dead for the whole
-            // 1 s drain and the TX_RESP fired after we stopped looking. Use ~260 ms
-            // so the frame completes (success or expire) WELL within the drain —
-            // RX then recovers and the TX_RESP (ACK status) is visible.
-            put32(b, tx + 40, 0x0004_0000);
+            // life_time @tx+40: finite frame lifetime in microseconds. The
+            // 2026-07-02 ch149 run returned TX_STATUS_FAIL_LIFE_EXPIRE (0x87)
+            // with the earlier ~260 ms value, proving the frame expired before
+            // the firmware could complete retries/success. RX now stays alive on
+            // 5 GHz, so give each attempt 750 ms and drain long enough to see the
+            // resulting TX_RESP before queueing the next rate variant.
+            put32(b, tx + 40, 750_000);
             // scratch dram ptr @tx+44/48: point at the tx_cmd.scratch area (tx+8)
             let scratch_phys = frame_phys + (TX_CMD_HDR + 8) as u64;
             put32(b, tx + 44, (scratch_phys & 0xFFFF_FFFF) as u32);
@@ -2371,21 +2429,36 @@ impl IwlDevice {
         // Sweep antenna/rate variants. If exactly one of these gets ACKed, the
         // TX path is fine and the antenna mask/rate was the issue. If NONE are
         // ACKed while RX keeps flowing, focus on channel/PHY-context or RF reach.
-        let variants: &[(u32, &str)] = &[
-            (RATE_1M_CCK_A,  "1M-CCK antA"),
-            (RATE_1M_CCK_B,  "1M-CCK antB"),
-            (RATE_1M_CCK_AB, "1M-CCK antA|B"),
-            (RATE_6M_OFDM_A, "6M-OFDM antA"),
-            (RATE_6M_OFDM_B, "6M-OFDM antB"),
+        //
+        // 2026-07-02 Linux oracle: the T540p is successfully associated on
+        // channel 149 (5 GHz, 80 MHz). 1M CCK is invalid on 5 GHz, so do NOT
+        // waste the protected window trying CCK there. Sweep 5 GHz OFDM rates
+        // instead, including 12/24 Mbps in case the AP's basic-rate set rejects
+        // 6 Mbps management frames.
+        let channel = unsafe { CONN.channel };
+        let variants_24: &[(u32, &str)] = &[
+            (RATE_1M_CCK_A,  "2.4G 1M-CCK antA"),
+            (RATE_1M_CCK_B,  "2.4G 1M-CCK antB"),
+            (RATE_1M_CCK_AB, "2.4G 1M-CCK antA|B"),
+            (RATE_6M_OFDM_A, "2.4G 6M-OFDM antA"),
+            (RATE_6M_OFDM_B, "2.4G 6M-OFDM antB"),
         ];
+        let variants_5: &[(u32, &str)] = &[
+            (RATE_6M_OFDM_AB,  "5G 6M-OFDM antA|B"),
+            (RATE_12M_OFDM_AB, "5G 12M-OFDM antA|B"),
+            (RATE_24M_OFDM_AB, "5G 24M-OFDM antA|B"),
+        ];
+        let variants = if is_5ghz_channel(channel) { variants_5 } else { variants_24 };
+        println!("[wifi] auth rate sweep: target ch{} {} -> {} variant(s)",
+            channel, band_name(channel), variants.len());
         for (i, &(rate, label)) in variants.iter().enumerate() {
             let attempt = i + 1;
             let from = self.rx_count();
             println!("[wifi] auth attempt {} rate-sweep {} flags=0x{:08X} (te_running={})",
                 attempt, label, rate, is_te_running());
             if !self.tx_mgmt_rate(&frame, 24, rate, label) { return false; }
-            println!("[wifi] auth attempt {} sent ({}) ? short drain", attempt, label);
-            self.drain_rx(from, 180); // short: stay in-window for the next burst
+            println!("[wifi] auth attempt {} sent ({}) — drain for TX_RESP/auth response", attempt, label);
+            self.drain_rx(from, 900); // long enough for 750ms life_time to settle
             if unsafe { core::ptr::read_volatile(&raw const AUTH_SUCCESS) } {
                 println!("[wifi] AP answered on auth attempt {} ({})", attempt, label);
                 return true;
@@ -2505,10 +2578,10 @@ impl IwlDevice {
         }
     }
 
-    /// Send a PASSIVE LMAC scan of the 2.4 GHz band, then drain the RX ring to
-    /// log the beacons + the scan-complete notification. Passive needs no
-    /// aux-station / PHY-context setup. Requires the RUNTIME ucode ALIVE + the
-    /// command queue armed.
+    /// Send a PASSIVE LMAC scan over 2.4 GHz + common non-DFS 5 GHz channels,
+    /// then drain the RX ring to log the beacons + the scan-complete
+    /// notification. Passive needs no aux-station / PHY-context setup. Requires
+    /// the RUNTIME ucode ALIVE + the command queue armed.
     pub fn scan_passive(&mut self) -> bool {
         if self.state != DeviceState::Alive && !self.is_ready() {
             println!("[iwlwifi] scan: device not ALIVE");
@@ -2516,8 +2589,10 @@ impl IwlDevice {
         }
         let mut buf = [0u8; super::iwlwifi_scan::SCAN_CMD_LEN];
         let sta = self.sm.sta_mac;
-        let n = super::iwlwifi_scan::build_passive_scan(&mut buf, &sta, 11);
-        println!("[iwlwifi] SCAN: passive LMAC scan, 11 channels, {}-byte payload", n);
+        let channels = super::iwlwifi_scan::ORACLE_SCAN_CHANNELS;
+        let n = super::iwlwifi_scan::build_passive_scan(&mut buf, &sta, channels);
+        println!("[iwlwifi] SCAN: passive LMAC scan, {} channels (2.4GHz + 5GHz incl ch149), {}-byte payload",
+            channels.len(), n);
         // Mark RX count before the scan so the drain can't miss fast results.
         let scan_from = self.rx_count();
         let ok = self.send_cmd(super::iwlwifi_scan::SCAN_OFFLOAD_REQUEST_CMD, &buf[..n]);
@@ -2562,9 +2637,12 @@ impl IwlDevice {
         clear_connect_events();
         let ssid = &net.ssid[..net.ssid_len as usize];
         let ssid_str = core::str::from_utf8(ssid).unwrap_or("<non-utf8>");
-        println!("[wifi] connect: \"{}\"  BSSID {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}  ch{}",
+        println!("[wifi] connect: \"{}\"  BSSID {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}  ch{} {}",
             ssid_str, net.bssid[0], net.bssid[1], net.bssid[2], net.bssid[3], net.bssid[4],
-            net.bssid[5], net.channel);
+            net.bssid[5], net.channel, band_name(net.channel));
+        if is_5ghz_channel(net.channel) {
+            println!("[wifi] connect: 5GHz target — CCK auth rates disabled; using OFDM sweep");
+        }
 
         // Derive the WPA2-PSK PMK from the typed password (PBKDF2-HMAC-SHA1,
         // 4096 iterations). This is the root key for the 4-way handshake.
