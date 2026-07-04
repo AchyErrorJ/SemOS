@@ -133,6 +133,11 @@ impl PageTableEntry {
     pub fn is_huge(&self) -> bool { self.0 & flags::HUGE_PAGE != 0 }
     pub fn phys_addr(&self) -> u64 { self.0 & flags::ADDR_MASK }
     pub fn raw(&self) -> u64 { self.0 }
+
+    /// Add flag bits to this entry in place.
+    pub fn add_flags(&mut self, bits: u64) { self.0 |= bits; }
+    /// Remove flag bits from this entry in place.
+    pub fn remove_flags(&mut self, bits: u64) { self.0 &= !bits; }
 }
 
 /// A page table — 512 entries, 4KB aligned
@@ -452,6 +457,73 @@ pub fn install_guard_page(virt: u64) -> bool {
     // when it's GLOBAL — kernel pages are global, so a CR3 reload alone
     // would leave the guard readable through a stale huge-page TLB entry.
     invlpg(virt);
+    true
+}
+
+/// Modify the PTE flags for a single 4 KiB kernel virtual page.
+/// Splits a 2 MiB huge page if necessary (allocating a PT frame).
+/// Returns `true` if the page was present and successfully updated.
+///
+/// # Safety
+/// This manipulates the active kernel page tables. Callers must ensure
+/// `virt` is a kernel-mapped address (e.g. from `phys_to_virt`).
+pub unsafe fn set_page_flags(virt: u64, add: u64, remove: u64) -> bool {
+    let virt = virt & !(PAGE_SIZE_4K - 1);
+    let cr3 = read_cr3();
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+    let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
+
+    let pml4 = phys_to_virt(cr3) as *const u64;
+    let pml4e = *pml4.add(pml4_idx);
+    if pml4e & flags::PRESENT == 0 { return false; }
+
+    let pdpt = phys_to_virt(pml4e & flags::ADDR_MASK) as *const u64;
+    let pdpte = *pdpt.add(pdpt_idx);
+    if pdpte & flags::PRESENT == 0 || pdpte & flags::HUGE_PAGE != 0 { return false; }
+
+    let pd = phys_to_virt(pdpte & flags::ADDR_MASK) as *mut u64;
+    let pde = *pd.add(pd_idx);
+    if pde & flags::PRESENT == 0 { return false; }
+
+    // Split a 2 MiB huge page into 512 × 4 KiB, preserving protection + cache flags.
+    if pde & flags::HUGE_PAGE != 0 {
+        let base_2m = pde & 0x000F_FFFF_FFE0_0000;
+        let carry = pde & (flags::WRITABLE | flags::USER | flags::GLOBAL | flags::NO_EXECUTE
+                         | flags::WRITE_THROUGH | flags::NO_CACHE);
+        let pt_phys = match alloc_pt_frame() { Some(p) => p, None => return false };
+        let pt = phys_to_virt(pt_phys) as *mut u64;
+        for i in 0..ENTRIES {
+            let page_phys = base_2m + (i as u64) * PAGE_SIZE_4K;
+            *pt.add(i) = page_phys | flags::PRESENT | carry;
+        }
+        *pd.add(pd_idx) = pt_phys | flags::PRESENT | flags::WRITABLE | (pde & flags::USER);
+    }
+
+    let pt_phys = *pd.add(pd_idx) & flags::ADDR_MASK;
+    let pt = phys_to_virt(pt_phys) as *mut u64;
+    let entry = pt.add(pt_idx);
+    *entry = (*entry & !remove) | add;
+
+    invlpg(virt);
+    true
+}
+
+/// Mark a physical address range as uncached (`PWT | PCD`) in the kernel's
+/// physical-memory map. Used for MMIO regions such as the iGPU BAR0.
+/// Returns `true` if every page in the range was successfully updated.
+pub fn set_region_uncached(phys: u64, size: u64) -> bool {
+    let start = phys & !(PAGE_SIZE_4K - 1);
+    let end = (phys + size + PAGE_SIZE_4K - 1) & !(PAGE_SIZE_4K - 1);
+    let mut page = start;
+    while page < end {
+        let virt = phys_to_virt(page);
+        if !unsafe { set_page_flags(virt, flags::WRITE_THROUGH | flags::NO_CACHE, 0) } {
+            return false;
+        }
+        page += PAGE_SIZE_4K;
+    }
     true
 }
 

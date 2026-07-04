@@ -61,6 +61,8 @@ mod nvme;
 mod ahci;
 mod hda;
 mod igpu;
+mod backlight;
+mod display;
 mod wireless;
 mod panic_dump;
 mod tetris;
@@ -150,6 +152,17 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let (w, h) = (fb.info().width, fb.info().height);
         framebuffer::init(fb);
         println!("    Framebuffer: {}x{} (console active)", w, h);
+        if let Some(info) = framebuffer::fb_info() {
+            println!(
+                "[fb] {}x{} stride={} bpp={} fmt={} bytes={}",
+                info.width,
+                info.height,
+                info.stride,
+                info.bytes_per_pixel,
+                framebuffer::pixel_format_name(info.format),
+                info.byte_len,
+            );
+        }
     } else {
         println!("    Framebuffer: not available");
     }
@@ -240,6 +253,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("[*] Probing Intel integrated graphics (read-only)...");
     igpu::probe();
+    println!();
+
+    println!("[*] Initializing backlight controller...");
+    backlight::init();
     println!();
 
     // Hardware RNG availability check. Required by TLS 1.3 for ClientHello
@@ -519,6 +536,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static NET_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/net-demo/target/x86_64-unknown-none/release/net-demo"
     );
+    // M14 user/app framebuffer surface validation: draws a rectangle via
+    // SYS_FB_BLIT without touching the kernel framebuffer directly.
+    static FB_DEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/fb-demo/target/x86_64-unknown-none/release/fb-demo"
+    );
     // M20 native shell: parses + runs commands, spawns ELF children.
     static SEM_SH_ELF: &[u8] = include_bytes!(
         "../../user-programs/sem-sh/target/x86_64-unknown-none/release/sem-sh"
@@ -612,6 +634,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered net-demo.elf ({} bytes, semos-std M25 std::net demo)", NET_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register net-demo.elf");
+        }
+        if fs.add("fb-demo.elf", kernel_core::fs::ramfs::FileType::Executable, FB_DEMO_ELF) {
+            println!("    Registered fb-demo.elf ({} bytes, M14 user framebuffer surface demo)", FB_DEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register fb-demo.elf");
         }
         if fs.add("sem-sh.elf", kernel_core::fs::ramfs::FileType::Executable, SEM_SH_ELF) {
             println!("    Registered sem-sh.elf ({} bytes, M20 native shell)", SEM_SH_ELF.len());
