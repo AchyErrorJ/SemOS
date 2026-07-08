@@ -1,0 +1,5 @@
+$ ls -lh /lib/firmware/iwlwifi-7260*
+lrwxrwxrwx 1 nobody nogroup 35 Feb 28 16:09 /lib/firmware/iwlwifi-7260-17.ucode -> intel/iwlwifi/iwlwifi-7260-17.ucode
+
+$ sha256sum /lib/firmware/iwlwifi-7260*
+5d81a6003df0228a497ad27f916ba2c979614b4c439b0f45a5f2873dc0607fe8  /lib/firmware/iwlwifi-7260-17.ucode

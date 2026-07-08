@@ -1,0 +1,2 @@
+iface=
+No wireless interface found via iw dev.

@@ -1,0 +1,2 @@
+$ nmcli dev status
+Error: Could not create NMClient object: Could not connect: Operation not permitted.

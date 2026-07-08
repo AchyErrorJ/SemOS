@@ -1,0 +1,2 @@
+$ rfkill list
+rfkill: cannot open /dev/rfkill: No such file or directory

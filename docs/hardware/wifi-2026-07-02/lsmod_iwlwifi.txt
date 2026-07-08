@@ -1,0 +1,7 @@
+$ sh -c lsmod | grep -E 'iwlwifi|iwlmvm|mac80211|cfg80211'
+libkmod: ERROR ../libkmod/libkmod-module.c:2039 kmod_module_get_holders: could not open '/sys/module/nvidia/holders': No such file or directory
+iwlmvm                860160  0
+mac80211             1859584  1 iwlmvm
+libarc4                12288  1 mac80211
+iwlwifi               647168  1 iwlmvm
+cfg80211             1470464  3 iwlmvm,iwlwifi,mac80211

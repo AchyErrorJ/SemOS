@@ -1,0 +1,12 @@
+$ sh -c lspci -nnk | grep -A4 -Ei 'network|wireless|ethernet'
+00:19.0 Ethernet controller [0200]: Intel Corporation Ethernet Connection I217-LM [8086:153a] (rev 04)
+	Subsystem: Lenovo Ethernet Connection I217-LM [17aa:2210]
+	Kernel driver in use: e1000e
+	Kernel modules: e1000e
+00:1a.0 USB controller [0c03]: Intel Corporation 8 Series/C220 Series Chipset Family USB EHCI #2 [8086:8c2d] (rev 04)
+	Subsystem: Lenovo 8 Series/C220 Series Chipset Family USB EHCI [17aa:2210]
+--
+04:00.0 Network controller [0280]: Intel Corporation Wireless 7260 [8086:08b2] (rev 83)
+	Subsystem: Intel Corporation Dual Band Wireless-AC 7260 [Wilkins Peak 2] [8086:c270]
+	Kernel driver in use: iwlwifi
+	Kernel modules: iwlwifi

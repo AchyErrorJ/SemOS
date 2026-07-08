@@ -1,0 +1,5 @@
+$ nmcli -t -f NAME,UUID,TYPE,DEVICE connection show --active
+Error: Could not create NMClient object: Could not connect: Operation not permitted.
+
+$ nmcli -t -f GENERAL,IP4,IP6 device show
+Error: Could not create NMClient object: Could not connect: Operation not permitted.
