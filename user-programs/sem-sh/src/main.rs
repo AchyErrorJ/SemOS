@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_OPEN, SYS_PONG, SYS_TETRIS, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_OPEN, SYS_PONG, SYS_TETRIS, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -254,7 +254,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "fbinfo" | "brightness" | "usbinfo" | "usbenum" | "flash-sysroot" | "pong" | "wifi" | "tetris"
+            | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "flash-sysroot" | "pong" | "wifi" | "tetris"
             | "vouch" | "unvouch" | "vouches"
     )
 }
@@ -793,6 +793,18 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             let percent = unsafe { syscall2(SYS_BACKLIGHT, op, arg) };
             if percent == u64::MAX { println!("brightness: unavailable"); 1 }
             else { println!("brightness: {}%", percent); 0 }
+        }
+        "modeset" => {
+            let op = if argv.len() < 2 || argv[1] == "status" { 0 }
+            else if argv[1] == "plan" { 1 }
+            else if argv[1] == "verify-60" { 2 }
+            else if argv[1] == "poke-60" { 3 }
+            else {
+                println!("modeset: usage: modeset [status|plan|verify-60|poke-60]");
+                return 2;
+            };
+            let rc = unsafe { syscall1(SYS_MODESET, op) };
+            if rc == u64::MAX { 1 } else { 0 }
         }
         "fetch" => {
             if argv.len() < 2 {

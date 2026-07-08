@@ -455,6 +455,20 @@ impl Platform for X86Platform {
         0
     }
 
+    fn run_modeset(&self, op: u64) -> u64 {
+        let op = match op {
+            0 => crate::display::modeset::ModeOp::Status,
+            1 => crate::display::modeset::ModeOp::Plan,
+            2 => crate::display::modeset::ModeOp::Verify60,
+            3 => crate::display::modeset::ModeOp::Poke60Timings,
+            _ => {
+                crate::println!("modeset: usage: modeset [status|plan|verify-60|poke-60]");
+                return u64::MAX;
+            }
+        };
+        crate::display::modeset::run(op)
+    }
+
     fn fb_blit(&self, xy_pack: u64, wh_pack: u64, pixels_ptr: u64, pixel_count: u64) -> u64 {
         const USER_LIMIT: u64 = 0x0000_8000_0000_0000;
         let x = (xy_pack & 0xFFFF_FFFF) as usize;

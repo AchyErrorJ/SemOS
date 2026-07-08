@@ -162,6 +162,7 @@ pub mod numbers {
     // row-major u32 RGB buffer to (x,y,w,h) and presents the damage.
     pub const SYS_FB_META:      u64 = 128; // (out_ptr, out_len>=64) -> 0/err
     pub const SYS_FB_BLIT:      u64 = 129; // (xy_pack, wh_pack, pixels_ptr, pixel_count) -> 0/err
+    pub const SYS_MODESET:      u64 = 130; // (op) -> 0/err; guarded M14-F modeset status/plan/verify/poke
     pub const SYS_WIFI_SCAN:    u64 = 123; // () -> n; scans WiFi, prints numbered network list
                                            // sem-sh wraps external commands so typing during a
                                            // child run doesn't buffer into the next prompt.
@@ -319,6 +320,7 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_BACKLIGHT => crate::platform::get().run_backlight(arg0, arg1),
         SYS_FB_META => crate::platform::get().fb_meta(arg0, arg1),
         SYS_FB_BLIT => crate::platform::get().fb_blit(arg0, arg1, arg2, arg3),
+        SYS_MODESET => crate::platform::get().run_modeset(arg0),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),

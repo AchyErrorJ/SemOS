@@ -123,6 +123,11 @@ pub trait Platform: Send + Sync + 'static {
     /// x | (y << 32), `wh_pack` is w | (h << 32). Default: unavailable.
     fn fb_blit(&self, _xy_pack: u64, _wh_pack: u64, _pixels_ptr: u64, _pixel_count: u64) -> u64 { u64::MAX }
 
+    /// SYS_MODESET: guarded native modeset research/control. op: 0=status,
+    /// 1=plan 1080p60, 2=verify live timing registers, 3=experimental timing
+    /// register poke. Default: unavailable.
+    fn run_modeset(&self, _op: u64) -> u64 { u64::MAX }
+
     /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
     /// list to the TTY (`wifi` shell command). Blocks for the scan duration.
     /// Returns the number of unique networks found. Default: unavailable.

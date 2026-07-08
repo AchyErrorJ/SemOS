@@ -75,6 +75,7 @@ pub const SYS_FBINFO:       u64 = 118; // () -> 0; print framebuffer + native pa
 pub const SYS_BACKLIGHT:    u64 = 119; // (op,arg) -> percent | MAX; brightness control
 pub const SYS_FB_META:      u64 = 128; // (out_ptr,out_len>=64) -> 0/err
 pub const SYS_FB_BLIT:      u64 = 129; // (xy_pack,wh_pack,pixels_ptr,pixel_count) -> 0/err
+pub const SYS_MODESET:      u64 = 130; // (op) -> 0/err; guarded modeset control
 pub const SYS_WIFI_SCAN:    u64 = 123; // () -> n; scans WiFi, prints numbered network list
 pub const SYS_TETRIS:       u64 = 124; // () -> 0/err; runs the fullscreen tetris game
 pub const SYS_WIFI_CONNECT: u64 = 125; // (idx, pass_ptr, pass_len) -> 1/0; connect to network idx

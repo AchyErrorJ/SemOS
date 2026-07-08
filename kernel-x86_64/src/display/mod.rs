@@ -5,3 +5,5 @@
 //! register access is gated by device whitelist and feature flags.
 
 pub mod mmio;
+
+pub mod modeset;

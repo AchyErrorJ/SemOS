@@ -32,6 +32,10 @@ Already done:
 - M14-E app framebuffer surface: `SYS_FB_META` + `SYS_FB_BLIT` let Ring-3 code
   query GOP framebuffer metadata and present a user-owned RGB buffer; `fb-demo`
   draws a 320x180 gradient through this syscall path.
+- M14-F guarded modeset tool: `modeset status|plan|verify-60|poke-60` models
+  the CMN panel's 1920x1080@60.007 timing and provides explicit, shell-gated
+  Haswell timing register inspection/verification. Full DPLL/DDI/pipe takeover
+  remains gated behind a design + restore plan.
 - `kernel-x86_64/src/framebuffer.rs` exposes:
   - `fb_fill_rect`
   - `fb_blit`
