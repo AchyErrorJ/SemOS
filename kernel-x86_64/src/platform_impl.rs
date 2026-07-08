@@ -413,6 +413,83 @@ impl Platform for X86Platform {
         }
     }
 
+    fn fb_meta(&self, out_ptr: u64, out_len: u64) -> u64 {
+        const USER_LIMIT: u64 = 0x0000_8000_0000_0000;
+        if out_ptr == 0 || out_len < 64 || out_ptr >= USER_LIMIT {
+            return u64::MAX;
+        }
+        if out_ptr.checked_add(64).map_or(true, |end| end > USER_LIMIT) {
+            return u64::MAX;
+        }
+        let info = match crate::framebuffer::fb_info() {
+            Some(i) => i,
+            None => return u64::MAX,
+        };
+        let fmt = match crate::framebuffer::pixel_format_name(info.format) {
+            "RGB" => 1u64,
+            "BGR" => 2u64,
+            "U8" => 3u64,
+            _ => 0u64,
+        };
+        let (native_w, native_h) = match crate::igpu::find() {
+            Some(igpu) if igpu.device_id == crate::igpu::HASWELL_GT2_MOBILE_HD4600 => (1920u64, 1080u64),
+            _ => (0u64, 0u64),
+        };
+        let words = [
+            info.width as u64,
+            info.height as u64,
+            info.stride as u64,
+            info.bytes_per_pixel as u64,
+            fmt,
+            info.byte_len as u64,
+            native_w,
+            native_h,
+        ];
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                words.as_ptr() as *const u8,
+                out_ptr as *mut u8,
+                core::mem::size_of_val(&words),
+            );
+        }
+        0
+    }
+
+    fn fb_blit(&self, xy_pack: u64, wh_pack: u64, pixels_ptr: u64, pixel_count: u64) -> u64 {
+        const USER_LIMIT: u64 = 0x0000_8000_0000_0000;
+        let x = (xy_pack & 0xFFFF_FFFF) as usize;
+        let y = (xy_pack >> 32) as usize;
+        let w = (wh_pack & 0xFFFF_FFFF) as usize;
+        let h = (wh_pack >> 32) as usize;
+        if w == 0 || h == 0 || pixels_ptr == 0 || pixels_ptr >= USER_LIMIT {
+            return u64::MAX;
+        }
+        let needed = match w.checked_mul(h) {
+            Some(n) => n,
+            None => return u64::MAX,
+        };
+        if needed == 0 || needed > pixel_count as usize {
+            return u64::MAX;
+        }
+        // Keep the first version intentionally bounded: a user program can draw
+        // UI/demos, but a bogus request won't ask the kernel to scan arbitrary
+        // gigabytes of user memory.
+        if needed > 1920 * 1080 {
+            return u64::MAX;
+        }
+        let byte_len = match needed.checked_mul(core::mem::size_of::<u32>()) {
+            Some(n) => n as u64,
+            None => return u64::MAX,
+        };
+        if pixels_ptr.checked_add(byte_len).map_or(true, |end| end > USER_LIMIT) {
+            return u64::MAX;
+        }
+        let pixels = unsafe { core::slice::from_raw_parts(pixels_ptr as *const u32, needed) };
+        crate::framebuffer::fb_blit(pixels, x, y, w, h);
+        let _ = crate::framebuffer::fb_present();
+        0
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,

@@ -155,6 +155,13 @@ pub mod numbers {
     pub const SYS_BACKLIGHT:    u64 = 119; // (op, arg) -> percent | u64::MAX. op: 0=get,
                                            // 1=set arg%, 2=up, 3=down, 4=restore. Clamped
                                            // to a visible floor by the platform impl.
+    // M14-E: first app-facing framebuffer surface. Metadata is returned as
+    // eight little-endian u64 words: width, height, stride_pixels,
+    // bytes_per_pixel, format_code (1=RGB, 2=BGR, 3=U8, 0=unknown), byte_len,
+    // native_width_or_0, native_height_or_0. FB_BLIT copies a user-owned
+    // row-major u32 RGB buffer to (x,y,w,h) and presents the damage.
+    pub const SYS_FB_META:      u64 = 128; // (out_ptr, out_len>=64) -> 0/err
+    pub const SYS_FB_BLIT:      u64 = 129; // (xy_pack, wh_pack, pixels_ptr, pixel_count) -> 0/err
     pub const SYS_WIFI_SCAN:    u64 = 123; // () -> n; scans WiFi, prints numbered network list
                                            // sem-sh wraps external commands so typing during a
                                            // child run doesn't buffer into the next prompt.
@@ -310,6 +317,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // M14 display diagnostics and safe backlight control.
         SYS_FBINFO => crate::platform::get().run_fbinfo(),
         SYS_BACKLIGHT => crate::platform::get().run_backlight(arg0, arg1),
+        SYS_FB_META => crate::platform::get().fb_meta(arg0, arg1),
+        SYS_FB_BLIT => crate::platform::get().fb_blit(arg0, arg1, arg2, arg3),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),

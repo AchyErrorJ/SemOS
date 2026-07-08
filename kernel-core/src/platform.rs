@@ -113,6 +113,16 @@ pub trait Platform: Send + Sync + 'static {
     /// controllable backlight on this machine. Default: unavailable.
     fn run_backlight(&self, _op: u64, _arg: u64) -> u64 { u64::MAX }
 
+    /// SYS_FB_META: copy framebuffer metadata to a user buffer as eight u64
+    /// words: width, height, stride_pixels, bytes_per_pixel, format_code,
+    /// byte_len, native_width_or_0, native_height_or_0. Default: unavailable.
+    fn fb_meta(&self, _out_ptr: u64, _out_len: u64) -> u64 { u64::MAX }
+
+    /// SYS_FB_BLIT: copy a user-owned row-major u32 RGB buffer into the GOP
+    /// framebuffer and present the damaged rectangle. `xy_pack` is
+    /// x | (y << 32), `wh_pack` is w | (h << 32). Default: unavailable.
+    fn fb_blit(&self, _xy_pack: u64, _wh_pack: u64, _pixels_ptr: u64, _pixel_count: u64) -> u64 { u64::MAX }
+
     /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
     /// list to the TTY (`wifi` shell command). Blocks for the scan duration.
     /// Returns the number of unique networks found. Default: unavailable.

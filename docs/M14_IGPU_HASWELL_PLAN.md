@@ -29,6 +29,9 @@ Already done:
 - M14-D backlight control: `brightness [N|up|down|restore]` shell builtin
   (`SYS_BACKLIGHT`) over the PCH PWM path in `kernel-x86_64/src/backlight.rs`,
   clamped to a 10% visible floor with save/restore.
+- M14-E app framebuffer surface: `SYS_FB_META` + `SYS_FB_BLIT` let Ring-3 code
+  query GOP framebuffer metadata and present a user-owned RGB buffer; `fb-demo`
+  draws a 320x180 gradient through this syscall path.
 - `kernel-x86_64/src/framebuffer.rs` exposes:
   - `fb_fill_rect`
   - `fb_blit`
@@ -51,7 +54,8 @@ Not done yet:
 - No backlight/brightness control.
 - No SemOS-side EDID/mode inventory.
 - No native Haswell modeset.
-- The M6 follow-up, user-space shared framebuffer mapping, is still open.
+- Direct shared framebuffer mapping remains deferred; M14-E uses a safer blit
+  syscall first.
 
 ---
 
