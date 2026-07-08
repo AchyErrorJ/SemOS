@@ -20,6 +20,7 @@ const TRANS_VBLANK_A: u64 = 0x60010;
 const TRANS_VSYNC_A:  u64 = 0x60014;
 const PIPEASRC:       u64 = 0x6001C;
 const TRANS_DDI_FUNC_CTL_A: u64 = 0x60400;
+const PIPE_DSL_A:     u64 = 0x70000; // current display scanline, read-only pacing source
 const PIPECONF_A:     u64 = 0x70008;
 const DSPCNTR_A:      u64 = 0x70180;
 const DSPSTRIDE_A:    u64 = 0x70188;
@@ -31,6 +32,7 @@ pub enum ModeOp {
     Plan,
     Verify60,
     Poke60Timings,
+    WaitVblank,
 }
 
 #[derive(Clone, Copy)]
@@ -118,11 +120,13 @@ pub fn run(op: ModeOp) -> u64 {
         ModeOp::Plan => plan(),
         ModeOp::Verify60 => verify_60(&mmio),
         ModeOp::Poke60Timings => poke_60_timings(&mmio),
+        ModeOp::WaitVblank => wait_vblank_cmd(&mmio),
     }
 }
 
 fn status(mmio: &MmioReg, loc: crate::pci::Location) -> u64 {
     println!("modeset: HD4600 @ {:02X}:{:02X}.{} BAR0 mapped, mode writes are shell-gated", loc.bus, loc.slot, loc.func);
+    dump_reg(mmio, "PIPE_DSL_A", PIPE_DSL_A);
     dump_reg(mmio, "PIPECONF_A", PIPECONF_A);
     dump_reg(mmio, "TRANS_DDI_FUNC_CTL_A", TRANS_DDI_FUNC_CTL_A);
     dump_reg(mmio, "TRANS_HTOTAL_A", TRANS_HTOTAL_A);
@@ -182,6 +186,49 @@ fn poke_60_timings(mmio: &MmioReg) -> u64 {
     write_reg(mmio, "PIPEASRC", PIPEASRC, p.pipeasrc);
     let _ = verify_60(mmio);
     0
+}
+
+fn wait_vblank_cmd(mmio: &MmioReg) -> u64 {
+    let before = read_scanline(mmio);
+    match wait_for_scanline_wrap(mmio) {
+        Some((after, spins)) => {
+            println!(
+                "modeset wait-vblank: scanline {} -> {} at frame boundary ({} spins, read-only)",
+                before,
+                after,
+                spins,
+            );
+            0
+        }
+        None => {
+            println!(
+                "modeset wait-vblank: timeout; PIPE_DSL_A stayed near scanline {} (is pipe A active?)",
+                read_scanline(mmio),
+            );
+            u64::MAX
+        }
+    }
+}
+
+/// Wait for the scanline counter to wrap. This is the safest 60 Hz primitive:
+/// it only reads PIPE_DSL_A and uses the live display engine's existing frame
+/// cadence. No IRQ enables/acks, no mode writes, no plane changes.
+fn wait_for_scanline_wrap(mmio: &MmioReg) -> Option<(u32, u64)> {
+    let mut last = read_scanline(mmio);
+    for spins in 0..25_000_000u64 {
+        core::hint::spin_loop();
+        let cur = read_scanline(mmio);
+        if cur < last && last < 8192 {
+            return Some((cur, spins));
+        }
+        last = cur;
+    }
+    None
+}
+
+#[inline]
+fn read_scanline(mmio: &MmioReg) -> u32 {
+    mmio.read32(PIPE_DSL_A) & 0x1FFF
 }
 
 fn dump_reg(mmio: &MmioReg, name: &str, off: u64) {

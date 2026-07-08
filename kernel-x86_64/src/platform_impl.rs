@@ -461,8 +461,9 @@ impl Platform for X86Platform {
             1 => crate::display::modeset::ModeOp::Plan,
             2 => crate::display::modeset::ModeOp::Verify60,
             3 => crate::display::modeset::ModeOp::Poke60Timings,
+            4 => crate::display::modeset::ModeOp::WaitVblank,
             _ => {
-                crate::println!("modeset: usage: modeset [status|plan|verify-60|poke-60]");
+                crate::println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank]");
                 return u64::MAX;
             }
         };

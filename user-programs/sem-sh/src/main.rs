@@ -799,8 +799,9 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             else if argv[1] == "plan" { 1 }
             else if argv[1] == "verify-60" { 2 }
             else if argv[1] == "poke-60" { 3 }
+            else if argv[1] == "wait-vblank" || argv[1] == "vblank" { 4 }
             else {
-                println!("modeset: usage: modeset [status|plan|verify-60|poke-60]");
+                println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank]");
                 return 2;
             };
             let rc = unsafe { syscall1(SYS_MODESET, op) };
