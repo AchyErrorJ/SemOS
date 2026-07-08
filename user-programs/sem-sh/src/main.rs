@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FLASH_SYSROOT, SYS_OPEN, SYS_PONG, SYS_TETRIS, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_OPEN, SYS_PONG, SYS_TETRIS, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -254,7 +254,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "usbinfo" | "usbenum" | "flash-sysroot" | "pong" | "wifi" | "tetris"
+            | "fbinfo" | "brightness" | "usbinfo" | "usbenum" | "flash-sysroot" | "pong" | "wifi" | "tetris"
             | "vouch" | "unvouch" | "vouches"
     )
 }
@@ -777,6 +777,23 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("up {} s ({} ticks @ 100 Hz)", ticks / 100, ticks);
             0
         }
+        "fbinfo" => {
+            let rc = unsafe { syscall1(SYS_FBINFO, 0) };
+            rc as i32
+        }
+        "brightness" => {
+            let (op, arg) = if argv.len() < 2 { (0u64, 0u64) }
+            else if argv[1] == "up" { (2, 0) }
+            else if argv[1] == "down" { (3, 0) }
+            else if argv[1] == "restore" { (4, 0) }
+            else { match argv[1].parse::<u64>() {
+                Ok(p) if p <= 100 => (1, p),
+                _ => { println!("brightness: usage: brightness [0-100|up|down|restore]"); return 2; }
+            }};
+            let percent = unsafe { syscall2(SYS_BACKLIGHT, op, arg) };
+            if percent == u64::MAX { println!("brightness: unavailable"); 1 }
+            else { println!("brightness: {}%", percent); 0 }
+        }
         "fetch" => {
             if argv.len() < 2 {
                 println!("sem-sh: fetch: usage: fetch <url>   (http only, e.g. http://example.com/)");
@@ -888,6 +905,8 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  ps                  task table + security tiers");
             println!("  free                heap usage");
             println!("  uptime              ticks since boot");
+            println!("  fbinfo              framebuffer + native panel diagnostics");
+            println!("  brightness [N|up|down|restore]  internal-panel backlight");
             println!("  ask QUESTION        ask the OS's Claude agent (one-shot)");
             println!("  agent               open the split-pane agent terminal");
             println!("  edit FILE           open the modal text editor (vi-style)");

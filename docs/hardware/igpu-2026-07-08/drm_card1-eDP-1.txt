@@ -1,0 +1,9 @@
+connector=/sys/class/drm/card1-eDP-1
+--- status ---
+connected
+--- enabled ---
+enabled
+--- dpms ---
+On
+--- modes ---
+1920x1080

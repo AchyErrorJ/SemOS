@@ -101,6 +101,18 @@ pub trait Platform: Send + Sync + 'static {
     /// Same shape as `run_pong`. Default: unavailable.
     fn run_tetris(&self) -> u64 { 0 }
 
+    /// SYS_FBINFO: print the current GOP framebuffer geometry/pixel format and
+    /// (where known) how it compares to the internal panel's native mode, to
+    /// the current TTY. Read-only. Returns 0. Default: unavailable.
+    fn run_fbinfo(&self) -> u64 { 0 }
+
+    /// SYS_BACKLIGHT: control the internal-panel backlight (the `brightness`
+    /// shell builtin). `op`: 0=get, 1=set `arg`%, 2=step up, 3=step down,
+    /// 4=restore original. Writes are clamped to a visible floor by the impl.
+    /// Returns the resulting brightness percent, or `u64::MAX` if there is no
+    /// controllable backlight on this machine. Default: unavailable.
+    fn run_backlight(&self, _op: u64, _arg: u64) -> u64 { u64::MAX }
+
     /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
     /// list to the TTY (`wifi` shell command). Blocks for the scan duration.
     /// Returns the number of unique networks found. Default: unavailable.

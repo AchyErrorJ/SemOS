@@ -1,0 +1,8 @@
+connector=/sys/class/drm/card1-HDMI-A-2
+--- status ---
+disconnected
+--- enabled ---
+disabled
+--- dpms ---
+Off
+--- modes ---

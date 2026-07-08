@@ -1,0 +1,10 @@
+videobuf2_vmalloc      20480  1 uvcvideo
+videobuf2_memops       16384  1 videobuf2_vmalloc
+videobuf2_v4l2         36864  1 uvcvideo
+videobuf2_common       86016  4 videobuf2_vmalloc,videobuf2_v4l2,uvcvideo,videobuf2_memops
+videodev              364544  2 videobuf2_v4l2,uvcvideo
+drm_ttm_helper         16384  0
+i915                 4812800  59
+drm_buddy              28672  1 i915
+drm_display_helper    290816  1 i915
+video                  77824  2 thinkpad_acpi,i915

@@ -1,0 +1,11 @@
+file=docs/hardware/igpu-2026-07-08/edid_card1-eDP-1.bin
+bytes=128
+manufacturer=CMN
+product_code=0x15c0
+serial=0
+edid_version=1.4
+extensions=0
+detailed_timing_1=1920x1080@60.007Hz pixel_clock_hz=151600000 htotal=2220 hblank=300 hsync_offset=90 hsync_width=60 vtotal=1138 vblank=58 vsync_offset=6 vsync_width=9 size_mm=344x194
+descriptor_2=text:N156HGE-EA1
+descriptor_3=text:CMN
+descriptor_4=text:N156HGE-EA1

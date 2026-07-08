@@ -175,71 +175,54 @@ fn read_bar(loc: pci::Location, index: u8) -> BarInfo {
     }
 
     if raw_low & 1 != 0 {
-        let size = bar_size(loc, index, false);
         return BarInfo {
             index,
             raw_low,
             raw_high: 0,
             kind: BarKind::Io { base: raw_low & !0x3 },
-            size,
+            size: observed_target_bar_size(loc, index),
         };
     }
 
     let prefetchable = raw_low & (1 << 3) != 0;
     match (raw_low >> 1) & 0x3 {
         0x0 => {
-            let size = bar_size(loc, index, false);
             BarInfo {
                 index,
                 raw_low,
                 raw_high: 0,
                 kind: BarKind::Mmio32 { base: raw_low & !0xF, prefetchable },
-                size,
+                size: observed_target_bar_size(loc, index),
             }
         }
         0x2 => {
             let raw_high = pci::read_u32(loc.bus, loc.slot, loc.func, offset + 4);
-            let size = bar_size(loc, index, true);
             let base = ((raw_high as u64) << 32) | ((raw_low as u64) & 0xFFFF_FFF0);
             BarInfo {
                 index,
                 raw_low,
                 raw_high,
                 kind: BarKind::Mmio64 { base, prefetchable },
-                size,
+                size: observed_target_bar_size(loc, index),
             }
         }
         _ => BarInfo { index, raw_low, raw_high: 0, kind: BarKind::Reserved, size: 0 },
     }
 }
 
-/// Compute a BAR's size by the standard PCI sizing dance: save the current
-/// value, write all-ones, read back the mask, restore the original value.
-fn bar_size(loc: pci::Location, index: u8, is_64bit: bool) -> u64 {
-    let offset = 0x10 + index * 4;
-    let low = pci::read_u32(loc.bus, loc.slot, loc.func, offset);
-
-    pci::write_u32(loc.bus, loc.slot, loc.func, offset, 0xFFFF_FFFF);
-    let masked_low = pci::read_u32(loc.bus, loc.slot, loc.func, offset);
-    pci::write_u32(loc.bus, loc.slot, loc.func, offset, low);
-
-    let high = if is_64bit {
-        let offset_high = offset + 4;
-        let saved_high = pci::read_u32(loc.bus, loc.slot, loc.func, offset_high);
-        pci::write_u32(loc.bus, loc.slot, loc.func, offset_high, 0xFFFF_FFFF);
-        let masked_high = pci::read_u32(loc.bus, loc.slot, loc.func, offset_high);
-        pci::write_u32(loc.bus, loc.slot, loc.func, offset_high, saved_high);
-        masked_high as u64
-    } else {
-        0xFFFF_FFFF
-    };
-
-    let mask = ((high << 32) | (masked_low as u64)) & !0xF;
-    if mask == 0 {
-        return 0;
+/// Return BAR sizes known from the Linux oracle capture for the target T540p
+/// HD 4600 (`docs/hardware/igpu-2026-07-08/`). This preserves the M14 safety
+/// rule that the read-only probe never performs the PCI BAR-sizing dance
+/// (write all-ones/read/restore) on the live display controller.
+fn observed_target_bar_size(loc: pci::Location, index: u8) -> u64 {
+    let device = pci::read_u16(loc.bus, loc.slot, loc.func, pci::regs::DEVICE_ID);
+    if device != HASWELL_GT2_MOBILE_HD4600 { return 0; }
+    match index {
+        0 => 4 * 1024 * 1024,
+        2 => 256 * 1024 * 1024,
+        4 => 64,
+        _ => 0,
     }
-    let size = (!mask).wrapping_add(1) & ((1u64 << 63) - 1);
-    if size == 0 { 0 } else { size }
 }
 
 fn print_bar(label: &str, bar: BarInfo) {

@@ -1,0 +1,8 @@
+connector=/sys/class/drm/card1-VGA-1
+--- status ---
+disconnected
+--- enabled ---
+disabled
+--- dpms ---
+Off
+--- modes ---

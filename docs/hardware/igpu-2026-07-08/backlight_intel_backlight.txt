@@ -1,0 +1,6 @@
+device=/sys/class/backlight/intel_backlight
+type=raw
+max_brightness=4438
+brightness=4438
+actual_brightness=4438
+bl_power=0

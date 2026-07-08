@@ -346,6 +346,73 @@ impl Platform for X86Platform {
         crate::tetris::run()
     }
 
+    fn run_fbinfo(&self) -> u64 {
+        match crate::framebuffer::fb_info() {
+            Some(info) => {
+                crate::println!(
+                    "fb: {}x{} stride={} bpp={} bytes={} fmt={} virt=0x{:016X}",
+                    info.width,
+                    info.height,
+                    info.stride,
+                    info.bytes_per_pixel,
+                    info.byte_len,
+                    crate::framebuffer::pixel_format_name(info.format),
+                    info.addr,
+                );
+                if let Some(igpu) = crate::igpu::find() {
+                    if igpu.device_id == crate::igpu::HASWELL_GT2_MOBILE_HD4600 {
+                        let native_w = 1920usize;
+                        let native_h = 1080usize;
+                        crate::println!(
+                            "panel: CMN N156HGE-EA1 eDP native {}x{} @ 60.007 Hz (oracle)",
+                            native_w,
+                            native_h,
+                        );
+                        if info.width == native_w && info.height == native_h {
+                            crate::println!("fb: GOP mode matches native panel resolution");
+                        } else {
+                            crate::println!(
+                                "fb: GOP mode differs from native panel ({}x{}); prefer GOP mode selection before native modeset",
+                                native_w,
+                                native_h,
+                            );
+                        }
+                    }
+                }
+            }
+            None => crate::println!("fb: unavailable"),
+        }
+        0
+    }
+
+    fn run_backlight(&self, op: u64, arg: u64) -> u64 {
+        const ERR: u64 = u64::MAX;
+        let result: Result<u8, &'static str> = (|| match op {
+            0 => crate::backlight::get().map(|s| s.percent).ok_or("backlight not available"),
+            1 => crate::backlight::set_percent(arg.min(100) as u8)
+                .and_then(|_| crate::backlight::get_percent().ok_or("backlight not available")),
+            2 => {
+                let cur = crate::backlight::get_percent().ok_or("backlight not available")?;
+                let next = cur.saturating_add(10).min(100);
+                crate::backlight::set_percent(next)?;
+                crate::backlight::get_percent().ok_or("backlight not available")
+            }
+            3 => {
+                let cur = crate::backlight::get_percent().ok_or("backlight not available")?;
+                let next = cur.saturating_sub(10);
+                crate::backlight::set_percent(next)?;
+                crate::backlight::get_percent().ok_or("backlight not available")
+            }
+            4 => crate::backlight::restore()
+                .and_then(|_| crate::backlight::get_percent().ok_or("backlight not available")),
+            _ => Err("usage: brightness [PERCENT|up|down|restore]"),
+        })();
+        match result {
+            Ok(percent) => percent as u64,
+            Err(e) => { crate::println!("brightness: {}", e); ERR }
+        }
+    }
+
     fn map_elf_segment(
         &self,
         space: u64,
