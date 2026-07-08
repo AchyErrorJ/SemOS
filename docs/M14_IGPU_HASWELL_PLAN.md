@@ -18,6 +18,17 @@ Already done:
 
 - UEFI boot on the T540p works.
 - Bootloader-provided framebuffer is initialized early from `BootInfo`.
+- M14-A oracle capture committed under `docs/hardware/igpu-2026-07-08/`
+  (HD 4600 `8086:0416` @ `00:02.0`, BAR0 4M, BAR2 256M, eDP-1 native
+  `1920x1080@60.007Hz` CMN `N156HGE-EA1`, `intel_backlight` raw max `4438`).
+- M14-B read-only PCI probe (`kernel-x86_64/src/igpu.rs`). BAR sizes come from
+  the oracle capture rather than the live PCI BAR-sizing write dance, preserving
+  the "read-only first" safety rule.
+- M14-C framebuffer diagnostics: `fbinfo` shell builtin (`SYS_FBINFO`) prints
+  the GOP geometry/format and compares it to the native panel mode.
+- M14-D backlight control: `brightness [N|up|down|restore]` shell builtin
+  (`SYS_BACKLIGHT`) over the PCH PWM path in `kernel-x86_64/src/backlight.rs`,
+  clamped to a 10% visible floor with save/restore.
 - `kernel-x86_64/src/framebuffer.rs` exposes:
   - `fb_fill_rect`
   - `fb_blit`
