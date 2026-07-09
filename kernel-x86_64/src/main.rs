@@ -64,6 +64,7 @@ mod igpu;
 mod backlight;
 mod display;
 mod wireless;
+mod e1000e;
 mod panic_dump;
 mod tetris;
 pub mod paging;
@@ -337,6 +338,20 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
                 if kernel_core::net::init(nd) {
                     // One initial poll to flush any startup state.
                     kernel_core::net::poll();
+                }
+            }
+        }
+    }
+
+    println!("[*] Probing Intel e1000e Ethernet device...");
+    if !kernel_core::net::is_initialized() {
+        if e1000e::init() {
+            if e1000e::register_with_kernel_core() {
+                println!("[e1000e] registered with driver registry as 'e1000e0'");
+                if let Some(nd) = kernel_core::drivers::registry::get_net("e1000e0") {
+                    if kernel_core::net::init(nd) {
+                        kernel_core::net::poll();
+                    }
                 }
             }
         }
