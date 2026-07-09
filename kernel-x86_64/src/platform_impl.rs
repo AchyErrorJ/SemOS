@@ -455,6 +455,10 @@ impl Platform for X86Platform {
         0
     }
 
+    fn fb_wait_vblank(&self) -> u64 {
+        if crate::display::modeset::wait_vblank() { 0 } else { u64::MAX }
+    }
+
     fn run_modeset(&self, op: u64) -> u64 {
         let op = match op {
             0 => crate::display::modeset::ModeOp::Status,

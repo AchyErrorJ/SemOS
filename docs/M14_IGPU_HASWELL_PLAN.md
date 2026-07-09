@@ -37,6 +37,9 @@ Already done:
   Haswell timing register inspection/verification plus read-only scanline-wrap
   frame pacing. Full DPLL/DDI/pipe takeover remains gated behind a design +
   restore plan.
+- M14-H vsync-paced present: `SYS_FB_WAIT_VBLANK` exposes the read-only Pipe A
+  scanline-wrap wait to Ring 3; `fb-demo` now animates 240 frames, pacing each
+  present to a frame boundary for tear-reduced ~60 FPS with no mode writes.
 - `kernel-x86_64/src/framebuffer.rs` exposes:
   - `fb_fill_rect`
   - `fb_blit`

@@ -188,6 +188,21 @@ fn poke_60_timings(mmio: &MmioReg) -> u64 {
     0
 }
 
+/// Public 60 Hz pacing primitive for the present path. Read-only: constructs a
+/// BAR0 view for the HD4600 target and waits for one Pipe A scanline wrap.
+/// Returns true on a detected frame boundary, false if unavailable/timed out.
+pub fn wait_vblank() -> bool {
+    match igpu::find() {
+        Some(i) if i.device_id == igpu::HASWELL_GT2_MOBILE_HD4600 => {}
+        _ => return false,
+    }
+    let mmio = match MmioReg::new() {
+        Some(m) => m,
+        None => return false,
+    };
+    wait_for_scanline_wrap(&mmio).is_some()
+}
+
 fn wait_vblank_cmd(mmio: &MmioReg) -> u64 {
     let before = read_scanline(mmio);
     match wait_for_scanline_wrap(mmio) {

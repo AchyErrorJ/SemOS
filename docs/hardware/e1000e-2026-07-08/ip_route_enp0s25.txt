@@ -1,0 +1,2 @@
+default via 192.168.68.1 proto dhcp src 192.168.68.116 metric 100 
+192.168.68.0/24 proto kernel scope link src 192.168.68.116 metric 100 

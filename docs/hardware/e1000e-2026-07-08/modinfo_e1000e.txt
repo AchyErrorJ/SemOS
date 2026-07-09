@@ -1,0 +1,166 @@
+filename:       /lib/modules/6.18.7-76061807-generic/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko.zst
+license:        GPL v2
+description:    Intel(R) PRO/1000 Network Driver
+srcversion:     DFB3EC93150B3E122F1A59E
+alias:          pci:v00008086d000057BAsv*sd*bc*sc*i*
+alias:          pci:v00008086d000057B9sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057B8sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057B7sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057B6sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057B5sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057B4sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057B3sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057A1sv*sd*bc*sc*i*
+alias:          pci:v00008086d000057A0sv*sd*bc*sc*i*
+alias:          pci:v00008086d00005511sv*sd*bc*sc*i*
+alias:          pci:v00008086d00005510sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000550Fsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000550Esv*sd*bc*sc*i*
+alias:          pci:v00008086d0000550Bsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000550Asv*sd*bc*sc*i*
+alias:          pci:v00008086d0000550Dsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000550Csv*sd*bc*sc*i*
+alias:          pci:v00008086d00000DC8sv*sd*bc*sc*i*
+alias:          pci:v00008086d00000DC7sv*sd*bc*sc*i*
+alias:          pci:v00008086d00001A1Dsv*sd*bc*sc*i*
+alias:          pci:v00008086d00001A1Csv*sd*bc*sc*i*
+alias:          pci:v00008086d00001A1Fsv*sd*bc*sc*i*
+alias:          pci:v00008086d00001A1Esv*sd*bc*sc*i*
+alias:          pci:v00008086d00000DC6sv*sd*bc*sc*i*
+alias:          pci:v00008086d00000DC5sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015F5sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015F4sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015FAsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015F9sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015FCsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015FBsv*sd*bc*sc*i*
+alias:          pci:v00008086d00000D55sv*sd*bc*sc*i*
+alias:          pci:v00008086d00000D53sv*sd*bc*sc*i*
+alias:          pci:v00008086d00000D4Dsv*sd*bc*sc*i*
+alias:          pci:v00008086d00000D4Csv*sd*bc*sc*i*
+alias:          pci:v00008086d00000D4Fsv*sd*bc*sc*i*
+alias:          pci:v00008086d00000D4Esv*sd*bc*sc*i*
+alias:          pci:v00008086d000015E2sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015E1sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015E0sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015DFsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015BCsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015BBsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015BEsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015BDsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015D6sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015E3sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015D8sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015D7sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015B9sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015B8sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015B7sv*sd*bc*sc*i*
+alias:          pci:v00008086d00001570sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000156Fsv*sd*bc*sc*i*
+alias:          pci:v00008086d000015A3sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015A2sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015A1sv*sd*bc*sc*i*
+alias:          pci:v00008086d000015A0sv*sd*bc*sc*i*
+alias:          pci:v00008086d00001559sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000155Asv*sd*bc*sc*i*
+alias:          pci:v00008086d0000153Bsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000153Asv*sd*bc*sc*i*
+alias:          pci:v00008086d00001503sv*sd*bc*sc*i*
+alias:          pci:v00008086d00001502sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010F0sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010EFsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010EBsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010EAsv*sd*bc*sc*i*
+alias:          pci:v00008086d00001525sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010DFsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010DEsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010CEsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010CDsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010CCsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010CBsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010F5sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010BFsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010E5sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000294Csv*sd*bc*sc*i*
+alias:          pci:v00008086d000010BDsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010C3sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010C2sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010C0sv*sd*bc*sc*i*
+alias:          pci:v00008086d00001501sv*sd*bc*sc*i*
+alias:          pci:v00008086d00001049sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000104Dsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000104Bsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000104Asv*sd*bc*sc*i*
+alias:          pci:v00008086d000010C4sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010C5sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000104Csv*sd*bc*sc*i*
+alias:          pci:v00008086d000010BBsv*sd*bc*sc*i*
+alias:          pci:v00008086d00001098sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010BAsv*sd*bc*sc*i*
+alias:          pci:v00008086d00001096sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000150Csv*sd*bc*sc*i*
+alias:          pci:v00008086d000010F6sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010D3sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000109Asv*sd*bc*sc*i*
+alias:          pci:v00008086d0000108Csv*sd*bc*sc*i*
+alias:          pci:v00008086d0000108Bsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000107Fsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000107Esv*sd*bc*sc*i*
+alias:          pci:v00008086d0000107Dsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010B9sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010D5sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010DAsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010D9sv*sd*bc*sc*i*
+alias:          pci:v00008086d00001060sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010A5sv*sd*bc*sc*i*
+alias:          pci:v00008086d000010BCsv*sd*bc*sc*i*
+alias:          pci:v00008086d000010A4sv*sd*bc*sc*i*
+alias:          pci:v00008086d0000105Fsv*sd*bc*sc*i*
+alias:          pci:v00008086d0000105Esv*sd*bc*sc*i*
+depends:        
+intree:         Y
+name:           e1000e
+retpoline:      Y
+vermagic:       6.18.7-76061807-generic SMP preempt mod_unload modversions 
+sig_id:         PKCS#7
+signer:         Build time autogenerated kernel key
+sig_key:        1D:68:D8:2C:21:2A:B2:70:B7:E8:03:64:22:6A:7F:07:F5:5D:E3:69
+sig_hashalgo:   sha512
+signature:      3F:AC:D8:77:60:66:80:BC:42:09:BF:8B:44:FF:30:FE:63:C5:0E:4B:
+		E9:6D:D4:80:33:E2:52:F2:59:9B:92:CF:83:1F:33:47:29:DB:EB:99:
+		25:67:F0:37:C0:AE:F8:9B:19:05:33:9A:44:9C:16:FE:AA:BC:2D:51:
+		21:BE:54:46:BB:AA:81:56:7D:90:1A:DB:06:B9:55:8E:4E:59:E6:C5:
+		63:B3:3D:D7:9D:3C:68:62:92:29:EF:4C:B6:9B:18:73:2F:31:71:48:
+		A3:47:DB:3D:5D:AB:CF:9B:AB:2B:CE:56:F9:B8:29:75:CF:0A:FD:A3:
+		BA:77:C7:E4:48:E4:80:69:39:84:A9:A7:DC:4D:F9:CD:F4:F4:AD:5D:
+		39:26:9A:C5:16:A2:14:6A:DB:6E:FC:AC:F9:B9:7A:36:08:C6:DF:E7:
+		8E:E8:9C:0A:DB:CD:DA:93:62:35:99:DC:8B:D0:54:10:90:90:83:25:
+		1C:CD:21:D1:69:AF:C6:EC:ED:F6:B1:19:4A:20:6B:0D:84:EA:7A:BD:
+		A7:6C:F5:11:8F:5B:98:19:EB:11:20:98:4E:5C:46:48:88:48:F0:70:
+		9F:60:0B:8F:8D:0B:FA:D0:06:E4:89:00:40:1B:F6:EA:16:97:F9:16:
+		D8:9A:4D:0C:A3:48:FA:41:2A:44:A4:77:8F:07:3F:CC:02:75:10:24:
+		EF:69:E4:F1:83:94:67:61:78:76:B3:F3:60:A6:DD:DA:07:03:19:F3:
+		FC:9C:01:EF:79:8C:0D:A7:AF:C9:9F:E9:BA:FA:60:4B:81:D1:CE:B0:
+		BB:2B:E6:55:07:2E:36:F5:6F:80:FB:36:D7:DA:58:E1:CA:54:15:37:
+		E3:C5:EB:E6:B8:35:D7:78:D7:BE:87:E5:04:6F:CB:41:DC:F6:E1:77:
+		49:E3:1E:74:E3:A7:F2:7F:DA:E8:BD:47:6C:6B:02:9A:1C:53:4F:BC:
+		41:45:86:4A:1B:EB:DE:DA:7F:E3:AC:73:D5:EE:B4:BC:31:DB:03:45:
+		B5:5C:93:69:F7:7F:6E:50:48:EA:CA:8D:41:5C:6F:8D:A6:98:8B:A4:
+		6A:01:6F:80:2B:9C:E0:26:AF:91:55:75:F0:E0:79:3E:81:8A:6C:E9:
+		43:12:14:AB:1A:3A:6C:CA:07:CD:8F:0E:86:7F:91:08:51:3B:DB:0E:
+		CA:AF:E1:D2:1C:D0:7C:C5:31:0A:7E:33:56:15:DA:D8:D9:FE:D7:C0:
+		84:F8:7B:79:1D:8C:59:95:D7:35:1D:28:95:32:A0:3C:D9:0C:8F:21:
+		20:47:09:05:72:17:48:CA:8A:5E:88:D4:F8:0E:1C:2C:B2:6A:0A:6B:
+		98:55:4B:76:C6:86:64:CD:4A:22:0B:F9
+parm:           debug:Debug level (0=none,...,16=all) (int)
+parm:           copybreak:Maximum size of packet that is copied to a new buffer on receive (uint)
+parm:           TxIntDelay:Transmit Interrupt Delay (array of int)
+parm:           TxAbsIntDelay:Transmit Absolute Interrupt Delay (array of int)
+parm:           RxIntDelay:Receive Interrupt Delay (array of int)
+parm:           RxAbsIntDelay:Receive Absolute Interrupt Delay (array of int)
+parm:           InterruptThrottleRate:Interrupt Throttling Rate (array of int)
+parm:           IntMode:Interrupt Mode (array of int)
+parm:           SmartPowerDownEnable:Enable PHY smart power down (array of int)
+parm:           KumeranLockLoss:Enable Kumeran lock loss workaround (array of int)
+parm:           WriteProtectNVM:Write-protect NVM [WARNING: disabling this can lead to corrupted NVM] (array of int)
+parm:           CrcStripping:Enable CRC Stripping, disable if your BMC needs the CRC (array of int)

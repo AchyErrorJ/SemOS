@@ -128,6 +128,11 @@ pub trait Platform: Send + Sync + 'static {
     /// register poke. Default: unavailable.
     fn run_modeset(&self, _op: u64) -> u64 { u64::MAX }
 
+    /// SYS_FB_WAIT_VBLANK: block until the display engine crosses a frame
+    /// boundary (read-only scanline wrap). Returns 0 on success, u64::MAX if no
+    /// pacing source is available. Default: unavailable.
+    fn fb_wait_vblank(&self) -> u64 { u64::MAX }
+
     /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
     /// list to the TTY (`wifi` shell command). Blocks for the scan duration.
     /// Returns the number of unique networks found. Default: unavailable.

@@ -1,0 +1,49 @@
+MAC Registers
+-------------
+0x00000: CTRL (Device control register)  0x58180240
+      Endian mode (buffers):             little
+      Link reset:                        normal
+      Set link up:                       1
+      Invert Loss-Of-Signal:             no
+      Receive flow control:              enabled
+      Transmit flow control:             enabled
+      VLAN mode:                         enabled
+      Auto speed detect:                 disabled
+      Speed select:                      1000Mb/s
+      Force speed:                       no
+      Force duplex:                      no
+0x00008: STATUS (Device status register) 0x00080083
+      Duplex:                            full
+      Link up:                           link config
+      TBI mode:                          disabled
+      Link speed:                        1000Mb/s
+      Bus type:                          PCI
+      Bus speed:                         33MHz
+      Bus width:                         32-bit
+0x00100: RCTL (Receive control register) 0x04008002
+      Receiver:                          enabled
+      Store bad packets:                 disabled
+      Unicast promiscuous:               disabled
+      Multicast promiscuous:             disabled
+      Long packet:                       disabled
+      Descriptor minimum threshold size: 1/2
+      Broadcast accept mode:             accept
+      VLAN filter:                       disabled
+      Canonical form indicator:          disabled
+      Discard pause frames:              filtered
+      Pass MAC control frames:           don't pass
+      Receive buffer size:               2048
+0x02808: RDLEN (Receive desc length)     0x00001000
+0x02810: RDH   (Receive desc head)       0x000000C0
+0x02818: RDT   (Receive desc tail)       0x000000B0
+0x02820: RDTR  (Receive delay timer)     0x00000000
+0x00400: TCTL (Transmit ctrl register)   0x3103F0FA
+      Transmitter:                       enabled
+      Pad short packets:                 enabled
+      Software XOFF Transmission:        disabled
+      Re-transmit on late collision:     enabled
+0x03808: TDLEN (Transmit desc length)    0x00001000
+0x03810: TDH   (Transmit desc head)      0x000000F8
+0x03818: TDT   (Transmit desc tail)      0x000000F8
+0x03820: TIDV  (Transmit delay timer)    0x00000008
+PHY type:                                unknown
