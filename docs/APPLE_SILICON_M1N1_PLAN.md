@@ -182,9 +182,49 @@ controller — **not** ARM GIC.)
 If the FDT wires `arm,armv8-timer` to the AIC, keep the generic-timer logic but read
 the IRQ from the FDT; otherwise implement the Apple timer MMIO.
 
-### ⬜ M8 — Apple-aware MMU identity map (`mmu.rs`)
-Replace hardcoded 2 GiB QEMU map with FDT-driven RAM + MMIO (UART, AIC, timer, FDT)
-mappings; set TCR/IPS for the Apple SoC's PA range (likely 48-bit).
+### ✅ M8 — Apple-aware MMU identity map (`mmu.rs`)
+The boot map was two hardcoded L1 entries: 1 GiB of device at 0, 1 GiB of RAM at
+`0x4000_0000`. It is now **built from the RAM the tree described** — which is why the
+banks are discovered *before* the MMU comes up rather than after.
+
+- **Whole gigabytes get 1 GiB L1 blocks; a partial gigabyte gets a static L2 table of
+  2 MiB blocks covering only the RAM itself.** That distinction is not pedantry: normal
+  memory is *speculatively accessible*, so blanketing a 1 GiB block over a 128 MiB bank
+  invites the CPU to speculatively read physical addresses that do not exist. QEMU
+  shrugs; an Apple SoC answers with an SError. Device blocks (`nGnRnE`) are never
+  speculated into, so MMIO still gets whole 1 GiB blocks.
+- **The L2 tables are static.** The boot map is built before the frame allocator exists
+  — the allocator needs the map in order to touch its own bitmap — so there is nowhere
+  to allocate a page table from yet. Eight of them, enough for eight partial banks.
+- **`TCR_EL1.IPS` is read from `ID_AA64MMFR0_EL1.PARange`** instead of being hardcoded to
+  40-bit. Programming an IPS smaller than the addresses in the tables is how translations
+  quietly fault, and Apple's PA space is larger than a Cortex-A53's.
+- `T0SZ=25` (39-bit VA) is unchanged and *is* sufficient: 512 GiB of L1 slots covers
+  Apple RAM at `0x8_0000_0000` even on a 192 GiB machine. The addressing was never the
+  problem — the map was.
+- RAM the map could not cover is still withheld from the allocator (`mapped_ram()`),
+  so the failure mode stays "withhold and report", never "hand out memory we cannot reach".
+
+**QEMU-verified — this is the test that failed before:**
+
+| `-m` | allocatable before M8 | allocatable after M8 |
+|---|---|---|
+| 128M | 106 MiB | 106 MiB (now via the L2 path) |
+| 1G | 1002 MiB | 1002 MiB |
+| 2G | 1002 MiB — **1024 MiB withheld** | **2026 MiB, nothing withheld** |
+| 4G | (would withhold ~3 GiB) | **4074 MiB, nothing withheld** |
+
+The MMU self-test passes and the scheduler preempts normally in every case. Counting the
+frames is not the same as reaching them, so that was checked directly too: a temporary
+probe wrote and read back the **last page of the highest bank** — `0x1_3FFF_F000` on the
+4 GiB machine, a physical address of 5 GiB, four L1 entries past anything the old map
+had. Under the old map that access is a translation fault, which is precisely why `-m 2G`
+used to withhold half the machine.
+
+Unverified on Apple hardware: whether Apple MMIO needs the `nonposted-mmio` semantics
+Asahi's DT advertises (device-nGnRnE may not be sufficient), and the real `PARange` — the
+IPS read is hardware-driven, but a Cortex-A53 reports 40-bit, so the wider Apple value has
+never actually been programmed.
 
 ### ⬜ M9 — Validate scheduler + context switch on Apple
 Reuse `context.rs`; confirm the first AIC timer IRQ drives `timer_schedule`.
@@ -211,16 +251,21 @@ aarch64 before real hardware.**
 5. **PCIe/DART** version + the NIC `compatible` string
 
 ## Immediate next step
-M1 (FDT parse), M2 (UART-from-FDT) and M4/M5 (memory-from-FDT) are done and
-QEMU-verified. Nothing in the boot path is hardcoded to QEMU `virt` any more except
-the **MMU map** and the **GICv2 + timer** block — and the memory work has now walked
-right up to the first of those: on a Mac the kernel would discover all the RAM and
-withhold nearly all of it, because the boot identity map cannot reach `0x8_0000_0000`.
+M1 (FDT parse), M2 (UART-from-FDT), M4/M5 (memory-from-FDT) and M8 (FDT-driven MMU map)
+are done and QEMU-verified. **The only thing left hardcoded to QEMU `virt` in the boot
+path is the interrupt controller and timer**: `GICD_BASE`/`GICC_BASE` and `TIMER_INTID`
+in `main.rs`. Apple does not have a GIC at all — it has AIC — so on a Mac the kernel now
+boots, finds its console, discovers and maps all of RAM, and then writes GIC registers
+into empty space and never takes a timer interrupt.
 
-That makes **M8 (Apple-aware MMU identity map)** the next milestone rather than M6/M7 —
-it is what unblocks the RAM this milestone just found. Then M6 (AIC) → M7 (timer) →
-M11A (virtio-net).
+So the next milestone is **M6 — the Apple AIC** (`aic.rs`), followed by **M7** (timer IRQ
+from the FDT rather than the hardcoded PPI 30) and **M9** (confirm the scheduler runs off
+an AIC tick). M6 is the first milestone that cannot be verified under QEMU `virt` at all:
+there is no AIC to talk to. That makes the Asahi RE checklist below load-bearing for the
+first time — the register layout has to come from m1n1/Linux sources, and the first real
+test is a Mac.
 
-An **RK3588 SBC** would still be the honest intermediate rig — a real device tree from
-hardware nobody tuned this parser against, with multiple memory banks and a populated
-`/reserved-memory`, all of which QEMU `virt` never exercises — before a Mac.
+An **RK3588 SBC** remains the honest intermediate rig for everything up to here — a real
+device tree from hardware nobody tuned this parser against, with multiple memory banks and
+a populated `/reserved-memory`, none of which QEMU `virt` exercises. It has a GIC, so it
+would also validate M6/M7's FDT-driven IRQ plumbing without the AIC.

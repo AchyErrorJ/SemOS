@@ -344,6 +344,26 @@ fn mmu_self_test() {
 
 // ---- Physical memory discovery (M4/M5) --------------------------------------
 
+/// The RAM banks the tree describes. Needed before the MMU comes up, because
+/// the boot map is built from them.
+///
+/// With no tree — or a tree with no `/memory` — fall back to what QEMU `virt`
+/// hands out, so a broken DTB degrades to the old fixed behavior rather than to
+/// a machine with no RAM at all.
+fn discover_banks(fdt: Option<fdt::Fdt>) -> ([(u64, u64); 8], usize) {
+    let mut banks: [(u64, u64); 8] = [(0, 0); 8];
+    let mut n = 0usize;
+    if let Some(f) = fdt {
+        n = f.memory_banks(&mut banks);
+    }
+    if n == 0 {
+        banks[0] = (0x4000_0000, 0x0800_0000);
+        n = 1;
+        serial::uart_str("  [memory] no /memory in FDT — assuming QEMU virt 128 MiB\n");
+    }
+    (banks, n)
+}
+
 /// Build the physical frame pool from the device tree.
 ///
 /// Everything the loader left live in RAM has to be reserved before the pool
@@ -359,7 +379,7 @@ fn mmu_self_test() {
 ///
 /// Reservations are rounded outward to whole frames: over-reserving costs a
 /// page, under-reserving corrupts something that is still in use.
-fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64) {
+fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64, banks: &[(u64, u64)]) {
     extern "C" {
         static _kernel_start: u8;
         static _stack_top: u8;
@@ -367,13 +387,8 @@ fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64) {
     let kernel_start = core::ptr::addr_of!(_kernel_start) as u64;
     let stack_top = core::ptr::addr_of!(_stack_top) as u64;
 
-    let mut banks: [(u64, u64); 8] = [(0, 0); 8];
-    let mut nbanks = 0usize;
-
     unsafe {
         if let Some(f) = fdt {
-            nbanks = f.memory_banks(&mut banks);
-
             // The DTB is read-only to us, but it lives in RAM: reserve it or the
             // allocator will hand it out from under the parser.
             crate::memory::reserve(dtb, f.totalsize() as u64);
@@ -394,17 +409,18 @@ fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64) {
             }
         }
 
-        // No tree, or a tree with no /memory: fall back to what QEMU virt gives
-        // us, so a broken DTB degrades to the old behavior instead of no RAM.
-        if nbanks == 0 {
-            banks[0] = (0x4000_0000, 0x0800_0000);
-            nbanks = 1;
-            kernel_core::platform::log("  [memory] no /memory in FDT — assuming QEMU virt 128 MiB\n");
-        }
-
         crate::memory::reserve(kernel_start, stack_top - kernel_start);
 
-        for &(base, size) in &banks[..nbanks] {
+        // Anything the boot map could not cover has no virtual address, and
+        // mmu.rs zeroes every frame it allocates — an unmapped frame is a data
+        // abort, not a bad pointer to debug later. After M8 this should be empty
+        // for any machine whose RAM fits the 39-bit VA and the static L2 pool;
+        // if it ever isn't, the kernel withholds that RAM and says so rather
+        // than handing out memory it cannot reach.
+        let mut mapped: [(u64, u64); 16] = [(0, 0); 16];
+        let nmapped = crate::mmu::mapped_ram(&mut mapped);
+
+        for &(base, size) in banks {
             crate::memory::add_bank(base, size);
             kernel_core::platform::log("  [memory] bank base=");
             kernel_core::platform::log_num(base);
@@ -412,22 +428,33 @@ fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64) {
             kernel_core::platform::log_num(size / 1024 / 1024);
             kernel_core::platform::log(" MiB\n");
 
-            // The boot identity map covers exactly one 1 GiB RAM block. Frames
-            // outside it have no virtual address, and mmu.rs zeroes every frame
-            // it allocates — so an unmapped frame is a data abort, not a bad
-            // pointer we could debug later. Reserve the excess and report it;
-            // mapping it is M8, and doing it here would drag the whole
-            // Apple-aware MMU into this milestone.
             let end = base.saturating_add(size);
-            if base < crate::mmu::IDENTITY_RAM_BASE {
-                crate::memory::reserve(base, crate::mmu::IDENTITY_RAM_BASE.min(end) - base);
-            }
-            if end > crate::mmu::IDENTITY_RAM_END {
-                let lost_base = base.max(crate::mmu::IDENTITY_RAM_END);
-                crate::memory::reserve(lost_base, end - lost_base);
+            let mut cursor = base;
+            while cursor < end {
+                // Is `cursor` inside a mapped range? If so, skip to its end.
+                let mut covered_to = None;
+                for &(mb, me) in &mapped[..nmapped] {
+                    if cursor >= mb && cursor < me {
+                        covered_to = Some(me.min(end));
+                        break;
+                    }
+                }
+                if let Some(to) = covered_to {
+                    cursor = to;
+                    continue;
+                }
+                // Not mapped. Reserve up to the start of the next mapped range.
+                let mut next = end;
+                for &(mb, _) in &mapped[..nmapped] {
+                    if mb > cursor && mb < next {
+                        next = mb;
+                    }
+                }
+                crate::memory::reserve(cursor, next - cursor);
                 kernel_core::platform::log("  [memory] NOTE: ");
-                kernel_core::platform::log_num((end - lost_base) / 1024 / 1024);
-                kernel_core::platform::log(" MiB above the boot identity map reserved (unmapped until M8)\n");
+                kernel_core::platform::log_num((next - cursor) / 1024 / 1024);
+                kernel_core::platform::log(" MiB unmapped by the boot map — withheld\n");
+                cursor = next;
             }
         }
 
@@ -538,16 +565,19 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     }
     kernel_core::platform::log("  [platform] Aarch64Platform registered\n");
 
-    // Turn on the identity-map MMU. The console's block goes in the map too, so
-    // the first print on the far side of MMU-enable still reaches the UART the
-    // FDT picked — including one at an Apple address far outside the QEMU window.
+    // M8: the boot map is built from the RAM the tree described, so the banks
+    // have to be discovered before the MMU comes up — not after. (Reading the
+    // FDT here is safe: translation is still off, so the physical pointer works.)
+    let (banks, nbanks) = discover_banks(fdt);
     let (_, console_mmio) = serial::current();
-    serial::uart_str("  enabling MMU (identity map, 1 GiB blocks)...\n");
-    unsafe { crate::mmu::enable_identity_mmu(console_mmio) };
+    serial::uart_str("  enabling MMU (identity map from FDT, IPS=");
+    uart_hex(crate::mmu::ips());
+    serial::uart_str(")...\n");
+    unsafe { crate::mmu::enable_identity_mmu(&banks[..nbanks], console_mmio) };
     serial::uart_str("  MMU ON — translation active.\n");
 
     // M4/M5: build the frame pool from the RAM the device tree describes.
-    init_memory(fdt, dtb);
+    init_memory(fdt, dtb, &banks[..nbanks]);
 
     // Initialize kernel-core subsystems in the same order as the x86_64 backend.
     kernel_core::scheduler::init_core();
