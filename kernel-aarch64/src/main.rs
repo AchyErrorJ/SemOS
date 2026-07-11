@@ -166,7 +166,6 @@ irq_entry:
 const GICD_BASE: u64 = 0x0800_0000;
 const GICC_BASE: u64 = 0x0801_0000;
 const TIMER_INTID: u32 = 30;
-const RAM_END: u64 = 0x4800_0000; // QEMU `-M virt` default 128 MiB
 
 static mut TIMER_INTERVAL: u64 = 0;
 static TICKS: AtomicU64 = AtomicU64::new(0);
@@ -343,6 +342,118 @@ fn mmu_self_test() {
     }
 }
 
+// ---- Physical memory discovery (M4/M5) --------------------------------------
+
+/// Build the physical frame pool from the device tree.
+///
+/// Everything the loader left live in RAM has to be reserved before the pool
+/// opens, or we will hand it out and overwrite it:
+///
+/// * **the kernel image and its stack** — we are executing out of them;
+/// * **the DTB itself** — QEMU parks it at `0x4400_0000`, which is inside RAM
+///   and *above* the old `_stack_top` pool floor, so the previous allocator was
+///   free to hand the device tree out as scratch. It survived only because
+///   nothing had claimed enough frames to reach it yet;
+/// * **the header's reservation block and `/reserved-memory`** — on Apple these
+///   cover firmware regions and the framebuffer m1n1 is still scanning out of.
+///
+/// Reservations are rounded outward to whole frames: over-reserving costs a
+/// page, under-reserving corrupts something that is still in use.
+fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64) {
+    extern "C" {
+        static _kernel_start: u8;
+        static _stack_top: u8;
+    }
+    let kernel_start = core::ptr::addr_of!(_kernel_start) as u64;
+    let stack_top = core::ptr::addr_of!(_stack_top) as u64;
+
+    let mut banks: [(u64, u64); 8] = [(0, 0); 8];
+    let mut nbanks = 0usize;
+
+    unsafe {
+        if let Some(f) = fdt {
+            nbanks = f.memory_banks(&mut banks);
+
+            // The DTB is read-only to us, but it lives in RAM: reserve it or the
+            // allocator will hand it out from under the parser.
+            crate::memory::reserve(dtb, f.totalsize() as u64);
+
+            let mut resv: [(u64, u64); 16] = [(0, 0); 16];
+            let n = f.mem_reservations(&mut resv);
+            for &(base, size) in &resv[..n] {
+                crate::memory::reserve(base, size);
+            }
+            let n = f.reserved_memory(&mut resv);
+            for &(base, size) in &resv[..n] {
+                crate::memory::reserve(base, size);
+            }
+            if n > 0 {
+                kernel_core::platform::log("  [memory] honored ");
+                kernel_core::platform::log_num(n as u64);
+                kernel_core::platform::log(" /reserved-memory region(s)\n");
+            }
+        }
+
+        // No tree, or a tree with no /memory: fall back to what QEMU virt gives
+        // us, so a broken DTB degrades to the old behavior instead of no RAM.
+        if nbanks == 0 {
+            banks[0] = (0x4000_0000, 0x0800_0000);
+            nbanks = 1;
+            kernel_core::platform::log("  [memory] no /memory in FDT — assuming QEMU virt 128 MiB\n");
+        }
+
+        crate::memory::reserve(kernel_start, stack_top - kernel_start);
+
+        for &(base, size) in &banks[..nbanks] {
+            crate::memory::add_bank(base, size);
+            kernel_core::platform::log("  [memory] bank base=");
+            kernel_core::platform::log_num(base);
+            kernel_core::platform::log(" size=");
+            kernel_core::platform::log_num(size / 1024 / 1024);
+            kernel_core::platform::log(" MiB\n");
+
+            // The boot identity map covers exactly one 1 GiB RAM block. Frames
+            // outside it have no virtual address, and mmu.rs zeroes every frame
+            // it allocates — so an unmapped frame is a data abort, not a bad
+            // pointer we could debug later. Reserve the excess and report it;
+            // mapping it is M8, and doing it here would drag the whole
+            // Apple-aware MMU into this milestone.
+            let end = base.saturating_add(size);
+            if base < crate::mmu::IDENTITY_RAM_BASE {
+                crate::memory::reserve(base, crate::mmu::IDENTITY_RAM_BASE.min(end) - base);
+            }
+            if end > crate::mmu::IDENTITY_RAM_END {
+                let lost_base = base.max(crate::mmu::IDENTITY_RAM_END);
+                crate::memory::reserve(lost_base, end - lost_base);
+                kernel_core::platform::log("  [memory] NOTE: ");
+                kernel_core::platform::log_num((end - lost_base) / 1024 / 1024);
+                kernel_core::platform::log(" MiB above the boot identity map reserved (unmapped until M8)\n");
+            }
+        }
+
+        if !crate::memory::finalize() {
+            kernel_core::platform::log("  [memory] FATAL: no usable RAM\n");
+            loop {
+                core::arch::asm!("wfe");
+            }
+        }
+    }
+
+    let (bm_addr, bm_bytes) = crate::memory::bitmap_info();
+    kernel_core::platform::log("  [memory] bitmap ");
+    kernel_core::platform::log_num(bm_bytes / 1024);
+    kernel_core::platform::log(" KiB @");
+    kernel_core::platform::log_num(bm_addr);
+    kernel_core::platform::log("\n");
+
+    let (total, _used, _free) = crate::memory::stats();
+    kernel_core::platform::log("  [memory] frame pool: ");
+    kernel_core::platform::log_num(total as u64);
+    kernel_core::platform::log(" frames (");
+    kernel_core::platform::log_num((total as u64) * 4096 / 1024 / 1024);
+    kernel_core::platform::log(" MiB) allocatable\n");
+}
+
 // ---- Kernel entry -----------------------------------------------------------
 
 #[no_mangle]
@@ -373,50 +484,39 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     serial::uart_str("  DTB ptr (x0) = ");
     uart_hex(dtb);
     serial::uart_str("\n");
-    unsafe {
-        match fdt::Fdt::from_ptr(dtb as *const u8) {
-            Some(f) => {
-                serial::uart_str("  [fdt] magic OK, totalsize=");
-                uart_hex(f.totalsize() as u64);
-                serial::uart_str("\n");
-                match f.memory() {
-                    Some((base, size)) => {
-                        serial::uart_str("  [fdt] /memory base=");
-                        uart_hex(base);
-                        serial::uart_str(" size=");
-                        uart_hex(size);
-                        serial::uart_str("\n");
-                    }
-                    None => serial::uart_str("  [fdt] no /memory node\n"),
-                }
+    let fdt = unsafe { fdt::Fdt::from_ptr(dtb as *const u8) };
+    match fdt {
+        Some(f) => {
+            serial::uart_str("  [fdt] magic OK, totalsize=");
+            uart_hex(f.totalsize() as u64);
+            serial::uart_str("\n");
 
-                // M2: retarget the console at whatever UART the tree names.
-                // Everything from here on — including the panic handler — talks
-                // to the discovered device, not the compiled-in guess.
-                match serial::init_from_fdt(&f) {
-                    Some((kind, base)) => {
-                        serial::uart_str("  [uart] console from FDT: ");
-                        serial::uart_str(kind.name());
-                        serial::uart_str(" @");
-                        uart_hex(base);
-                        serial::uart_str("\n");
-                    }
-                    None => {
-                        let (kind, base) = serial::current();
-                        serial::uart_str("  [uart] no console node in FDT — keeping ");
-                        serial::uart_str(kind.name());
-                        serial::uart_str(" @");
-                        uart_hex(base);
-                        serial::uart_str("\n");
-                    }
+            // M2: retarget the console at whatever UART the tree names.
+            // Everything from here on — including the panic handler — talks
+            // to the discovered device, not the compiled-in guess.
+            match serial::init_from_fdt(&f) {
+                Some((kind, base)) => {
+                    serial::uart_str("  [uart] console from FDT: ");
+                    serial::uart_str(kind.name());
+                    serial::uart_str(" @");
+                    uart_hex(base);
+                    serial::uart_str("\n");
                 }
-
-                if f.find_compatible("arm,armv8-timer").is_some() {
-                    serial::uart_str("  [fdt] found arm,armv8-timer node\n");
+                None => {
+                    let (kind, base) = serial::current();
+                    serial::uart_str("  [uart] no console node in FDT — keeping ");
+                    serial::uart_str(kind.name());
+                    serial::uart_str(" @");
+                    uart_hex(base);
+                    serial::uart_str("\n");
                 }
             }
-            None => serial::uart_str("  [fdt] parse FAILED (bad magic?)\n"),
+
+            if f.find_compatible("arm,armv8-timer").is_some() {
+                serial::uart_str("  [fdt] found arm,armv8-timer node\n");
+            }
         }
+        None => serial::uart_str("  [fdt] parse FAILED (bad magic?)\n"),
     }
 
     // Which exception level did QEMU drop us at?
@@ -446,16 +546,8 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     unsafe { crate::mmu::enable_identity_mmu(console_mmio) };
     serial::uart_str("  MMU ON — translation active.\n");
 
-    // Carve the physical frame pool out of the RAM left after the kernel image.
-    unsafe {
-        extern "C" {
-            static _stack_top: u8;
-        }
-        let pool_start = core::ptr::addr_of!(_stack_top) as u64;
-        let pool_size = (RAM_END - pool_start) as usize;
-        crate::memory::init(pool_start, pool_size);
-        kernel_core::platform::log("  [memory] physical frame pool initialized\n");
-    }
+    // M4/M5: build the frame pool from the RAM the device tree describes.
+    init_memory(fdt, dtb);
 
     // Initialize kernel-core subsystems in the same order as the x86_64 backend.
     kernel_core::scheduler::init_core();

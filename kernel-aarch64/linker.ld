@@ -7,6 +7,10 @@ SECTIONS
 {
     . = 0x40080000;
 
+    /* Start of the loaded image. The frame allocator reserves
+     * [_kernel_start, _stack_top) so it never hands out the kernel or its stack. */
+    _kernel_start = .;
+
     .text : {
         KEEP(*(.text._start))
         *(.text*)

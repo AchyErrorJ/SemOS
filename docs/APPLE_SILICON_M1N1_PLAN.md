@@ -113,13 +113,66 @@ Two things that cost real debugging time, worth keeping:
 Unverified on Apple hardware: the s5l register offsets are from m1n1/Linux, not from
 a Mac that has booted this code.
 
-### ⬜ M4 — Physical memory discovery (`main.rs`, `memory.rs`)
-Parse `/memory` from the FDT; compute the range after kernel + stack + FDT; feed
-`memory::init(base, size)`.
+### ✅ M4 + M5 — Physical memory discovery & allocator scaling (`memory.rs`, `fdt.rs`, `main.rs`)
+`RAM_END` and `MAX_FRAMES` are gone. The frame pool is now built from the tree:
+`memory_banks()` returns **every** `reg` entry of **every** `/memory` node (a node can
+carry several `(addr,size)` pairs, and there can be several nodes — the old
+`memory()` took the first pair of the first node and silently lost the rest).
 
-### ⬜ M5 — Allocator scaling (`memory.rs`)
-Raise/`dynamic`-ize `MAX_FRAMES` (currently 32 768 = 128 MiB) + multi-bank support
-for real Apple RAM.
+**The bitmap is sized from the discovered RAM and carved out of that RAM.** One bit
+per 4 KiB frame is 32 KiB per GiB — 4 KiB of metadata for QEMU's 128 MiB, ~2 MiB for
+a 64 GiB Mac — and it is the only memory that must be written at boot. The rejected
+alternative, threading a free list through the free frames themselves, needs no static
+metadata but has to *touch every free frame* to link it: ~128 MiB of scattered writes
+on a 64 GiB machine, every one of which requires that frame to already be mapped. That
+would have dragged the whole Apple-aware MMU (M8) into this milestone.
+
+Bit semantics: **1 = unavailable**, 0 = free. The bitmap spans one contiguous range
+from the lowest bank base to the highest bank end, so a frame index is pure
+arithmetic and the holes between banks are simply born set.
+
+**Reservations — what the loader left live in RAM.** `finalize()` opens the banks, then
+closes back up:
+- the **kernel image and stack** (`[_kernel_start, _stack_top)`, a new linker symbol);
+- **the DTB itself** — QEMU parks it at `0x4400_0000`, *inside* RAM and *above* the old
+  `_stack_top` pool floor, so the previous allocator was free to hand the device tree
+  out as scratch. It survived only because nothing had yet allocated enough frames to
+  reach it;
+- the header's **`off_mem_rsvmap` block** and **`/reserved-memory`** children — on Apple
+  these cover firmware regions and the framebuffer m1n1 is still scanning out of;
+- the bitmap's own frames.
+
+Reservations round *outward* to whole frames: over-reserving costs a page, under-
+reserving corrupts something still in use. `free()` also rejects any address that is
+reserved or outside a bank, so a stray free of the DTB can't quietly add it to the pool.
+
+**QEMU-verified — the frame count tracks the RAM size:**
+
+| `-m` | bank | bitmap | allocatable |
+|---|---|---|---|
+| 128M | 128 MiB | 4 KiB | 27 311 frames (106 MiB) |
+| 1G | 1024 MiB | 32 KiB | 256 680 frames (1002 MiB) |
+| 2G | 2048 MiB | 64 KiB | 256 672 frames (1002 MiB) — 1024 MiB withheld |
+
+The MMU self-test passes with no leaks in all three. The gap between the bank size and
+the allocatable total is real and accounted for: `kernel-core`'s 16 MiB heap arena is a
+`.bss` static, so it is *inside* the kernel image reservation.
+
+**The DTB exclusion was verified directly, not inferred**: a temporary probe drained the
+allocator to exhaustion and checked every frame it returned — 27 311 frames handed out,
+**zero** inside the DTB or the kernel image.
+
+**The `-m 2G` row is the M8 boundary showing through.** The boot identity map covers one
+1 GiB RAM block (`mmu::IDENTITY_RAM_BASE..IDENTITY_RAM_END`). `mmu.rs` zeroes every frame
+it allocates, so an unmapped frame is a data abort, not a bad pointer to debug later —
+so RAM beyond the window is reserved and reported rather than handed out. Apple's RAM at
+`0x8_0000_0000` is entirely outside it: **on a Mac, this code discovers the RAM correctly
+and then withholds essentially all of it until M8 maps it.** That is the intended, honest
+failure mode — it does not hand out memory it cannot address.
+
+Unverified on Apple hardware: multi-bank trees, `/reserved-memory`, and the `off_mem_rsvmap`
+path all parse, but QEMU `virt` presents a single bank and an empty reservation block, so
+none of those branches has met a real tree.
 
 ### ⬜ M6 — Apple AIC interrupt controller (new `aic.rs`, `main.rs`)
 `aic_init/ack/eoi/enable`. Replace the GICv2 reads in `irq_handler`. (Apple's own
@@ -158,11 +211,16 @@ aarch64 before real hardware.**
 5. **PCIe/DART** version + the NIC `compatible` string
 
 ## Immediate next step
-M1 (FDT parse) and M2 (UART-from-FDT) are done and QEMU-verified, so the console no
-longer depends on a compiled-in constant. Next is **M4/M5 — memory from the FDT**:
-`RAM_END` (`0x4800_0000`) and `MAX_FRAMES` (32 768 = 128 MiB) are the last hardcoded
-QEMU facts in the boot path, and Apple RAM starts at `0x8_0000_0000` with orders of
-magnitude more of it. Then M11A (virtio-net) on QEMU aarch64.
+M1 (FDT parse), M2 (UART-from-FDT) and M4/M5 (memory-from-FDT) are done and
+QEMU-verified. Nothing in the boot path is hardcoded to QEMU `virt` any more except
+the **MMU map** and the **GICv2 + timer** block — and the memory work has now walked
+right up to the first of those: on a Mac the kernel would discover all the RAM and
+withhold nearly all of it, because the boot identity map cannot reach `0x8_0000_0000`.
+
+That makes **M8 (Apple-aware MMU identity map)** the next milestone rather than M6/M7 —
+it is what unblocks the RAM this milestone just found. Then M6 (AIC) → M7 (timer) →
+M11A (virtio-net).
 
 An **RK3588 SBC** would still be the honest intermediate rig — a real device tree from
-hardware nobody tuned this parser against — before a Mac.
+hardware nobody tuned this parser against, with multiple memory banks and a populated
+`/reserved-memory`, all of which QEMU `virt` never exercises — before a Mac.

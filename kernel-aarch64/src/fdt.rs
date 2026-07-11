@@ -273,6 +273,92 @@ impl Fdt {
 
         None
     }
+
+    /// Collect **every** `reg` entry of **every** `/memory` node into `out`,
+    /// returning how many were written.
+    ///
+    /// `memory()` returns only the first entry of the first node, which is all
+    /// QEMU `virt` needs. Real trees split RAM across banks — a node can carry
+    /// several `(address, size)` pairs in one `reg`, and there can be several
+    /// `/memory` nodes — and dropping the rest silently loses RAM.
+    pub fn memory_banks(&self, out: &mut [(u64, u64)]) -> usize {
+        let mut count = 0usize;
+        self.walk_nodes(|name, depth, props, parent_cells| {
+            if depth == 2 && (name_eq(name, "memory") || name.starts_with(b"memory@")) {
+                for &(pname, pvalue) in props {
+                    if name_eq(pname, "reg") {
+                        count += decode_cells_all(
+                            pvalue,
+                            parent_cells.0,
+                            parent_cells.1,
+                            &mut out[count..],
+                        );
+                    }
+                }
+            }
+            count < out.len()
+        });
+        count
+    }
+
+    /// Collect the `reg` ranges of `/reserved-memory` children — RAM the loader
+    /// has already spoken for. m1n1 uses these for the framebuffer and the
+    /// firmware regions it leaves live behind us; handing them out as free
+    /// frames would corrupt a running device.
+    ///
+    /// Children declared with `size`/`alignment` instead of `reg` (dynamic
+    /// placement) have nothing to reserve yet and are skipped.
+    pub fn reserved_memory(&self, out: &mut [(u64, u64)]) -> usize {
+        let mut count = 0usize;
+        let mut in_reserved = false;
+        self.walk_nodes(|name, depth, props, parent_cells| {
+            // The walk is depth-first in document order, so the children of
+            // /reserved-memory are exactly the depth-3 nodes that follow it,
+            // until the next depth-2 node closes the section.
+            if depth <= 2 {
+                in_reserved = depth == 2 && name_eq(name, "reserved-memory");
+            } else if in_reserved && depth == 3 {
+                for &(pname, pvalue) in props {
+                    if name_eq(pname, "reg") {
+                        count += decode_cells_all(
+                            pvalue,
+                            parent_cells.0,
+                            parent_cells.1,
+                            &mut out[count..],
+                        );
+                    }
+                }
+            }
+            count < out.len()
+        });
+        count
+    }
+
+    /// Read the memory reservation block the DTB header points at (`off_mem_rsvmap`):
+    /// a list of 16-byte big-endian `(address, size)` pairs terminated by a zero
+    /// pair. This is separate from `/reserved-memory` and predates it; a loader
+    /// can use either, so we honor both.
+    pub fn mem_reservations(&self, out: &mut [(u64, u64)]) -> usize {
+        let mut count = 0usize;
+        let mut off = self.off_mem_rsvmap;
+        while count < out.len() {
+            let addr = match read_be64(self.blob, off) {
+                Some(v) => v,
+                None => break,
+            };
+            let size = match read_be64(self.blob, off + 8) {
+                Some(v) => v,
+                None => break,
+            };
+            if addr == 0 && size == 0 {
+                break; // terminator
+            }
+            out[count] = (addr, size);
+            count += 1;
+            off += 16;
+        }
+        count
+    }
 }
 
 // ---- private helpers --------------------------------------------------------
@@ -472,6 +558,39 @@ fn read_be32(blob: &[u8], off: usize) -> Option<u32> {
         blob[off + 2],
         blob[off + 3],
     ]))
+}
+
+fn read_be64(blob: &[u8], off: usize) -> Option<u64> {
+    let hi = read_be32(blob, off)? as u64;
+    let lo = read_be32(blob, off.checked_add(4)?)? as u64;
+    Some((hi << 32) | lo)
+}
+
+/// Decode as many `(address, size)` pairs as `value` holds and `out` can take,
+/// returning the count. `decode_cells` reads only the first pair.
+fn decode_cells_all(value: &[u8], address_cells: u32, size_cells: u32, out: &mut [(u64, u64)]) -> usize {
+    let ac = address_cells as usize;
+    let sc = size_cells as usize;
+    if ac == 0 || ac > 2 || sc > 2 {
+        return 0;
+    }
+    let pair_len = (ac + sc) * 4;
+    if pair_len == 0 {
+        return 0;
+    }
+    let mut count = 0usize;
+    let mut off = 0usize;
+    while count < out.len() && off + pair_len <= value.len() {
+        match decode_cells(&value[off..off + pair_len], address_cells, size_cells) {
+            Some(pair) => {
+                out[count] = pair;
+                count += 1;
+            }
+            None => break,
+        }
+        off += pair_len;
+    }
+    count
 }
 
 /// Read a null-terminated string from `blob`. Returns the offset *after* the

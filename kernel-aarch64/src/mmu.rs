@@ -58,6 +58,15 @@ impl PageTable {
 
 // ---- Boot identity map ------------------------------------------------------
 
+/// The RAM the boot identity map actually covers: one 1 GiB block, L1 entry 1.
+///
+/// The frame allocator must not hand out anything outside this — `map_*` zeroes
+/// each page table it allocates, so an unmapped frame faults the instant it is
+/// used. Lifting this (multi-block RAM, Apple's `0x8_0000_0000`) is M8; until
+/// then the kernel reserves RAM beyond the window and says how much it lost.
+pub const IDENTITY_RAM_BASE: u64 = 0x4000_0000;
+pub const IDENTITY_RAM_END: u64 = 0x8000_0000;
+
 /// The boot L1 table used by the kernel. User address spaces copy its entries
 /// so kernel mappings remain accessible after a TTBR0 switch.
 static mut BOOT_L1_TABLE: PageTable = PageTable::empty();
