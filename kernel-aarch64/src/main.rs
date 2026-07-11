@@ -17,6 +17,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 mod context;
+mod fdt;
 mod memory;
 mod mmu;
 mod platform_impl;
@@ -46,6 +47,7 @@ global_asm!(
 .section .text._start
 .global _start
 _start:
+    mov     x19, x0                 // preserve DTB pointer (x0) from QEMU/m1n1
     ldr     x0, =_stack_top
     mov     sp, x0
     ldr     x0, =_bss_start
@@ -54,7 +56,8 @@ _start:
     b.hs    1f
     str     xzr, [x0], #8
     b       0b
-1:  bl      kmain
+1:  mov     x0, x19                 // pass DTB pointer as kmain's first arg
+    bl      kmain
 2:  wfe
     b       2b
 
@@ -343,8 +346,61 @@ fn mmu_self_test() {
 // ---- Kernel entry -----------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn kmain() -> ! {
+pub extern "C" fn kmain(dtb: u64) -> ! {
     serial::uart_str("\nSemOS aarch64 — ARM HAL + kernel-core scheduler\n");
+
+    // These two must precede any nontrivial Rust: at -O the compiler emits NEON
+    // in plain integer code (the FDT walker's array init does), which faults with
+    // EC=0x07 while FPEN is clear — and with VBAR_EL1 still zero that fault
+    // vectors into nothing and spins forever, with no output.
+    unsafe {
+        core::arch::asm!("msr cpacr_el1, {}", in(reg) (3u64 << 20));
+        core::arch::asm!("isb");
+
+        extern "C" {
+            static _vectors: u8;
+        }
+        let v = &_vectors as *const u8 as u64;
+        core::arch::asm!("msr vbar_el1, {}", in(reg) v);
+        core::arch::asm!("isb");
+        serial::uart_str("  FP/SIMD enabled, VBAR_EL1 set = ");
+        uart_hex(v);
+        serial::uart_str("\n");
+    }
+
+    // M1 verify: parse the device tree m1n1/QEMU handed us in x0. The MMU is
+    // still off here, so the physical DTB pointer is directly readable.
+    serial::uart_str("  DTB ptr (x0) = ");
+    uart_hex(dtb);
+    serial::uart_str("\n");
+    unsafe {
+        match fdt::Fdt::from_ptr(dtb as *const u8) {
+            Some(f) => {
+                serial::uart_str("  [fdt] magic OK, totalsize=");
+                uart_hex(f.totalsize() as u64);
+                serial::uart_str("\n");
+                match f.memory() {
+                    Some((base, size)) => {
+                        serial::uart_str("  [fdt] /memory base=");
+                        uart_hex(base);
+                        serial::uart_str(" size=");
+                        uart_hex(size);
+                        serial::uart_str("\n");
+                    }
+                    None => serial::uart_str("  [fdt] no /memory node\n"),
+                }
+                if let Some(uart) = f.stdout_path_uart() {
+                    serial::uart_str("  [fdt] stdout UART @");
+                    uart_hex(uart);
+                    serial::uart_str("\n");
+                }
+                if f.find_compatible("arm,armv8-timer").is_some() {
+                    serial::uart_str("  [fdt] found arm,armv8-timer node\n");
+                }
+            }
+            None => serial::uart_str("  [fdt] parse FAILED (bad magic?)\n"),
+        }
+    }
 
     // Which exception level did QEMU drop us at?
     let el: u64;
@@ -365,31 +421,10 @@ pub extern "C" fn kmain() -> ! {
     }
     kernel_core::platform::log("  [platform] Aarch64Platform registered\n");
 
-    // Install the exception vector table.
-    unsafe {
-        extern "C" {
-            static _vectors: u8;
-        }
-        let v = &_vectors as *const u8 as u64;
-        core::arch::asm!("msr vbar_el1, {}", in(reg) v);
-        core::arch::asm!("isb");
-        serial::uart_str("  VBAR_EL1 set = ");
-        uart_hex(v);
-        serial::uart_str("\n");
-    }
-
     // Turn on the identity-map MMU.
     serial::uart_str("  enabling MMU (identity map, 1 GiB blocks)...\n");
     unsafe { crate::mmu::enable_identity_mmu() };
     serial::uart_str("  MMU ON — translation active.\n");
-
-    // Enable EL1/EL0 access to FP/SIMD; otherwise compiler-generated FP
-    // instructions fault with EC=0x07.
-    unsafe {
-        core::arch::asm!("msr cpacr_el1, {}", in(reg) (3u64 << 20));
-        core::arch::asm!("isb");
-        serial::uart_str("  FP/SIMD access enabled.\n");
-    }
 
     // Carve the physical frame pool out of the RAM left after the kernel image.
     unsafe {
