@@ -334,6 +334,33 @@ impl Fdt {
         count
     }
 
+    /// Collect **all** `reg` ranges of the first node compatible with `compat`.
+    ///
+    /// `find_compatible()` returns only the first `(base, size)` pair, which is
+    /// not enough for either interrupt controller we care about: AIC2 keeps its
+    /// event register in a *second* `reg` range (the die count is not
+    /// discoverable from the capability registers, so the tree has to spell it
+    /// out), and the GIC's CPU interface is a second range after the distributor.
+    pub fn compatible_regs(&self, compat: &str, out: &mut [(u64, u64)]) -> usize {
+        let compat_bytes = compat.as_bytes();
+        let mut count = 0usize;
+        self.walk_nodes(|_name, _depth, props, parent_cells| {
+            let matches = props.iter().any(|&(pname, pvalue)| {
+                name_eq(pname, "compatible") && pvalue.split(|&b| b == 0).any(|s| s == compat_bytes)
+            });
+            if !matches {
+                return true;
+            }
+            for &(pname, pvalue) in props {
+                if name_eq(pname, "reg") {
+                    count = decode_cells_all(pvalue, parent_cells.0, parent_cells.1, out);
+                }
+            }
+            false // first match wins
+        });
+        count
+    }
+
     /// Read the memory reservation block the DTB header points at (`off_mem_rsvmap`):
     /// a list of 16-byte big-endian `(address, size)` pairs terminated by a zero
     /// pair. This is separate from `/reserved-memory` and predates it; a loader

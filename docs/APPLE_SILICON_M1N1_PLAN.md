@@ -174,13 +174,51 @@ Unverified on Apple hardware: multi-bank trees, `/reserved-memory`, and the `off
 path all parse, but QEMU `virt` presents a single bank and an empty reservation block, so
 none of those branches has met a real tree.
 
-### ⬜ M6 — Apple AIC interrupt controller (new `aic.rs`, `main.rs`)
-`aic_init/ack/eoi/enable`. Replace the GICv2 reads in `irq_handler`. (Apple's own
-controller — **not** ARM GIC.)
+### 🔨 M6 + M7 — Apple AIC2 + timer (`aic.rs`, `main.rs`) — written, not yet run on a Mac
+**Target is an M1 Pro (`t6000`), so this is AIC *2*, not the AIC1 of the original M1.**
+Different `compatible` (`apple,aic2`), different register layout. Both facts below come
+from Linux's `drivers/irqchip/irq-apple-aic.c`, not from anything QEMU can show us.
 
-### ⬜ M7 — Timer (`main.rs` or new `timer.rs`)
-If the FDT wires `arm,armv8-timer` to the AIC, keep the generic-timer logic but read
-the IRQ from the FDT; otherwise implement the Apple timer MMIO.
+**The finding that reshaped the milestone: on Apple the timer is not an AIC interrupt
+at all.** The ARMv8 generic timer is delivered straight to the CPU as an **FIQ**, and is
+identified by reading `CNTP_CTL_EL0` — there is no controller register to ack. The AIC
+handles *device* interrupts only. Two consequences:
+
+- Our vector table sent the FIQ slots to `exc_handler`, which prints and halts. **On a
+  Mac the first timer tick would have halted the kernel.** FIQ slots now branch to the
+  same `irq_entry` trampoline as IRQ, and boot clears `PSTATE.F` as well as `PSTATE.I`
+  (`daifclr, #3`) — with F still set, the M1 Pro would simply never tick.
+- A preemptive scheduler on Apple therefore does **not** require the AIC. It requires
+  the FIQ vector. The AIC is only needed once there are device drivers.
+
+**One handler serves both machines.** The tick is no longer driven off an INTID —
+it is driven off `CNTP_CTL_EL0.ISTATUS`, which is the timer's own statement that it
+fired and is true whether the interrupt arrived as a GIC IRQ (QEMU) or a bare FIQ
+(Apple). The controller-specific work is then just the handshake: GIC needs its
+IAR/EOIR, AIC needs its event register drained.
+
+**AIC2's register offsets are not constants.** Only `IRQ_CFG` (0x2000) is fixed; the
+mask registers sit after a variable-length IRQ-config array sized by `AIC2_INFO3.MAX_IRQ`,
+read at probe. Hardcoding offsets from another SoC compiles, boots, and silently never
+delivers an interrupt. Note also that **reading the event register *is* the ack** — it
+acks *and masks* — so EOI is an unmask, and anything we have no driver for simply stays
+masked instead of re-firing forever. The event register is a **second `reg` range** in the
+tree (the die count is not discoverable from the capability registers), which is why
+`Fdt::compatible_regs()` now returns all of a node's `reg` entries; the kernel refuses to
+drive an AIC2 whose tree gives only one.
+
+**QEMU-verified (the GIC half, which is more than it sounds):** the GIC bases now come
+from the FDT (`dist @0x0800_0000`, `cpu @0x0801_0000`) instead of constants, and both demo
+tasks still preempt normally — *with the timer detected via `ISTATUS`*. That is the exact
+code path Apple will use, so the detection logic is genuinely exercised.
+
+**Not verified, and cannot be under QEMU `virt`:** FIQ *delivery*, the AIC2 register
+arithmetic, and the `apple,aic2` bring-up. There is no AIC to talk to. First real test is
+a Mac. Single-die only — `t6002` (M1 Ultra) needs `die_stride` and is refused rather than
+silently driven as die 0.
+
+### ⬜ M9 — Validate scheduler + context switch on Apple
+Reuse `context.rs`; confirm the first **FIQ** timer tick drives `timer_schedule`.
 
 ### ✅ M8 — Apple-aware MMU identity map (`mmu.rs`)
 The boot map was two hardcoded L1 entries: 1 GiB of device at 0, 1 GiB of RAM at
@@ -225,9 +263,6 @@ Unverified on Apple hardware: whether Apple MMIO needs the `nonposted-mmio` sema
 Asahi's DT advertises (device-nGnRnE may not be sufficient), and the real `PARange` — the
 IPS read is hardware-driven, but a Cortex-A53 reports 40-bit, so the wider Apple value has
 never actually been programmed.
-
-### ⬜ M9 — Validate scheduler + context switch on Apple
-Reuse `context.rs`; confirm the first AIC timer IRQ drives `timer_schedule`.
 
 ### ⬜ M10 — Driver registry (new `drivers/mod.rs`, `main.rs`)
 Global `Option<&'static dyn NetDevice>` + `register_net_device()` / `net_device()`.

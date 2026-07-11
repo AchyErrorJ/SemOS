@@ -16,6 +16,7 @@ use core::arch::global_asm;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU64, Ordering};
 
+mod aic;
 mod context;
 mod fdt;
 mod memory;
@@ -92,11 +93,11 @@ _start:
 _vectors:
     VEC 0          // Current EL, SP0, Synchronous
     IRQ_VEC        // Current EL, SP0, IRQ
-    VEC 2          // Current EL, SP0, FIQ
+    IRQ_VEC        // Current EL, SP0, FIQ
     VEC 3          // Current EL, SP0, SError
     VEC 4          // Current EL, SPx, Synchronous
-    IRQ_VEC        // Current EL, SPx, IRQ  <- timer IRQs land here at EL1
-    VEC 6          // Current EL, SPx, FIQ
+    IRQ_VEC        // Current EL, SPx, IRQ  <- timer IRQs land here on QEMU (GIC)
+    IRQ_VEC        // Current EL, SPx, FIQ  <- timer lands HERE on Apple
     VEC 7          // Current EL, SPx, SError
     VEC 8
     VEC 9
@@ -160,12 +161,41 @@ irq_entry:
 "#
 );
 
-// ---- GICv2 + generic timer (interrupts) -------------------------------------
-// QEMU `-M virt` with GICv2: distributor @0x0800_0000, CPU interface @0x0801_0000.
-// The non-secure EL1 physical timer (CNTP) fires PPI INTID 30.
-const GICD_BASE: u64 = 0x0800_0000;
-const GICC_BASE: u64 = 0x0801_0000;
+// ---- Interrupt controller + generic timer (M6/M7) ---------------------------
+//
+// Two machines, two completely different paths to the same tick:
+//
+// * **QEMU `-M virt`** has a GICv2 and delivers the EL1 physical timer as IRQ
+//   INTID 30. Bases come from the tree now; these are the fallback.
+// * **Apple** has no GIC at all — it has the AIC — and does not route the timer
+//   through it. The ARMv8 generic timer is delivered straight to the CPU as an
+//   **FIQ**, with no controller register to ack.
+//
+// What makes one handler serve both: `CNTP_CTL_EL0.ISTATUS` is the timer's own
+// statement that it fired, and it is true on either machine regardless of how
+// the interrupt got here. So the tick is driven off that, not off an INTID.
+const GICD_BASE_FALLBACK: u64 = 0x0800_0000;
+const GICC_BASE_FALLBACK: u64 = 0x0801_0000;
 const TIMER_INTID: u32 = 30;
+
+/// Which interrupt controller this machine actually has.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Intc {
+    None,
+    Gic { gicd: u64, gicc: u64 },
+    Aic2,
+}
+
+static mut INTC: Intc = Intc::None;
+
+/// Is the generic timer asserting? `ENABLE` set, `IMASK` clear, `ISTATUS` set —
+/// the same condition Linux's `TIMER_FIRING()` checks in its FIQ handler.
+#[inline]
+unsafe fn timer_firing() -> bool {
+    let ctl: u64;
+    core::arch::asm!("mrs {}, cntp_ctl_el0", out(reg) ctl);
+    (ctl & 0b111) == 0b101
+}
 
 static mut TIMER_INTERVAL: u64 = 0;
 static TICKS: AtomicU64 = AtomicU64::new(0);
@@ -189,14 +219,72 @@ unsafe fn mmio_w8(addr: u64, v: u8) {
 }
 
 /// Bring up GICv2: enable the distributor + CPU interface, route INTID 30.
-unsafe fn gic_init() {
+unsafe fn gic_init(gicd: u64, gicc: u64) {
     // Distributor: enable, set-enable INTID 30, give it a priority.
-    mmio_w32(GICD_BASE + 0x000, 1); // GICD_CTLR.EnableGrp0
-    mmio_w32(GICD_BASE + 0x100, 1 << TIMER_INTID); // GICD_ISENABLER0 bit 30
-    mmio_w8(GICD_BASE + 0x400 + TIMER_INTID as u64, 0xA0); // GICD_IPRIORITYR[30]
+    mmio_w32(gicd + 0x000, 1); // GICD_CTLR.EnableGrp0
+    mmio_w32(gicd + 0x100, 1 << TIMER_INTID); // GICD_ISENABLER0 bit 30
+    mmio_w8(gicd + 0x400 + TIMER_INTID as u64, 0xA0); // GICD_IPRIORITYR[30]
     // CPU interface: allow all priorities, enable.
-    mmio_w32(GICC_BASE + 0x004, 0xFF); // GICC_PMR
-    mmio_w32(GICC_BASE + 0x000, 1); // GICC_CTLR.Enable
+    mmio_w32(gicc + 0x004, 0xFF); // GICC_PMR
+    mmio_w32(gicc + 0x000, 1); // GICC_CTLR.Enable
+}
+
+/// Pick and bring up whatever interrupt controller this machine has.
+///
+/// Apple first: a Mac has no GIC to fall back to, and an AIC left un-enabled
+/// would leave us with no device interrupts at all.
+unsafe fn intc_init(fdt: Option<fdt::Fdt>) {
+    let mut regs: [(u64, u64); 4] = [(0, 0); 4];
+
+    if let Some(f) = fdt {
+        let n = f.compatible_regs("apple,aic2", &mut regs);
+        if n >= 2 {
+            if aic::init(&regs[..n]) {
+                let (nr, max) = aic::info();
+                INTC = Intc::Aic2;
+                kernel_core::platform::log("  [intc] Apple AIC2 @");
+                kernel_core::platform::log_num(regs[0].0);
+                kernel_core::platform::log(" event @");
+                kernel_core::platform::log_num(regs[1].0);
+                kernel_core::platform::log(", nr_irq=");
+                kernel_core::platform::log_num(nr as u64);
+                kernel_core::platform::log(" max_irq=");
+                kernel_core::platform::log_num(max as u64);
+                kernel_core::platform::log("\n");
+                return;
+            }
+            kernel_core::platform::log("  [intc] AIC2 present but init FAILED\n");
+        } else if n == 1 {
+            // The event register is a second reg range; without it we cannot ack.
+            kernel_core::platform::log("  [intc] AIC2 has no event reg range — refusing to drive it\n");
+        }
+        if f.find_compatible("apple,aic").is_some() {
+            kernel_core::platform::log("  [intc] AIC v1 (t8103) found — unsupported, this is AIC2 only\n");
+        }
+
+        // GIC: QEMU virt is "arm,cortex-a15-gic"; real boards often "arm,gic-400".
+        for compat in ["arm,cortex-a15-gic", "arm,gic-400"] {
+            let n = f.compatible_regs(compat, &mut regs);
+            if n >= 2 {
+                let (gicd, gicc) = (regs[0].0, regs[1].0);
+                gic_init(gicd, gicc);
+                INTC = Intc::Gic { gicd, gicc };
+                kernel_core::platform::log("  [intc] GICv2 from FDT: dist @");
+                kernel_core::platform::log_num(gicd);
+                kernel_core::platform::log(" cpu @");
+                kernel_core::platform::log_num(gicc);
+                kernel_core::platform::log("\n");
+                return;
+            }
+        }
+    }
+
+    gic_init(GICD_BASE_FALLBACK, GICC_BASE_FALLBACK);
+    INTC = Intc::Gic {
+        gicd: GICD_BASE_FALLBACK,
+        gicc: GICC_BASE_FALLBACK,
+    };
+    kernel_core::platform::log("  [intc] no controller in FDT — assuming QEMU virt GICv2\n");
 }
 
 /// Program the EL1 physical timer to fire at SCHEDULER_TICK_HZ and enable it.
@@ -220,19 +308,41 @@ unsafe fn rearm_timer() {
 
 // ---- Exception handlers -----------------------------------------------------
 
-/// Timer IRQ handler. `cur_sp` is the running task's saved-frame SP. Services
-/// the timer and delegates the scheduling decision to `context::timer_schedule`,
-/// which returns the next task's frame SP for `irq_entry` to restore.
+/// Interrupt handler — serves both the GIC IRQ vector and the Apple FIQ vector.
+/// `cur_sp` is the running task's saved-frame SP; the scheduling decision goes
+/// to `context::timer_schedule`, which returns the next task's frame SP for
+/// `irq_entry` to restore.
 #[no_mangle]
 extern "C" fn irq_handler(cur_sp: u64) -> u64 {
     unsafe {
-        let iar = mmio_r32(GICC_BASE + 0x00C); // GICC_IAR
-        let intid = iar & 0x3FF;
-        if intid == TIMER_INTID {
+        // Ask the timer, not the controller. On QEMU this interrupt arrived as a
+        // GIC IRQ with INTID 30; on Apple it arrived as a bare CPU FIQ with no
+        // INTID to read at all. ISTATUS is true in both cases, so the tick does
+        // not care which machine it is on. `rearm_timer` clears it by reloading
+        // TVAL.
+        if timer_firing() {
             TICKS.fetch_add(1, Ordering::Relaxed);
             rearm_timer();
         }
-        mmio_w32(GICC_BASE + 0x010, iar); // GICC_EOIR
+
+        match INTC {
+            Intc::Gic { gicc, .. } => {
+                // The GIC still needs its ack/EOI handshake even for interrupts
+                // we did not act on, or it will not deliver another.
+                let iar = mmio_r32(gicc + 0x00C); // GICC_IAR
+                mmio_w32(gicc + 0x010, iar); // GICC_EOIR
+            }
+            Intc::Aic2 => {
+                // Drain the AIC. Reading the event register *is* the ack — it
+                // also masks the source, so anything we do not have a driver for
+                // simply stays masked rather than re-firing forever.
+                while let Some((ty, irq)) = aic::next_event() {
+                    let _ = (ty, irq);
+                }
+            }
+            Intc::None => {}
+        }
+
         context::timer_schedule(cur_sp)
     }
 }
@@ -624,13 +734,16 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     context::spawn_task("task_b", demo_b);
     kernel_core::platform::log("  [tasks] demo tasks A and B spawned\n");
 
-    // Interrupts: GIC + timer, then unmask IRQs.
+    // Interrupts: whichever controller this machine has, then the timer.
     unsafe {
-        gic_init();
+        intc_init(fdt);
         timer_init();
-        core::arch::asm!("msr daifclr, #2"); // clear PSTATE.I — enable IRQs
+        // Clear PSTATE.I *and* PSTATE.F. Unmasking FIQ is what makes the Apple
+        // path possible at all: the generic timer is delivered as an FIQ there,
+        // so with F still set the M1 Pro would simply never tick.
+        core::arch::asm!("msr daifclr, #3");
     }
-    kernel_core::platform::log("  [irq] IRQs on — scheduler running\n");
+    kernel_core::platform::log("  [irq] IRQs + FIQs on — scheduler running\n");
 
     loop {
         unsafe { core::arch::asm!("wfe") };
