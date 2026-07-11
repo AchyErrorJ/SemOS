@@ -76,10 +76,23 @@ fn block_1g_desc(phys: u64, attr_idx: u64, normal: bool) -> u64 {
 
 /// Build the boot identity map and enable the MMU (SCTLR_EL1.M). Caches left
 /// off (C/I=0) for safety — correct, just uncached.
-pub unsafe fn enable_identity_mmu() {
+///
+/// `console_mmio` is the UART base the FDT gave us; its 1 GiB block is mapped
+/// as device memory on top of the fixed QEMU window.
+pub unsafe fn enable_identity_mmu(console_mmio: u64) {
     let l1 = core::ptr::addr_of_mut!(BOOT_L1_TABLE.entries) as *mut u64;
     *l1.add(0) = block_1g_desc(0x0000_0000, 0, false); // device (UART)
     *l1.add(1) = block_1g_desc(0x4000_0000, 1, true); // normal RAM (kernel)
+
+    // The console need not live in the low 2 GiB the QEMU window covers —
+    // Apple's UART sits near 0x2_3520_0000. Without its block, the first print
+    // after `SCTLR_EL1.M` goes high is a data abort, and the boot dies exactly
+    // where it can no longer tell you why. T0SZ=25 gives a 39-bit VA, so any
+    // address under 512 GiB has an L1 slot to land in.
+    let idx = (console_mmio >> 30) as usize;
+    if idx < ENTRIES && *l1.add(idx) == 0 {
+        *l1.add(idx) = block_1g_desc(console_mmio & !((1 << 30) - 1), 0, false);
+    }
 
     let ttbr0 = core::ptr::addr_of!(BOOT_L1_TABLE) as u64;
     // MAIR: Attr0 = 0x00 device-nGnRnE, Attr1 = 0xFF normal write-back.

@@ -389,11 +389,28 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
                     }
                     None => serial::uart_str("  [fdt] no /memory node\n"),
                 }
-                if let Some(uart) = f.stdout_path_uart() {
-                    serial::uart_str("  [fdt] stdout UART @");
-                    uart_hex(uart);
-                    serial::uart_str("\n");
+
+                // M2: retarget the console at whatever UART the tree names.
+                // Everything from here on — including the panic handler — talks
+                // to the discovered device, not the compiled-in guess.
+                match serial::init_from_fdt(&f) {
+                    Some((kind, base)) => {
+                        serial::uart_str("  [uart] console from FDT: ");
+                        serial::uart_str(kind.name());
+                        serial::uart_str(" @");
+                        uart_hex(base);
+                        serial::uart_str("\n");
+                    }
+                    None => {
+                        let (kind, base) = serial::current();
+                        serial::uart_str("  [uart] no console node in FDT — keeping ");
+                        serial::uart_str(kind.name());
+                        serial::uart_str(" @");
+                        uart_hex(base);
+                        serial::uart_str("\n");
+                    }
                 }
+
                 if f.find_compatible("arm,armv8-timer").is_some() {
                     serial::uart_str("  [fdt] found arm,armv8-timer node\n");
                 }
@@ -421,9 +438,12 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     }
     kernel_core::platform::log("  [platform] Aarch64Platform registered\n");
 
-    // Turn on the identity-map MMU.
+    // Turn on the identity-map MMU. The console's block goes in the map too, so
+    // the first print on the far side of MMU-enable still reaches the UART the
+    // FDT picked — including one at an Apple address far outside the QEMU window.
+    let (_, console_mmio) = serial::current();
     serial::uart_str("  enabling MMU (identity map, 1 GiB blocks)...\n");
-    unsafe { crate::mmu::enable_identity_mmu() };
+    unsafe { crate::mmu::enable_identity_mmu(console_mmio) };
     serial::uart_str("  MMU ON — translation active.\n");
 
     // Carve the physical frame pool out of the RAM left after the kernel image.

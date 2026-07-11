@@ -68,6 +68,17 @@ impl Node {
             core::str::from_utf8(&b[..len]).ok()
         })
     }
+
+    /// True if any of the node's `compatible` strings equals `compat`. A node
+    /// lists several, most-specific first (Apple's UART is both
+    /// `apple,t8103-uart` and `apple,s5l-uart`), so matching only the first
+    /// would miss the generic name a driver binds to.
+    pub fn is_compatible(&self, compat: &str) -> bool {
+        match self.compatible {
+            Some(v) => v.split(|&b| b == 0).any(|s| s == compat.as_bytes()),
+            None => false,
+        }
+    }
 }
 
 impl Fdt {
@@ -190,9 +201,13 @@ impl Fdt {
         result
     }
 
-    /// Return the MMIO base address of the UART selected by `/chosen/stdout-path`,
-    /// falling back to a node compatible with `arm,pl011`.
-    pub fn stdout_path_uart(&self) -> Option<u64> {
+    /// Return the console UART node selected by `/chosen/stdout-path`, falling
+    /// back to the first node compatible with a UART we know how to drive.
+    ///
+    /// The caller needs the whole node, not just its address: which register
+    /// layout to use is decided by `compatible` (Apple's s5l UART and the
+    /// PL011 share nothing but the concept of a byte).
+    pub fn stdout_uart(&self) -> Option<Node> {
         // 1. Read /chosen stdout-path.
         let mut stdout_prop: Option<&[u8]> = None;
         self.walk_nodes(|name, depth, props, _parent| {
@@ -235,8 +250,8 @@ impl Fdt {
 
                     if let Some(t) = target {
                         if let Some(node) = self.node_by_path(t) {
-                            if let Some((base, _size)) = node.reg {
-                                return Some(base);
+                            if node.reg.is_some() {
+                                return Some(node);
                             }
                         }
                     }
@@ -244,10 +259,15 @@ impl Fdt {
             }
         }
 
-        // 2. Fallback: find a PL011 UART node.
-        if let Some(node) = self.find_compatible("arm,pl011") {
-            if let Some((base, _size)) = node.reg {
-                return Some(base);
+        // 2. Fallback: no usable stdout-path — take the first UART node whose
+        //    `compatible` we recognize. Apple first: on a Mac both this and the
+        //    stdout-path lookup should agree, and if the tree is missing
+        //    /chosen we still want the real console rather than nothing.
+        for compat in ["apple,s5l-uart", "arm,pl011"] {
+            if let Some(node) = self.find_compatible(compat) {
+                if node.reg.is_some() {
+                    return Some(node);
+                }
             }
         }
 
