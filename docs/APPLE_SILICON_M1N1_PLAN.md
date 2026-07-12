@@ -60,11 +60,42 @@ cargo runner (`kernel-aarch64/qemu-run.sh`) objcopies to raw before booting, so
 `cargo run --release` now works. Worth remembering when the m1n1 handoff is wired up:
 m1n1 *does* pass the DTB in `x0`, so that path exercises the parser for real.
 
-### 🔨 M3 — m1n1 boot entry (partial)
-Done: `_start` now preserves the DTB pointer (`x0`) across BSS-zero and passes it
-to `kmain(dtb)`; `kmain` parses the tree and prints `/memory`, stdout UART, and the
-timer node. **Remaining:** if m1n1 enters at EL2, drop to EL1 before MMU enable;
-confirm the linker load address matches m1n1's payload placement.
+### ✅ M3 — m1n1 boot entry: drop from EL2 to EL1 before the kernel runs (`main.rs`)
+
+Done: `_start` preserves the DTB pointer and passes it to `kmain`; `kmain` parses the tree
+and prints its contents.
+
+Remaining, now completed: **m1n1 enters at EL2**, so `_start` now checks `CurrentEL` and,
+if it is 2, drops to **EL1h** before any Rust code runs. The kernel touches only `_EL1`
+registers (`VBAR_EL1`, `SCTLR_EL1`, `TTBR0_EL1`, `CPACR_EL1`, `CNTV_CTL_EL0`, etc.), so
+running at EL2 with `HCR_EL2.E2H` set would silently redirect those writes to their `_EL2`
+equivalents, installing vectors the CPU never uses and configuring the wrong translation
+regime.
+
+The drop sets:
+
+- `HCR_EL2.RW=1` so EL1 is AArch64.
+- `HCR_EL2.{E2H,TGE}=0` so EL1 is a real EL1, not the VHE host mode, and
+  `IRQ/FIQ/SError` are routed to EL1.
+- `CNTHCTL_EL2` to let EL1 read the counter and use the EL1 physical timer without
+  trapping.
+- `CPTR_EL2` to not trap FP/SIMD (already enabled at EL1 later, but we must not trap it
+  from EL2 either).
+- `SCTLR_EL1` to a safe reset value (MMU and caches off) before `eret` into EL1h.
+
+The E2H bit is read back after the clear because some cores have E2H RES1. If it stuck at
+1, the kernel would access `CNTHCTL_EL2`/`CPTR_EL2` in their *VHE* layouts at different
+bit positions; guessing wrong there costs the timer or traps every FP instruction.
+
+**QEMU-verified** with `-M virt,virtualization=on`, which enters the kernel at EL2 exactly
+like m1n1 does. `kmain` reports `CurrentEL = EL1`, the MMU comes up, the memory allocator
+initializes, and the scheduler preempts just as it does when QEMU enters at EL1 by default.
+
+One caveat for the real m1n1 handoff: m1n1 may leave the MMU on at EL1. The early BSS-zero
+loop runs with whatever mapping it inherits; if BSS is inside the mapped RAM window (it
+will be, for a normal payload placement), there is no problem. If not, it faults before
+`kmain` — but we will see that on screen because the framebuffer mirror is wired into the
+panic handler.
 
 ### ✅ M2 — Apple UART early console (`serial.rs`)
 The console is now **discovered, not compiled in**. `Fdt::stdout_uart()` resolves

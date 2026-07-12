@@ -51,18 +51,79 @@ global_asm!(
 .global _start
 _start:
     mov     x19, x0                 // preserve DTB pointer (x0) from QEMU/m1n1
-    ldr     x0, =_stack_top
+
+// ---- M3: m1n1 hands off at EL2; the whole kernel assumes EL1 ----------------
+// Every sysreg this kernel touches is an _EL1 one (SCTLR_EL1, TTBR0_EL1,
+// VBAR_EL1, CPACR_EL1). Executed at EL2 with HCR_EL2.E2H set — which is how
+// Apple cores run — those accesses are silently *redirected* to their _EL2
+// equivalents, so the code would configure the wrong translation regime and
+// install vectors the CPU never uses. Rather than teach the kernel about EL2,
+// drop to EL1 here, before anything reads or writes an EL1 register.
+    mrs     x0, CurrentEL
+    lsr     x0, x0, #2
+    and     x0, x0, #3
+    cmp     x0, #2
+    b.ne    4f                      // already EL1 (QEMU's default) — nothing to do
+
+    // HCR_EL2: RW=1 so EL1 is AArch64. Everything else cleared — in particular
+    // E2H and TGE (so EL1 is a real EL1, not the VHE host), and IMO/FMO/AMO,
+    // so IRQ/FIQ/SError are taken at EL1 instead of being routed up to EL2.
+    // Without FMO clear, the Apple timer FIQ would vector to EL2 and vanish.
+    mov     x0, xzr
+    orr     x0, x0, #(1 << 31)      // HCR_EL2.RW
+    msr     hcr_el2, x0
+    isb
+
+    // Read HCR_EL2 back. On a core where E2H is RES1 (VHE-only), the clear
+    // above did not stick — and CNTHCTL_EL2 and CPTR_EL2 then have their *VHE*
+    // layouts, at different bit positions. Guessing wrong here costs us the
+    // timer or traps every FP instruction, so branch on what the hardware says.
+    mrs     x0, hcr_el2
+    tst     x0, #(1 << 34)          // HCR_EL2.E2H
+    b.eq    2f
+
+    // E2H stuck at 1 — VHE register layouts.
+    mov     x0, #(3 << 10)          // CNTHCTL_EL2.EL1PCTEN and EL1PTEN
+    msr     cnthctl_el2, x0
+    mov     x0, #(3 << 20)          // CPTR_EL2.FPEN=0b11 — do not trap FP/SIMD
+    msr     cptr_el2, x0
+    b       3f
+
+2:  // E2H == 0 — classic layouts.
+    mov     x0, #3                  // CNTHCTL_EL2.EL1PCTEN and EL1PCEN: let EL1
+    msr     cnthctl_el2, x0         // read the counter and drive CNTP_* without trapping
+    mov     x0, #0x33ff             // CPTR_EL2 RES1 bits, TFP=0
+    msr     cptr_el2, x0
+
+3:  msr     cntvoff_el2, xzr        // no virtual-counter offset
+
+    // Give EL1 a sane SCTLR before we land in it: MMU and caches off (mmu.rs
+    // turns them on), RES1 bits set.
+    ldr     x0, =0x30d00800
+    msr     sctlr_el1, x0
+
+    // ERET into EL1h with all of DAIF masked; kmain unmasks once the vectors
+    // and the interrupt controller are up.
+    mov     x0, #0x3c5              // M=EL1h, D+A+I+F masked
+    msr     spsr_el2, x0
+    adr     x0, 4f
+    msr     elr_el2, x0
+    isb
+    eret
+
+// ---- Now at EL1, whichever way we got here ----------------------------------
+4:  ldr     x0, =_stack_top
     mov     sp, x0
     ldr     x0, =_bss_start
     ldr     x1, =_bss_end
-0:  cmp     x0, x1
-    b.hs    1f
+5:  cmp     x0, x1
+    b.hs    6f
     str     xzr, [x0], #8
-    b       0b
-1:  mov     x0, x19                 // pass DTB pointer as kmain's first arg
+    b       5b
+6:  mov     x0, x19                 // pass DTB pointer as kmain's first arg
     bl      kmain
-2:  wfe
-    b       2b
+7:  wfe
+    b       7b
 
 // ---- Exception vector table (AArch64, EL1) -----------------------------------
 // 16 entries × 0x80 bytes, table aligned to 0x800 (VBAR_EL1 requirement). Each
