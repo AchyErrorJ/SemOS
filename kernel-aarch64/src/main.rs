@@ -18,7 +18,9 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 mod aic;
 mod context;
+mod fb;
 mod fdt;
+mod font;
 mod memory;
 mod mmu;
 mod platform_impl;
@@ -489,7 +491,12 @@ fn discover_banks(fdt: Option<fdt::Fdt>) -> ([(u64, u64); 8], usize) {
 ///
 /// Reservations are rounded outward to whole frames: over-reserving costs a
 /// page, under-reserving corrupts something that is still in use.
-fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64, banks: &[(u64, u64)]) {
+fn init_memory(
+    fdt: Option<fdt::Fdt>,
+    dtb: u64,
+    banks: &[(u64, u64)],
+    fb: Option<(u64, u64)>,
+) {
     extern "C" {
         static _kernel_start: u8;
         static _stack_top: u8;
@@ -498,6 +505,14 @@ fn init_memory(fdt: Option<fdt::Fdt>, dtb: u64, banks: &[(u64, u64)]) {
     let stack_top = core::ptr::addr_of!(_stack_top) as u64;
 
     unsafe {
+        // The framebuffer is live memory we are actively scanning out of. m1n1
+        // normally lists it in /reserved-memory, but reserve it explicitly — if
+        // that listing is ever missing, the allocator would hand the screen out
+        // as scratch and the console would dissolve into whatever landed there.
+        if let Some((base, size)) = fb {
+            crate::memory::reserve(base, size);
+        }
+
         if let Some(f) = fdt {
             // The DTB is read-only to us, but it lives in RAM: reserve it or the
             // allocator will hand it out from under the parser.
@@ -679,15 +694,50 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     // have to be discovered before the MMU comes up — not after. (Reading the
     // FDT here is safe: translation is still off, so the physical pointer works.)
     let (banks, nbanks) = discover_banks(fdt);
+
+    // The framebuffer has to be found before the MMU too, so its pages get into
+    // the boot map. On a Mac this is the console.
+    let fb_node = fdt.and_then(|f| f.simple_framebuffer());
+    let fb_range = fb_node.map(|f| (f.base, f.size));
+
+    // Bring the screen up *before* the MMU. The framebuffer is physical memory
+    // and translation is still off, so it is directly writable here — and this
+    // way the MMU and memory logs, the two places most likely to go wrong on a
+    // Mac, are on screen rather than lost. From here every uart_str in the
+    // kernel is mirrored to it, including the panic handler.
+    if let Some(f) = fb_node {
+        let ok = unsafe { fb::init(&f) };
+        if ok {
+            let (w, h, scale) = fb::geometry();
+            serial::uart_str("  [fb] console @");
+            uart_hex(f.base);
+            serial::uart_str(" ");
+            kernel_core::platform::log_num(w as u64);
+            serial::uart_str("x");
+            kernel_core::platform::log_num(h as u64);
+            serial::uart_str(" ");
+            serial::uart_str(f.format_str());
+            serial::uart_str(" scale=");
+            kernel_core::platform::log_num(scale as u64);
+            serial::uart_str("\n");
+        } else {
+            serial::uart_str("  [fb] unsupported format ");
+            serial::uart_str(f.format_str());
+            serial::uart_str(" — screen left alone\n");
+        }
+    } else {
+        serial::uart_str("  [fb] no simple-framebuffer in FDT (UART only)\n");
+    }
+
     let (_, console_mmio) = serial::current();
     serial::uart_str("  enabling MMU (identity map from FDT, IPS=");
     uart_hex(crate::mmu::ips());
     serial::uart_str(")...\n");
-    unsafe { crate::mmu::enable_identity_mmu(&banks[..nbanks], console_mmio) };
+    unsafe { crate::mmu::enable_identity_mmu(&banks[..nbanks], console_mmio, fb_range) };
     serial::uart_str("  MMU ON — translation active.\n");
 
     // M4/M5: build the frame pool from the RAM the device tree describes.
-    init_memory(fdt, dtb, &banks[..nbanks]);
+    init_memory(fdt, dtb, &banks[..nbanks], fb_range);
 
     // Initialize kernel-core subsystems in the same order as the x86_64 backend.
     kernel_core::scheduler::init_core();

@@ -120,9 +120,17 @@ unsafe fn mmio_w32(addr: u64, v: u32) {
     core::ptr::write_volatile(addr as *mut u32, v);
 }
 
-/// Emit one byte on the console UART.
+/// Emit one byte on the console UART, and mirror it to the framebuffer console
+/// if one exists.
+///
+/// The mirror lives here, at the bottom, on purpose: every existing caller —
+/// the FDT log, the memory report, the panic handler — reaches the screen
+/// without knowing a screen exists. On a Mac with no second machine, this is
+/// the only output there is.
 #[inline]
 pub fn uart_put(b: u8) {
+    crate::fb::putc(b);
+
     let (kind, base) = current();
     unsafe {
         match kind {

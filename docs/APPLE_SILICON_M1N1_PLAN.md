@@ -174,6 +174,43 @@ Unverified on Apple hardware: multi-bank trees, `/reserved-memory`, and the `off
 path all parse, but QEMU `virt` presents a single bank and an empty reservation block, so
 none of those branches has met a real tree.
 
+### ✅ M2b — Framebuffer console (`fb.rs`, `font.rs`) — the kernel's only voice on a Mac
+**Why this exists.** On a MacBook the hardware UART that M2 drives is not on any port you
+can plug a cable into, and m1n1's serial console is a **USB gadget** that needs a *second
+machine* on the other end of a USB-C cable. With one Mac, a UART-only kernel boots
+completely blind — every diagnostic we have built would go nowhere. m1n1 has already
+brought the display up (it prints its own log there) and passes the framebuffer on in the
+device tree, so that is where we speak.
+
+`Fdt::simple_framebuffer()` reads the `/chosen` `simple-framebuffer` node (`reg`, `width`,
+`height`, `stride`, `format`). The **mirror is installed at the bottom, in `uart_put`**, so
+every existing caller — the FDT log, the memory report, the panic handler — reaches the
+screen without knowing a screen exists.
+
+- **Brought up *before* the MMU**, since the framebuffer is physical memory and translation
+  is still off. That puts the MMU and memory logs — the two things most likely to go wrong
+  on a Mac — on screen instead of into the void.
+- **Mapped and reserved.** Its pages go into the boot map (it is the console; unmapped is
+  fatal) and are reserved from the frame allocator. m1n1 normally lists it in
+  `/reserved-memory`, but if that listing were ever missing, the allocator would hand the
+  screen out as scratch and the console would dissolve into whatever landed there.
+- **Two pixel formats, and Apple is the reason.** `x8r8g8b8` is the common case, but Apple
+  panels commonly run **10 bits per channel** (`x2r10g10b10`) — writing 8-bit-packed
+  pixels there produces a dim, wrongly-coloured mess rather than an obvious failure.
+- 8x8 bitmap font (public-domain `font8x8`), not the x86 side's TrueType rasterizer: this
+  has to work before the allocator exists and must not depend on anything that can fail.
+  Auto-scales (`height/400`, clamped 1–4) so 8px glyphs are readable on a Retina panel.
+
+**QEMU-verified**, by splicing a `simple-framebuffer` node into QEMU's own dumped DTB and
+feeding it back with `-dtb` — `virt` has no framebuffer of its own. The kernel renders into
+real memory, and a temporary probe read the pixels back rather than trusting a screen nobody
+is looking at: **1380 lit pixels**, and the packed values are exact in both formats.
+The 10-bit one is the one that matters: `FG` = `(0xC8, 0xD0, 0xD8)` widens to
+`(0x323, 0x343, 0x363)` and packs to **`0x323D0F63`** — exactly what was read back.
+
+Unverified on Apple hardware: that m1n1's node is where and what we think it is (it should
+be, it is the same `simple-framebuffer` binding), and the real panel's format.
+
 ### 🔨 M6 + M7 — Apple AIC2 + timer (`aic.rs`, `main.rs`) — written, not yet run on a Mac
 **Target is an M1 Pro (`t6000`), so this is AIC *2*, not the AIC1 of the original M1.**
 Different `compatible` (`apple,aic2`), different register layout. Both facts below come

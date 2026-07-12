@@ -43,6 +43,30 @@ pub struct Fdt {
     size_dt_strings: usize,
 }
 
+/// A `simple-framebuffer` as described by the device tree.
+#[derive(Clone, Copy)]
+pub struct Framebuffer {
+    pub base: u64,
+    pub size: u64,
+    pub width: u32,
+    pub height: u32,
+    /// Bytes per scanline — not pixels, and not necessarily `width * bpp`.
+    pub stride: u32,
+    /// Raw `format` string, e.g. `x8r8g8b8` or Apple's `x2r10g10b10`.
+    format: &'static [u8],
+}
+
+impl Framebuffer {
+    pub fn format_str(&self) -> &str {
+        let len = self
+            .format
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.format.len());
+        core::str::from_utf8(&self.format[..len]).unwrap_or("?")
+    }
+}
+
 /// A node discovered during FDT traversal.
 #[derive(Clone, Copy)]
 pub struct Node {
@@ -332,6 +356,56 @@ impl Fdt {
             count < out.len()
         });
         count
+    }
+
+    /// The `simple-framebuffer` m1n1 hands us in `/chosen`.
+    ///
+    /// On a Mac this is the only way the kernel can say anything: the hardware
+    /// UART is not on any port you can plug into, and m1n1's serial console is a
+    /// USB gadget that needs a *second machine* on the other end of the cable.
+    /// m1n1 has already brought the display up and printed its own log to it.
+    pub fn simple_framebuffer(&self) -> Option<Framebuffer> {
+        let mut fb: Option<Framebuffer> = None;
+        self.walk_nodes(|_name, _depth, props, parent_cells| {
+            let matches = props.iter().any(|&(pname, pvalue)| {
+                name_eq(pname, "compatible")
+                    && pvalue
+                        .split(|&b| b == 0)
+                        .any(|s| s == b"simple-framebuffer")
+            });
+            if !matches {
+                return true;
+            }
+            let mut f = Framebuffer {
+                base: 0,
+                size: 0,
+                width: 0,
+                height: 0,
+                stride: 0,
+                format: &b""[..],
+            };
+            for &(pname, pvalue) in props {
+                if name_eq(pname, "reg") {
+                    if let Some((b, s)) = decode_cells(pvalue, parent_cells.0, parent_cells.1) {
+                        f.base = b;
+                        f.size = s;
+                    }
+                } else if name_eq(pname, "width") {
+                    f.width = decode_u32(pvalue);
+                } else if name_eq(pname, "height") {
+                    f.height = decode_u32(pvalue);
+                } else if name_eq(pname, "stride") {
+                    f.stride = decode_u32(pvalue);
+                } else if name_eq(pname, "format") {
+                    f.format = pvalue;
+                }
+            }
+            if f.base != 0 && f.width > 0 && f.height > 0 && f.stride > 0 {
+                fb = Some(f);
+            }
+            false
+        });
+        fb
     }
 
     /// Collect **all** `reg` ranges of the first node compatible with `compat`.

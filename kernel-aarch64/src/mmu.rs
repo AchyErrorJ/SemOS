@@ -214,7 +214,11 @@ unsafe fn cpu_ips() -> u64 {
 /// `banks` are the discovered `(base, size)` RAM ranges; `console_mmio` is the
 /// UART base. This replaces a fixed 2 GiB window (1 GiB device + 1 GiB RAM at
 /// `0x4000_0000`) that could not reach Apple's RAM at `0x8_0000_0000` at all.
-pub unsafe fn enable_identity_mmu(banks: &[(u64, u64)], console_mmio: u64) {
+pub unsafe fn enable_identity_mmu(
+    banks: &[(u64, u64)],
+    console_mmio: u64,
+    fb: Option<(u64, u64)>,
+) {
     let l1 = core::ptr::addr_of_mut!(BOOT_L1_TABLE.entries) as *mut u64;
     BOOT_L2_USED = 0;
     MAPPED_COUNT = 0;
@@ -227,6 +231,14 @@ pub unsafe fn enable_identity_mmu(banks: &[(u64, u64)], console_mmio: u64) {
     map_device_1g(l1, console_mmio);
 
     for &(base, size) in banks {
+        map_ram_range(l1, base, base.saturating_add(size));
+    }
+
+    // The framebuffer. m1n1 carves it out of RAM, so it usually falls inside a
+    // bank that was just mapped and this is a no-op — but it is the one thing we
+    // cannot afford to have unmapped: it is the console. Map it as normal memory
+    // (caches are off, so it is effectively uncached anyway).
+    if let Some((base, size)) = fb {
         map_ram_range(l1, base, base.saturating_add(size));
     }
 
