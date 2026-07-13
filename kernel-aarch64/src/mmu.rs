@@ -61,9 +61,45 @@ impl PageTable {
 const GIB: u64 = 1 << 30;
 const MIB2: u64 = 2 << 20;
 
-/// The boot L1 table used by the kernel. User address spaces copy its entries
-/// so kernel mappings remain accessible after a TTBR0 switch.
-static mut BOOT_L1_TABLE: PageTable = PageTable::empty();
+/// One level-0 entry covers 512 GiB.
+const L0_SHIFT: u64 = 39;
+
+/// The boot page tables.
+///
+/// **A level-0 root, not a level-1 one.** The M1 Pro (`t6000`) puts its RAM at
+/// `0x100_0000_0000` — *1 TiB* — not at the 32 GiB where the original M1 (t8103)
+/// keeps it. A 39-bit VA (`T0SZ=25`, L1 root) tops out at 512 GiB, so the kernel
+/// could discover every byte of that RAM and then be unable to address any of
+/// it. `T0SZ=16` gives a 48-bit VA and requires an L0 table above the L1s.
+static mut BOOT_L0_TABLE: PageTable = PageTable::empty();
+
+/// One L1 table per populated 512 GiB region — low MMIO lives in region 0, RAM
+/// at 1 TiB lives in region 2. Static, because the boot map is built before the
+/// frame allocator exists.
+const MAX_BOOT_L1: usize = 4;
+static mut BOOT_L1_TABLES: [PageTable; MAX_BOOT_L1] = [PageTable::empty(); MAX_BOOT_L1];
+static mut BOOT_L1_USED: usize = 0;
+
+/// Get (or create) the boot L1 table covering `va`'s 512 GiB region.
+unsafe fn boot_l1_for(va: u64) -> Option<*mut u64> {
+    let l0 = core::ptr::addr_of_mut!(BOOT_L0_TABLE.entries) as *mut u64;
+    let idx = ((va >> L0_SHIFT) & 511) as usize;
+    let desc = *l0.add(idx);
+    if desc != 0 {
+        return Some(desc_phys(desc) as *mut u64);
+    }
+    if BOOT_L1_USED >= MAX_BOOT_L1 {
+        return None;
+    }
+    let l1 = &raw mut BOOT_L1_TABLES[BOOT_L1_USED];
+    BOOT_L1_USED += 1;
+    let entries = core::ptr::addr_of_mut!((*l1).entries) as *mut u64;
+    for e in 0..ENTRIES {
+        *entries.add(e) = 0;
+    }
+    *l0.add(idx) = (l1 as u64 & OUTPUT_MASK_4K) | DESC_TABLE;
+    Some(entries)
+}
 
 /// Second-level tables for RAM banks that do not fill a whole 1 GiB block.
 ///
@@ -109,9 +145,13 @@ const fn align_up_u64(v: u64, a: u64) -> u64 {
 /// Map one 1 GiB-aligned device region. Device memory (`nGnRnE`) is never
 /// speculatively accessed, so mapping a whole block that is mostly empty MMIO
 /// space costs nothing.
-unsafe fn map_device_1g(l1: *mut u64, addr: u64) {
-    let idx = (addr >> 30) as usize;
-    if idx < ENTRIES && *l1.add(idx) == 0 {
+unsafe fn map_device_1g(addr: u64) {
+    let l1 = match boot_l1_for(addr) {
+        Some(t) => t,
+        None => return,
+    };
+    let idx = ((addr >> 30) & 511) as usize;
+    if *l1.add(idx) == 0 {
         *l1.add(idx) = block_1g_desc(align_down_u64(addr, GIB), 0, false);
     }
 }
@@ -124,19 +164,20 @@ unsafe fn map_device_1g(l1: *mut u64, addr: u64) {
 /// speculatively accessible, so blanketing a 1 GiB block over a 128 MiB bank
 /// would invite the CPU to speculatively read physical addresses that do not
 /// exist. QEMU tolerates that; an Apple SoC answers with an SError.
-unsafe fn map_ram_range(l1: *mut u64, base: u64, end: u64) {
+unsafe fn map_ram_range(base: u64, end: u64) {
     if end <= base {
         return;
     }
     let mut g = align_down_u64(base, GIB);
     while g < end {
         let g_end = g + GIB;
-        let idx = (g >> 30) as usize;
-        // Beyond the 39-bit VA the L1 table can address (512 GiB). Not mapped,
-        // so it must not be allocatable either — we simply do not record it.
-        if idx >= ENTRIES {
-            return;
-        }
+        // Out of static L1 tables, or beyond the 48-bit VA. Not mapped, so it
+        // must not be allocatable either — we simply do not record it.
+        let l1 = match boot_l1_for(g) {
+            Some(t) => t,
+            None => return,
+        };
+        let idx = ((g >> 30) & 511) as usize;
 
         let piece_base = base.max(g);
         let piece_end = end.min(g_end);
@@ -219,19 +260,23 @@ pub unsafe fn enable_identity_mmu(
     console_mmio: u64,
     fb: Option<(u64, u64)>,
 ) {
-    let l1 = core::ptr::addr_of_mut!(BOOT_L1_TABLE.entries) as *mut u64;
+    BOOT_L1_USED = 0;
     BOOT_L2_USED = 0;
     MAPPED_COUNT = 0;
+    let l0 = core::ptr::addr_of_mut!(BOOT_L0_TABLE.entries) as *mut u64;
+    for e in 0..ENTRIES {
+        *l0.add(e) = 0;
+    }
 
     // Device first, so a RAM bank can never claim a block the console needs.
     // Block 0 covers QEMU virt's peripherals (GIC @0x0800_0000, UART @0x0900_0000);
     // the console gets its own block wherever the tree put it — Apple's UART sits
     // near 0x2_3520_0000, far outside anything we used to map.
-    map_device_1g(l1, 0);
-    map_device_1g(l1, console_mmio);
+    map_device_1g(0);
+    map_device_1g(console_mmio);
 
     for &(base, size) in banks {
-        map_ram_range(l1, base, base.saturating_add(size));
+        map_ram_range(base, base.saturating_add(size));
     }
 
     // The framebuffer. m1n1 carves it out of RAM, so it usually falls inside a
@@ -239,17 +284,17 @@ pub unsafe fn enable_identity_mmu(
     // cannot afford to have unmapped: it is the console. Map it as normal memory
     // (caches are off, so it is effectively uncached anyway).
     if let Some((base, size)) = fb {
-        map_ram_range(l1, base, base.saturating_add(size));
+        map_ram_range(base, base.saturating_add(size));
     }
 
-    let ttbr0 = core::ptr::addr_of!(BOOT_L1_TABLE) as u64;
+    let ttbr0 = core::ptr::addr_of!(BOOT_L0_TABLE) as u64;
     // MAIR: Attr0 = 0x00 device-nGnRnE, Attr1 = 0xFF normal write-back.
     let mair: u64 = (0xFF << 8) | 0x00;
-    // TCR: T0SZ=25 (39-bit VA — 512 GiB of L1 slots, enough for Apple RAM at
-    // 32 GiB even on a 192 GiB machine), IRGN0/ORGN0=WB, SH0=inner, TG0=4KiB,
-    // EPD1 (no TTBR1), IPS from the CPU.
+    // TCR: T0SZ=16 — a 48-bit VA, rooted at level 0. It was 25 (39-bit, 512 GiB,
+    // L1 root), which cannot reach the M1 Pro's RAM at 1 TiB at all.
+    // IRGN0/ORGN0=WB, SH0=inner, TG0=4KiB, EPD1 (no TTBR1), IPS from the CPU.
     let tcr: u64 =
-        25 | (0b01 << 8) | (0b01 << 10) | (0b11 << 12) | (1 << 23) | (cpu_ips() << 32);
+        16 | (0b01 << 8) | (0b01 << 10) | (0b11 << 12) | (1 << 23) | (cpu_ips() << 32);
 
     core::arch::asm!(
         "msr mair_el1, {mair}",
@@ -275,7 +320,7 @@ pub fn ips() -> u64 {
 
 /// Return the physical address of the boot L1 table (the kernel's TTBR0).
 pub fn boot_ttbr0() -> u64 {
-    core::ptr::addr_of!(BOOT_L1_TABLE) as u64
+    core::ptr::addr_of!(BOOT_L0_TABLE) as u64
 }
 
 // ---- Helpers ----------------------------------------------------------------
@@ -368,6 +413,8 @@ unsafe fn alloc_pt_frame() -> Option<u64> {
 #[derive(Clone, Copy)]
 pub struct AddressSpace {
     pub ttbr0: u64,
+    /// The private region-0 L1 (see `new_address_space`). User mappings live here.
+    l1_phys: u64,
     subtables: [u64; MAX_SUBTABLES],
     subtable_count: usize,
     pub max_tier: u8,
@@ -375,17 +422,34 @@ pub struct AddressSpace {
 
 static mut ADDRESS_SPACES: [Option<AddressSpace>; MAX_TASKS] = [None; MAX_TASKS];
 
-/// Create a new address space: fresh L1 table with the kernel identity entries
-/// copied from the boot table.
+/// Create a new address space: a fresh L0 rooted on the kernel's regions, with a
+/// **private** L1 for region 0.
+///
+/// Region 0 has to be private because that is where user mappings land (user VAs
+/// are low), and `map_user_region` splits blocks in place. Sharing the boot L1
+/// there would let one process's mappings rewrite the kernel's own map — and
+/// every other process's. The higher regions (RAM at 1 TiB) are pure kernel
+/// identity mappings that nobody splits, so their L1s are shared by pointer.
 pub unsafe fn new_address_space(max_tier: u8) -> Option<AddressSpace> {
+    let l0_phys = alloc_pt_frame()?;
+    let l0 = page_table_from_phys(l0_phys);
+    let boot_l0 = core::ptr::addr_of!(BOOT_L0_TABLE) as *const PageTable;
+    (*l0).entries.copy_from_slice(&(*boot_l0).entries);
+
     let l1_phys = alloc_pt_frame()?;
     let l1 = page_table_from_phys(l1_phys);
-    // Copy boot entries so kernel mappings remain visible after TTBR0 switches.
-    let boot = core::ptr::addr_of!(BOOT_L1_TABLE) as *const PageTable;
-    (*l1).entries.copy_from_slice(&(*boot).entries);
+    let boot_l1 = match boot_l1_for(0) {
+        Some(t) => t,
+        None => return None,
+    };
+    for i in 0..ENTRIES {
+        (*l1).entries[i] = *boot_l1.add(i);
+    }
+    (*l0).entries[0] = table_desc(l1_phys);
 
     Some(AddressSpace {
-        ttbr0: l1_phys,
+        ttbr0: l0_phys,
+        l1_phys,
         subtables: [0; MAX_SUBTABLES],
         subtable_count: 0,
         max_tier,
@@ -417,7 +481,9 @@ unsafe fn find_address_space(ttbr0: u64) -> Option<&'static mut AddressSpace> {
 
 /// Return a mutable pointer to the L1 table of the given address space.
 unsafe fn l1_of(space: &mut AddressSpace) -> *mut PageTable {
-    page_table_from_phys(space.ttbr0)
+    // NOT ttbr0: that is the L0 now. User VAs all live in region 0, whose L1 is
+    // private to this address space.
+    page_table_from_phys(space.l1_phys)
 }
 
 /// Ensure `l1[idx]` points to a valid L2 table. If it currently holds a 1 GiB
@@ -505,12 +571,15 @@ pub unsafe fn destroy_address_space(ttbr0: u64) {
         Some(s) => s,
         None => return,
     };
-    let l1 = page_table_from_phys(space.ttbr0);
-    let boot = core::ptr::addr_of!(BOOT_L1_TABLE) as *const PageTable;
+    let l1 = page_table_from_phys(space.l1_phys);
+    let boot = match boot_l1_for(0) {
+        Some(t) => t,
+        None => return,
+    };
 
     for i in 0..ENTRIES {
         let desc = (*l1).entries[i];
-        let boot_desc = (*boot).entries[i];
+        let boot_desc = *boot.add(i);
         if !is_valid(desc) || desc == boot_desc {
             continue;
         }
@@ -539,7 +608,8 @@ pub unsafe fn destroy_address_space(ttbr0: u64) {
         }
         crate::memory::free(l2_phys);
     }
-    crate::memory::free(space.ttbr0);
+    crate::memory::free(space.l1_phys); // private region-0 L1
+    crate::memory::free(space.ttbr0); // the L0 root
 
     // Clear the stored reference.
     let arr = &raw mut ADDRESS_SPACES;

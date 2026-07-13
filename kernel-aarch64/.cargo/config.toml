@@ -7,6 +7,18 @@ build-std-features = ["compiler-builtins-mem"]
 
 [target.aarch64-unknown-none]
 # Link with our bare-metal script. aarch64-unknown-none uses rust-lld.
-rustflags = ["-C", "link-arg=-Tlinker.ld"]
+#
+# Position-independent, because m1n1 memcpy's the kernel to a 2 MiB-aligned
+# address of its own choosing in Apple RAM and jumps there — a fixed-address
+# image would run with every absolute pointer aimed at memory that does not
+# exist. `-pie` keeps the R_AARCH64_RELATIVE relocations in .rela.dyn, which
+# `_start` applies against the real load address before any of them are used.
+rustflags = [
+    "-C", "link-arg=-Tlinker.ld",
+    "-C", "relocation-model=pic",
+    "-C", "link-arg=-pie",
+    "-C", "link-arg=--no-dynamic-linker",
+    "-C", "link-arg=-znorelro",
+]
 # Boots a raw binary, not the ELF — QEMU only hands over a DTB on the raw path.
 runner = "./qemu-run.sh"

@@ -50,7 +50,63 @@ global_asm!(
 .section .text._start
 .global _start
 _start:
+// ---- arm64 Linux Image header ------------------------------------------------
+// m1n1 identifies a payload by the "ARM\x64" magic at offset 0x38 and refuses
+// anything else ("Unknown payload ... No valid payload found"). The first two
+// words are executable — m1n1 jumps to offset 0 — so they branch over the header.
+    nop                             // code0 (entry lands here)
+    b       _start_real             // code1
+    .quad   0                       // text_offset
+    .global _image_size_field
+_image_size_field:
+    .quad   0                       // image_size — patched post-link with the
+                                    // true footprint (file + BSS + stack) by
+                                    // wrap-m1n1.sh, so m1n1 reserves the memory
+                                    // we actually use. A linker-computed value
+                                    // here would need an ABS64 reloc a PIE cannot
+                                    // emit.
+    .quad   0xA                     // flags: 4 KiB pages, 2 MiB-aligned anywhere
+    .quad   0                       // res2
+    .quad   0                       // res3
+    .quad   0                       // res4
+    .ascii  "ARM\x64"               // magic, at 0x38
+    .long   0                       // res5
+
+_start_real:
     mov     x19, x0                 // preserve DTB pointer (x0) from QEMU/m1n1
+
+// ---- Self-relocation ---------------------------------------------------------
+// m1n1 copies this image to a 2 MiB-aligned address of its choosing inside Apple
+// RAM — which begins at 0x10_0000_0000 — and jumps there. It does not honour a
+// link address, so the kernel is linked position-independent at base 0 and fixes
+// itself up here. Until this loop finishes, every absolute address in the image
+// (literal pools, function pointers in statics, &_vectors) still says 0.
+//
+// This must run before anything else: the very next instruction, `ldr x0,
+// =_stack_top`, reads a literal-pool entry that is one of the things being
+// relocated.
+    adrp    x9,  _image_start
+    add     x9,  x9,  :lo12:_image_start    // x9 = where we actually are (delta,
+                                            //      since the link base is 0)
+    adrp    x10, __rela_start
+    add     x10, x10, :lo12:__rela_start
+    adrp    x11, __rela_end
+    add     x11, x11, :lo12:__rela_end
+
+8:  cmp     x10, x11
+    b.hs    9f
+    ldp     x12, x13, [x10]         // r_offset, r_info
+    ldr     x14, [x10, #16]         // r_addend
+    add     x10, x10, #24           // sizeof(Elf64_Rela)
+    and     x13, x13, #0xffffffff   // ELF64_R_TYPE
+    cmp     x13, #1027              // R_AARCH64_RELATIVE
+    b.ne    8b
+    add     x12, x12, x9            // *(base + r_offset) = base + r_addend
+    add     x14, x14, x9
+    str     x14, [x12]
+    b       8b
+9:  dsb     sy
+    isb
 
 // ---- M3: m1n1 hands off at EL2; the whole kernel assumes EL1 ----------------
 // Every sysreg this kernel touches is an _EL1 one (SCTLR_EL1, TTBR0_EL1,
@@ -112,10 +168,16 @@ _start:
     eret
 
 // ---- Now at EL1, whichever way we got here ----------------------------------
-4:  ldr     x0, =_stack_top
+// adrp/add, not `ldr =sym`: a literal pool holds an absolute address, and in a
+// PIE that needs an R_AARCH64_ABS64 the linker refuses to emit. PC-relative
+// addressing needs no relocation at all.
+4:  adrp    x0, _stack_top
+    add     x0, x0, :lo12:_stack_top
     mov     sp, x0
-    ldr     x0, =_bss_start
-    ldr     x1, =_bss_end
+    adrp    x0, _bss_start
+    add     x0, x0, :lo12:_bss_start
+    adrp    x1, _bss_end
+    add     x1, x1, :lo12:_bss_end
 5:  cmp     x0, x1
     b.hs    6f
     str     xzr, [x0], #8
@@ -523,8 +585,8 @@ fn mmu_self_test() {
 /// With no tree — or a tree with no `/memory` — fall back to what QEMU `virt`
 /// hands out, so a broken DTB degrades to the old fixed behavior rather than to
 /// a machine with no RAM at all.
-fn discover_banks(fdt: Option<fdt::Fdt>) -> ([(u64, u64); 8], usize) {
-    let mut banks: [(u64, u64); 8] = [(0, 0); 8];
+fn discover_banks(fdt: Option<fdt::Fdt>) -> ([(u64, u64); 16], usize) {
+    let mut banks: [(u64, u64); 16] = [(0, 0); 16];
     let mut n = 0usize;
     if let Some(f) = fdt {
         n = f.memory_banks(&mut banks);
@@ -579,7 +641,7 @@ fn init_memory(
             // allocator will hand it out from under the parser.
             crate::memory::reserve(dtb, f.totalsize() as u64);
 
-            let mut resv: [(u64, u64); 16] = [(0, 0); 16];
+            let mut resv: [(u64, u64); 64] = [(0, 0); 64];
             let n = f.mem_reservations(&mut resv);
             for &(base, size) in &resv[..n] {
                 crate::memory::reserve(base, size);

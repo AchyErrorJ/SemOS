@@ -28,10 +28,12 @@ use core::sync::atomic::{AtomicBool, Ordering};
 const FRAME_SIZE: u64 = 4096;
 
 /// Real trees have one or two banks; Apple's has a handful.
-const MAX_BANKS: usize = 8;
+const MAX_BANKS: usize = 16;
 /// Kernel image, stack, DTB, the `/memory` reservation block, and every
-/// `/reserved-memory` child have to fit here.
-const MAX_RESERVED: usize = 32;
+/// `/reserved-memory` child have to fit here. Apple's tree carries far more of
+/// these than QEMU's — firmware carveouts, the framebuffer, per-device regions —
+/// and a reservation we silently drop is RAM we hand out from under live firmware.
+const MAX_RESERVED: usize = 96;
 
 /// A half-open physical range `[base, end)`.
 #[derive(Clone, Copy)]
