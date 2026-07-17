@@ -483,6 +483,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static EXFIL_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/exfil-demo/target/x86_64-unknown-none/release/exfil-demo"
     );
+    // 2026-07-17 review P0 regression: Ring-3 attacks on SYS_WRITE /
+    // SYS_LLM_CONTEXT with kernel pointers must all return u64::MAX.
+    static PTR_GUARD_TEST_ELF: &[u8] = include_bytes!(
+        "../../user-programs/ptr-guard-test/target/x86_64-unknown-none/release/ptr-guard-test"
+    );
     // Phase 14 Tier 3 #45 Ring-3 validation: spawns a sibling thread,
     // round-trips through SYS_FUTEX_WAIT/WAKE/THREAD_JOIN, exits with
     // a known code the kernel reads in DEMO 28.
@@ -599,6 +604,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered exfil-demo.elf ({} bytes, adversarial exfil demo)", EXFIL_DEMO_ELF.len());
         } else {
             println!("    [WARN] failed to register exfil-demo.elf");
+        }
+        if fs.add("ptr-guard-test.elf", kernel_core::fs::ramfs::FileType::Executable, PTR_GUARD_TEST_ELF) {
+            println!("    Registered ptr-guard-test.elf ({} bytes, P0 pointer-validation regression)", PTR_GUARD_TEST_ELF.len());
+        } else {
+            println!("    [WARN] failed to register ptr-guard-test.elf");
         }
         if fs.add("sync-demo.elf", kernel_core::fs::ramfs::FileType::Executable, SYNC_DEMO_ELF) {
             println!("    Registered sync-demo.elf ({} bytes, Condvar+mpsc+RwLock smoke)", SYNC_DEMO_ELF.len());
@@ -902,6 +912,18 @@ fn init_loader_task() {
     // println!("  SemOS DEMO 6: adversarial PII exfiltration via the LLM channel");
     // println!("================================================================");
     // spawn_named_at("exfil-demo.elf", 2);
+
+    // DEMO 6b: P0 pointer-validation regression (2026-07-17 review).
+    // Ring-3, tier 0 — the least-privileged context in the system — attacks
+    // SYS_WRITE / SYS_LLM_CONTEXT with kernel pointers; every attempt must
+    // return u64::MAX and the machine must survive. Gated like DEMO 6
+    // (task #40 output starvation); the ELF is always registered in ramfs,
+    // so it can also be run from sem-sh as `ptr-guard-test.elf`.
+    // println!();
+    // println!("================================================================");
+    // println!("  SemOS DEMO 6b: P0 Ring-3 kernel read/write primitive regression");
+    // println!("================================================================");
+    // spawn_named_at("ptr-guard-test.elf", 0);
 
     // DEMO 5 — re-enabled for task #40 hunt 2026-05-13 with new diagnostics
     // (canary check, expanded PF dump, IDT-dbg, timer-trap RIP=0 reporter).

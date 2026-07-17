@@ -188,6 +188,18 @@ pub fn current_task_max_tier() -> u8 {
     }
 }
 
+/// Is the current task a Ring-3 (user-mode) task? The syscall layer uses
+/// this to decide whether pointer arguments must satisfy USER_ADDR_LIMIT:
+/// kernel tasks legitimately `dispatch()` with kernel-space buffers
+/// (agent.rs, editor.rs, demos), so validation is per-caller, not global.
+pub fn current_task_is_user() -> bool {
+    let current = CURRENT_TASK.load(Ordering::SeqCst);
+    unsafe {
+        let tasks = &raw const TASKS;
+        !(*tasks)[current].is_kernel
+    }
+}
+
 /// Get the current task index
 pub fn current_task_index() -> usize {
     CURRENT_TASK.load(Ordering::SeqCst)

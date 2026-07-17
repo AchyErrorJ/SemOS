@@ -371,27 +371,56 @@ fn validate_user_ptr(ptr: u64, len: u64) -> bool {
     }
 }
 
-/// Read a byte slice from user space. Returns None if the pointer is invalid.
+/// Does the current syscall caller need user-range enforcement?
+/// Ring-3 tasks always do; kernel tasks call `dispatch()` directly with
+/// kernel-space buffers (agent pipe capture, editor saves, pipe demos), so
+/// their pointers are trusted. This per-caller split is what closes the
+/// 2026-07-17 review's critical findings without breaking kernel callers.
+#[inline]
+fn caller_needs_validation() -> bool {
+    crate::scheduler::current_task_is_user()
+}
+
+/// Read a byte slice from the syscall caller's address space. For Ring-3
+/// callers the range is validated against USER_ADDR_LIMIT first, so a user
+/// task can never trick a handler into reading kernel memory. Returns None
+/// if the pointer is invalid.
 ///
 /// # Safety
-/// The caller must ensure the memory at ptr..ptr+len is actually mapped.
-/// We validate address range only (not page table presence).
-unsafe fn read_user_slice(ptr: u64, len: u64) -> Option<&'static [u8]> {
-    if !validate_user_ptr(ptr, len) {
+/// Range-checked for user callers; the memory must still be mapped (an
+/// in-range-but-unmapped user pointer faults — the kernel #PF handler kills
+/// the faulting task rather than the machine; a copy-with-recovery path is
+/// future work).
+unsafe fn read_caller_slice(ptr: u64, len: u64) -> Option<&'static [u8]> {
+    if caller_needs_validation() && !validate_user_ptr(ptr, len) {
         return None;
     }
+    if len == 0 || (len as usize) as u64 != len { return None; }
     Some(core::slice::from_raw_parts(ptr as *const u8, len as usize))
 }
 
-/// Read a string from user space. Returns None if invalid pointer or not UTF-8.
-unsafe fn read_user_str(ptr: u64, len: u64) -> Option<&'static str> {
-    let slice = read_user_slice(ptr, len)?;
+/// Mutable counterpart of `read_caller_slice`. A Ring-3 caller can never
+/// obtain a `&mut [u8]` into kernel memory through this.
+unsafe fn caller_slice_mut(ptr: u64, len: u64) -> Option<&'static mut [u8]> {
+    if caller_needs_validation() && !validate_user_ptr(ptr, len) {
+        return None;
+    }
+    if len == 0 || (len as usize) as u64 != len { return None; }
+    Some(core::slice::from_raw_parts_mut(ptr as *mut u8, len as usize))
+}
+
+/// Read a string from the caller's address space. Returns None if invalid
+/// pointer (for a Ring-3 caller) or not UTF-8.
+unsafe fn read_caller_str(ptr: u64, len: u64) -> Option<&'static str> {
+    let slice = read_caller_slice(ptr, len)?;
     core::str::from_utf8(slice).ok()
 }
 
-/// Write bytes to user space. Returns false if the pointer is invalid.
-unsafe fn write_to_user(ptr: u64, data: &[u8]) -> bool {
-    if !validate_user_ptr(ptr, data.len() as u64) {
+/// Write bytes to the caller's address space. For Ring-3 callers the range
+/// is validated first, so a user task can never write kernel memory through
+/// a syscall output buffer. Returns false if the pointer is invalid.
+unsafe fn write_to_caller(ptr: u64, data: &[u8]) -> bool {
+    if caller_needs_validation() && !validate_user_ptr(ptr, data.len() as u64) {
         return false;
     }
     let dest = core::slice::from_raw_parts_mut(ptr as *mut u8, data.len());
@@ -404,15 +433,21 @@ unsafe fn write_to_user(ptr: u64, data: &[u8]) -> bool {
 /// Write `buf` to the TTY console (the Console FD sink). This is the old
 /// global `handle_write` body, now reachable both as the default stdout
 /// path and as the `FdEntry::Console` action.
+///
+/// The buffer goes through `read_caller_slice`: a Ring-3 caller passing a
+/// kernel address gets u64::MAX instead of a kernel-memory disclosure
+/// (2026-07-17 review, critical #1). Kernel-mode callers (demos, agent)
+/// still print kernel buffers directly.
 fn console_write(buf_ptr: u64, buf_len: u64) -> u64 {
     let len = buf_len as usize;
     if len > 4096 { return u64::MAX; }
-    unsafe {
-        // For kernel-mode callers, skip user validation (ptr may be in kernel space)
-        let slice = core::slice::from_raw_parts(buf_ptr as *const u8, len);
-        if let Ok(s) = core::str::from_utf8(slice) {
-            crate::platform::log(s);
-        }
+    if len == 0 { return 0; }
+    let slice = match unsafe { read_caller_slice(buf_ptr, buf_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
+    };
+    if let Ok(s) = core::str::from_utf8(slice) {
+        crate::platform::log(s);
     }
     buf_len
 }
@@ -436,7 +471,13 @@ fn current_fd_entry(fd: u64) -> Option<crate::process::FdEntry> {
 /// returns u64::MAX on a broken pipe, else the byte count.
 fn pipe_write_blocking(pipe_id: usize, buf_ptr: u64, buf_len: u64) -> u64 {
     let len = (buf_len as usize).min(4096);
-    let data = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, len) };
+    if len == 0 { return 0; }
+    // Validated: a Ring-3 caller pointing at kernel memory gets u64::MAX,
+    // not a kernel-memory disclosure into the pipe.
+    let data = match unsafe { read_caller_slice(buf_ptr, len as u64) } {
+        Some(s) => s,
+        None => return u64::MAX,
+    };
     match crate::ipc::pipe_write(pipe_id, data) {
         Some(0) => {
             crate::platform::log("[syscall] write: broken pipe\n");
@@ -1274,7 +1315,13 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
             // inline, larger routes through heap-Allocated via from_bytes.
             let len = buf_len as usize;
             if len > crate::semantic::object::MAX_FILE_CONTENT { return u64::MAX; }
-            let data = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, len) };
+            if len == 0 { return 0; }
+            // Validated: Ring-3 callers cannot source file contents from
+            // kernel memory (2026-07-17 review, critical #1).
+            let data = match unsafe { read_caller_slice(buf_ptr, buf_len) } {
+                Some(s) => s,
+                None => return u64::MAX,
+            };
             let pos = position as usize;
             let registry = unsafe { crate::semantic::registry::global_registry() };
             let obj = match registry.get_mut(&suid) {
@@ -2531,13 +2578,40 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
     let n = (count as usize).min(32);
     let tier = crate::scheduler::current_task_max_tier();
 
-    let suids = unsafe {
-        core::slice::from_raw_parts(suid_pairs_ptr as *const (u64, u64), n)
+    // Validated: a Ring-3 caller pointing suid_pairs at kernel memory gets
+    // u64::MAX, not a kernel-memory read used as object IDs.
+    let suids: &[u8] = if n > 0 {
+        match unsafe { read_caller_slice(suid_pairs_ptr, (n * 16) as u64) } {
+            Some(s) => s,
+            None => return u64::MAX,
+        }
+    } else {
+        &[]
+    };
+    let suids: &[(u64, u64)] = unsafe {
+        core::slice::from_raw_parts(suids.as_ptr() as *const (u64, u64), n)
     };
 
     // Static scratch buffer for processing one entry at a time.
     // Safe because syscalls are serialized (no concurrent access).
     static mut CONTEXT_SCRATCH: [u8; 4096] = [0; 4096];
+
+    // out_ptr == 0 is the size-query form. Any other pointer is a write
+    // target: for a Ring-3 caller it must be a user-space address, and the
+    // write window is capped at the user boundary — never 32 KiB of
+    // attacker-chosen content into kernel memory (2026-07-17 review,
+    // critical #2: self-elevation via max_tier / VOUCH_TABLE overwrite).
+    const OUT_CAP: u64 = 32768;
+    let out_limit: usize = if out_ptr == 0 {
+        0
+    } else if caller_needs_validation() {
+        if !validate_user_ptr(out_ptr, 1) {
+            return u64::MAX;
+        }
+        core::cmp::min(OUT_CAP, USER_ADDR_LIMIT - out_ptr) as usize
+    } else {
+        OUT_CAP as usize
+    };
 
     unsafe {
         let registry = crate::semantic::registry::global_registry();
@@ -2584,7 +2658,7 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
                 total_size += entry_len + 8; // +8 for length prefix
 
                 // Write to output buffer if provided
-                if !out.is_null() && offset + entry_len + 8 <= 32768 {
+                if !out.is_null() && offset + entry_len + 8 <= out_limit {
                     // Write length prefix
                     let len_bytes = (entry_len as u64).to_le_bytes();
                     core::ptr::copy_nonoverlapping(
