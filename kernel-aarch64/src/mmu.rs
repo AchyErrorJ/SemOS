@@ -106,14 +106,14 @@ unsafe fn boot_l1_for(va: u64) -> Option<*mut u64> {
 /// These have to be static: the boot map is built *before* the frame allocator
 /// exists (the allocator needs the map to touch its own bitmap), so there is
 /// nowhere to allocate a page table from yet.
-const MAX_BOOT_L2: usize = 8;
+const MAX_BOOT_L2: usize = 128;
 static mut BOOT_L2_TABLES: [PageTable; MAX_BOOT_L2] = [PageTable::empty(); MAX_BOOT_L2];
 static mut BOOT_L2_USED: usize = 0;
 
 /// The RAM ranges the boot map actually covers. The frame allocator must not
 /// hand out anything outside these: `map_*` zeroes every page table it
 /// allocates, so an unmapped frame is a data abort the instant it is used.
-const MAX_MAPPED: usize = 16;
+const MAX_MAPPED: usize = 256;
 static mut MAPPED_RAM: [(u64, u64); MAX_MAPPED] = [(0, 0); MAX_MAPPED];
 static mut MAPPED_COUNT: usize = 0;
 
@@ -219,6 +219,69 @@ unsafe fn map_ram_range(base: u64, end: u64) {
     }
 }
 
+/// Identity-map a normal-memory range using only 2 MiB block descriptors.
+///
+/// This is deliberately more conservative than `map_ram_range`, which uses 1
+/// GiB blocks for full-gigabyte chunks. Real Apple SoCs can raise SError on
+/// speculative Normal-memory access outside real RAM; a 1 GiB block is too
+/// coarse near imperfect/stale FDT bank boundaries. 2 MiB granules still keep
+/// the boot map small while avoiding the worst overmapping.
+unsafe fn map_2m(base: u64, end: u64, attr_idx: u64, normal: bool) {
+    if end <= base {
+        return;
+    }
+
+    let start = align_down_u64(base, MIB2);
+    let finish = align_up_u64(end, MIB2);
+    let mut g = align_down_u64(start, GIB);
+    while g < finish {
+        let g_end = g + GIB;
+        let piece_base = start.max(g);
+        let piece_end = finish.min(g_end);
+
+        let l1 = match boot_l1_for(g) {
+            Some(t) => t,
+            None => return,
+        };
+        let l1_idx = ((g >> 30) & 511) as usize;
+        let desc = *l1.add(l1_idx);
+
+        let l2_entries = if desc == 0 {
+            if BOOT_L2_USED >= MAX_BOOT_L2 {
+                return;
+            }
+            let l2 = &raw mut BOOT_L2_TABLES[BOOT_L2_USED];
+            BOOT_L2_USED += 1;
+            let entries = core::ptr::addr_of_mut!((*l2).entries) as *mut u64;
+            for e in 0..ENTRIES {
+                *entries.add(e) = 0;
+            }
+            *l1.add(l1_idx) = (l2 as u64 & OUTPUT_MASK_4K) | DESC_TABLE;
+            entries
+        } else if is_table(desc) {
+            desc_phys(desc) as *mut u64
+        } else {
+            // Already a block mapping (e.g. Device). Never replace attributes.
+            g = g_end;
+            continue;
+        };
+
+        let mut p = piece_base;
+        while p < piece_end {
+            let e = ((p - g) / MIB2) as usize;
+            if e < ENTRIES && *l2_entries.add(e) == 0 {
+                *l2_entries.add(e) = block_2m_desc(p, attr_idx, normal);
+            }
+            p += MIB2;
+        }
+
+        if normal {
+            record_mapped(piece_base, piece_end);
+        }
+        g = g_end;
+    }
+}
+
 unsafe fn record_mapped(base: u64, end: u64) {
     if MAPPED_COUNT < MAX_MAPPED && end > base {
         MAPPED_RAM[MAPPED_COUNT] = (base, end);
@@ -274,17 +337,42 @@ pub unsafe fn enable_identity_mmu(
     // near 0x2_3520_0000, far outside anything we used to map.
     map_device_1g(0);
     map_device_1g(console_mmio);
+    // Apple SoC MMIO we touch post-MMU lives well above the first gigabyte:
+    // the watchdog is at 0x2_922b_0000. Map its gigabyte so a post-MMU reset
+    // (and other SoC MMIO in that block) does not fault.
+    map_device_1g(0x2_922b_0000);
 
-    for &(base, size) in banks {
-        map_ram_range(base, base.saturating_add(size));
+    // Map the discovered RAM banks, but only the parts that are real. See the
+    // note on `map_ram_normal_2m`: on Apple, blanketing a 1 GiB Normal block
+    // past the end of real RAM triggers a speculative-access SError, so RAM is
+    // mapped strictly in 2 MiB granules covering only the requested range.
+    // ISOLATION: skip FDT banks; keep PC window + framebuffer only.
+    let _ = banks;
+
+    // Bring-up safety net: always map the *actual current PC* gigabyte. This
+    // avoids relying on linker-symbol addresses in a PIE image. If m1n1 placed
+    // the kernel outside the FDT's memory range, the next instruction fetch
+    // after SCTLR.M would otherwise fault immediately.
+    {
+        let pc: u64;
+        core::arch::asm!("adr {}, .", out(reg) pc);
+        // A generous window around PC as 2 MiB blocks (never a full gigabyte),
+        // covering code, rodata, data, bss and the boot stack.
+        let s = align_down_u64(pc.saturating_sub(64 * 1024 * 1024), MIB2);
+        let e = align_up_u64(pc + 64 * 1024 * 1024, MIB2);
+        map_2m(s, e, 1, true);
     }
 
     // The framebuffer. m1n1 carves it out of RAM, so it usually falls inside a
     // bank that was just mapped and this is a no-op — but it is the one thing we
     // cannot afford to have unmapped: it is the console. Map it as normal memory
     // (caches are off, so it is effectively uncached anyway).
+    // The framebuffer, mapped as normal memory in bounded 2 MiB granules.
     if let Some((base, size)) = fb {
-        map_ram_range(base, base.saturating_add(size));
+        // DEVICE memory (attr0, non-cacheable, non-speculative). Mapping the
+        // display carveout as Normal cacheable makes Apple SError on speculative
+        // access; device semantics avoid that and are fine for a linear console.
+        map_2m(base, align_up_u64(base.saturating_add(size), MIB2), 0, false);
     }
 
     let ttbr0 = core::ptr::addr_of!(BOOT_L0_TABLE) as u64;
@@ -300,10 +388,19 @@ pub unsafe fn enable_identity_mmu(
         "msr mair_el1, {mair}",
         "msr tcr_el1,  {tcr}",
         "msr ttbr0_el1,{ttbr}",
-        "dsb sy",
+        // Flush any stale TLB entries left from m1n1's own (now-disabled) MMU.
+        // Without this, enabling translation can fault immediately on Apple cores.
+        "dsb ish",
+        "tlbi vmalle1",
+        "dsb ish",
         "isb",
+        // Enable MMU *and* caches together. The table walker is programmed
+        // write-back cacheable (TCR IRGN/ORGN=WB); leaving SCTLR.C off while the
+        // walker is cacheable is the classic Apple hang. Turn on M, C and I.
         "mrs {tmp}, sctlr_el1",
-        "orr {tmp}, {tmp}, #1",   // SCTLR_EL1.M = 1
+        "orr {tmp}, {tmp}, #(1 << 0)",    // M: MMU enable
+        // Caches intentionally left OFF for this bring-up test to isolate an
+        // SError seen at MMU enable. Uncached is slow but correct.
         "msr sctlr_el1, {tmp}",
         "isb",
         mair = in(reg) mair,

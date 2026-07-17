@@ -100,19 +100,24 @@ unsafe fn put_pixel(con: &Console, x: u32, y: u32, v: u32) {
 
 /// Adopt the framebuffer the device tree describes and clear it.
 ///
-/// Must run **after** the MMU is on and the framebuffer is mapped. Returns
-/// `false` if the format is one we cannot drive — better a silent screen than
-/// a screen full of garbage that hides the boot log m1n1 already put there.
+/// Must run once the framebuffer is reachable (before the MMU it is physical
+/// and directly writable). During bring-up this is intentionally forgiving:
+/// an unrecognized `format` string falls back to the common 8-bit layout
+/// rather than leaving the screen dark, because a wrongly-coloured console is
+/// still infinitely more debuggable than a silent one.
 pub unsafe fn init(fb: &Framebuffer) -> bool {
-    let format = match parse_format(fb.format_str()) {
-        Some(f) => f,
-        None => return false,
-    };
-    // Sanity: the tree must describe a buffer that actually fits in its own reg.
-    let needed = (fb.height as u64) * (fb.stride as u64);
-    if needed > fb.size || fb.stride < fb.width * 4 {
+    // A framebuffer with no base or no dimensions is unusable no matter what.
+    if fb.base == 0 || fb.width == 0 || fb.height == 0 {
         return false;
     }
+    let format = parse_format(fb.format_str()).unwrap_or(Format::X8R8G8B8);
+
+    // Prefer the stride the tree gives; if it is nonsense, assume packed 32bpp.
+    let stride = if fb.stride >= fb.width * 4 {
+        fb.stride
+    } else {
+        fb.width * 4
+    };
 
     let scale = (fb.height / 400).clamp(1, 4);
 
@@ -120,13 +125,26 @@ pub unsafe fn init(fb: &Framebuffer) -> bool {
         base: fb.base,
         width: fb.width,
         height: fb.height,
-        stride: fb.stride,
+        stride,
         format,
         scale,
         cur_x: 0,
         cur_y: 0,
     };
 
+    READY.store(true, Ordering::Release);
+
+    // Bring-up "I am alive" flash: paint the WHOLE screen a bright, unmistakable
+    // colour so a successful m1n1 -> kernel handoff is visible even before a
+    // single glyph is drawn. If the screen ever leaves the m1n1 logo and turns
+    // solid teal, the kernel is running and the framebuffer is real.
+    let alive = pack(format, (0x00, 0xB0, 0xC0));
+    for y in 0..CON.height {
+        for x in 0..CON.width {
+            put_pixel(&CON, x, y, alive);
+        }
+    }
+    // Then settle to the console background so text is readable.
     let bg = pack(format, BG);
     for y in 0..CON.height {
         for x in 0..CON.width {
@@ -134,8 +152,25 @@ pub unsafe fn init(fb: &Framebuffer) -> bool {
         }
     }
 
-    READY.store(true, Ordering::Release);
     true
+}
+
+/// Flood the entire framebuffer with one colour. Used by the exception and
+/// panic handlers so a fault is impossible to miss on a headless Mac. No-op if
+/// the console was never brought up.
+pub fn flood(r: u8, g: u8, b: u8) {
+    if !present() {
+        return;
+    }
+    unsafe {
+        let con = &*core::ptr::addr_of!(CON);
+        let v = pack(con.format, (r, g, b));
+        for y in 0..con.height {
+            for x in 0..con.width {
+                put_pixel(con, x, y, v);
+            }
+        }
+    }
 }
 
 /// Scroll up one text line.

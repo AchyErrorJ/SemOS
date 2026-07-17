@@ -32,3 +32,8 @@ test_assert.rs
 .DS_Store
 Thumbs.db
 .anthropic-key
+
+# Apple Silicon m1n1 bring-up: extracted ESP binaries (machine-specific, large)
+kernel-aarch64/esp-m1n1-analysis/
+# Local MCP config
+.mcp.json

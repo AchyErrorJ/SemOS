@@ -174,6 +174,21 @@ _start_real:
 4:  adrp    x0, _stack_top
     add     x0, x0, :lo12:_stack_top
     mov     sp, x0
+
+    // Enable FP/SIMD (CPACR_EL1.FPEN=0b11) and install the EL1 vector table
+    // BEFORE any Rust runs. At -O the compiler emits NEON in ordinary integer
+    // code; if FP is still trapped when the first Rust executes (e.g. the boot
+    // banner), it takes an EC=0x07 abort, and with VBAR unset that abort has
+    // nowhere to go and the machine hangs on real hardware. Doing this in
+    // assembly closes that window entirely.
+    mov     x0, #(3 << 20)
+    msr     cpacr_el1, x0
+    isb
+    adrp    x0, _vectors
+    add     x0, x0, :lo12:_vectors
+    msr     vbar_el1, x0
+    isb
+
     adrp    x0, _bss_start
     add     x0, x0, :lo12:_bss_start
     adrp    x1, _bss_end
@@ -343,6 +358,29 @@ unsafe fn mmio_w8(addr: u64, v: u8) {
     core::ptr::write_volatile(addr as *mut u8, v);
 }
 
+/// Trigger a normal Apple Silicon reset through watchdog #1.
+///
+/// T6000's DTB names `apple,t6000-wdt` at 0x2_922b_0000. Asahi/Linux document
+/// WD1 as the normal-reset watchdog: control at +0x1c, bite compare at +0x14,
+/// current counter at +0x10, with bit 2 (`RESET_EN`) enabling the reset.
+unsafe fn wdt_reboot() -> ! {
+    const WDT_BASE: u64 = 0x2_922b_0000;
+    const WD1_CUR_TIME: u64 = 0x10;
+    const WD1_BITE_TIME: u64 = 0x14;
+    const WD1_CTRL: u64 = 0x1c;
+    const RESET_EN: u32 = 1 << 2;
+
+    mmio_w32(WDT_BASE + WD1_CTRL, RESET_EN);
+    mmio_w32(WDT_BASE + WD1_BITE_TIME, 0);
+    mmio_w32(WDT_BASE + WD1_CUR_TIME, 0);
+    let _ = mmio_r32(WDT_BASE + WD1_CUR_TIME);
+    core::arch::asm!("dsb sy", "isb");
+
+    loop {
+        core::arch::asm!("wfe");
+    }
+}
+
 /// Bring up GICv2: enable the distributor + CPU interface, route INTID 30.
 unsafe fn gic_init(gicd: u64, gicc: u64) {
     // Distributor: enable, set-enable INTID 30, give it a priority.
@@ -475,6 +513,10 @@ extern "C" fn irq_handler(cur_sp: u64) -> u64 {
 /// Common synchronous exception handler. Reports and halts.
 #[no_mangle]
 extern "C" fn exc_handler(index: u64, esr: u64, elr: u64, far: u64) {
+    // If we have a framebuffer, turn the whole panel red before printing. On a
+    // one-machine Mac bring-up this may be the only visible sign that the
+    // kernel reached its exception vectors.
+    fb::flood(0xC0, 0x00, 0x00);
     serial::uart_str("\n[aarch64] *** EXCEPTION *** vector=");
     uart_hex(index);
     serial::uart_str("\n  ESR_EL1=");
@@ -733,6 +775,7 @@ fn init_memory(
 
 #[no_mangle]
 pub extern "C" fn kmain(dtb: u64) -> ! {
+
     serial::uart_str("\nSemOS aarch64 — ARM HAL + kernel-core scheduler\n");
 
     // These two must precede any nontrivial Rust: at -O the compiler emits NEON
@@ -753,6 +796,7 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
         uart_hex(v);
         serial::uart_str("\n");
     }
+
 
     // M1 verify: parse the device tree m1n1/QEMU handed us in x0. The MMU is
     // still off here, so the physical DTB pointer is directly readable.
@@ -823,13 +867,15 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     let fb_node = fdt.and_then(|f| f.simple_framebuffer());
     let fb_range = fb_node.map(|f| (f.base, f.size));
 
+
+
     // Bring the screen up *before* the MMU. The framebuffer is physical memory
     // and translation is still off, so it is directly writable here — and this
     // way the MMU and memory logs, the two places most likely to go wrong on a
     // Mac, are on screen rather than lost. From here every uart_str in the
     // kernel is mirrored to it, including the panic handler.
     if let Some(f) = fb_node {
-        let ok = unsafe { fb::init(&f) };
+        let ok = false; let _ = &f; // PROBE: defer fb init until AFTER our MMU maps it
         if ok {
             let (w, h, scale) = fb::geometry();
             serial::uart_str("  [fb] console @");
@@ -856,8 +902,18 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
     serial::uart_str("  enabling MMU (identity map from FDT, IPS=");
     uart_hex(crate::mmu::ips());
     serial::uart_str(")...\n");
+
+
+
     unsafe { crate::mmu::enable_identity_mmu(&banks[..nbanks], console_mmio, fb_range) };
+    // ===== POST-MMU SPIN (fb DEVICE-mapped, NO write) ==========================
+    //   Hang on logo    => device fb mapping is fine; the WRITE to fb.base faults.
+    //   Reboot to macOS => even a device fb mapping reboots (fb.base/size bogus?).
+    loop { unsafe { core::arch::asm!("wfe"); } }
+    // ===== END POST-MMU SPIN ===================================================
     serial::uart_str("  MMU ON — translation active.\n");
+
+
 
     // M4/M5: build the frame pool from the RAM the device tree describes.
     init_memory(fdt, dtb, &banks[..nbanks], fb_range);
@@ -925,6 +981,8 @@ pub extern "C" fn kmain(dtb: u64) -> ! {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
+    // Magenta = Rust panic. Distinct from exception red and alive teal.
+    fb::flood(0xC0, 0x00, 0xC0);
     serial::uart_str("\n[aarch64] PANIC — halting.\n");
     loop {
         unsafe { core::arch::asm!("wfe") };

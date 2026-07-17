@@ -8,10 +8,10 @@
 //!   of the Samsung S3C UART: status at +0x10 (TX-buffer-empty at bit 1), TX
 //!   holding register at +0x20, and 32-bit accesses only.
 //!
-//! Until `init_from_fdt` runs we have to print *something* — the FDT parse
-//! itself logs, and a parse failure must be able to say so — so the statics
-//! start on the PL011 base QEMU uses. That guess is only ever wrong on hardware
-//! whose real console we are about to discover anyway.
+//! Until `init_from_fdt` runs, the UART is deliberately disabled. The old QEMU
+//! PL011 default was convenient, but on Apple Silicon that physical address is
+//! not a UART; touching it before the DTB retargets the console can take an
+//! external abort before vectors or the framebuffer are alive.
 //!
 //! Neither path programs baud, line control, or the FIFOs: whoever loaded us
 //! (QEMU, or m1n1, which prints its own banner) already brought the console up,
@@ -21,8 +21,8 @@ use core::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
 use crate::fdt::Node;
 
-/// PL011 UART0 on QEMU `-M virt` — the pre-FDT default.
-const DEFAULT_BASE: u64 = 0x0900_0000;
+/// No pre-DTB UART. The DTB must name a real console before MMIO is touched.
+const DEFAULT_BASE: u64 = 0;
 
 // PL011 register offsets.
 const PL011_DR: u64 = 0x00;
@@ -37,6 +37,7 @@ const S5L_UTRSTAT_TXBE: u32 = 1 << 1; // TX buffer empty
 /// Which register layout the console UART uses.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum UartKind {
+    None,
     Pl011,
     AppleS5L,
 }
@@ -45,6 +46,7 @@ impl UartKind {
     /// The `compatible` string a device tree uses for this UART.
     pub fn name(self) -> &'static str {
         match self {
+            UartKind::None => "none",
             UartKind::Pl011 => "arm,pl011",
             UartKind::AppleS5L => "apple,s5l-uart",
         }
@@ -52,24 +54,27 @@ impl UartKind {
 
     fn from_tag(tag: u8) -> UartKind {
         match tag {
+            TAG_PL011 => UartKind::Pl011,
             TAG_APPLE_S5L => UartKind::AppleS5L,
-            _ => UartKind::Pl011,
+            _ => UartKind::None,
         }
     }
 
     fn tag(self) -> u8 {
         match self {
+            UartKind::None => TAG_NONE,
             UartKind::Pl011 => TAG_PL011,
             UartKind::AppleS5L => TAG_APPLE_S5L,
         }
     }
 }
 
+const TAG_NONE: u8 = 0xFF;
 const TAG_PL011: u8 = 0;
 const TAG_APPLE_S5L: u8 = 1;
 
 static UART_BASE: AtomicU64 = AtomicU64::new(DEFAULT_BASE);
-static UART_TAG: AtomicU8 = AtomicU8::new(TAG_PL011);
+static UART_TAG: AtomicU8 = AtomicU8::new(TAG_NONE);
 
 /// A TX register that never drains would otherwise hang the boot with no
 /// output at all. Bound the wait and push the byte anyway: a garbled line is a
@@ -79,8 +84,8 @@ const TX_SPIN_LIMIT: u32 = 100_000;
 /// Point the console at the UART the device tree describes.
 ///
 /// Returns the `(kind, base)` adopted, or `None` if the tree has no console
-/// node we can drive — in which case the caller keeps printing to the
-/// pre-FDT default and should say so.
+/// node we can drive — in which case UART output remains disabled until the
+/// framebuffer console comes up.
 pub fn init_from_fdt(fdt: &crate::fdt::Fdt) -> Option<(UartKind, u64)> {
     let node = fdt.stdout_uart()?;
     let (base, _size) = node.reg?;
@@ -134,6 +139,7 @@ pub fn uart_put(b: u8) {
     let (kind, base) = current();
     unsafe {
         match kind {
+            UartKind::None => return,
             UartKind::Pl011 => {
                 let mut spins = 0;
                 while mmio_r32(base + PL011_FR) & PL011_FR_TXFF != 0 && spins < TX_SPIN_LIMIT {
