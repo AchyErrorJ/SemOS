@@ -800,8 +800,11 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             else if argv[1] == "verify-60" { 2 }
             else if argv[1] == "poke-60" { 3 }
             else if argv[1] == "wait-vblank" || argv[1] == "vblank" { 4 }
+            else if argv[1] == "snapshot" { 5 }
+            else if argv[1] == "native-60" { 6 }
+            else if argv[1] == "restore-gop" { 7 }
             else {
-                println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank]");
+                println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank|snapshot|native-60|restore-gop]");
                 return 2;
             };
             let rc = unsafe { syscall1(SYS_MODESET, op) };

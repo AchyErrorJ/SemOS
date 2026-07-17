@@ -12,6 +12,25 @@ use crate::display::mmio::MmioReg;
 
 // Haswell/Gen7 display register offsets in BAR0 for CPU transcoder/pipe A.
 // These are the internal-panel path candidates observed/needed for T540p M14.
+
+// Power wells / force-wake
+const PWR_WELL_CTL:       u64 = 0x45400;
+const PWR_WELL_CTL2:      u64 = 0x45404;
+const FORCEWAKE_MEDIA:    u64 = 0xA254;  // render/media force-wake request
+const FORCEWAKE_ACK_MEDIA: u64 = 0xA258; // render/media force-wake acknowledge
+
+// DPLL 0 (display PLL for the eDP path)
+const DPLL_CTRL1:         u64 = 0x6C058;
+const DPLL_CFGCR1:        u64 = 0x6C080;
+const DPLL_CFGCR2:        u64 = 0x6C084;
+
+// DDI A (internal eDP panel)
+const DDI_BUF_CTL_A:      u64 = 0x64000;
+const DP_TP_CTL_A:        u64 = 0x64040;
+const DP_TP_STATUS_A:     u64 = 0x64044;
+const DDI_BUF_TRANS_A:    u64 = 0x64E00; // base of 9-entry translation table
+
+// Transcoder A timing
 const TRANS_HTOTAL_A: u64 = 0x60000;
 const TRANS_HBLANK_A: u64 = 0x60004;
 const TRANS_HSYNC_A:  u64 = 0x60008;
@@ -20,11 +39,18 @@ const TRANS_VBLANK_A: u64 = 0x60010;
 const TRANS_VSYNC_A:  u64 = 0x60014;
 const PIPEASRC:       u64 = 0x6001C;
 const TRANS_DDI_FUNC_CTL_A: u64 = 0x60400;
+
+// Pipe A
 const PIPE_DSL_A:     u64 = 0x70000; // current display scanline, read-only pacing source
 const PIPECONF_A:     u64 = 0x70008;
+
+// Primary plane A
 const DSPCNTR_A:      u64 = 0x70180;
 const DSPSTRIDE_A:    u64 = 0x70188;
 const DSPSURF_A:      u64 = 0x7019C;
+const DSPTILEOFF_A:   u64 = 0x701A0;
+const DSPPOS_A:       u64 = 0x7018C;
+const DSPSIZE_A:      u64 = 0x70190;
 
 #[derive(Clone, Copy)]
 pub enum ModeOp {
@@ -33,6 +59,9 @@ pub enum ModeOp {
     Verify60,
     Poke60Timings,
     WaitVblank,
+    Snapshot,
+    Native60,
+    RestoreGop,
 }
 
 #[derive(Clone, Copy)]
@@ -69,6 +98,114 @@ struct RegPlan {
     vblank: u32,
     vsync: u32,
     pipeasrc: u32,
+}
+
+/// Snapshot of the display engine state for save/restore and oracle comparison.
+/// All offsets are for Haswell Pipe/Transcoder/DDI/Plane A and DPLL 0.
+#[derive(Clone, Copy, Default)]
+struct DisplaySnapshot {
+    // Power / force-wake
+    pwr_well_ctl: u32,
+    pwr_well_ctl2: u32,
+    forcewake_media: u32,
+    forcewake_ack_media: u32,
+
+    // DPLL 0
+    dpll_ctrl1: u32,
+    dpll_cfgcr1: u32,
+    dpll_cfgcr2: u32,
+
+    // DDI A (eDP)
+    ddi_buf_ctl_a: u32,
+    dp_tp_ctl_a: u32,
+    dp_tp_status_a: u32,
+
+    // Transcoder A timing
+    trans_htotal_a: u32,
+    trans_hblank_a: u32,
+    trans_hsync_a: u32,
+    trans_vtotal_a: u32,
+    trans_vblank_a: u32,
+    trans_vsync_a: u32,
+    pipeasrc: u32,
+    trans_ddi_func_ctl_a: u32,
+
+    // Pipe A
+    pipeconf_a: u32,
+
+    // Plane A
+    dspcntr_a: u32,
+    dspstride_a: u32,
+    dspsurf_a: u32,
+    dsptileoff_a: u32,
+    dsppos_a: u32,
+    dspsize_a: u32,
+}
+
+impl DisplaySnapshot {
+    fn read(mmio: &MmioReg) -> Self {
+        Self {
+            pwr_well_ctl: mmio.read32(PWR_WELL_CTL),
+            pwr_well_ctl2: mmio.read32(PWR_WELL_CTL2),
+            forcewake_media: mmio.read32(FORCEWAKE_MEDIA),
+            forcewake_ack_media: mmio.read32(FORCEWAKE_ACK_MEDIA),
+
+            dpll_ctrl1: mmio.read32(DPLL_CTRL1),
+            dpll_cfgcr1: mmio.read32(DPLL_CFGCR1),
+            dpll_cfgcr2: mmio.read32(DPLL_CFGCR2),
+
+            ddi_buf_ctl_a: mmio.read32(DDI_BUF_CTL_A),
+            dp_tp_ctl_a: mmio.read32(DP_TP_CTL_A),
+            dp_tp_status_a: mmio.read32(DP_TP_STATUS_A),
+
+            trans_htotal_a: mmio.read32(TRANS_HTOTAL_A),
+            trans_hblank_a: mmio.read32(TRANS_HBLANK_A),
+            trans_hsync_a: mmio.read32(TRANS_HSYNC_A),
+            trans_vtotal_a: mmio.read32(TRANS_VTOTAL_A),
+            trans_vblank_a: mmio.read32(TRANS_VBLANK_A),
+            trans_vsync_a: mmio.read32(TRANS_VSYNC_A),
+            pipeasrc: mmio.read32(PIPEASRC),
+            trans_ddi_func_ctl_a: mmio.read32(TRANS_DDI_FUNC_CTL_A),
+
+            pipeconf_a: mmio.read32(PIPECONF_A),
+
+            dspcntr_a: mmio.read32(DSPCNTR_A),
+            dspstride_a: mmio.read32(DSPSTRIDE_A),
+            dspsurf_a: mmio.read32(DSPSURF_A),
+            dsptileoff_a: mmio.read32(DSPTILEOFF_A),
+            dsppos_a: mmio.read32(DSPPOS_A),
+            dspsize_a: mmio.read32(DSPSIZE_A),
+        }
+    }
+
+    fn print(&self) {
+        println!("modeset snapshot:");
+        println!("  PWR_WELL_CTL          [0x{:05X}] = 0x{:08X}", PWR_WELL_CTL, self.pwr_well_ctl);
+        println!("  PWR_WELL_CTL2         [0x{:05X}] = 0x{:08X}", PWR_WELL_CTL2, self.pwr_well_ctl2);
+        println!("  FORCEWAKE_MEDIA       [0x{:05X}] = 0x{:08X}", FORCEWAKE_MEDIA, self.forcewake_media);
+        println!("  FORCEWAKE_ACK_MEDIA   [0x{:05X}] = 0x{:08X}", FORCEWAKE_ACK_MEDIA, self.forcewake_ack_media);
+        println!("  DPLL_CTRL1            [0x{:05X}] = 0x{:08X}", DPLL_CTRL1, self.dpll_ctrl1);
+        println!("  DPLL_CFGCR1           [0x{:05X}] = 0x{:08X}", DPLL_CFGCR1, self.dpll_cfgcr1);
+        println!("  DPLL_CFGCR2           [0x{:05X}] = 0x{:08X}", DPLL_CFGCR2, self.dpll_cfgcr2);
+        println!("  DDI_BUF_CTL_A         [0x{:05X}] = 0x{:08X}", DDI_BUF_CTL_A, self.ddi_buf_ctl_a);
+        println!("  DP_TP_CTL_A           [0x{:05X}] = 0x{:08X}", DP_TP_CTL_A, self.dp_tp_ctl_a);
+        println!("  DP_TP_STATUS_A        [0x{:05X}] = 0x{:08X}", DP_TP_STATUS_A, self.dp_tp_status_a);
+        println!("  TRANS_HTOTAL_A        [0x{:05X}] = 0x{:08X}", TRANS_HTOTAL_A, self.trans_htotal_a);
+        println!("  TRANS_HBLANK_A        [0x{:05X}] = 0x{:08X}", TRANS_HBLANK_A, self.trans_hblank_a);
+        println!("  TRANS_HSYNC_A         [0x{:05X}] = 0x{:08X}", TRANS_HSYNC_A, self.trans_hsync_a);
+        println!("  TRANS_VTOTAL_A        [0x{:05X}] = 0x{:08X}", TRANS_VTOTAL_A, self.trans_vtotal_a);
+        println!("  TRANS_VBLANK_A        [0x{:05X}] = 0x{:08X}", TRANS_VBLANK_A, self.trans_vblank_a);
+        println!("  TRANS_VSYNC_A         [0x{:05X}] = 0x{:08X}", TRANS_VSYNC_A, self.trans_vsync_a);
+        println!("  PIPEASRC              [0x{:05X}] = 0x{:08X}", PIPEASRC, self.pipeasrc);
+        println!("  TRANS_DDI_FUNC_CTL_A  [0x{:05X}] = 0x{:08X}", TRANS_DDI_FUNC_CTL_A, self.trans_ddi_func_ctl_a);
+        println!("  PIPECONF_A            [0x{:05X}] = 0x{:08X}", PIPECONF_A, self.pipeconf_a);
+        println!("  DSPCNTR_A             [0x{:05X}] = 0x{:08X}", DSPCNTR_A, self.dspcntr_a);
+        println!("  DSPSTRIDE_A           [0x{:05X}] = 0x{:08X}", DSPSTRIDE_A, self.dspstride_a);
+        println!("  DSPSURF_A             [0x{:05X}] = 0x{:08X}", DSPSURF_A, self.dspsurf_a);
+        println!("  DSPTILEOFF_A          [0x{:05X}] = 0x{:08X}", DSPTILEOFF_A, self.dsptileoff_a);
+        println!("  DSPPOS_A              [0x{:05X}] = 0x{:08X}", DSPPOS_A, self.dsppos_a);
+        println!("  DSPSIZE_A             [0x{:05X}] = 0x{:08X}", DSPSIZE_A, self.dspsize_a);
+    }
 }
 
 impl Timing1080p60 {
@@ -121,6 +258,9 @@ pub fn run(op: ModeOp) -> u64 {
         ModeOp::Verify60 => verify_60(&mmio),
         ModeOp::Poke60Timings => poke_60_timings(&mmio),
         ModeOp::WaitVblank => wait_vblank_cmd(&mmio),
+        ModeOp::Snapshot => snapshot(&mmio),
+        ModeOp::Native60 => native_60(&mmio),
+        ModeOp::RestoreGop => restore_gop(&mmio),
     }
 }
 
@@ -186,6 +326,31 @@ fn poke_60_timings(mmio: &MmioReg) -> u64 {
     write_reg(mmio, "PIPEASRC", PIPEASRC, p.pipeasrc);
     let _ = verify_60(mmio);
     0
+}
+
+/// Capture a read-only snapshot of every display register M14-I may touch.
+/// This is the first step before any native modeset write and the data source
+/// for `docs/DISPLAY_HASWELL_NATIVE_MODESET.md`.
+fn snapshot(mmio: &MmioReg) -> u64 {
+    let s = DisplaySnapshot::read(mmio);
+    s.print();
+    0
+}
+
+/// M14-I placeholder: perform a full native Haswell modeset to 1920x1080@60.
+/// The implementation is gated until the refreshed `i915_display_info.txt`
+/// oracle values are committed and the design doc is written.
+fn native_60(_mmio: &MmioReg) -> u64 {
+    println!("modeset native-60: M14-I not yet implemented");
+    println!("modeset native-60: run `modeset snapshot` and refresh the Pop!_OS oracle capture first");
+    u64::MAX
+}
+
+/// M14-I placeholder: restore the original GOP-driven display state.
+fn restore_gop(_mmio: &MmioReg) -> u64 {
+    println!("modeset restore-gop: M14-I not yet implemented");
+    println!("modeset restore-gop: reboot to return to GOP if native-60 was not run");
+    u64::MAX
 }
 
 /// Public 60 Hz pacing primitive for the present path. Read-only: constructs a
