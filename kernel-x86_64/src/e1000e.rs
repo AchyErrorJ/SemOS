@@ -315,8 +315,29 @@ pub fn init() -> bool {
     true
 }
 
+/// Sleep at least `ms` milliseconds using the scheduler tick (62 Hz, so
+/// resolution is ~16 ms; always rounds up by one tick). Ctrl+C cuts the
+/// wait short so a real-hardware hang doesn't deadlock the whole boot
+/// with no way out — same pattern as the EHCI/xHCI reset waits.
+fn sleep_ms(ms: u64) {
+    let ticks_needed = (ms * kernel_core::scheduler::SCHEDULER_TICK_HZ).div_ceil(1000) + 1;
+    let end = kernel_core::platform::ticks() + ticks_needed;
+    while kernel_core::platform::ticks() < end {
+        if crate::keyboard::abort_requested() { return; }
+        core::hint::spin_loop();
+    }
+}
+
 /// Reset the MAC. Per the e1000e spec, write CTRL.RST and wait for it to
 /// clear, then set SLU to take the PHY out of low-power state.
+///
+/// Real PCH-integrated silicon (unlike QEMU's instant-response emulated
+/// e1000e) can leave the MMIO register interface unresponsive for a few
+/// milliseconds while the reset pulse is in flight. A blocking MMIO load
+/// issued into that window doesn't time out — the load instruction never
+/// retires — so we must NOT re-read any register immediately after
+/// writing RST. Sleep first (matches the Linux e1000e ich8lan/lpt reset
+/// sequence), then poll with real per-iteration delays.
 fn reset() -> bool {
     unsafe {
         // Disable RX/TX before reset.
@@ -331,20 +352,25 @@ fn reset() -> bool {
         ctrl |= ctrl::RST;
         wr32(reg::CTRL, ctrl);
 
-        // Wait for RST to clear (with timeout).
-        let mut spins = 0u32;
-        while rd32(reg::CTRL) & ctrl::RST != 0 {
-            spins = spins.wrapping_add(1);
-            if spins > 10_000_000 {
+        // Let the reset pulse land before touching MMIO again — do NOT
+        // read back CTRL immediately (see doc comment above).
+        sleep_ms(20);
+
+        // Now poll for RST to clear, with a bounded real-time deadline and
+        // a sleep between reads rather than a tight spin.
+        let deadline = kernel_core::platform::ticks() + kernel_core::scheduler::SCHEDULER_TICK_HZ; // ~1 s
+        loop {
+            if rd32(reg::CTRL) & ctrl::RST == 0 { break; }
+            if kernel_core::platform::ticks() >= deadline {
+                crate::println!("[e1000e] reset did not clear within 1s");
                 return false;
             }
-            core::hint::spin_loop();
+            if crate::keyboard::abort_requested() { return false; }
+            sleep_ms(2);
         }
 
-        // Wait a small additional delay for PHY/serdes to settle.
-        for _ in 0..1000 {
-            core::hint::spin_loop();
-        }
+        // Additional settle delay for PHY/serdes.
+        sleep_ms(5);
 
         // Bring the link up.
         ctrl = rd32(reg::CTRL);
