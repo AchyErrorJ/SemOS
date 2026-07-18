@@ -270,8 +270,9 @@ impl Platform for X86Platform {
         // The editor's keyboard pump + sleep cadence need the timer; enable
         // interrupts for the session (iretq restores the Ring-3 caller's flags).
         x86_64::instructions::interrupts::enable();
-        let bytes = unsafe {
-            core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize)
+        let bytes = match unsafe { kernel_core::syscall::read_caller_slice(path_ptr, path_len) } {
+            Some(b) => b,
+            None => return 2,
         };
         let path = core::str::from_utf8(bytes).unwrap_or("");
         if path.is_empty() {
@@ -297,10 +298,19 @@ impl Platform for X86Platform {
     }
 
     fn run_wifi_connect(&self, idx: u64, pass_ptr: u64, pass_len: u64) -> u64 {
-        // Read the password from the user buffer (trust the VA, as the rest of
-        // the syscall layer does). Bound the length defensively.
+        // Read the password from the caller's buffer (range-validated for
+        // Ring-3 callers). Bound the length defensively. An empty password
+        // (open network) is legal — the slice helper rejects zero-length
+        // ranges, so special-case it.
         let len = (pass_len as usize).min(63);
-        let pass = unsafe { core::slice::from_raw_parts(pass_ptr as *const u8, len) };
+        let pass: &[u8] = if len == 0 {
+            &[]
+        } else {
+            match unsafe { kernel_core::syscall::read_caller_slice(pass_ptr, len as u64) } {
+                Some(p) => p,
+                None => return u64::MAX,
+            }
+        };
         match crate::wireless::iwlwifi_device::device() {
             Some(dev) => dev.connect(idx as usize, pass) as u64,
             None => {

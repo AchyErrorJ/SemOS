@@ -384,14 +384,15 @@ fn caller_needs_validation() -> bool {
 /// Read a byte slice from the syscall caller's address space. For Ring-3
 /// callers the range is validated against USER_ADDR_LIMIT first, so a user
 /// task can never trick a handler into reading kernel memory. Returns None
-/// if the pointer is invalid.
+/// if the pointer is invalid. `pub` so platform-side syscall handlers
+/// (editor path, wifi password) share the same enforcement.
 ///
 /// # Safety
 /// Range-checked for user callers; the memory must still be mapped (an
 /// in-range-but-unmapped user pointer faults — the kernel #PF handler kills
 /// the faulting task rather than the machine; a copy-with-recovery path is
 /// future work).
-unsafe fn read_caller_slice(ptr: u64, len: u64) -> Option<&'static [u8]> {
+pub unsafe fn read_caller_slice(ptr: u64, len: u64) -> Option<&'static [u8]> {
     if caller_needs_validation() && !validate_user_ptr(ptr, len) {
         return None;
     }
@@ -513,9 +514,8 @@ fn pipe_read_blocking(pipe_id: usize, buf_ptr: u64, buf_len: u64) -> u64 {
     match crate::ipc::pipe_read(pipe_id, read_buf) {
         Some(n) => {
             if n > 0 {
-                unsafe {
-                    let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
-                    dest.copy_from_slice(&read_buf[..n]);
+                if !unsafe { write_to_caller(buf_ptr, &read_buf[..n]) } {
+                    return u64::MAX;
                 }
             }
             n as u64 // n>0 = data, n==0 = EOF (no writers left)
@@ -553,10 +553,11 @@ fn handle_read(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
 
 /// Drain the TTY line discipline into the user buffer.
 fn stdin_drain(buf_ptr: u64, len: usize) -> u64 {
-    unsafe {
-        let slice = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len);
-        crate::platform::stdin_read(slice) as u64
-    }
+    let slice = match unsafe { caller_slice_mut(buf_ptr, len as u64) } {
+        Some(s) => s,
+        None => return u64::MAX,
+    };
+    crate::platform::stdin_read(slice) as u64
 }
 
 fn handle_exit(code: u64) -> u64 {
@@ -657,7 +658,10 @@ fn handle_sysinfo(buf_ptr: u64, buf_len: u64) -> u64 {
         return u64::MAX;
     }
     let (used, free, blocks) = crate::memory::heap::stats();
-    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, 24) };
+    let buf = match unsafe { caller_slice_mut(buf_ptr, 24) } {
+        Some(b) => b,
+        None => return u64::MAX,
+    };
     buf[0..8].copy_from_slice(&(used as u64).to_le_bytes());
     buf[8..16].copy_from_slice(&(free as u64).to_le_bytes());
     buf[16..24].copy_from_slice(&(blocks as u64).to_le_bytes());
@@ -673,8 +677,14 @@ fn handle_ask(prompt_ptr: u64, prompt_len: u64, out_ptr: u64, out_len: u64) -> u
     if prompt_ptr == 0 || out_ptr == 0 || prompt_len == 0 || prompt_len > 16384 || out_len == 0 {
         return 0;
     }
-    let prompt = unsafe { core::slice::from_raw_parts(prompt_ptr as *const u8, prompt_len as usize) };
-    let out = unsafe { core::slice::from_raw_parts_mut(out_ptr as *mut u8, out_len as usize) };
+    let prompt = match unsafe { read_caller_slice(prompt_ptr, prompt_len) } {
+        Some(s) => s,
+        None => return 0,
+    };
+    let out = match unsafe { caller_slice_mut(out_ptr, out_len) } {
+        Some(s) => s,
+        None => return 0,
+    };
     crate::platform::get().llm_ask(prompt, out) as u64
 }
 
@@ -692,7 +702,10 @@ fn handle_ps(buf_ptr: u64, buf_len: u64) -> u64 {
     if cap == 0 {
         return 0;
     }
-    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len as usize) };
+    let buf = match unsafe { caller_slice_mut(buf_ptr, buf_len) } {
+        Some(b) => b,
+        None => return 0,
+    };
     let tasks = unsafe { &*core::ptr::addr_of!(crate::scheduler::TASKS) };
     let mut n = 0usize;
     for (i, t) in tasks.iter().enumerate() {
@@ -773,10 +786,7 @@ fn handle_get_cwd(buf_ptr: u64, buf_len: u64) -> u64 {
     }
 
     if cwd_len > len_out { return u64::MAX; }
-    unsafe {
-        let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, cwd_len);
-        dest.copy_from_slice(&cwd_bytes[..cwd_len]);
-    }
+    if !unsafe { write_to_caller(buf_ptr, &cwd_bytes[..cwd_len]) } { return u64::MAX; }
     cwd_len as u64
 }
 
@@ -785,12 +795,9 @@ fn handle_get_cwd(buf_ptr: u64, buf_len: u64) -> u64 {
 fn handle_set_cwd(path_ptr: u64, path_len: u64) -> u64 {
     let len = path_len as usize;
     if len == 0 || len > 128 { return u64::MAX; }
-    let path = unsafe {
-        let slice = core::slice::from_raw_parts(path_ptr as *const u8, len);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let path = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
     let pid = crate::process::current_pid();
     unsafe {
@@ -810,12 +817,9 @@ fn handle_get_env(key_ptr: u64, key_len: u64, val_buf_ptr: u64, val_buf_len: u64
     let vlen_out = val_buf_len as usize;
     if klen == 0 || klen > 64 || vlen_out == 0 || vlen_out > 1024 { return u64::MAX; }
 
-    let key = unsafe {
-        let slice = core::slice::from_raw_parts(key_ptr as *const u8, klen);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let key = match unsafe { read_caller_str(key_ptr, key_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
     let pid = crate::process::current_pid();
     unsafe {
@@ -826,8 +830,7 @@ fn handle_get_env(key_ptr: u64, key_len: u64, val_buf_ptr: u64, val_buf_len: u64
         match proc.env_get(key) {
             Some(value) => {
                 if value.len() > vlen_out { return u64::MAX; }
-                let dest = core::slice::from_raw_parts_mut(val_buf_ptr as *mut u8, value.len());
-                dest.copy_from_slice(value);
+                if !write_to_caller(val_buf_ptr, value) { return u64::MAX; }
                 value.len() as u64
             }
             None => 0,
@@ -841,18 +844,18 @@ fn handle_set_env(key_ptr: u64, key_len: u64, val_ptr: u64, val_len: u64) -> u64
     let klen = key_len as usize;
     let vlen = val_len as usize;
     if klen == 0 || klen > 64 || vlen > 1024 { return u64::MAX; }
-    let key = unsafe {
-        let slice = core::slice::from_raw_parts(key_ptr as *const u8, klen);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let key = match unsafe { read_caller_str(key_ptr, key_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
-    let val = unsafe {
-        let slice = core::slice::from_raw_parts(val_ptr as *const u8, vlen);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
+    // vlen == 0 is legal (clears the value); the slice helpers reject
+    // zero-length ranges, so special-case it.
+    let val = if vlen == 0 {
+        ""
+    } else {
+        match unsafe { read_caller_str(val_ptr, val_len) } {
+            Some(s) => s,
+            None => return u64::MAX,
         }
     };
     let pid = crate::process::current_pid();
@@ -952,12 +955,9 @@ pub mod open_flags {
 // ============================================================================
 
 fn handle_open(path_ptr: u64, path_len: u64, flags: u64) -> u64 {
-    let name = unsafe {
-        let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let name = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     // Path-namespace entries are absolute (start with '/'). Anything else
@@ -1180,10 +1180,7 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
             let pos = position as usize;
             if pos >= bytes.len() { return 0; }
             let n = (bytes.len() - pos).min(len);
-            unsafe {
-                let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
-                dest.copy_from_slice(&bytes[pos..pos + n]);
-            }
+            if !unsafe { write_to_caller(buf_ptr, &bytes[pos..pos + n]) } { return u64::MAX; }
             crate::process::with_current_fds_mut(|t| {
                 if let Some(FdEntry::Path { position, .. }) = t.get_mut(fd as i32) {
                     *position = (pos + n) as u32;
@@ -1194,7 +1191,10 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
 
         // M27 DEMO 80: sysroot blob file — stream from the SATA disk at cursor.
         Some(FdEntry::SysrootBlob { idx, position }) => {
-            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len) };
+            let buf = match unsafe { caller_slice_mut(buf_ptr, len as u64) } {
+                Some(b) => b,
+                None => return u64::MAX,
+            };
             match crate::sysroot_blob::read(idx as usize, position, buf) {
                 Some(n) => {
                     if n > 0 {
@@ -1226,9 +1226,8 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
             match fd_table.read(fs, handle as usize, read_buf) {
                 Some(n) => {
                     if n > 0 {
-                        unsafe {
-                            let dest = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, n);
-                            dest.copy_from_slice(&read_buf[..n]);
+                        if !unsafe { write_to_caller(buf_ptr, &read_buf[..n]) } {
+                            return u64::MAX;
                         }
                     }
                     n as u64
@@ -1253,11 +1252,7 @@ fn handle_sysroot_info(idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u64 {
     let n = cap.min(tmp.len());
     match crate::sysroot_blob::info(idx as usize, &mut tmp[..n]) {
         Some(len) => {
-            // SAFETY: user buffer; trust the VA as the rest of this file does.
-            unsafe {
-                let dest = core::slice::from_raw_parts_mut(name_buf_ptr as *mut u8, n);
-                dest.copy_from_slice(&tmp[..n]);
-            }
+            if !unsafe { write_to_caller(name_buf_ptr, &tmp[..n]) } { return u64::MAX; }
             len
         }
         None => u64::MAX,
@@ -1271,8 +1266,11 @@ fn handle_sysroot_read(idx: u64, offset: u64, buf_ptr: u64, buf_len: u64) -> u64
     if len == 0 || len > crate::semantic::object::MAX_FILE_CONTENT {
         return u64::MAX;
     }
-    // SAFETY: user buffer; trust the VA as the rest of this file does.
-    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len) };
+    // SAFETY: range-validated for Ring-3 callers; must still be mapped.
+    let buf = match unsafe { caller_slice_mut(buf_ptr, buf_len) } {
+        Some(b) => b,
+        None => return u64::MAX,
+    };
     match crate::sysroot_blob::read(idx as usize, offset, buf) {
         Some(n) => n as u64,
         None => u64::MAX,
@@ -1392,12 +1390,9 @@ fn handle_seek(fd: u64, position: u64) -> u64 {
 
 /// SYS_STAT(path_ptr, path_len) → file size, or u64::MAX if not found
 fn handle_stat(path_ptr: u64, path_len: u64) -> u64 {
-    let name = unsafe {
-        let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let name = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     // Path-namespace first (absolute paths).
@@ -1427,12 +1422,9 @@ fn handle_stat(path_ptr: u64, path_len: u64) -> u64 {
 
 /// SYS_MKDIR(path_ptr, path_len) → 0 on success, u64::MAX on error.
 fn handle_mkdir(path_ptr: u64, path_len: u64) -> u64 {
-    let path = unsafe {
-        let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let path = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
     match crate::fs::paths::Namespace::mkdir(path) {
         Ok(_) => 0,
@@ -1443,12 +1435,9 @@ fn handle_mkdir(path_ptr: u64, path_len: u64) -> u64 {
 /// SYS_UNLINK(path_ptr, path_len) → 0 on success, u64::MAX on error.
 /// Removes the file or empty directory at the given absolute path.
 fn handle_unlink(path_ptr: u64, path_len: u64) -> u64 {
-    let path = unsafe {
-        let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let path = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
     match crate::fs::paths::Namespace::unlink(path) {
         Ok(()) => 0,
@@ -1510,13 +1499,13 @@ fn handle_fsync() -> u64 {
 /// add new name to new parent. SUID stays the same → atomic. Both
 /// parent dirs must exist; new name must not.
 fn handle_rename(old_ptr: u64, old_len: u64, new_ptr: u64, new_len: u64) -> u64 {
-    let old_path = unsafe {
-        let s = core::slice::from_raw_parts(old_ptr as *const u8, old_len as usize);
-        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    let old_path = match unsafe { read_caller_str(old_ptr, old_len) } {
+        Some(p) => p,
+        None => return u64::MAX,
     };
-    let new_path = unsafe {
-        let s = core::slice::from_raw_parts(new_ptr as *const u8, new_len as usize);
-        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    let new_path = match unsafe { read_caller_str(new_ptr, new_len) } {
+        Some(p) => p,
+        None => return u64::MAX,
     };
     match crate::fs::paths::Namespace::rename(old_path, new_path) {
         Ok(()) => 0,
@@ -1529,9 +1518,9 @@ fn handle_rename(old_ptr: u64, old_len: u64, new_ptr: u64, new_len: u64) -> u64 
 /// zeros. Errors if `new_size > 256` (today's inline-only limit) —
 /// follow-up task #44 wires the Allocated content path.
 fn handle_truncate(path_ptr: u64, path_len: u64, new_size: u64) -> u64 {
-    let path = unsafe {
-        let s = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    let path = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(p) => p,
+        None => return u64::MAX,
     };
     match crate::fs::paths::Namespace::truncate(path, new_size as usize) {
         Ok(()) => 0,
@@ -1544,10 +1533,18 @@ fn handle_truncate(path_ptr: u64, path_len: u64, new_size: u64) -> u64 {
 /// responsible for the struct buffer being large enough (sizeof
 /// StatX = 64 bytes).
 fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
-    let path = unsafe {
-        let s = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(s) { Ok(p) => p, Err(_) => return u64::MAX }
+    let path = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(p) => p,
+        None => return u64::MAX,
     };
+    // The StatX out-struct is written through a raw `&mut *out_ptr` below —
+    // for a Ring-3 caller it must be a user-space buffer, not a kernel
+    // address (same class as the review's critical #2).
+    if caller_needs_validation()
+        && !validate_user_ptr(out_ptr, core::mem::size_of::<StatX>() as u64)
+    {
+        return u64::MAX;
+    }
     // M27 DEMO 80: sysroot blob files (/sysroot/<name>) are read-only, disk-
     // backed, and have no namespace object. The rustc crate loader stats them
     // (Path::exists / is_file) before opening, so report size + regular-file.
@@ -1629,9 +1626,8 @@ fn handle_readdir(fd: u64, idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u6
             Err(_) => return u64::MAX,
         };
         let n = name.len().min(buf_len);
-        unsafe {
-            let dest = core::slice::from_raw_parts_mut(name_buf_ptr as *mut u8, n);
-            dest.copy_from_slice(&name.as_bytes()[..n]);
+        if !unsafe { write_to_caller(name_buf_ptr, &name.as_bytes()[..n]) } {
+            return u64::MAX;
         }
         return n as u64;
     }
@@ -1669,6 +1665,12 @@ fn handle_sleep(ticks: u64) -> u64 {
 /// Creates a pipe and writes [read_fd, write_fd] (two u64s) to `out_ptr`.
 fn handle_pipe(out_ptr: u64) -> u64 {
     use crate::process::FdEntry;
+    // Validate the out-pointer first (a Ring-3 caller must not aim this at
+    // kernel memory) — before allocating anything, so a rejected call can't
+    // leak pipe slots and FDs.
+    if caller_needs_validation() && !validate_user_ptr(out_ptr, 16) {
+        return u64::MAX;
+    }
     let pipe_id = match crate::ipc::create_pipe() {
         Some(id) => id,
         None => {
@@ -1699,7 +1701,7 @@ fn handle_pipe(out_ptr: u64) -> u64 {
         }
     };
 
-    // Write the two FDs to user space
+    // Write the two FDs to user space (out_ptr validated above).
     unsafe {
         let out = out_ptr as *mut u64;
         *out = read_fd as u64;
@@ -1828,6 +1830,13 @@ fn parse_spawn_args<'a>(
     if spawn_args_ptr == 0 {
         return Some((0, 0));
     }
+    // The SpawnArgs struct and its blobs are caller memory — validated for
+    // Ring-3 callers like every other syscall pointer.
+    if caller_needs_validation()
+        && !validate_user_ptr(spawn_args_ptr, core::mem::size_of::<SpawnArgs>() as u64)
+    {
+        return None;
+    }
     let sa = unsafe { &*(spawn_args_ptr as *const SpawnArgs) };
     if sa.argv_blob_len as usize > MAX_BLOB_BYTES || sa.envp_blob_len as usize > MAX_BLOB_BYTES {
         return None;
@@ -1835,15 +1844,11 @@ fn parse_spawn_args<'a>(
     let mut argc = 0usize;
     let mut envc = 0usize;
     if sa.argv_blob_ptr != 0 && sa.argv_blob_len > 0 {
-        let blob = unsafe {
-            core::slice::from_raw_parts(sa.argv_blob_ptr as *const u8, sa.argv_blob_len as usize)
-        };
+        let blob = unsafe { read_caller_slice(sa.argv_blob_ptr, sa.argv_blob_len as u64)? };
         argc = parse_argv_blob(blob, argv_items)?;
     }
     if sa.envp_blob_ptr != 0 && sa.envp_blob_len > 0 {
-        let blob = unsafe {
-            core::slice::from_raw_parts(sa.envp_blob_ptr as *const u8, sa.envp_blob_len as usize)
-        };
+        let blob = unsafe { read_caller_slice(sa.envp_blob_ptr, sa.envp_blob_len as u64)? };
         envc = parse_argv_blob(blob, envp_items)?;
     }
     Some((argc, envc))
@@ -1983,9 +1988,9 @@ fn handle_vouch(path_ptr: u64, path_len: u64, grant_tier: u64) -> u64 {
         crate::platform::log("[vouch] DENIED: grant exceeds caller clearance\n");
         return 0;
     }
-    let path = unsafe {
-        let s = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(s) { Ok(s) => s, Err(_) => return 0 }
+    let path = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(s) => s,
+        None => return 0,
     };
     let suid = match crate::fs::paths::Namespace::resolve(path) { Ok(s) => s, Err(_) => return 0 };
     let registry = unsafe { crate::semantic::registry::global_registry() };
@@ -2049,12 +2054,9 @@ fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64
     let caller_tier = crate::scheduler::current_task_max_tier();
     let spawn_tier = (max_tier as u8).min(caller_tier);
 
-    let path = unsafe {
-        let slice = core::slice::from_raw_parts(path_ptr as *const u8, path_len as usize);
-        match core::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
-        }
+    let path = match unsafe { read_caller_str(path_ptr, path_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     // Resolve `path` to ELF bytes and spawn. Three routes, all funnelled through
@@ -2307,8 +2309,9 @@ fn handle_sem_create(suid_high: u64, suid_low: u64, tier: u64, content_info: u64
     let content_len = (content_info >> 32) as usize;
 
     let obj = if content_ptr != 0 && content_len > 0 && content_len <= 1024 {
-        let data = unsafe {
-            core::slice::from_raw_parts(content_ptr as *const u8, content_len)
+        let data = match unsafe { read_caller_slice(content_ptr, content_len as u64) } {
+            Some(d) => d,
+            None => return u64::MAX,
         };
         match crate::semantic::SemanticObject::with_content(suid, security_tier, owner, data) {
             Some(o) => o,
@@ -2340,11 +2343,8 @@ fn handle_sem_read(suid_high: u64, suid_low: u64, out_ptr: u64) -> u64 {
                 }
                 match obj.content.as_bytes() {
                     Some(data) => {
-                        if out_ptr != 0 {
-                            let dest = core::slice::from_raw_parts_mut(
-                                out_ptr as *mut u8, data.len(),
-                            );
-                            dest.copy_from_slice(data);
+                        if out_ptr != 0 && !data.is_empty() {
+                            if !write_to_caller(out_ptr, data) { return u64::MAX; }
                         }
                         data.len() as u64
                     }
@@ -2374,7 +2374,16 @@ fn handle_sem_write(suid_high: u64, suid_low: u64, data_ptr: u64, data_len: u64)
                 if obj.flags.is_immutable() {
                     return u64::MAX;
                 }
-                let data = core::slice::from_raw_parts(data_ptr as *const u8, len);
+                // A zero-length write clears the content; the slice helpers
+                // reject zero-length ranges, so special-case it.
+                let data: &[u8] = if len == 0 {
+                    &[]
+                } else {
+                    match read_caller_slice(data_ptr, data_len) {
+                        Some(d) => d,
+                        None => return u64::MAX,
+                    }
+                };
                 // task #44: from_bytes promotes >256 B writes to
                 // heap-Allocated transparently.
                 match crate::semantic::ObjectContent::from_bytes(data) {
@@ -2444,6 +2453,14 @@ fn handle_sem_query(tier_filter: u64, out_ptr: u64, max_results: u64) -> u64 {
     let filter = (tier_filter as u8).min(max_tier);
     let limit = (max_results as usize).min(64);
 
+    // The result buffer receives up to limit SUID pairs — validate the full
+    // window for Ring-3 callers before writing through the raw pointer.
+    if limit > 0 && caller_needs_validation()
+        && !validate_user_ptr(out_ptr, (limit * 16) as u64)
+    {
+        return u64::MAX;
+    }
+
     unsafe {
         let registry = crate::semantic::registry::global_registry();
         let mut count = 0usize;
@@ -2471,9 +2488,20 @@ fn handle_sem_search(query_ptr: u64, query_dims: u64, max_results: u64, out_ptr:
 
     if dims == 0 || dims > 384 { return u64::MAX; }
 
-    let query = unsafe {
-        core::slice::from_raw_parts(query_ptr as *const f32, dims)
+    let query_bytes = match unsafe { read_caller_slice(query_ptr, (dims * 4) as u64) } {
+        Some(b) => b,
+        None => return u64::MAX,
     };
+    let query = unsafe {
+        core::slice::from_raw_parts(query_bytes.as_ptr() as *const f32, dims)
+    };
+
+    // Results window: up to limit × 24 bytes (suid_high, suid_low, score).
+    if limit > 0 && caller_needs_validation()
+        && !validate_user_ptr(out_ptr, (limit * 24) as u64)
+    {
+        return u64::MAX;
+    }
 
     unsafe {
         let search = crate::semantic::search::global_search();
@@ -2499,6 +2527,11 @@ fn handle_sem_search(query_ptr: u64, query_dims: u64, max_results: u64, out_ptr:
 fn handle_sem_meta(suid_high: u64, suid_low: u64, out_ptr: u64) -> u64 {
     let max_tier = crate::scheduler::current_task_max_tier();
     let suid = crate::semantic::SUID::new(suid_high, suid_low);
+
+    // Five u64s are written through the raw out pointer below.
+    if caller_needs_validation() && !validate_user_ptr(out_ptr, 40) {
+        return u64::MAX;
+    }
 
     unsafe {
         let registry = crate::semantic::registry::global_registry();
@@ -2533,8 +2566,9 @@ fn handle_llm_query(prompt_ptr: u64, prompt_len: u64, out_ptr: u64) -> u64 {
     let tier = crate::scheduler::current_task_max_tier();
     let task_id = crate::scheduler::current_user_id();
 
-    let prompt = unsafe {
-        core::slice::from_raw_parts(prompt_ptr as *const u8, len)
+    let prompt = match unsafe { read_caller_slice(prompt_ptr, prompt_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     unsafe {
@@ -2551,10 +2585,7 @@ fn handle_llm_query(prompt_ptr: u64, prompt_len: u64, out_ptr: u64) -> u64 {
                         if response.is_success() {
                             let content = response.content();
                             if out_ptr != 0 && !content.is_empty() {
-                                let dest = core::slice::from_raw_parts_mut(
-                                    out_ptr as *mut u8, content.len(),
-                                );
-                                dest.copy_from_slice(content);
+                                if !write_to_caller(out_ptr, content) { return u64::MAX; }
                             }
                             content.len() as u64
                         } else {
@@ -2695,8 +2726,9 @@ fn handle_llm_redact(input_ptr: u64, input_len: u64, out_ptr: u64) -> u64 {
     // (no guard page yet). Single-threaded for now → static is safe.
     static mut REDACT_SCRATCH: [u8; 4096] = [0; 4096];
 
-    let input = unsafe {
-        core::slice::from_raw_parts(input_ptr as *const u8, len)
+    let input = match unsafe { read_caller_slice(input_ptr, input_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     unsafe {
@@ -2707,8 +2739,7 @@ fn handle_llm_redact(input_ptr: u64, input_len: u64, out_ptr: u64) -> u64 {
         );
         let out_len = redactor.redact(input, scratch_slice);
         if out_ptr != 0 && out_len > 0 {
-            let dest = core::slice::from_raw_parts_mut(out_ptr as *mut u8, out_len);
-            dest.copy_from_slice(&scratch_slice[..out_len]);
+            if !write_to_caller(out_ptr, &scratch_slice[..out_len]) { return u64::MAX; }
         }
         out_len as u64
     }
@@ -2720,8 +2751,9 @@ fn handle_llm_summarize(input_ptr: u64, input_len: u64, out_ptr: u64) -> u64 {
     let len = input_len as usize;
     if len == 0 || len > 4096 { return u64::MAX; }
 
-    let input = unsafe {
-        core::slice::from_raw_parts(input_ptr as *const u8, len)
+    let input = match unsafe { read_caller_slice(input_ptr, input_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     unsafe {
@@ -2729,8 +2761,7 @@ fn handle_llm_summarize(input_ptr: u64, input_len: u64, out_ptr: u64) -> u64 {
         let summary = summarizer.summarize(input);
         let data = summary.as_bytes();
         if out_ptr != 0 && !data.is_empty() {
-            let dest = core::slice::from_raw_parts_mut(out_ptr as *mut u8, data.len());
-            dest.copy_from_slice(data);
+            if !write_to_caller(out_ptr, data) { return u64::MAX; }
         }
         data.len() as u64
     }
@@ -2743,7 +2774,10 @@ fn handle_llm_access(requester_id: u64, current_tier: u64, requested_tier: u64, 
     let just_len = (justification_info >> 32) as usize;
 
     let justification = if just_ptr != 0 && just_len > 0 && just_len <= 256 {
-        unsafe { core::slice::from_raw_parts(just_ptr as *const u8, just_len) }
+        match unsafe { read_caller_slice(just_ptr, just_len as u64) } {
+            Some(s) => s,
+            None => return u64::MAX,
+        }
     } else {
         b"No justification provided"
     };
@@ -2770,8 +2804,9 @@ pub fn handle_llm_stream_start(prompt_ptr: u64, prompt_len: u64, context_ptr: u6
     let len = prompt_len as usize;
     if len == 0 || len > 1024 { return u64::MAX; }
 
-    let prompt = unsafe {
-        core::slice::from_raw_parts(prompt_ptr as *const u8, len)
+    let prompt = match unsafe { read_caller_slice(prompt_ptr, prompt_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     let task_id = crate::scheduler::current_user_id();
@@ -2814,8 +2849,9 @@ pub fn handle_llm_stream_read(request_id: u64, out_ptr: u64, out_len: u64) -> u6
                     if response.is_success() {
                         let content = response.content();
                         let copy_len = content.len().min(max_len);
-                        let out = core::slice::from_raw_parts_mut(out_ptr as *mut u8, copy_len);
-                        out.copy_from_slice(&content[..copy_len]);
+                        if copy_len > 0 && !write_to_caller(out_ptr, &content[..copy_len]) {
+                            return u64::MAX;
+                        }
                         copy_len as u64
                     } else {
                         response.error_code as u64
@@ -2862,9 +2898,10 @@ pub fn handle_llm_set_policy(suid_high: u64, suid_low: u64, policy_data_ptr: u64
     let requester_id = crate::scheduler::current_user_id();
     let requester_tier = crate::scheduler::current_task_max_tier();
 
-    // Read policy data from user space
-    let policy_data = unsafe {
-        core::slice::from_raw_parts(policy_data_ptr as *const u8, data_len)
+    // Read policy data from the caller's address space (validated for Ring 3).
+    let policy_data = match unsafe { read_caller_slice(policy_data_ptr, policy_data_len) } {
+        Some(d) => d,
+        None => return u64::MAX - 1,
     };
 
     // Deserialize policy object
@@ -2969,8 +3006,9 @@ pub fn handle_llm_get_policy(suid_high: u64, suid_low: u64, out_ptr: u64, out_le
 
                     // Copy policy data to output buffer
                     let copy_len = policy_content.len().min(buffer_len);
-                    let out_buffer = core::slice::from_raw_parts_mut(out_ptr as *mut u8, copy_len);
-                    out_buffer.copy_from_slice(&policy_content[..copy_len]);
+                    if copy_len > 0 && !write_to_caller(out_ptr, &policy_content[..copy_len]) {
+                        return u64::MAX;
+                    }
 
                     copy_len as u64
                 } else {
@@ -2996,9 +3034,18 @@ fn handle_encrypt(key_ptr: u64, nonce_ptr: u64, data_ptr: u64, data_len: u64) ->
     if len == 0 || len > 4096 { return u64::MAX; }
 
     unsafe {
-        let key_bytes = core::slice::from_raw_parts(key_ptr as *const u8, 32);
-        let nonce_bytes = core::slice::from_raw_parts(nonce_ptr as *const u8, 12);
-        let data = core::slice::from_raw_parts_mut(data_ptr as *mut u8, len);
+        let key_bytes = match read_caller_slice(key_ptr, 32) {
+            Some(s) => s,
+            None => return u64::MAX,
+        };
+        let nonce_bytes = match read_caller_slice(nonce_ptr, 12) {
+            Some(s) => s,
+            None => return u64::MAX,
+        };
+        let data = match caller_slice_mut(data_ptr, data_len) {
+            Some(s) => s,
+            None => return u64::MAX,
+        };
 
         let mut key_arr = [0u8; 32];
         key_arr.copy_from_slice(key_bytes);
@@ -3027,15 +3074,13 @@ fn handle_hash(data_ptr: u64, data_len: u64, out_ptr: u64) -> u64 {
     if len == 0 || len > 65536 { return u64::MAX; }
     if out_ptr == 0 { return u64::MAX; }
 
-    let data = unsafe {
-        core::slice::from_raw_parts(data_ptr as *const u8, len)
+    let data = match unsafe { read_caller_slice(data_ptr, data_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     let digest = crate::crypto::sha256::hash(data);
-    unsafe {
-        let dest = core::slice::from_raw_parts_mut(out_ptr as *mut u8, 32);
-        dest.copy_from_slice(&digest);
-    }
+    if !unsafe { write_to_caller(out_ptr, &digest) } { return u64::MAX; }
     0
 }
 
@@ -3096,12 +3141,10 @@ fn handle_create_user(name_ptr: u64, name_len: u64, tier: u64, group: u64) -> u6
     }
 
     let len = name_len as usize;
-    if !validate_user_ptr(name_ptr, name_len) { return u64::MAX; }
     if len == 0 || len > crate::security::users::MAX_USERNAME_LEN { return u64::MAX; }
-    let raw = unsafe { core::slice::from_raw_parts(name_ptr as *const u8, len) };
-    let name = match core::str::from_utf8(raw) {
-        Ok(s) => s,
-        Err(_) => return u64::MAX,
+    let name = match unsafe { read_caller_str(name_ptr, name_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
 
     // Clamp the new user's tier to the caller's. Without this an admin could
@@ -3129,7 +3172,6 @@ fn handle_create_user(name_ptr: u64, name_len: u64, tier: u64, group: u64) -> u6
 /// without needing a binary layout shared between kernel and user-programs.
 fn handle_lookup_user(uid: u64, out_ptr: u64, out_len: u64) -> u64 {
     if uid > 255 { return u64::MAX; }
-    if !validate_user_ptr(out_ptr, out_len) { return u64::MAX; }
     let target = uid as u8;
     let cap = out_len as usize;
 
@@ -3142,10 +3184,7 @@ fn handle_lookup_user(uid: u64, out_ptr: u64, out_len: u64) -> u64 {
         }
     };
     if written > cap { return u64::MAX; }
-    unsafe {
-        let dst = core::slice::from_raw_parts_mut(out_ptr as *mut u8, written);
-        dst.copy_from_slice(&scratch[..written]);
-    }
+    if !unsafe { write_to_caller(out_ptr, &scratch[..written]) } { return u64::MAX; }
     written as u64
 }
 
@@ -3239,10 +3278,11 @@ fn write_hex(dst: &mut [u8], n: u64) -> usize {
 /// retries on EAGAIN.
 fn handle_futex_wait(addr: u64, expected: u64) -> u64 {
     if addr == 0 || addr & 0x3 != 0 { return u64::MAX; }
-    // SAFETY: caller-supplied pointer; in v1 we trust user-mode to pass
-    // a valid mapped u32. A proper version walks the AS for permission +
-    // mapping verification — tracked as task #41 follow-up (guard pages
-    // + general user-pointer hardening).
+    // SAFETY: range-validated for Ring-3 callers (a user task must not make
+    // the kernel read — and block on — an arbitrary kernel address). The
+    // remaining gap is mapping verification, tracked as task #41 follow-up
+    // (guard pages + general user-pointer hardening).
+    if caller_needs_validation() && !validate_user_ptr(addr, 4) { return u64::MAX; }
     let observed = unsafe { core::ptr::read_volatile(addr as *const u32) };
     if observed as u64 != expected { return 1; }
 
@@ -3380,9 +3420,9 @@ static mut NET_TCP: Option<crate::net::TcpStream> = None;
 /// long-lived TCP path that needed the non-blocking split.)
 fn handle_dns_resolve(host_ptr: u64, host_len: u64) -> u64 {
     if host_len == 0 || host_len > 255 { return u64::MAX; }
-    let host = unsafe {
-        let slice = core::slice::from_raw_parts(host_ptr as *const u8, host_len as usize);
-        match core::str::from_utf8(slice) { Ok(s) => s, Err(_) => return u64::MAX }
+    let host = match unsafe { read_caller_str(host_ptr, host_len) } {
+        Some(s) => s,
+        None => return u64::MAX,
     };
     match crate::net::resolve(host) {
         Some(ip) => {
@@ -3436,11 +3476,14 @@ fn handle_tcp_state(fd: u64) -> u64 {
 fn handle_tcp_read(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     use crate::net::TcpError;
     if fd != NET_FD || buf_len == 0 { return u64::MAX; }
+    let buf = match unsafe { caller_slice_mut(buf_ptr, buf_len) } {
+        Some(b) => b,
+        None => return u64::MAX,
+    };
     unsafe {
         let net_tcp = &raw mut NET_TCP;
         let stream = match (*net_tcp).as_mut() { Some(s) => s, None => return u64::MAX };
         crate::net::poll();
-        let buf = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len as usize);
         match stream.read(buf) {
             Ok(n) if n > 0 => n as u64,
             Ok(_) => numbers::NET_WOULDBLOCK,   // connected but nothing ready
@@ -3454,10 +3497,13 @@ fn handle_tcp_read(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
 /// Single send attempt + one poll to push it onto the wire.
 fn handle_tcp_write(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
     if fd != NET_FD || buf_len == 0 { return u64::MAX; }
+    let buf = match unsafe { read_caller_slice(buf_ptr, buf_len) } {
+        Some(b) => b,
+        None => return u64::MAX,
+    };
     unsafe {
         let net_tcp = &raw mut NET_TCP;
         let stream = match (*net_tcp).as_mut() { Some(s) => s, None => return u64::MAX };
-        let buf = core::slice::from_raw_parts(buf_ptr as *const u8, buf_len as usize);
         let r = match stream.write(buf) {
             Ok(n) if n > 0 => n as u64,
             Ok(_) => numbers::NET_WOULDBLOCK,   // tx ring full
