@@ -125,24 +125,7 @@ impl ContextAwareRedactor {
         unsafe {
             let policy_engine = global_policy_engine();
             let policy_result = policy_engine.evaluate(&eval_context);
-
-            match policy_result {
-                PolicyResult::AllowWithRedaction(profile) => profile,
-                PolicyResult::Allow(_) => {
-                    // No specific redaction required, but apply default for sensitive data
-                    match context.requester_tier {
-                        SecurityTier::Secret => RedactionProfile::Minimal,
-                        SecurityTier::Sensitive => RedactionProfile::Standard,
-                        SecurityTier::Internal => RedactionProfile::Standard,
-                        SecurityTier::Public => RedactionProfile::Standard,
-                    }
-                }
-                PolicyResult::Deny => {
-                    // Access denied - redact everything
-                    RedactionProfile::Minimal
-                }
-                _ => self.default_profile,
-            }
+            map_policy_result(policy_result, context.requester_tier, self.default_profile)
         }
     }
 
@@ -154,6 +137,12 @@ impl ContextAwareRedactor {
         output: &mut [u8],
     ) -> usize {
         match profile {
+            RedactionProfile::None => {
+                // Passthrough: requester is cleared for the content outright.
+                let copy_len = content.len().min(output.len());
+                output[..copy_len].copy_from_slice(&content[..copy_len]);
+                copy_len
+            }
             RedactionProfile::Standard => {
                 // Standard PII redaction
                 self.base_redactor.redact(content, output)
@@ -167,8 +156,8 @@ impl ContextAwareRedactor {
             RedactionProfile::NamesOnly => {
                 self.apply_names_only_redaction(content, output)
             }
-            RedactionProfile::Minimal => {
-                self.apply_minimal_redaction(content, output)
+            RedactionProfile::Full => {
+                self.apply_full_redaction(content, output)
             }
             RedactionProfile::Custom(profile_id) => {
                 self.apply_custom_redaction(content, output, profile_id)
@@ -204,8 +193,8 @@ impl ContextAwareRedactor {
         self.apply_name_patterns(content, output)
     }
 
-    /// Apply minimal redaction (most restrictive)
-    fn apply_minimal_redaction(&self, content: &[u8], output: &mut [u8]) -> usize {
+    /// Apply full redaction (most restrictive)
+    fn apply_full_redaction(&self, _content: &[u8], output: &mut [u8]) -> usize {
         // Very aggressive redaction - only keep basic structure
         let summary = b"[CONTENT REDACTED - INSUFFICIENT PRIVILEGE]";
         let copy_len = summary.len().min(output.len());
@@ -400,6 +389,34 @@ impl ContextAwareRedactor {
     }
 }
 
+/// Map a policy-engine result + requester tier to a redaction profile.
+/// Pure function (no globals) so the tier→profile contract is unit-testable
+/// without standing up the policy engine (2026-07-17 review, high #4).
+///
+/// Rules:
+/// - `AllowWithRedaction(p)` → `p` (policy says exactly what to do).
+/// - `Allow(_)`: Secret requester → `None` (passthrough — this was the
+///   inversion bug: Secret used to land on the *maximum*-redaction profile
+///   because it was misleadingly named `Minimal`). Everyone else → Standard.
+/// - `Deny` → `Full` (blank everything).
+/// - Anything else (`RequireEscalation`, `NoMatch`, future variants) →
+///   `Full`: unknown outcomes fail CLOSED, never to the default profile.
+fn map_policy_result(
+    result: PolicyResult,
+    requester_tier: SecurityTier,
+    _default_profile: RedactionProfile,
+) -> RedactionProfile {
+    match result {
+        PolicyResult::AllowWithRedaction(profile) => profile,
+        PolicyResult::Allow(_) => match requester_tier {
+            SecurityTier::Secret => RedactionProfile::None,
+            _ => RedactionProfile::Standard,
+        },
+        PolicyResult::Deny => RedactionProfile::Full,
+        _ => RedactionProfile::Full,
+    }
+}
+
 /// Global context-aware redactor instance
 static mut GLOBAL_CONTEXT_REDACTOR: ContextAwareRedactor = ContextAwareRedactor::new();
 
@@ -439,6 +456,9 @@ mod tests {
     fn test_context_redaction() {
         let mut redactor = ContextAwareRedactor::new();
         redactor.init();
+        // The policy engine must be initialized or evaluate() returns Deny
+        // (fail-closed) and every request comes back fully blanked.
+        crate::security::evaluation::init();
 
         let context = RedactionContext {
             requester_id: user_ids::GUEST,
@@ -456,5 +476,79 @@ mod tests {
         let result = core::str::from_utf8(&output[..len]).unwrap();
 
         assert!(result.contains("[EMAIL]"));
+    }
+
+    // --- Tier→profile contract tests (2026-07-17 review, high #4) ---
+    // Pin the mapping so the tier-inversion bug (Secret → maximum redaction)
+    // cannot come back.
+
+    #[test]
+    fn test_allow_secret_requester_gets_passthrough() {
+        let p = map_policy_result(
+            PolicyResult::Allow(SecurityTier::Secret),
+            SecurityTier::Secret,
+            RedactionProfile::Standard,
+        );
+        assert_eq!(p, RedactionProfile::None);
+    }
+
+    #[test]
+    fn test_allow_lower_tiers_get_standard() {
+        for tier in [SecurityTier::Sensitive, SecurityTier::Internal, SecurityTier::Public] {
+            let p = map_policy_result(
+                PolicyResult::Allow(tier),
+                tier,
+                RedactionProfile::Standard,
+            );
+            assert_eq!(p, RedactionProfile::Standard);
+        }
+    }
+
+    #[test]
+    fn test_deny_gets_full_redaction() {
+        for tier in [SecurityTier::Secret, SecurityTier::Sensitive, SecurityTier::Internal, SecurityTier::Public] {
+            let p = map_policy_result(PolicyResult::Deny, tier, RedactionProfile::Standard);
+            assert_eq!(p, RedactionProfile::Full);
+        }
+    }
+
+    #[test]
+    fn test_unknown_policy_results_fail_closed() {
+        // RequireEscalation and NoMatch must NOT fall back to the default
+        // profile — unknown outcomes redact maximally.
+        for result in [PolicyResult::RequireEscalation, PolicyResult::NoMatch] {
+            let p = map_policy_result(result, SecurityTier::Secret, RedactionProfile::Standard);
+            assert_eq!(p, RedactionProfile::Full);
+        }
+    }
+
+    #[test]
+    fn test_policy_specified_profile_passes_through() {
+        let p = map_policy_result(
+            PolicyResult::AllowWithRedaction(RedactionProfile::Medical),
+            SecurityTier::Public,
+            RedactionProfile::Standard,
+        );
+        assert_eq!(p, RedactionProfile::Medical);
+    }
+
+    #[test]
+    fn test_full_profile_blanks_content() {
+        let mut redactor = ContextAwareRedactor::new();
+        redactor.init();
+        let content = b"top secret payload";
+        let mut output = [0u8; 256];
+        let len = redactor.apply_redaction_profile(content, RedactionProfile::Full, &mut output);
+        assert_eq!(&output[..len], b"[CONTENT REDACTED - INSUFFICIENT PRIVILEGE]");
+    }
+
+    #[test]
+    fn test_none_profile_passes_content_verbatim() {
+        let mut redactor = ContextAwareRedactor::new();
+        redactor.init();
+        let content = b"top secret payload";
+        let mut output = [0u8; 256];
+        let len = redactor.apply_redaction_profile(content, RedactionProfile::None, &mut output);
+        assert_eq!(&output[..len], content);
     }
 }

@@ -134,8 +134,14 @@ pub enum RedactionProfile {
     Financial = 2,
     /// Names and identifiers only
     NamesOnly = 3,
-    /// Everything except public facts
-    Minimal = 4,
+    /// Everything blanked — the MAXIMUM-redaction profile. Renamed from
+    /// `Minimal` (2026-07-17 review): the old name read as "lightest touch"
+    /// but implemented "replace everything", which hid a tier-inversion bug
+    /// in the context redactor.
+    Full = 4,
+    /// Passthrough — no redaction at all. Only for requesters whose
+    /// clearance covers the content outright (Secret).
+    None = 5,
     /// Custom redaction rule (by ID)
     Custom(u8) = 255,
 }
