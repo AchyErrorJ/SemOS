@@ -146,7 +146,6 @@ pub mod numbers {
     pub const SYS_EDIT:         u64 = 113; // (path_ptr, path_len) -> 0/err; runs the modal text editor
     pub const SYS_USBINFO:      u64 = 114; // () -> 0; dumps every USB port + enumerated slot to the TTY
     pub const SYS_USBENUM:      u64 = 115; // () -> port_count; re-runs xHCI port enumeration (hot-plug retry)
-    pub const SYS_PONG:         u64 = 116; // () -> 0/err; runs the fullscreen pong game
     pub const SYS_TTY_SUPPRESS: u64 = 117; // (on: u64) -> 0; 1 silences keyboard input from
                                            // committing to the cooked-mode line discipline.
     // M14 iGPU: display diagnostics + internal-panel backlight control.
@@ -167,7 +166,6 @@ pub mod numbers {
     pub const SYS_WIFI_SCAN:    u64 = 123; // () -> n; scans WiFi, prints numbered network list
                                            // sem-sh wraps external commands so typing during a
                                            // child run doesn't buffer into the next prompt.
-    pub const SYS_TETRIS:       u64 = 124; // () -> 0/err; runs the fullscreen tetris game
     pub const SYS_WIFI_CONNECT: u64 = 125; // (idx, pass_ptr, pass_len) -> 1/0; connect to network idx
     pub const SYS_VOUCH:        u64 = 126; // (path_ptr, path_len, grant_tier) -> 1/0; mark a namespace tool safe to run at grant_tier. Interactive console ONLY (the agent cannot reach this).
     pub const SYS_VOUCHES:      u64 = 127; // () -> count; print the active vouch grants (audit list)
@@ -302,9 +300,6 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // Hot-plug retry — re-runs xHCI port enumeration from the shell.
         SYS_USBENUM => crate::platform::get().run_usbenum(),
 
-        // Pong (the `pong` builtin) — fullscreen two-player game.
-        SYS_PONG => crate::platform::get().run_pong(),
-        SYS_TETRIS => crate::platform::get().run_tetris(),
 
         // WiFi scan (the `wifi` builtin) — scan + print numbered network list.
         SYS_WIFI_SCAN => crate::platform::get().run_wifi_scan(),
@@ -674,18 +669,53 @@ fn handle_sysinfo(buf_ptr: u64, buf_len: u64) -> u64 {
 /// The platform impl runs the (multi-second, network) call synchronously with
 /// interrupts enabled. Bounded prompt size keeps the request sane.
 fn handle_ask(prompt_ptr: u64, prompt_len: u64, out_ptr: u64, out_len: u64) -> u64 {
-    if prompt_ptr == 0 || out_ptr == 0 || prompt_len == 0 || prompt_len > 16384 || out_len == 0 {
+    const ASK_PROMPT_CAP: usize = 16 * 1024;
+    const ASK_OUT_CAP: usize = 8 * 1024;
+
+    if prompt_ptr == 0
+        || out_ptr == 0
+        || prompt_len == 0
+        || prompt_len > ASK_PROMPT_CAP as u64
+        || out_len == 0
+    {
         return 0;
     }
-    let prompt = match unsafe { read_caller_slice(prompt_ptr, prompt_len) } {
+
+    let out_cap = (out_len as usize).min(ASK_OUT_CAP);
+    if out_cap == 0 {
+        return 0;
+    }
+    if caller_needs_validation() && !validate_user_ptr(out_ptr, out_cap as u64) {
+        return 0;
+    }
+
+    // Copy-in/copy-out for the long-running, interrupts-enabled path. The old
+    // version handed `llm_ask` direct references to caller memory while the
+    // network stack ran for seconds with preemption enabled, so a sibling
+    // thread in the same address space could race the prompt/output buffers
+    // (2026-07-17 review, P2 TOCTOU class). Fixed-size locked scratch keeps
+    // kernel-core allocator-free and avoids large stack frames.
+    static ASK_PROMPT_SCRATCH: crate::sync::Mutex<[u8; ASK_PROMPT_CAP]> =
+        crate::sync::Mutex::new([0; ASK_PROMPT_CAP]);
+    static ASK_OUT_SCRATCH: crate::sync::Mutex<[u8; ASK_OUT_CAP]> =
+        crate::sync::Mutex::new([0; ASK_OUT_CAP]);
+
+    let mut prompt_guard = ASK_PROMPT_SCRATCH.lock();
+    let prompt_len = prompt_len as usize;
+    let prompt_src = match unsafe { read_caller_slice(prompt_ptr, prompt_len as u64) } {
         Some(s) => s,
         None => return 0,
     };
-    let out = match unsafe { caller_slice_mut(out_ptr, out_len) } {
-        Some(s) => s,
-        None => return 0,
-    };
-    crate::platform::get().llm_ask(prompt, out) as u64
+    prompt_guard[..prompt_len].copy_from_slice(prompt_src);
+
+    let mut out_guard = ASK_OUT_SCRATCH.lock();
+    let n = crate::platform::get()
+        .llm_ask(&prompt_guard[..prompt_len], &mut out_guard[..out_cap])
+        .min(out_cap);
+    if n > 0 && !unsafe { write_to_caller(out_ptr, &out_guard[..n]) } {
+        return 0;
+    }
+    n as u64
 }
 
 /// SYS_PS(buf_ptr, buf_len) — write one 24-byte record per live scheduler task
@@ -1474,6 +1504,21 @@ pub struct StatX {
     pub _reserved: [u64; 3],
 }
 
+const _: [(); 72] = [(); core::mem::size_of::<StatX>()];
+
+fn encode_statx(st: &StatX, out: &mut [u8; core::mem::size_of::<StatX>()]) {
+    out[0..8].copy_from_slice(&st.size.to_le_bytes());
+    out[8..16].copy_from_slice(&st.suid_high.to_le_bytes());
+    out[16..24].copy_from_slice(&st.suid_low.to_le_bytes());
+    out[24..32].copy_from_slice(&st.created_at.to_le_bytes());
+    out[32..40].copy_from_slice(&st.modified_at.to_le_bytes());
+    out[40..44].copy_from_slice(&st.file_type.to_le_bytes());
+    out[44..48].copy_from_slice(&st.tier.to_le_bytes());
+    out[48..56].copy_from_slice(&st._reserved[0].to_le_bytes());
+    out[56..64].copy_from_slice(&st._reserved[1].to_le_bytes());
+    out[64..72].copy_from_slice(&st._reserved[2].to_le_bytes());
+}
+
 /// SYS_FSYNC() — flush the path namespace to virtio0. No args, no
 /// per-FD selection (the snapshot covers everything). Returns 0 on
 /// success, u64::MAX if virtio0 isn't present or the save failed.
@@ -1530,8 +1575,8 @@ fn handle_truncate(path_ptr: u64, path_len: u64, new_size: u64) -> u64 {
 
 /// SYS_STATX(path_ptr, path_len, out_struct_ptr) — fill a [`StatX`]
 /// at `out_struct_ptr` with the object's metadata. Caller is
-/// responsible for the struct buffer being large enough (sizeof
-/// StatX = 64 bytes).
+/// responsible for the struct buffer being large enough
+/// (`core::mem::size_of::<StatX>()` bytes).
 fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
     let path = match unsafe { read_caller_str(path_ptr, path_len) } {
         Some(p) => p,
@@ -1550,16 +1595,19 @@ fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
     // (Path::exists / is_file) before opening, so report size + regular-file.
     if let Some(rest) = path.strip_prefix("/sysroot/") {
         if let Some(idx) = crate::sysroot_blob::find(rest) {
-            let out = unsafe { &mut *(out_ptr as *mut StatX) };
-            out.size = crate::sysroot_blob::file_len(idx).unwrap_or(0);
-            out.suid_high = 0;
-            out.suid_low = 0;
-            out.created_at = 0;
-            out.modified_at = 0;
-            out.file_type = 0; // Binary (is_file() == file_type != 3)
-            out.tier = 0; // Public
-            out._reserved = [0; 3];
-            return 0;
+            let stat = StatX {
+                size: crate::sysroot_blob::file_len(idx).unwrap_or(0),
+                suid_high: 0,
+                suid_low: 0,
+                created_at: 0,
+                modified_at: 0,
+                file_type: 0, // Binary (is_file() == file_type != 3)
+                tier: 0, // Public
+                _reserved: [0; 3],
+            };
+            let mut bytes = [0u8; core::mem::size_of::<StatX>()];
+            encode_statx(&stat, &mut bytes);
+            return if unsafe { write_to_caller(out_ptr, &bytes) } { 0 } else { u64::MAX };
         }
     }
     let suid = match crate::fs::paths::Namespace::resolve(path) {
@@ -1571,16 +1619,19 @@ fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
         Some(o) => o,
         None => return u64::MAX,
     };
-    let out = unsafe { &mut *(out_ptr as *mut StatX) };
-    out.size = obj.content.len() as u64;
-    out.suid_high = suid.high;
-    out.suid_low = suid.low;
-    out.created_at = obj.created_at;
-    out.modified_at = obj.modified_at;
-    out.file_type = obj.content_type as u32;
-    out.tier = obj.tier as u32;
-    out._reserved = [0; 3];
-    0
+    let stat = StatX {
+        size: obj.content.len() as u64,
+        suid_high: suid.high,
+        suid_low: suid.low,
+        created_at: obj.created_at,
+        modified_at: obj.modified_at,
+        file_type: obj.content_type as u32,
+        tier: obj.tier as u32,
+        _reserved: [0; 3],
+    };
+    let mut bytes = [0u8; core::mem::size_of::<StatX>()];
+    encode_statx(&stat, &mut bytes);
+    if unsafe { write_to_caller(out_ptr, &bytes) } { 0 } else { u64::MAX }
 }
 
 /// SYS_READDIR(fd, idx, name_buf_ptr, name_buf_len) → name length on
@@ -1701,14 +1752,13 @@ fn handle_pipe(out_ptr: u64) -> u64 {
         }
     };
 
-    // Write the two FDs to user space (out_ptr validated above).
-    unsafe {
-        let out = out_ptr as *mut u64;
-        *out = read_fd as u64;
-        *out.add(1) = write_fd as u64;
-    }
-
-    0
+    // Write the two FDs through the syscall copy-out helper, not a raw
+    // pointer store, so this path follows the same audit rule as the rest of
+    // the 2026-07-17 pointer fix.
+    let mut out = [0u8; 16];
+    out[0..8].copy_from_slice(&(read_fd as u64).to_le_bytes());
+    out[8..16].copy_from_slice(&(write_fd as u64).to_le_bytes());
+    if unsafe { write_to_caller(out_ptr, &out) } { 0 } else { u64::MAX }
 }
 
 /// SYS_DUP(old_fd) → new_fd or u64::MAX. Duplicates the entry into the
@@ -1820,36 +1870,50 @@ fn parse_argv_blob<'a>(blob: &'a [u8], items_out: &mut [&'a [u8]]) -> Option<usi
 
 /// Parse the optional `SpawnArgs` blob (arg3) into argv/envp item slices.
 /// Returns `(argc, envc)`, `Some((0,0))` when `spawn_args_ptr == 0` (legacy
-/// no-args callers), or `None` on a malformed/oversized blob. The item refs
-/// point into the caller's blob, valid for the syscall's duration.
+/// no-args callers), or `None` on a malformed/oversized blob.
+///
+/// Copy-in is deliberate: spawn is a complex path and eventually writes argv
+/// onto the new user stack, so it must not keep borrowing caller memory after
+/// the initial validation/read step (2026-07-17 review, P2 TOCTOU class).
+/// The item refs point into the kernel scratch buffers supplied by the caller.
 fn parse_spawn_args<'a>(
     spawn_args_ptr: u64,
+    argv_blob_scratch: &'a mut [u8; MAX_BLOB_BYTES],
+    envp_blob_scratch: &'a mut [u8; MAX_BLOB_BYTES],
     argv_items: &mut [&'a [u8]],
     envp_items: &mut [&'a [u8]],
 ) -> Option<(usize, usize)> {
     if spawn_args_ptr == 0 {
         return Some((0, 0));
     }
-    // The SpawnArgs struct and its blobs are caller memory — validated for
-    // Ring-3 callers like every other syscall pointer.
-    if caller_needs_validation()
-        && !validate_user_ptr(spawn_args_ptr, core::mem::size_of::<SpawnArgs>() as u64)
-    {
-        return None;
-    }
-    let sa = unsafe { &*(spawn_args_ptr as *const SpawnArgs) };
-    if sa.argv_blob_len as usize > MAX_BLOB_BYTES || sa.envp_blob_len as usize > MAX_BLOB_BYTES {
+
+    // Copy the repr(C) SpawnArgs bytes, then decode the field offsets
+    // explicitly (u64, u32, padding, u64, u32). This avoids creating a raw
+    // reference to caller memory.
+    let sa_bytes = unsafe {
+        read_caller_slice(spawn_args_ptr, core::mem::size_of::<SpawnArgs>() as u64)?
+    };
+    let argv_blob_ptr = u64::from_le_bytes(sa_bytes[0..8].try_into().ok()?);
+    let argv_blob_len = u32::from_le_bytes(sa_bytes[8..12].try_into().ok()?);
+    let envp_blob_ptr = u64::from_le_bytes(sa_bytes[16..24].try_into().ok()?);
+    let envp_blob_len = u32::from_le_bytes(sa_bytes[24..28].try_into().ok()?);
+
+    if argv_blob_len as usize > MAX_BLOB_BYTES || envp_blob_len as usize > MAX_BLOB_BYTES {
         return None;
     }
     let mut argc = 0usize;
     let mut envc = 0usize;
-    if sa.argv_blob_ptr != 0 && sa.argv_blob_len > 0 {
-        let blob = unsafe { read_caller_slice(sa.argv_blob_ptr, sa.argv_blob_len as u64)? };
-        argc = parse_argv_blob(blob, argv_items)?;
+    if argv_blob_ptr != 0 && argv_blob_len > 0 {
+        let len = argv_blob_len as usize;
+        let blob = unsafe { read_caller_slice(argv_blob_ptr, argv_blob_len as u64)? };
+        argv_blob_scratch[..len].copy_from_slice(blob);
+        argc = parse_argv_blob(&argv_blob_scratch[..len], argv_items)?;
     }
-    if sa.envp_blob_ptr != 0 && sa.envp_blob_len > 0 {
-        let blob = unsafe { read_caller_slice(sa.envp_blob_ptr, sa.envp_blob_len as u64)? };
-        envc = parse_argv_blob(blob, envp_items)?;
+    if envp_blob_ptr != 0 && envp_blob_len > 0 {
+        let len = envp_blob_len as usize;
+        let blob = unsafe { read_caller_slice(envp_blob_ptr, envp_blob_len as u64)? };
+        envp_blob_scratch[..len].copy_from_slice(blob);
+        envc = parse_argv_blob(&envp_blob_scratch[..len], envp_items)?;
     }
     Some((argc, envc))
 }
@@ -2143,9 +2207,17 @@ fn intern_prog_name(name: &str) -> &'static str {
 /// `spawn_tier`. The single spawn path shared by every route (/bin, namespace,
 /// legacy ramfs name). `arg3==0` → empty argv/envp (old API).
 fn spawn_elf_bytes(elf_data: &[u8], name: &'static str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
+    let mut argv_blob_scratch = [0u8; MAX_BLOB_BYTES];
+    let mut envp_blob_scratch = [0u8; MAX_BLOB_BYTES];
     let mut argv_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
     let mut envp_items: [&[u8]; MAX_BLOB_ITEMS] = [&[]; MAX_BLOB_ITEMS];
-    let (argc, envc) = match parse_spawn_args(spawn_args_ptr, &mut argv_items, &mut envp_items) {
+    let (argc, envc) = match parse_spawn_args(
+        spawn_args_ptr,
+        &mut argv_blob_scratch,
+        &mut envp_blob_scratch,
+        &mut argv_items,
+        &mut envp_items,
+    ) {
         Some(t) => t,
         None => {
             crate::platform::log("[syscall] spawn: argv/envp blob malformed\n");
@@ -2459,27 +2531,25 @@ fn handle_sem_query(tier_filter: u64, out_ptr: u64, max_results: u64) -> u64 {
     let filter = (tier_filter as u8).min(max_tier);
     let limit = (max_results as usize).min(64);
 
-    // The result buffer receives up to limit SUID pairs — validate the full
-    // window for Ring-3 callers before writing through the raw pointer.
-    if limit > 0 && caller_needs_validation()
-        && !validate_user_ptr(out_ptr, (limit * 16) as u64)
-    {
-        return u64::MAX;
-    }
-
     unsafe {
         let registry = crate::semantic::registry::global_registry();
         let mut count = 0usize;
-        let out = out_ptr as *mut u64;
+        let mut written = 0usize;
+        let mut out = [0u8; 64 * 16];
 
         for obj in registry.iter() {
             if (obj.tier as u8) <= filter {
-                if count < limit {
-                    *out.add(count * 2) = obj.suid.high;
-                    *out.add(count * 2 + 1) = obj.suid.low;
+                if written < limit {
+                    let o = written * 16;
+                    out[o..o + 8].copy_from_slice(&obj.suid.high.to_le_bytes());
+                    out[o + 8..o + 16].copy_from_slice(&obj.suid.low.to_le_bytes());
+                    written += 1;
                 }
                 count += 1;
             }
+        }
+        if written > 0 && !write_to_caller(out_ptr, &out[..written * 16]) {
+            return u64::MAX;
         }
         count as u64
     }
@@ -2498,28 +2568,38 @@ fn handle_sem_search(query_ptr: u64, query_dims: u64, max_results: u64, out_ptr:
         Some(b) => b,
         None => return u64::MAX,
     };
-    let query = unsafe {
-        core::slice::from_raw_parts(query_bytes.as_ptr() as *const f32, dims)
-    };
-
-    // Results window: up to limit × 24 bytes (suid_high, suid_low, score).
-    if limit > 0 && caller_needs_validation()
-        && !validate_user_ptr(out_ptr, (limit * 24) as u64)
-    {
-        return u64::MAX;
+    // Copy the caller's byte representation into aligned f32 storage. This
+    // avoids both TOCTOU on the query vector and the old unaligned
+    // `u8* as *const f32` cast.
+    let mut query_storage = [0f32; 384];
+    for i in 0..dims {
+        let o = i * 4;
+        let bits = u32::from_le_bytes([
+            query_bytes[o],
+            query_bytes[o + 1],
+            query_bytes[o + 2],
+            query_bytes[o + 3],
+        ]);
+        query_storage[i] = f32::from_bits(bits);
     }
+    let query = &query_storage[..dims];
 
     unsafe {
         let search = crate::semantic::search::global_search();
         let mut results = [crate::semantic::SearchResult::new(0, 0, 0.0); 16];
         match search.find_similar(query, max_tier, limit, &mut results[..limit]) {
             Ok(count) => {
-                // Write results: each result is (suid_high, suid_low, score_bits)
-                let out = out_ptr as *mut u64;
+                // Write results: each result is (suid_high, suid_low, score_bits).
+                let mut out = [0u8; 16 * 24];
                 for i in 0..count {
-                    *out.add(i * 3) = results[i].suid_high;
-                    *out.add(i * 3 + 1) = results[i].suid_low;
-                    *out.add(i * 3 + 2) = (results[i].score.to_bits()) as u64;
+                    let o = i * 24;
+                    out[o..o + 8].copy_from_slice(&results[i].suid_high.to_le_bytes());
+                    out[o + 8..o + 16].copy_from_slice(&results[i].suid_low.to_le_bytes());
+                    out[o + 16..o + 24]
+                        .copy_from_slice(&(results[i].score.to_bits() as u64).to_le_bytes());
+                }
+                if count > 0 && !write_to_caller(out_ptr, &out[..count * 24]) {
+                    return u64::MAX;
                 }
                 count as u64
             }
@@ -2534,11 +2614,6 @@ fn handle_sem_meta(suid_high: u64, suid_low: u64, out_ptr: u64) -> u64 {
     let max_tier = crate::scheduler::current_task_max_tier();
     let suid = crate::semantic::SUID::new(suid_high, suid_low);
 
-    // Five u64s are written through the raw out pointer below.
-    if caller_needs_validation() && !validate_user_ptr(out_ptr, 40) {
-        return u64::MAX;
-    }
-
     unsafe {
         let registry = crate::semantic::registry::global_registry();
         match registry.get(&suid) {
@@ -2546,14 +2621,14 @@ fn handle_sem_meta(suid_high: u64, suid_low: u64, out_ptr: u64) -> u64 {
                 if (obj.tier as u8) > max_tier {
                     return u64::MAX;
                 }
-                let out = out_ptr as *mut u64;
-                *out.add(0) = obj.tier as u64;
-                *out.add(1) = obj.owner as u64;
-                *out.add(2) = obj.content.len() as u64;
                 let link_count = obj.get_links().iter().filter(|l| l.is_some()).count();
-                *out.add(3) = link_count as u64;
-                *out.add(4) = obj.flags.as_u32() as u64;
-                0
+                let mut out = [0u8; 40];
+                out[0..8].copy_from_slice(&(obj.tier as u64).to_le_bytes());
+                out[8..16].copy_from_slice(&(obj.owner as u64).to_le_bytes());
+                out[16..24].copy_from_slice(&(obj.content.len() as u64).to_le_bytes());
+                out[24..32].copy_from_slice(&(link_count as u64).to_le_bytes());
+                out[32..40].copy_from_slice(&(obj.flags.as_u32() as u64).to_le_bytes());
+                if write_to_caller(out_ptr, &out) { 0 } else { u64::MAX }
             }
             None => u64::MAX,
         }
@@ -2615,9 +2690,11 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
     let n = (count as usize).min(32);
     let tier = crate::scheduler::current_task_max_tier();
 
-    // Validated: a Ring-3 caller pointing suid_pairs at kernel memory gets
-    // u64::MAX, not a kernel-memory read used as object IDs.
-    let suids: &[u8] = if n > 0 {
+    // Copy-in: a Ring-3 caller pointing suid_pairs at kernel memory gets
+    // u64::MAX, not a kernel-memory read used as object IDs; parsing into
+    // aligned kernel storage also closes the unaligned `(u8*) as (u64,u64)*`
+    // cast and TOCTOU window for the object list.
+    let suid_bytes: &[u8] = if n > 0 {
         match unsafe { read_caller_slice(suid_pairs_ptr, (n * 16) as u64) } {
             Some(s) => s,
             None => return u64::MAX,
@@ -2625,9 +2702,30 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
     } else {
         &[]
     };
-    let suids: &[(u64, u64)] = unsafe {
-        core::slice::from_raw_parts(suids.as_ptr() as *const (u64, u64), n)
-    };
+    let mut suids = [(0u64, 0u64); 32];
+    for i in 0..n {
+        let o = i * 16;
+        suids[i].0 = u64::from_le_bytes([
+            suid_bytes[o],
+            suid_bytes[o + 1],
+            suid_bytes[o + 2],
+            suid_bytes[o + 3],
+            suid_bytes[o + 4],
+            suid_bytes[o + 5],
+            suid_bytes[o + 6],
+            suid_bytes[o + 7],
+        ]);
+        suids[i].1 = u64::from_le_bytes([
+            suid_bytes[o + 8],
+            suid_bytes[o + 9],
+            suid_bytes[o + 10],
+            suid_bytes[o + 11],
+            suid_bytes[o + 12],
+            suid_bytes[o + 13],
+            suid_bytes[o + 14],
+            suid_bytes[o + 15],
+        ]);
+    }
 
     // Static scratch buffer for processing one entry at a time, behind the
     // kernel mutex: the old "safe because syscalls are serialized" comment
@@ -2654,7 +2752,6 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
         OUT_CAP as usize
     };
 
-    // Still unsafe: the out_ptr writes below go through copy_nonoverlapping.
     unsafe {
         let registry = crate::semantic::registry::global_registry();
         let redactor = crate::llm::context_builder::global_redactor();
@@ -2663,10 +2760,10 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
 
         let mut total_size = 0usize;
         let mut offset = 0usize;
-        let out = if out_ptr != 0 { out_ptr as *mut u8 } else { core::ptr::null_mut() };
+        let do_write = out_ptr != 0;
 
-        for (suid_high, suid_low) in suids {
-            let suid = crate::semantic::SUID::new(*suid_high, *suid_low);
+        for (suid_high, suid_low) in suids[..n].iter().copied() {
+            let suid = crate::semantic::SUID::new(suid_high, suid_low);
 
             if let Some(object) = registry.get(&suid) {
                 let obj_tier = object.tier as u8;
@@ -2699,24 +2796,32 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
                 total_size += entry_len + 8; // +8 for length prefix
 
                 // Write to output buffer if provided
-                if !out.is_null() && offset + entry_len + 8 <= out_limit {
+                if do_write && offset + entry_len + 8 <= out_limit {
                     // Write length prefix
                     let len_bytes = (entry_len as u64).to_le_bytes();
-                    core::ptr::copy_nonoverlapping(
-                        len_bytes.as_ptr(), out.add(offset), 8
-                    );
+                    let len_dst = match out_ptr.checked_add(offset as u64) {
+                        Some(p) => p,
+                        None => return u64::MAX,
+                    };
+                    if !write_to_caller(len_dst, &len_bytes) {
+                        return u64::MAX;
+                    }
                     offset += 8;
 
                     // Write content
-                    core::ptr::copy_nonoverlapping(
-                        content.as_ptr(), out.add(offset), entry_len
-                    );
+                    let content_dst = match out_ptr.checked_add(offset as u64) {
+                        Some(p) => p,
+                        None => return u64::MAX,
+                    };
+                    if entry_len > 0 && !write_to_caller(content_dst, content) {
+                        return u64::MAX;
+                    }
                     offset += entry_len;
                 }
             }
         }
 
-        if out.is_null() {
+        if !do_write {
             total_size as u64 // Size query
         } else {
             offset as u64 // Bytes written

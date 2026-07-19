@@ -1,57 +1,0 @@
-warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
-package:   F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-rustc-src\compiler\rustc_codegen_gcc\Cargo.toml
-workspace: F:\Software\ArmKernel3\user-programs\semos-rustc\Cargo.toml
-    Updating crates.io index
-       Fetch [========>                        ] 73 compl…       Fetch [===========>                     ] 96 compl…       Fetch [=================>               ] 113 comp…       Fetch [=======================>         ] 121 comp…     Locking 4 packages to latest compatible versions
-      Adding anyhow v1.0.102 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\anyhow)
-      Adding cranelift-object v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-object)
-      Adding crc32fast v1.5.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\crc32fast)
-      Adding regalloc2 v0.12.2 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\regalloc2)
-       Fetch [=============================>   ] 124 comp…       Fetch [=============================>   ] 129 comp…       Fetch [=============================>   ] 136 comp…   Compiling anyhow v1.0.102 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\anyhow)
-   Compiling crc32fast v1.5.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\crc32fast)
-   Compiling cranelift-assembler-x64 v0.122.0
-   Compiling cranelift-codegen-meta v0.122.0
-    Checking memchr v2.8.1 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\memchr)
-    Checking indexmap v2.14.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\indexmap)
-    Checking wasmtime-internal-math v35.0.0
-    Checking cranelift-bforest v0.122.0 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\cranelift-bforest)
-    Checking regalloc2 v0.12.2 (F:\Software\ArmKernel3\user-programs\semos-rustc\vendor-externals\regalloc2)
-    Building [==============>            ] 33/57: craneli…error[E0463]: can't find crate for `std`
-   --> vendor-externals\indexmap\src\lib.rs:106:1
-    |
-106 | extern crate std;
-    | ^^^^^^^^^^^^^^^^^ can't find crate
-    |
-    = note: the `x86_64-unknown-none` target may not support the standard library
-    = help: consider building the standard library from source with `cargo build -Zbuild-std`
-
-error[E0463]: can't find crate for `std`
-   --> vendor-externals\memchr\src\lib.rs:198:1
-    |
-198 | extern crate std;
-    | ^^^^^^^^^^^^^^^^^ can't find crate
-    |
-    = note: the `x86_64-unknown-none` target may not support the standard library
-    = help: consider building the standard library from source with `cargo build -Zbuild-std`
-
-    Building [===============>           ] 34/57: craneli…    Building [===============>           ] 35/57: regallo…For more information about this error, try `rustc --explain E0463`.
-error: could not compile `memchr` (lib) due to 1 previous error
-warning: build failed, waiting for other jobs to finish...
-    Building [================>          ] 36/57: regallo…error: could not compile `indexmap` (lib) due to 1 previous error
-    Building [================>          ] 37/57: regallo…    Building [=================>         ] 38/57: regallo…    Building [=================>         ] 39/57: regallo…    Building [=================>         ] 40/57: regallo…warning: hiding a lifetime that's elided elsewhere is confusing
-  --> vendor-externals\regalloc2\src\fastalloc\vregset.rs:61:17
-   |
-61 |     pub fn iter(&self) -> VRegSetIter {
-   |                 ^^^^^     ^^^^^^^^^^^ the same lifetime is hidden here
-   |                 |
-   |                 the lifetime is elided here
-   |
-   = help: the same lifetime is referred to in inconsistent ways, making the signature confusing
-   = note: `#[warn(mismatched_lifetime_syntaxes)]` on by default
-help: use `'_` for type paths
-   |
-61 |     pub fn iter(&self) -> VRegSetIter<'_> {
-   |                                      ++++
-
-warning: `regalloc2` (lib) generated 1 warning (run `cargo fix --lib -p regalloc2` to apply 1 suggestion)
-    Building [==================>        ] 41/57: craneli…

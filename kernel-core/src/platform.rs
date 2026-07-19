@@ -91,16 +91,6 @@ pub trait Platform: Send + Sync + 'static {
     /// number of devices that completed enumeration. Default: 0.
     fn run_usbenum(&self) -> u64 { 0 }
 
-    /// SYS_PONG: run the fullscreen pong game until the user hits Esc. Blocks
-    /// in the caller's syscall context driving the framebuffer + raw HID
-    /// keyboard at ~60 FPS. Returns 0 on a clean exit, 1 if headless.
-    /// Default: unavailable.
-    fn run_pong(&self) -> u64 { 0 }
-
-    /// SYS_TETRIS: run the fullscreen tetris game until the user hits Esc/Q.
-    /// Same shape as `run_pong`. Default: unavailable.
-    fn run_tetris(&self) -> u64 { 0 }
-
     /// SYS_FBINFO: print the current GOP framebuffer geometry/pixel format and
     /// (where known) how it compares to the internal panel's native mode, to
     /// the current TTY. Read-only. Returns 0. Default: unavailable.

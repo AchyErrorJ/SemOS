@@ -343,19 +343,6 @@ impl Platform for X86Platform {
         n + crate::usb::ehci::enumerate_incremental() as u64
     }
 
-    fn run_pong(&self) -> u64 {
-        // The game's frame-pacing sleep + keyboard pump cadence need the
-        // timer; enable interrupts for the session. iretq restores the
-        // Ring-3 caller's flags on return.
-        x86_64::instructions::interrupts::enable();
-        crate::pong::run()
-    }
-
-    fn run_tetris(&self) -> u64 {
-        x86_64::instructions::interrupts::enable();
-        crate::tetris::run()
-    }
-
     fn run_fbinfo(&self) -> u64 {
         match crate::framebuffer::fb_info() {
             Some(info) => {

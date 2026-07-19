@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_OPEN, SYS_PONG, SYS_TETRIS, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_OPEN, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -254,7 +254,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "flash-sysroot" | "pong" | "wifi" | "tetris"
+            | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "flash-sysroot" | "wifi"
             | "vouch" | "unvouch" | "vouches"
     )
 }
@@ -929,7 +929,6 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  fetch URL           HTTP GET (http:// only)");
             println!("  usbinfo             dump xHCI port state + enum'd USB devices");
             println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
-            println!("  pong                fullscreen pong — 1P vs CPU by default (T flips to 2P, Esc quits)");
             println!("  exit [CODE]         leave the shell");
             println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
             0
@@ -1055,20 +1054,6 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // Audit list: print every active vouch grant (kernel prints them).
             let _ = unsafe { syscall1(SYS_VOUCHES, 0) };
             0
-        }
-        "pong" => {
-            // Hand off to the kernel-side fullscreen pong game. Two-player
-            // local: left W/S, right Up/Down, Space to pause/restart, Esc
-            // to quit. The kernel holds FULLSCREEN_APP_ACTIVE for the
-            // duration; control returns here on quit with the screen cleared.
-            let rc = unsafe { syscall1(SYS_PONG, 0) };
-            rc as i32
-        }
-        "tetris" => {
-            // Kernel-side fullscreen Tetris (NES-style). Arrows/AD move, Up/X or
-            // Z rotate, Down soft-drop, Space hard-drop, P pause, Esc/Q quit.
-            let rc = unsafe { syscall1(SYS_TETRIS, 0) };
-            rc as i32
         }
         "flash-sysroot" => {
             // M27 DEMO 80: copy sysroot.img off the FAT USB stick (usb0) onto

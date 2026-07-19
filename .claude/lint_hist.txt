@@ -1,2 +1,0 @@
-      3 error[E0433]: failed to resolve: use of unresolved module or unlinked crate `rustc_error_messages`
-      2 error[E0433]: failed to resolve: use of unresolved module or unlinked crate `std`

@@ -15,6 +15,10 @@ qemu-stderr.log
 # GDB debugging artifacts
 gdb-out.log
 gdb-trace.log
+/*.log
+/debug*.gdb
+/watch.gdb
+/.claude/
 
 # Runtime screenshots / serial logs / scratch files
 screen*.png

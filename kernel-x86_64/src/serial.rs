@@ -157,7 +157,7 @@ pub fn _print(args: fmt::Arguments) {
     x86_64::instructions::interrupts::without_interrupts(|| {
         SERIAL.lock().write_fmt(args).unwrap();
         // Mirror to framebuffer (no-op if not yet initialized). Skip only when
-        // a fullscreen kernel app (agent/editor/pong/tetris) owns the screen;
+        // a fullscreen kernel app (agent/editor) owns the screen;
         // `SUPPRESS_TTY_INPUT` is for keyboard echo only, so user-space output
         // (shell prompts, command output, rustc diagnostics) stays visible.
         if !crate::FULLSCREEN_APP_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {

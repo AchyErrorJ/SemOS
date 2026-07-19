@@ -434,7 +434,7 @@ static STDIN: Mutex<LineState> = Mutex::new(LineState::new());
 /// concurrent `drain` (both take the STDIN lock).
 pub fn input_push(b: u8) {
     // Fullscreen apps that own the screen + read input via a side channel
-    // (pong → `keyboard::read_key` + `poll_hid`) set SUPPRESS_TTY_INPUT so
+    // fullscreen apps set SUPPRESS_TTY_INPUT so
     // typed bytes don't pollute the cooked-mode pend buffer or paint glyphs
     // over the game frame. The agent does NOT set this — it still consumes
     // cooked lines via `peek_line`/`drain`.

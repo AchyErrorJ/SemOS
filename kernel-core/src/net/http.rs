@@ -100,6 +100,56 @@ pub fn decode_chunked(input: &[u8], out: &mut [u8]) -> Result<usize, ChunkedErro
     }
 }
 
+/// Return whether a chunked-transfer body is complete, without decoding it.
+///
+/// This follows the same framing rules as [`decode_chunked`]: every non-final
+/// chunk must have a complete size line, declared data bytes, and trailing
+/// CRLF; the zero-size chunk is the authoritative end of the body and optional
+/// trailers do not have to be parsed. It is useful for HTTP keep-alive callers
+/// that need to know when one response is framed, but do not want to allocate a
+/// large decode scratch buffer just to check for completeness.
+pub fn chunked_complete(input: &[u8]) -> bool {
+    let mut i = 0usize;
+
+    loop {
+        let line_end = match find_crlf(input, i) {
+            Some(v) => v,
+            None => return false,
+        };
+        let size_line = &input[i..line_end];
+        let size_field = match size_line.iter().position(|&b| b == b';') {
+            Some(semi) => &size_line[..semi],
+            None => size_line,
+        };
+        let chunk_size = match parse_hex(size_field) {
+            Some(v) => v,
+            None => return false,
+        };
+
+        i = line_end + 2;
+
+        if chunk_size == 0 {
+            return true;
+        }
+
+        let data_end = match i.checked_add(chunk_size) {
+            Some(v) => v,
+            None => return false,
+        };
+        let crlf_end = match data_end.checked_add(2) {
+            Some(v) => v,
+            None => return false,
+        };
+        if crlf_end > input.len() {
+            return false;
+        }
+        if input[data_end] != b'\r' || input[data_end + 1] != b'\n' {
+            return false;
+        }
+        i = crlf_end;
+    }
+}
+
 /// Whether the HTTP header block declares `Transfer-Encoding: chunked`.
 ///
 /// `headers` is the bytes from the start of the response up to (and

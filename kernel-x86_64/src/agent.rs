@@ -12,6 +12,7 @@
 //! because it leans on the global allocator for JSON string work and on the
 //! kernel-side syscall surface for tools.
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 
@@ -360,9 +361,8 @@ pub fn build_http_request(body: &str, api_key: &str, keep_alive: bool) -> String
 /// Is `resp` a complete HTTP response? On a keep-alive connection the server
 /// does NOT close after the body, so we can't read-until-EOF — we must frame
 /// each response exactly. Returns `true` once the body is fully present:
-///   - chunked: `decode_chunked` succeeds (it returns `Ok` only at the
-///     terminating zero-chunk, `Err` while truncated) — exact, not a substring
-///     search for `0\r\n\r\n`.
+///   - chunked: scan chunk frames until the terminating zero-chunk — exact,
+///     not a substring search for `0\r\n\r\n`, and no large scratch buffer.
 ///   - Content-Length: the body has reached the declared length.
 /// Returns `false` (need more bytes) until then. A response with neither
 /// framing header can only be delimited by close, so it never reports complete
@@ -376,8 +376,7 @@ fn response_complete(resp: &[u8]) -> bool {
     let headers = &resp[..hdr_end];
     let body = &resp[hdr_end + sep.len()..];
     if kernel_core::net::http::is_chunked(headers) {
-        let mut scratch = [0u8; 8192];
-        kernel_core::net::http::decode_chunked(body, &mut scratch).is_ok()
+        kernel_core::net::http::chunked_complete(body)
     } else if let Some(clen) = kernel_core::net::http::content_length(headers) {
         body.len() >= clen
     } else {
@@ -667,8 +666,13 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
         Ok(s) => s,
         Err(e) => return write_out(out, &format!("ask: connection failed ({})", e)),
     };
-    let mut resp = [0u8; 8192];
-    let n = match session.request(http.as_bytes(), &mut resp) {
+    // Heap buffers, not stack buffers: `ask()` is nested under the fullscreen
+    // TUI path, so keeping the 8 KiB HTTP response and body scratch arrays on
+    // the stack reintroduced the layout-sensitive overflow class called out in
+    // the 2026-07-17 review. The request/parse strings are already heap-backed;
+    // put the fixed-size transport buffers there too.
+    let mut resp = Box::new([0u8; 8192]);
+    let n = match session.request(http.as_bytes(), &mut resp[..]) {
         Ok(n) => n,
         Err(e) => {
             session.close();
@@ -677,8 +681,8 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
     };
     session.close();
 
-    let mut body = [0u8; 8192];
-    let bn = decode_body(&resp[..n], &mut body);
+    let mut body = Box::new([0u8; 8192]);
+    let bn = decode_body(&resp[..n], &mut body[..]);
     let parsed = parse_response(&String::from_utf8_lossy(&body[..bn]));
     match parsed.text {
         Some(t) if !t.trim().is_empty() => write_out(out, t.trim()),
@@ -708,8 +712,13 @@ pub fn run_interactive(_flags: u64) -> u64 {
     // Clear the boot console first so the TUI sits on a clean screen instead of
     // overlaying leftover demo/shell scrollback.
     crate::framebuffer::clear();
-    let mut tui = match Tui::new("claude-haiku-4-5") {
-        Some(t) => t,
+    // Box the Tui: four TtyConsole scrollback rings are ~27 KiB, and held on
+    // the stack for the whole session they made run_agent_tui's frame ~55 KiB
+    // (measured via -Zemit-stack-sizes) — one nested ask() away from smashing
+    // the 64 KiB task stack. The pane state lives on the heap instead; the
+    // ask output buffer goes with it. See 2026-07-17 review, medium #4.2.
+    let mut tui: Box<Tui> = match Tui::new("claude-haiku-4-5") {
+        Some(t) => Box::new(t),
         None => return 1, // headless — no framebuffer to draw the TUI
     };
     tui.push_assistant("Agent terminal — type a question, Enter to send. 'exit' returns to the shell.");
@@ -721,7 +730,7 @@ pub fn run_interactive(_flags: u64) -> u64 {
 
     crate::FULLSCREEN_APP_ACTIVE.store(true, Ordering::Relaxed);
 
-    let mut out = [0u8; 8192];
+    let mut out = Box::new([0u8; 8192]);
     loop {
         tui.set_status("ready");
         let mut qbuf = [0u8; 512];
@@ -739,7 +748,7 @@ pub fn run_interactive(_flags: u64) -> u64 {
             continue;
         }
         tui.set_status("thinking");
-        let m = ask(q, &mut out).min(out.len());
+        let m = ask(q, &mut out[..]).min(out.len());
         let answer = core::str::from_utf8(&out[..m]).unwrap_or("(decode error)");
         tui.push_assistant(answer);
     }

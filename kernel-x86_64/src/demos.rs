@@ -15,6 +15,7 @@
 
 use crate::tty;
 use crate::println;
+use alloc::boxed::Box;
 
 /// DEMO 47: M22 Claude agent core (no network). Exercises the agent's
 /// Messages-API request framing, response parsing (text + tool_use), and tool
@@ -151,8 +152,8 @@ pub(crate) fn agent_live_demo() {
 pub(crate) fn agent_tui_demo() {
     use crate::tui::{self, Tui};
 
-    let mut t = match Tui::new("claude-haiku-4-5") {
-        Some(t) => t,
+    let mut t: Box<Tui> = match Tui::new("claude-haiku-4-5") {
+        Some(t) => Box::new(t),
         None => {
             println!("  [DEMO 50] SKIPPED: no framebuffer");
             return;
@@ -650,8 +651,8 @@ pub(crate) fn agent_bash_tool_demo() {
 pub(crate) fn agent_tui_input_demo() {
     use crate::tui::{self, Tui};
 
-    let mut t = match Tui::new("claude-haiku-4-5") {
-        Some(t) => t,
+    let mut t: Box<Tui> = match Tui::new("claude-haiku-4-5") {
+        Some(t) => Box::new(t),
         None => {
             println!("  [DEMO 51] SKIPPED: no framebuffer");
             return;
@@ -716,7 +717,7 @@ pub(crate) fn agent_loop_demo() {
     // Live mirror of the conversation on the framebuffer TUI (if present). The
     // same loop that prints to serial drives the panes — so this is the real
     // agent UI, not a mock. `None` on a headless run; calls are no-ops then.
-    let mut tui = Tui::new("claude-haiku-4-5");
+    let mut tui = Tui::new("claude-haiku-4-5").map(Box::new);
 
     // Get the user's question through the TUI prompt. On metal `read_line`
     // blocks on the real keyboard; headless, we inject the keystrokes first so
@@ -750,8 +751,8 @@ pub(crate) fn agent_loop_demo() {
 
     let mut msgs = vec![Message::text("user", question)];
 
-    let mut resp = [0u8; 8192];
-    let mut body = [0u8; 8192];
+    let mut resp = Box::new([0u8; 8192]);
+    let mut body = Box::new([0u8; 8192]);
 
     // ONE keep-alive TLS connection for the whole conversation — both turns
     // ride it, so the multi-turn loop does a single handshake instead of a
@@ -769,7 +770,7 @@ pub(crate) fn agent_loop_demo() {
     println!("  [DEMO 49] turn 1: asking Claude (with key) to use read_file...");
     let req1 = agent::build_request(model, 256, sys, &msgs);
     let http1 = agent::build_http_request(&req1, key, true);
-    let n1 = match session.request(http1.as_bytes(), &mut resp) {
+    let n1 = match session.request(http1.as_bytes(), &mut resp[..]) {
         Ok(n) => n,
         Err(e) => {
             println!("  [DEMO 49] SKIPPED: transport error ({})", e);
@@ -779,7 +780,7 @@ pub(crate) fn agent_loop_demo() {
         }
     };
     let status1 = agent::http_status(&resp[..n1]).unwrap_or(0);
-    let bn1 = agent::decode_body(&resp[..n1], &mut body);
+    let bn1 = agent::decode_body(&resp[..n1], &mut body[..]);
     let r1 = agent::parse_response(&String::from_utf8_lossy(&body[..bn1]));
     let tu = match r1.tool_use {
         Some(t) => t,
@@ -810,7 +811,7 @@ pub(crate) fn agent_loop_demo() {
     let req2 = agent::build_request(model, 256, sys, &msgs);
     let http2 = agent::build_http_request(&req2, key, true);
     // SAME connection — no reconnect between turns.
-    let n2 = match session.request(http2.as_bytes(), &mut resp) {
+    let n2 = match session.request(http2.as_bytes(), &mut resp[..]) {
         Ok(n) => n,
         Err(e) => {
             println!("  [DEMO 49] SKIPPED: transport error on turn 2 ({})", e);
@@ -819,7 +820,7 @@ pub(crate) fn agent_loop_demo() {
             return;
         }
     };
-    let bn2 = agent::decode_body(&resp[..n2], &mut body);
+    let bn2 = agent::decode_body(&resp[..n2], &mut body[..]);
     let r2 = agent::parse_response(&String::from_utf8_lossy(&body[..bn2]));
     let summary = r2.text.unwrap_or_default();
 
