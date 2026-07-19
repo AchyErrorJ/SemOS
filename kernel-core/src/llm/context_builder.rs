@@ -226,7 +226,7 @@ impl ContextBuilder {
         context.requester_tier = requester_tier;
 
         // Get registry for object lookup
-        let registry = unsafe { crate::semantic::registry::global_registry() };
+        let registry = crate::semantic::registry::global_registry();
 
         for i in 0..result_count {
             let result = &results[i];
@@ -271,7 +271,7 @@ impl ContextBuilder {
         let mut context = LlmContext::new();
         context.requester_tier = requester_tier;
 
-        let registry = unsafe { crate::semantic::registry::global_registry() };
+        let registry = crate::semantic::registry::global_registry();
 
         for (high, low) in suids {
             let suid = SUID::new(*high, *low);
@@ -323,7 +323,7 @@ impl ContextBuilder {
             }
             SecurityTier::Internal => {
                 // Tier 1: Summarize
-                let summary = unsafe { global_summarizer() }.summarize(content);
+                let summary = global_summarizer().summarize(content);
                 entry.processing = ContentProcessing::Summarized;
                 let summary_bytes = summary.as_bytes();
                 let copy_len = summary_bytes.len().min(MAX_ENTRY_SIZE);
@@ -333,7 +333,7 @@ impl ContextBuilder {
             SecurityTier::Sensitive => {
                 // Tier 2: Redact
                 entry.processing = ContentProcessing::Redacted;
-                let redacted_len = unsafe { global_redactor() }
+                let redacted_len = global_redactor()
                     .redact(content, &mut entry.content);
                 entry.content_len = redacted_len;
             }
@@ -347,29 +347,33 @@ impl ContextBuilder {
     }
 }
 
-// Global instances
-static mut GLOBAL_CONTEXT_BUILDER: ContextBuilder = ContextBuilder::new();
-static mut GLOBAL_REDACTOR: super::redact::Redactor = super::redact::Redactor::new();
-static mut GLOBAL_SUMMARIZER: super::summarize::Summarizer = super::summarize::Summarizer::new();
+// Global instances, behind the yield-on-contention kernel mutex (the old
+// `static mut` + `&'static mut` pattern raced when an interrupts-enabled
+// syscall handler was preempted mid-borrow — 2026-07-17 review, P1).
+static GLOBAL_CONTEXT_BUILDER: crate::sync::Mutex<ContextBuilder> =
+    crate::sync::Mutex::new(ContextBuilder::new());
+static GLOBAL_REDACTOR: crate::sync::Mutex<super::redact::Redactor> =
+    crate::sync::Mutex::new(super::redact::Redactor::new());
+static GLOBAL_SUMMARIZER: crate::sync::Mutex<super::summarize::Summarizer> =
+    crate::sync::Mutex::new(super::summarize::Summarizer::new());
 
-/// Get the global context builder
-pub unsafe fn global_context_builder() -> &'static mut ContextBuilder {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_CONTEXT_BUILDER)
+/// Lock the global context builder. Never hold the guard across a blocking
+/// call or a nested `dispatch()`.
+pub fn global_context_builder() -> crate::sync::MutexGuard<'static, ContextBuilder> {
+    GLOBAL_CONTEXT_BUILDER.lock()
 }
 
-/// Get the global redactor
-pub unsafe fn global_redactor() -> &'static mut super::redact::Redactor {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_REDACTOR)
+/// Lock the global redactor.
+pub fn global_redactor() -> crate::sync::MutexGuard<'static, super::redact::Redactor> {
+    GLOBAL_REDACTOR.lock()
 }
 
-/// Get the global summarizer
-pub unsafe fn global_summarizer() -> &'static mut super::summarize::Summarizer {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_SUMMARIZER)
+/// Lock the global summarizer.
+pub fn global_summarizer() -> crate::sync::MutexGuard<'static, super::summarize::Summarizer> {
+    GLOBAL_SUMMARIZER.lock()
 }
 
 /// Initialize the context builder subsystem
 pub fn init() {
-    unsafe {
-        GLOBAL_CONTEXT_BUILDER.init();
-    }
+    GLOBAL_CONTEXT_BUILDER.lock().init();
 }

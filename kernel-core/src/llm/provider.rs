@@ -400,9 +400,7 @@ impl LlmProvider {
     /// (today: loopback; tomorrow: TCP over e1000).
     fn remote_process_prompt(&self, prompt: &[u8], request_id: u64, context_entries: usize) -> LlmResponse {
         let mut completion = [0u8; super::net_provider::MAX_RESPONSE_BODY];
-        let result = unsafe {
-            super::net_provider::global_net_provider().complete(prompt, &mut completion)
-        };
+        let result = super::net_provider::global_net_provider().complete(prompt, &mut completion);
         match result {
             Ok(n) => LlmResponse::success(request_id, &completion[..n], context_entries),
             Err(e) => LlmResponse::error(request_id, e.to_error_code()),
@@ -468,17 +466,17 @@ impl LlmProvider {
     }
 }
 
-// Global provider instance
-static mut GLOBAL_LLM_PROVIDER: LlmProvider = LlmProvider::new();
+// Global provider instance, behind the kernel mutex (2026-07-17 review,
+// P1).
+static GLOBAL_LLM_PROVIDER: crate::sync::Mutex<LlmProvider> =
+    crate::sync::Mutex::new(LlmProvider::new());
 
-/// Get the global LLM provider
-pub unsafe fn global_provider() -> &'static mut LlmProvider {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_LLM_PROVIDER)
+/// Lock the global LLM provider.
+pub fn global_provider() -> crate::sync::MutexGuard<'static, LlmProvider> {
+    GLOBAL_LLM_PROVIDER.lock()
 }
 
 /// Initialize the provider subsystem
 pub fn init() {
-    unsafe {
-        GLOBAL_LLM_PROVIDER.init();
-    }
+    GLOBAL_LLM_PROVIDER.lock().init();
 }

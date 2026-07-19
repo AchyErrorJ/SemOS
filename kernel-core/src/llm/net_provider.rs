@@ -241,18 +241,13 @@ impl NetworkLlmProvider {
         let transport_kind = self.endpoint.transport;
 
         // 2. Drive the transport. Either backend is a global singleton
-        // re-acquired between phases — no borrow on `self` survives
-        // across calls. The `dyn NetworkTransport` coercion lets the
-        // send/recv loops below not care which backend they're driving.
-        //
-        // Safety: single-threaded kernel; we own the &mut for the
-        // duration of this method, releasing between iterations of
-        // the recv loop so `self.resp_buf` can be re-borrowed.
-        unsafe {
-            let t: &mut dyn NetworkTransport = match transport_kind {
-                TransportKind::Loopback => global_loopback_transport(),
-                TransportKind::TlsTcp   => global_tls_transport(),
-            };
+        // re-locked between phases — the `dyn NetworkTransport` coercion
+        // lets the send/recv loops below not care which backend they're
+        // driving. The guard holds the backend's kernel mutex for the
+        // phase, so a preempted peer task can't interleave bytes into the
+        // same connection (2026-07-17 review, P1).
+        {
+            let mut t = lock_transport(transport_kind);
             if !t.is_connected() {
                 if let Err(e) = t.connect(host_str, port) {
                     return self.fail(transport_to_llm(e));
@@ -269,18 +264,15 @@ impl NetworkLlmProvider {
             }
         }
 
-        // Receive phase. Each iteration we re-borrow the transport so the
-        // borrow on `self.resp_buf` is the only one live at a time.
+        // Receive phase. Each iteration we re-lock the transport so the
+        // guard is held only for the duration of one recv call.
         let mut total_resp = 0;
         loop {
             if total_resp >= self.resp_buf.len() {
                 return self.fail(LlmError::ContextTooLarge);
             }
-            let n_result = unsafe {
-                let t: &mut dyn NetworkTransport = match transport_kind {
-                    TransportKind::Loopback => global_loopback_transport(),
-                    TransportKind::TlsTcp   => global_tls_transport(),
-                };
+            let n_result = {
+                let mut t = lock_transport(transport_kind);
                 t.recv(&mut self.resp_buf[total_resp..])
             };
             match n_result {
@@ -291,11 +283,8 @@ impl NetworkLlmProvider {
         }
 
         // 3. Close the transport (best-effort; ignore any error).
-        unsafe {
-            let t: &mut dyn NetworkTransport = match transport_kind {
-                TransportKind::Loopback => global_loopback_transport(),
-                TransportKind::TlsTcp   => global_tls_transport(),
-            };
+        {
+            let mut t = lock_transport(transport_kind);
             t.close();
         }
 
@@ -443,6 +432,41 @@ impl NetworkLlmProvider {
 // ============================================================================
 // Free helpers for body building and response parsing.
 // ============================================================================
+
+/// Locked view of whichever global transport backend an `Endpoint`
+/// selects. Holds the backend's kernel-mutex guard and derefs straight to
+/// `dyn NetworkTransport`, replacing the old `&'static mut` match arms.
+enum TransportGuard {
+    Loopback(crate::sync::MutexGuard<'static, super::transport::LoopbackTransport>),
+    Tls(crate::sync::MutexGuard<'static, crate::tls::transport_tls::TlsTransport>),
+}
+
+/// Lock the global transport backend for `kind`.
+fn lock_transport(kind: TransportKind) -> TransportGuard {
+    match kind {
+        TransportKind::Loopback => TransportGuard::Loopback(global_loopback_transport()),
+        TransportKind::TlsTcp   => TransportGuard::Tls(global_tls_transport()),
+    }
+}
+
+impl core::ops::Deref for TransportGuard {
+    type Target = dyn NetworkTransport + 'static;
+    fn deref(&self) -> &(dyn NetworkTransport + 'static) {
+        match self {
+            TransportGuard::Loopback(g) => &**g,
+            TransportGuard::Tls(g) => &**g,
+        }
+    }
+}
+
+impl core::ops::DerefMut for TransportGuard {
+    fn deref_mut(&mut self) -> &mut (dyn NetworkTransport + 'static) {
+        match self {
+            TransportGuard::Loopback(g) => &mut **g,
+            TransportGuard::Tls(g) => &mut **g,
+        }
+    }
+}
 
 /// Convert a `TransportError` into the matching `LlmError`.
 fn transport_to_llm(e: TransportError) -> LlmError {
@@ -688,20 +712,19 @@ impl ToStackBytes for [u8] {
 // Global instance
 // ============================================================================
 
-static mut GLOBAL_NET_PROVIDER: NetworkLlmProvider = NetworkLlmProvider::new();
+static GLOBAL_NET_PROVIDER: crate::sync::Mutex<NetworkLlmProvider> =
+    crate::sync::Mutex::new(NetworkLlmProvider::new());
 
-/// Get the global network provider.
-///
-/// # Safety
-/// Same single-threaded-kernel contract as the other LLM singletons.
-pub unsafe fn global_net_provider() -> &'static mut NetworkLlmProvider {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_NET_PROVIDER)
+/// Lock the global network provider (2026-07-17 review, P1 — was a bare
+/// `static mut` under the "single-threaded kernel" contract).
+pub fn global_net_provider() -> crate::sync::MutexGuard<'static, NetworkLlmProvider> {
+    GLOBAL_NET_PROVIDER.lock()
 }
 
 /// Initialise the global network provider (sets defaults pointing at the
 /// loopback transport).
 pub fn init() {
-    unsafe { GLOBAL_NET_PROVIDER.init(); }
+    GLOBAL_NET_PROVIDER.lock().init();
 }
 
 #[cfg(test)]
@@ -714,8 +737,8 @@ mod tests {
         init();
         let prompt = b"hello, world";
         let mut out = [0u8; 512];
-        unsafe {
-            let net = global_net_provider();
+        {
+            let mut net = global_net_provider();
             let n = net.complete(prompt, &mut out).unwrap();
             let s = core::str::from_utf8(&out[..n]).unwrap();
             assert!(s.contains("[loopback] echo: hello, world"));

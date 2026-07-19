@@ -122,11 +122,9 @@ impl ContextAwareRedactor {
         );
 
         // Check if security policies specify a redaction profile
-        unsafe {
-            let policy_engine = global_policy_engine();
-            let policy_result = policy_engine.evaluate(&eval_context);
-            map_policy_result(policy_result, context.requester_tier, self.default_profile)
-        }
+        let policy_engine = global_policy_engine();
+        let policy_result = policy_engine.evaluate(&eval_context);
+        map_policy_result(policy_result, context.requester_tier, self.default_profile)
     }
 
     /// Apply specific redaction profile to content
@@ -417,19 +415,19 @@ fn map_policy_result(
     }
 }
 
-/// Global context-aware redactor instance
-static mut GLOBAL_CONTEXT_REDACTOR: ContextAwareRedactor = ContextAwareRedactor::new();
+/// Global context-aware redactor instance, behind the kernel mutex (same
+/// preemption race as the registry — 2026-07-17 review, P1).
+static GLOBAL_CONTEXT_REDACTOR: crate::sync::Mutex<ContextAwareRedactor> =
+    crate::sync::Mutex::new(ContextAwareRedactor::new());
 
-/// Get the global context-aware redactor
-pub unsafe fn global_context_redactor() -> &'static mut ContextAwareRedactor {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_CONTEXT_REDACTOR)
+/// Lock the global context-aware redactor.
+pub fn global_context_redactor() -> crate::sync::MutexGuard<'static, ContextAwareRedactor> {
+    GLOBAL_CONTEXT_REDACTOR.lock()
 }
 
 /// Initialize the context-aware redaction subsystem
 pub fn init() {
-    unsafe {
-        GLOBAL_CONTEXT_REDACTOR.init();
-    }
+    GLOBAL_CONTEXT_REDACTOR.lock().init();
 }
 
 #[cfg(test)]

@@ -385,7 +385,7 @@ impl Namespace {
     /// an empty directory object. Idempotent — re-running is a no-op
     /// if root already exists.
     pub fn init() -> Result<(), FsError> {
-        let registry = unsafe { global_registry() };
+        let mut registry = global_registry();
         if registry.get(&ROOT_SUID).is_some() {
             return Ok(()); // already initialised
         }
@@ -432,8 +432,12 @@ impl Namespace {
         dir.modified_at = now;
         let empty = [0u8; 1];
         dir.content = ObjectContent::from_inline(&empty).ok_or(FsError::Corrupt)?;
-        let registry = unsafe { global_registry() };
-        if !registry.insert(dir) { return Err(FsError::RegistryFull); }
+        // Scope the guard: add_child re-locks the registry, and the kernel
+        // mutex is non-recursive (holding it here would self-deadlock).
+        {
+            let mut registry = global_registry();
+            if !registry.insert(dir) { return Err(FsError::RegistryFull); }
+        }
         add_child(parent, name, suid)?;
         Ok(suid)
     }
@@ -454,8 +458,11 @@ impl Namespace {
         file.created_at = now;
         file.modified_at = now;
         file.content = ObjectContent::from_bytes(content).ok_or(FsError::ContentTooLarge)?;
-        let registry = unsafe { global_registry() };
-        if !registry.insert(file) { return Err(FsError::RegistryFull); }
+        // Scope the guard: add_child re-locks the registry (see mkdir).
+        {
+            let mut registry = global_registry();
+            if !registry.insert(file) { return Err(FsError::RegistryFull); }
+        }
         add_child(parent, name, suid)?;
         Ok(suid)
     }
@@ -466,7 +473,7 @@ impl Namespace {
     pub fn write_file(path: &str, content: &[u8]) -> Result<(), FsError> {
         let suid = Self::resolve(path)?;
         let now = crate::platform::wall_clock().unwrap_or(0);
-        let registry = unsafe { global_registry() };
+        let mut registry = global_registry();
         let obj = registry.get_mut(&suid).ok_or(FsError::NotFound)?;
         if obj.content_type == ContentType::Structured {
             return Err(FsError::IsADirectory);
@@ -476,21 +483,23 @@ impl Namespace {
         Ok(())
     }
 
-    /// Read a file's content. Returns a slice into the underlying
-    /// SemanticObject's inline buffer; valid until the next mutation.
-    pub fn read_file(path: &str) -> Result<&'static [u8], FsError> {
+    /// Read a file's content into `out`, returning the byte count. Copy-out
+    /// (never a borrowed slice): the old `read_file` transmuted a registry
+    /// borrow to `&'static [u8]`, which was only defensible while the
+    /// registry was a fake-`'static` global — with the kernel mutex, a
+    /// returned borrow would outlive the guard and race the next mutation
+    /// (2026-07-17 review, P1).
+    pub fn read_file_into(path: &str, out: &mut [u8]) -> Result<usize, FsError> {
         let suid = Self::resolve(path)?;
-        let registry = unsafe { global_registry() };
+        let registry = global_registry();
         let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
         if obj.content_type == ContentType::Structured {
             return Err(FsError::IsADirectory);
         }
-        // `as_bytes` returns Option<&[u8]> with the object's lifetime.
-        // The registry is 'static so this slice lives until the object
-        // is mutated or removed.
         let bytes = obj.content.as_bytes().ok_or(FsError::Corrupt)?;
-        // Extend the lifetime — sound because the registry is &'static mut.
-        Ok(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(bytes) })
+        let n = bytes.len().min(out.len());
+        out[..n].copy_from_slice(&bytes[..n]);
+        Ok(n)
     }
 
     /// Remove the entry named `path`. If it's a directory, the
@@ -502,7 +511,7 @@ impl Namespace {
         let suid = lookup_in_dir(parent, name)?;
         // If target is a non-empty directory, refuse.
         {
-            let registry = unsafe { global_registry() };
+            let registry = global_registry();
             let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
             if obj.content_type == ContentType::Structured {
                 let bytes = obj.content.as_bytes().unwrap_or(&[]);
@@ -513,7 +522,7 @@ impl Namespace {
         }
         remove_child(parent, name)?;
         // Drop the object itself.
-        let registry = unsafe { global_registry() };
+        let mut registry = global_registry();
         registry.remove(&suid);
         Ok(())
     }
@@ -528,7 +537,7 @@ impl Namespace {
         F: FnMut(&str, SUID),
     {
         let suid = Self::resolve(path)?;
-        let registry = unsafe { global_registry() };
+        let registry = global_registry();
         let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
         if obj.content_type != ContentType::Structured {
             return Err(FsError::NotADirectory);
@@ -578,7 +587,7 @@ impl Namespace {
 
         // Bump mtime on the moved object so std::fs::Metadata sees the rename.
         let now = crate::platform::wall_clock().unwrap_or(0);
-        let registry = unsafe { global_registry() };
+        let mut registry = global_registry();
         if let Some(obj) = registry.get_mut(&suid) {
             obj.modified_at = now;
         }
@@ -595,7 +604,7 @@ impl Namespace {
         use crate::semantic::object::MAX_FILE_CONTENT;
 
         let suid = Self::resolve(path)?;
-        let registry = unsafe { global_registry() };
+        let mut registry = global_registry();
         let obj = registry.get_mut(&suid).ok_or(FsError::NotFound)?;
         if obj.content_type == ContentType::Structured {
             return Err(FsError::IsADirectory);
@@ -759,7 +768,7 @@ mod serial {
         let mut head = 0usize;
         let mut tail = 1usize;
 
-        let registry = unsafe { global_registry() };
+        let registry = global_registry();
         while head < tail {
             let suid = queue[head];
             head += 1;
@@ -826,7 +835,7 @@ mod serial {
         if version != VERSION { return Err(FsError::Corrupt); }
         let count = u32::from_le_bytes(buf[8..12].try_into().unwrap()) as usize;
 
-        let registry = unsafe { global_registry() };
+        let mut registry = global_registry();
         let mut cursor = 12usize;
         for _ in 0..count {
             if cursor + OBJ_HEADER > buf.len() { return Err(FsError::Corrupt); }
@@ -891,7 +900,7 @@ mod serial {
 /// Look up one path component in the directory at `parent_suid`.
 /// Errors if the parent isn't a directory or the name isn't present.
 fn lookup_in_dir(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
-    let registry = unsafe { global_registry() };
+    let registry = global_registry();
     let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
     if parent.content_type != ContentType::Structured {
         return Err(FsError::NotADirectory);
@@ -912,7 +921,7 @@ fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
     // the registry mutably for the rewrite.
     let mut scratch = [0u8; DIR_CONTENT_MAX];
     let existing_len = {
-        let registry = unsafe { global_registry() };
+        let registry = global_registry();
         let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
         if parent.content_type != ContentType::Structured {
             return Err(FsError::NotADirectory);
@@ -926,7 +935,7 @@ fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
     let mut new_buf = [0u8; DIR_CONTENT_MAX];
     let new_len = insert_dir_entry(&scratch[..existing_len], name, suid, &mut new_buf)?;
 
-    let registry = unsafe { global_registry() };
+    let mut registry = global_registry();
     let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
     // Heap-backed (from_bytes) so a directory isn't capped at 256 B inline.
     parent.content = ObjectContent::from_bytes(&new_buf[..new_len])
@@ -939,7 +948,7 @@ fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
 fn remove_child(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
     let mut scratch = [0u8; DIR_CONTENT_MAX];
     let existing_len = {
-        let registry = unsafe { global_registry() };
+        let registry = global_registry();
         let parent = registry.get(&parent_suid).ok_or(FsError::NotFound)?;
         if parent.content_type != ContentType::Structured {
             return Err(FsError::NotADirectory);
@@ -954,7 +963,7 @@ fn remove_child(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
     let (new_len, removed_suid) =
         remove_dir_entry(&scratch[..existing_len], name, &mut new_buf)?;
 
-    let registry = unsafe { global_registry() };
+    let mut registry = global_registry();
     let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
     parent.content = ObjectContent::from_bytes(&new_buf[..new_len])
         .ok_or(FsError::Corrupt)?;

@@ -71,8 +71,8 @@ impl SemanticSearch {
         }
 
         // Insert into registry
-        unsafe {
-            let registry = registry::global_registry();
+        {
+            let mut registry = registry::global_registry();
             if !registry.insert(object) {
                 return Err(SearchError::RegistryFull);
             }
@@ -81,11 +81,11 @@ impl SemanticSearch {
         // Add to vector index if embedding provided
         if !embedding.is_empty() {
             let vector = DefaultVector::from_slice(embedding);
-            unsafe {
-                let index = global_vector_index();
+            {
+                let mut index = global_vector_index();
                 if !index.insert(suid.high, suid.low, tier as u8, vector) {
                     // Remove from registry since vector insert failed
-                    let registry = registry::global_registry();
+                    let mut registry = registry::global_registry();
                     registry.remove(&suid);
                     return Err(SearchError::IndexFull);
                 }
@@ -102,7 +102,7 @@ impl SemanticSearch {
         }
 
         // Verify object exists
-        unsafe {
+        {
             let registry = registry::global_registry();
             if registry.get(suid).is_none() {
                 return Err(SearchError::NotFound);
@@ -111,8 +111,8 @@ impl SemanticSearch {
 
         // Update vector index
         let vector = DefaultVector::from_slice(embedding);
-        unsafe {
-            let index = global_vector_index();
+        {
+            let mut index = global_vector_index();
             if !index.update(suid.high, suid.low, vector.clone()) {
                 // Object exists but not in vector index - insert it
                 // Get tier from registry
@@ -143,8 +143,8 @@ impl SemanticSearch {
 
         let query_vec = DefaultVector::from_slice(query);
 
-        unsafe {
-            let index = global_vector_index();
+        {
+            let mut index = global_vector_index();
             let found = index.search(&query_vec, max_tier, limit, results);
             Ok(found)
         }
@@ -157,14 +157,14 @@ impl SemanticSearch {
         }
 
         // Remove from vector index
-        unsafe {
-            let index = global_vector_index();
+        {
+            let mut index = global_vector_index();
             index.remove(suid.high, suid.low);
         }
 
         // Remove from registry
-        unsafe {
-            let registry = registry::global_registry();
+        {
+            let mut registry = registry::global_registry();
             if registry.remove(suid).is_none() {
                 return Err(SearchError::NotFound);
             }
@@ -179,9 +179,9 @@ impl SemanticSearch {
             return SearchStats::default();
         }
 
-        unsafe {
+        {
             let registry = registry::global_registry();
-            let index = global_vector_index();
+            let mut index = global_vector_index();
 
             SearchStats {
                 object_count: registry.len(),
@@ -243,17 +243,17 @@ pub struct SearchStats {
     pub dimensions: usize,
 }
 
-/// Global semantic search instance
-static mut GLOBAL_SEARCH: SemanticSearch = SemanticSearch::new();
+/// Global semantic search instance, behind the kernel mutex (2026-07-17
+/// review, P1).
+static GLOBAL_SEARCH: crate::sync::Mutex<SemanticSearch> =
+    crate::sync::Mutex::new(SemanticSearch::new());
 
-/// Get the global semantic search instance
-pub unsafe fn global_search() -> &'static mut SemanticSearch {
-    &mut *(&raw mut GLOBAL_SEARCH as *mut SemanticSearch)
+/// Lock the global semantic search instance.
+pub fn global_search() -> crate::sync::MutexGuard<'static, SemanticSearch> {
+    GLOBAL_SEARCH.lock()
 }
 
 /// Initialize the global semantic search
 pub fn init_global_search() {
-    unsafe {
-        GLOBAL_SEARCH.init();
-    }
+    GLOBAL_SEARCH.lock().init();
 }

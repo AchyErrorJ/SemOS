@@ -228,17 +228,21 @@ impl ObjectRegistry {
     }
 }
 
-/// Global registry instance
-static mut GLOBAL_REGISTRY: ObjectRegistry = ObjectRegistry::new();
+/// Global registry instance, behind the yield-on-contention kernel mutex.
+/// The old `static mut` + `&'static mut` pattern raced whenever a syscall
+/// handler with interrupts enabled (llm_ask / agent TUI / editor) was
+/// preempted mid-borrow (2026-07-17 review, P1).
+static GLOBAL_REGISTRY: crate::sync::Mutex<ObjectRegistry> =
+    crate::sync::Mutex::new(ObjectRegistry::new());
 
-/// Get the global registry (unsafe due to mutable static)
-pub unsafe fn global_registry() -> &'static mut ObjectRegistry {
-    &mut *(&raw mut GLOBAL_REGISTRY as *mut ObjectRegistry)
+/// Lock the global registry and return the guard. Derefs to
+/// `ObjectRegistry`, so `registry.get(...)` call sites read unchanged.
+/// Never hold the guard across a blocking call or a nested `dispatch()`.
+pub fn global_registry() -> crate::sync::MutexGuard<'static, ObjectRegistry> {
+    GLOBAL_REGISTRY.lock()
 }
 
 /// Initialize the global registry
 pub fn init_global_registry() {
-    unsafe {
-        GLOBAL_REGISTRY.init();
-    }
+    GLOBAL_REGISTRY.lock().init();
 }

@@ -2895,8 +2895,8 @@ fn persistence_demo() {
                 Some(o) => o,
                 None => { println!("  [DEMO 5] with_content failed"); return; }
             };
-            unsafe {
-                let registry = kernel_core::semantic::registry::global_registry();
+            {
+                let mut registry = kernel_core::semantic::registry::global_registry();
                 if !registry.insert(obj) {
                     println!("  [DEMO 5] registry.insert failed (duplicate SUID?)");
                     return;
@@ -3031,7 +3031,7 @@ fn llm_streaming_test() {
 
     // Process pending requests manually since we're in kernel space
     unsafe {
-        let provider = kernel_core::llm::provider::global_provider();
+        let mut provider = kernel_core::llm::provider::global_provider();
         provider.process_pending();
     }
 
@@ -3311,7 +3311,7 @@ fn network_llm_provider_test() {
     // ---- Test 2: round-trip via LlmProvider queue with ProviderType::Remote ----
     println!("  [DEMO 10] Test 2: queue round-trip via LlmProvider (Remote)");
     unsafe {
-        let provider = global_provider();
+        let mut provider = global_provider();
         let saved_type = provider.provider_type();
         provider.set_type(ProviderType::Remote);
 
@@ -3356,7 +3356,7 @@ fn network_llm_provider_test() {
     // on the TLS singleton at boot before this transport is usable). ----
     println!("  [DEMO 10] Test 4: switching transport to TlsTcp (no remote IP yet)");
     unsafe {
-        let net = global_net_provider();
+        let mut net = global_net_provider();
         let saved = net.endpoint().transport;
         net.endpoint_mut().transport = TransportKind::TlsTcp;
         let mut sink = [0u8; 64];
@@ -3370,7 +3370,7 @@ fn network_llm_provider_test() {
     // ---- Test 5: format switch — verify parser rejects mismatched shape ----
     println!("  [DEMO 10] Test 5: ApiFormat::OpenAi parser rejects Anthropic-shape body");
     unsafe {
-        let net = global_net_provider();
+        let mut net = global_net_provider();
         let saved_fmt = net.endpoint().format;
         net.endpoint_mut().format = ApiFormat::OpenAi;
         // The loopback peer always answers Anthropic-shape: `content` is an
@@ -4191,8 +4191,9 @@ fn paths_namespace_test() {
     };
 
     // Step 4: read it back byte-exact.
-    let got = match Namespace::read_file("/notes/2026/meeting.md") {
-        Ok(b) => b,
+    let mut rbuf = [0u8; 256];
+    let got = match Namespace::read_file_into("/notes/2026/meeting.md", &mut rbuf) {
+        Ok(n) => &rbuf[..n],
         Err(e) => { println!("  [DEMO 17] FAIL: read_file: {:?}", e); return; }
     };
     if got != HELLO {
@@ -4206,8 +4207,8 @@ fn paths_namespace_test() {
     if let Err(e) = Namespace::write_file("/notes/2026/meeting.md", REVISED) {
         println!("  [DEMO 17] FAIL: write_file: {:?}", e); return;
     }
-    let got2 = match Namespace::read_file("/notes/2026/meeting.md") {
-        Ok(b) => b,
+    let got2 = match Namespace::read_file_into("/notes/2026/meeting.md", &mut rbuf) {
+        Ok(n) => &rbuf[..n],
         Err(e) => { println!("  [DEMO 17] FAIL: read_file after overwrite: {:?}", e); return; }
     };
     if got2 != REVISED {
@@ -4258,11 +4259,11 @@ fn paths_namespace_test() {
     if let Err(e) = Namespace::unlink("/notes/2026/scratch.md") {
         println!("  [DEMO 17] FAIL: unlink: {:?}", e); return;
     }
-    match Namespace::read_file("/notes/2026/scratch.md") {
+    match Namespace::read_file_into("/notes/2026/scratch.md", &mut rbuf) {
         Err(FsError::NotFound) => {}
         other => { println!("  [DEMO 17] FAIL: read after unlink got {:?}, want NotFound", other.map(|_| ())); return; }
     }
-    match Namespace::read_file("/notes/2026/meeting.md") {
+    match Namespace::read_file_into("/notes/2026/meeting.md", &mut rbuf) {
         Ok(_) => println!("  [DEMO 17] PASS: unlink removed only the named entry"),
         Err(e) => { println!("  [DEMO 17] FAIL: sibling read after unlink: {:?}", e); return; }
     }
@@ -4319,34 +4320,35 @@ fn fs_persistence_test() {
     const FILE_B: &[u8] = b"beta file with different content\n";
 
     // Was a previous boot's state restored by the boot-time auto-load?
-    let already_loaded = Namespace::read_file("/persist/a.txt").is_ok();
+    let mut pbuf = [0u8; 256];
+    let already_loaded = Namespace::read_file_into("/persist/a.txt", &mut pbuf).is_ok();
 
     if already_loaded {
         // SECOND+ BOOT: validate everything came back.
         println!("  [DEMO 21] detected prior-boot snapshot (boot-time auto-load fired)");
 
-        let a = match Namespace::read_file("/persist/a.txt") {
-            Ok(b) => b,
+        let a_len = match Namespace::read_file_into("/persist/a.txt", &mut pbuf) {
+            Ok(n) => n,
             Err(e) => { println!("  [DEMO 21] FAIL: read a.txt: {:?}", e); return; }
         };
-        if a != FILE_A {
-            println!("  [DEMO 21] FAIL: a.txt content drifted ({} bytes, want {})", a.len(), FILE_A.len());
+        if &pbuf[..a_len] != FILE_A {
+            println!("  [DEMO 21] FAIL: a.txt content drifted ({} bytes, want {})", a_len, FILE_A.len());
             return;
         }
-        let b = match Namespace::read_file("/persist/b.txt") {
-            Ok(b) => b,
+        let b_len = match Namespace::read_file_into("/persist/b.txt", &mut pbuf) {
+            Ok(n) => n,
             Err(e) => { println!("  [DEMO 21] FAIL: read b.txt: {:?}", e); return; }
         };
-        if b != FILE_B {
+        if &pbuf[..b_len] != FILE_B {
             println!("  [DEMO 21] FAIL: b.txt content drifted"); return;
         }
         println!("  [DEMO 21] PASS: both files survived reboot byte-exact ({} + {} bytes)",
-            a.len(), b.len());
+            a_len, b_len);
 
         // Timestamps should pre-date current wall clock (they're from a prior boot).
         let ts = {
             let suid = Namespace::resolve("/persist/a.txt").unwrap();
-            let registry = unsafe { kernel_core::semantic::registry::global_registry() };
+            let registry = kernel_core::semantic::registry::global_registry();
             registry.get(&suid).map(|o| (o.created_at, o.modified_at)).unwrap_or((0,0))
         };
         let now = kernel_core::platform::wall_clock().unwrap_or(0);
@@ -7004,8 +7006,8 @@ fn sem_demo_one(
         Some(o) => o,
         None => { println!("[sem_demo] SemanticObject::with_content failed"); return; }
     };
-    let inserted = unsafe {
-        let registry = kernel_core::semantic::registry::global_registry();
+    let inserted = {
+        let mut registry = kernel_core::semantic::registry::global_registry();
         registry.insert(obj)
     };
     if !inserted {
@@ -7021,13 +7023,15 @@ fn sem_demo_one(
     println!("  SUID:        0x{:016X}_{:016X}", suid.high, suid.low);
     println!("  Tier:        {}", tier_label);
 
-    // Direct registry read — kernel mode = full access.
-    let direct: &[u8] = unsafe {
-        let registry = kernel_core::semantic::registry::global_registry();
-        match registry.get(&suid) {
-            Some(o) => o.content.as_bytes().unwrap_or(&[]),
-            None => &[],
-        }
+    // Direct registry read — kernel mode = full access. The registry guard
+    // must stay locked for as long as we hold the content slice: it borrows
+    // the object, and dropping the guard early would let another task
+    // mutate the registry under it (this used to "work" via a fake
+    // &'static). The guard lives to the end of the function.
+    let registry = kernel_core::semantic::registry::global_registry();
+    let direct: &[u8] = match registry.get(&suid) {
+        Some(o) => o.content.as_bytes().unwrap_or(&[]),
+        None => &[],
     };
     print!("  DIRECT READ: ");
     for &b in direct { print!("{}", b as char); }
@@ -7047,9 +7051,8 @@ fn sem_demo_one(
         }
         SecurityTier::Internal => {
             // Summarize.
-            let summary = unsafe {
-                kernel_core::llm::context_builder::global_summarizer().summarize(direct)
-            };
+            let summary =
+                kernel_core::llm::context_builder::global_summarizer().summarize(direct);
             for &b in summary.as_bytes() { print!("{}", b as char); }
         }
         SecurityTier::Sensitive => {

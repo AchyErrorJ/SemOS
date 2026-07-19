@@ -23,6 +23,7 @@
 #![allow(static_mut_refs)]
 
 pub mod platform;
+pub mod sync;
 pub mod memory;
 pub mod semantic;
 pub mod crypto;

@@ -466,16 +466,16 @@ fn write_decimal(dst: &mut [u8], n: u64) -> usize {
 // Global transport singleton
 // ============================================================================
 
-static mut GLOBAL_LOOPBACK: LoopbackTransport = LoopbackTransport::new();
+// Behind the yield-on-contention kernel mutex (was `static mut` +
+// `&'static mut` under the false "syscalls are serialized" assumption —
+// 2026-07-17 review, P1).
+static GLOBAL_LOOPBACK: crate::sync::Mutex<LoopbackTransport> =
+    crate::sync::Mutex::new(LoopbackTransport::new());
 
-/// Get the global loopback transport. Used by `NetworkLlmProvider` when its
-/// configured transport kind is `Loopback`.
-///
-/// # Safety
-/// Single-threaded kernel; the singleton is accessed under the same
-/// soft-serialised contract as the other global LLM providers.
-pub unsafe fn global_loopback_transport() -> &'static mut LoopbackTransport {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_LOOPBACK)
+/// Lock the global loopback transport. Used by `NetworkLlmProvider` when
+/// its configured transport kind is `Loopback`.
+pub fn global_loopback_transport() -> crate::sync::MutexGuard<'static, LoopbackTransport> {
+    GLOBAL_LOOPBACK.lock()
 }
 
 /// Initialise the transport subsystem. Currently a no-op (statics are

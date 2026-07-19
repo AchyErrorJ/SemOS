@@ -1070,7 +1070,7 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
     // semantics (higher value = stronger clearance).
     let caller_tier = crate::scheduler::current_task_max_tier();
     let obj_tier = {
-        let registry = unsafe { crate::semantic::registry::global_registry() };
+        let registry = crate::semantic::registry::global_registry();
         match registry.get(&suid) {
             Some(o) => o.tier,
             None => {
@@ -1090,7 +1090,7 @@ fn handle_open_path(path: &str, flags: u64) -> u64 {
 
     // Is it a directory? Path-namespace dirs have ContentType::Structured.
     let is_dir = {
-        let registry = unsafe { crate::semantic::registry::global_registry() };
+        let registry = crate::semantic::registry::global_registry();
         registry.get(&suid).map(|o| {
             o.content_type == crate::semantic::object::ContentType::Structured
         }).unwrap_or(false)
@@ -1168,7 +1168,7 @@ fn handle_fread(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         // Path-namespace FD: read the SemanticObject at the cursor, advance it.
         Some(FdEntry::Path { suid, position, is_directory }) => {
             if is_directory { return u64::MAX; } // use SYS_READDIR
-            let registry = unsafe { crate::semantic::registry::global_registry() };
+            let registry = crate::semantic::registry::global_registry();
             let obj = match registry.get(&suid) {
                 Some(o) => o,
                 None => return u64::MAX,
@@ -1321,7 +1321,7 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
                 None => return u64::MAX,
             };
             let pos = position as usize;
-            let registry = unsafe { crate::semantic::registry::global_registry() };
+            let mut registry = crate::semantic::registry::global_registry();
             let obj = match registry.get_mut(&suid) {
                 Some(o) => o,
                 None => return u64::MAX,
@@ -1402,7 +1402,7 @@ fn handle_stat(path_ptr: u64, path_len: u64) -> u64 {
             Ok(s) => s,
             Err(_) => return u64::MAX,
         };
-        let registry = unsafe { crate::semantic::registry::global_registry() };
+        let registry = crate::semantic::registry::global_registry();
         return match registry.get(&suid) {
             Some(o) => o.content.len() as u64,
             None => u64::MAX,
@@ -1566,7 +1566,7 @@ fn handle_statx(path_ptr: u64, path_len: u64, out_ptr: u64) -> u64 {
         Ok(s) => s,
         Err(_) => return u64::MAX,
     };
-    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let registry = crate::semantic::registry::global_registry();
     let obj = match registry.get(&suid) {
         Some(o) => o,
         None => return u64::MAX,
@@ -1605,7 +1605,7 @@ fn handle_readdir(fd: u64, idx: u64, name_buf_ptr: u64, name_buf_len: u64) -> u6
     // Walk the packed directory bytes to the requested index, then
     // copy that entry's name out. The path namespace exposes this
     // via the visitor-callback API.
-    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let registry = crate::semantic::registry::global_registry();
     let obj = match registry.get(&dir_suid) {
         Some(o) => o,
         None => return u64::MAX,
@@ -1876,7 +1876,7 @@ fn spawn_namespace_elf(path: &str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
 
     // Hold the registry borrow for the rest of the call (it's &'static mut and
     // spawn doesn't touch the registry, so the ELF byte borrow stays valid).
-    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let registry = crate::semantic::registry::global_registry();
     let obj = match registry.get(&suid) {
         Some(o) => o,
         None => return u64::MAX,
@@ -1958,18 +1958,21 @@ struct VouchEntry {
     path_len: u8,
 }
 const MAX_VOUCHES: usize = 32;
-static mut VOUCH_TABLE: [VouchEntry; MAX_VOUCHES] = [VouchEntry {
-    suid: crate::semantic::suid::SUID { high: 0, low: 0 },
-    tier: 0,
-    hash: [0; 32],
-    used: false,
-    path: [0; 64],
-    path_len: 0,
-}; MAX_VOUCHES];
+/// The vouch grant table, behind the kernel mutex (was `static mut` under
+/// the false "syscalls are serialized" assumption — 2026-07-17 review, P1).
+static VOUCH_TABLE: crate::sync::Mutex<[VouchEntry; MAX_VOUCHES]> =
+    crate::sync::Mutex::new([VouchEntry {
+        suid: crate::semantic::suid::SUID { high: 0, low: 0 },
+        tier: 0,
+        hash: [0; 32],
+        used: false,
+        path: [0; 64],
+        path_len: 0,
+    }; MAX_VOUCHES]);
 
 /// Look up a vouch grant for `suid` → (granted_tier, vouched-bytes hash).
 fn vouch_lookup(suid: &crate::semantic::suid::SUID) -> Option<(u8, [u8; 32])> {
-    let table = unsafe { &*core::ptr::addr_of!(VOUCH_TABLE) };
+    let table = VOUCH_TABLE.lock();
     table.iter().find(|e| e.used && e.suid == *suid).map(|e| (e.tier, e.hash))
 }
 
@@ -1993,7 +1996,7 @@ fn handle_vouch(path_ptr: u64, path_len: u64, grant_tier: u64) -> u64 {
         None => return 0,
     };
     let suid = match crate::fs::paths::Namespace::resolve(path) { Ok(s) => s, Err(_) => return 0 };
-    let registry = unsafe { crate::semantic::registry::global_registry() };
+    let registry = crate::semantic::registry::global_registry();
     let hash = match registry.get(&suid).and_then(|o| o.content.as_bytes()) {
         Some(elf) => crate::crypto::sha256::hash(elf),
         None => return 0,
@@ -2002,7 +2005,7 @@ fn handle_vouch(path_ptr: u64, path_len: u64, grant_tier: u64) -> u64 {
     let mut pbuf = [0u8; 64];
     let plen = path.len().min(64);
     pbuf[..plen].copy_from_slice(&path.as_bytes()[..plen]);
-    let table = unsafe { &mut *core::ptr::addr_of_mut!(VOUCH_TABLE) };
+    let mut table = VOUCH_TABLE.lock();
     // Update an existing grant for this object, else take a free slot.
     if let Some(e) = table.iter_mut().find(|e| e.used && e.suid == suid) {
         e.tier = grant;
@@ -2024,7 +2027,7 @@ fn handle_vouch(path_ptr: u64, path_len: u64, grant_tier: u64) -> u64 {
 /// SYS_VOUCHES() -> count. Print the current vouch grants (path + tier) to the
 /// console for audit. Any task may list (read-only, no secrets exposed).
 fn handle_vouches() -> u64 {
-    let table = unsafe { &*core::ptr::addr_of!(VOUCH_TABLE) };
+    let table = VOUCH_TABLE.lock();
     let mut n = 0u64;
     crate::platform::log("[vouches] active grants (reset on reboot):\n");
     for e in table.iter() {
@@ -2321,8 +2324,8 @@ fn handle_sem_create(suid_high: u64, suid_low: u64, tier: u64, content_info: u64
         crate::semantic::SemanticObject::new(suid, security_tier, owner)
     };
 
-    unsafe {
-        let registry = crate::semantic::registry::global_registry();
+    {
+        let mut registry = crate::semantic::registry::global_registry();
         if registry.insert(obj) { 0 } else { u64::MAX }
     }
 }
@@ -2365,7 +2368,7 @@ fn handle_sem_write(suid_high: u64, suid_low: u64, data_ptr: u64, data_len: u64)
     if len > 1024 { return u64::MAX; }
 
     unsafe {
-        let registry = crate::semantic::registry::global_registry();
+        let mut registry = crate::semantic::registry::global_registry();
         match registry.get_mut(&suid) {
             Some(obj) => {
                 if (obj.tier as u8) > max_tier {
@@ -2404,8 +2407,8 @@ fn handle_sem_delete(suid_high: u64, suid_low: u64) -> u64 {
     let max_tier = crate::scheduler::current_task_max_tier();
     let suid = crate::semantic::SUID::new(suid_high, suid_low);
 
-    unsafe {
-        let registry = crate::semantic::registry::global_registry();
+    {
+        let mut registry = crate::semantic::registry::global_registry();
         // Check tier before removing
         if let Some(obj) = registry.get(&suid) {
             if (obj.tier as u8) > max_tier {
@@ -2428,8 +2431,8 @@ fn handle_sem_link(src_high: u64, src_low: u64, dst_high: u64, dst_low: u64) -> 
     let src_suid = crate::semantic::SUID::new(src_high, src_low);
     let dst_suid = crate::semantic::SUID::new(dst_high, dst_low);
 
-    unsafe {
-        let registry = crate::semantic::registry::global_registry();
+    {
+        let mut registry = crate::semantic::registry::global_registry();
         match registry.get_mut(&src_suid) {
             Some(obj) => {
                 if (obj.tier as u8) > max_tier {
@@ -2572,7 +2575,7 @@ fn handle_llm_query(prompt_ptr: u64, prompt_len: u64, out_ptr: u64) -> u64 {
     };
 
     unsafe {
-        let provider = crate::llm::provider::global_provider();
+        let mut provider = crate::llm::provider::global_provider();
         let mut request = crate::llm::provider::LlmRequest::new(task_id, tier, prompt);
 
         match provider.submit(request) {
@@ -2623,9 +2626,13 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
         core::slice::from_raw_parts(suids.as_ptr() as *const (u64, u64), n)
     };
 
-    // Static scratch buffer for processing one entry at a time.
-    // Safe because syscalls are serialized (no concurrent access).
-    static mut CONTEXT_SCRATCH: [u8; 4096] = [0; 4096];
+    // Static scratch buffer for processing one entry at a time, behind the
+    // kernel mutex: the old "safe because syscalls are serialized" comment
+    // was wrong — an interrupts-enabled handler (llm_ask/agent TUI) can be
+    // preempted and another task can enter this handler mid-loop
+    // (2026-07-17 review, P1).
+    static CONTEXT_SCRATCH: crate::sync::Mutex<[u8; 4096]> =
+        crate::sync::Mutex::new([0; 4096]);
 
     // out_ptr == 0 is the size-query form. Any other pointer is a write
     // target: for a Ring-3 caller it must be a user-space address, and the
@@ -2644,12 +2651,12 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
         OUT_CAP as usize
     };
 
+    // Still unsafe: the out_ptr writes below go through copy_nonoverlapping.
     unsafe {
         let registry = crate::semantic::registry::global_registry();
         let redactor = crate::llm::context_builder::global_redactor();
-        let scratch = core::slice::from_raw_parts_mut(
-            (&raw mut CONTEXT_SCRATCH) as *mut u8, 4096
-        );
+        let mut scratch_guard = CONTEXT_SCRATCH.lock();
+        let scratch = &mut scratch_guard[..];
 
         let mut total_size = 0usize;
         let mut offset = 0usize;
@@ -2723,23 +2730,24 @@ fn handle_llm_redact(input_ptr: u64, input_len: u64, out_ptr: u64) -> u64 {
     // Use a static scratch buffer instead of a stack-allocated 4 KiB array.
     // The per-task kernel stack is 8 KiB, and a 4 KiB local plus the
     // syscall entry, dispatch, and handler frames overflows it silently
-    // (no guard page yet). Single-threaded for now → static is safe.
-    static mut REDACT_SCRATCH: [u8; 4096] = [0; 4096];
+    // (no guard page yet). Behind the kernel mutex — the old
+    // "single-threaded → static is safe" comment predated preemptible,
+    // interrupts-enabled syscall handlers (2026-07-17 review, P1).
+    static REDACT_SCRATCH: crate::sync::Mutex<[u8; 4096]> =
+        crate::sync::Mutex::new([0; 4096]);
 
     let input = match unsafe { read_caller_slice(input_ptr, input_len) } {
         Some(s) => s,
         None => return u64::MAX,
     };
 
-    unsafe {
+    {
         let redactor = crate::llm::context_builder::global_redactor();
-        let scratch_slice: &mut [u8] = core::slice::from_raw_parts_mut(
-            (&raw mut REDACT_SCRATCH) as *mut u8,
-            4096,
-        );
+        let mut scratch_guard = REDACT_SCRATCH.lock();
+        let scratch_slice: &mut [u8] = &mut scratch_guard[..];
         let out_len = redactor.redact(input, scratch_slice);
         if out_ptr != 0 && out_len > 0 {
-            if !write_to_caller(out_ptr, &scratch_slice[..out_len]) { return u64::MAX; }
+            if !unsafe { write_to_caller(out_ptr, &scratch_slice[..out_len]) } { return u64::MAX; }
         }
         out_len as u64
     }
@@ -2782,8 +2790,8 @@ fn handle_llm_access(requester_id: u64, current_tier: u64, requested_tier: u64, 
         b"No justification provided"
     };
 
-    unsafe {
-        let queue = crate::llm::access_request::global_escalation_queue();
+    {
+        let mut queue = crate::llm::access_request::global_escalation_queue();
         let request = crate::llm::access_request::AccessRequest::for_tier(
             requester_id as u8,
             current_tier as u8,
@@ -2812,8 +2820,8 @@ pub fn handle_llm_stream_start(prompt_ptr: u64, prompt_len: u64, context_ptr: u6
     let task_id = crate::scheduler::current_user_id();
     let tier = crate::scheduler::current_task_max_tier();
 
-    unsafe {
-        let provider = crate::llm::provider::global_provider();
+    {
+        let mut provider = crate::llm::provider::global_provider();
         let request = crate::llm::provider::LlmRequest::new(task_id, tier, prompt);
 
         match provider.submit(request) {
@@ -2911,8 +2919,8 @@ pub fn handle_llm_set_policy(suid_high: u64, suid_low: u64, policy_data_ptr: u64
     };
 
     // Check permissions
-    unsafe {
-        let registry = crate::semantic::registry::global_registry();
+    {
+        let mut registry = crate::semantic::registry::global_registry();
 
         // If policy already exists, check if requester can modify it
         if let Some(existing_obj) = registry.get(&policy_suid) {
@@ -3119,11 +3127,9 @@ fn handle_setuid(uid: u64) -> u64 {
     if uid > 255 { return u64::MAX; }
     let target = uid as u8;
     let requester = crate::scheduler::current_user_id();
-    unsafe {
-        let registry = crate::security::users::global_user_registry();
-        if !crate::security::users::can_setuid_to(requester, target, registry) {
-            return u64::MAX;
-        }
+    let registry = crate::security::users::global_user_registry();
+    if !crate::security::users::can_setuid_to(requester, target, &registry) {
+        return u64::MAX;
     }
     crate::scheduler::set_current_user_id(target);
     0
@@ -3155,8 +3161,8 @@ fn handle_create_user(name_ptr: u64, name_len: u64, tier: u64, group: u64) -> u6
     let new_tier = tier_from_u8(new_tier_raw);
 
     let group_id = (group & 0xFF) as u8;
-    unsafe {
-        let registry = crate::security::users::global_user_registry();
+    {
+        let mut registry = crate::security::users::global_user_registry();
         match registry.create_user(name, group_id, new_tier) {
             Ok(uid) => uid as u64,
             Err(_) => u64::MAX,
@@ -3176,7 +3182,7 @@ fn handle_lookup_user(uid: u64, out_ptr: u64, out_len: u64) -> u64 {
     let cap = out_len as usize;
 
     let mut scratch = [0u8; 96];
-    let written = unsafe {
+    let written = {
         let registry = crate::security::users::global_user_registry();
         match registry.lookup(target) {
             None => return 0, // 0 == "not found", distinct from u64::MAX (= error)
@@ -3412,7 +3418,11 @@ fn handle_waitnb(pid_hint: u64) -> u64 {
 
 /// The single user-visible TCP fd. Nonzero so 0 can't be mistaken for it.
 const NET_FD: u64 = 3;
-static mut NET_TCP: Option<crate::net::TcpStream> = None;
+/// Behind the kernel mutex: the TCP handlers do a `net::poll()` (which can
+/// take IRQs and, on other paths, preempt) between checking and mutating
+/// the slot — the check/set must be atomic (2026-07-17 review, P1).
+static NET_TCP: crate::sync::Mutex<Option<crate::net::TcpStream>> =
+    crate::sync::Mutex::new(None);
 
 /// SYS_DNS_RESOLVE(host_ptr, host_len) → IPv4 packed big-endian (first
 /// octet in the high byte) or u64::MAX on failure. (DNS resolve internally
@@ -3438,9 +3448,9 @@ fn handle_dns_resolve(host_ptr: u64, host_len: u64) -> u64 {
 fn handle_tcp_connect(ipv4_be: u64, port: u64) -> u64 {
     use crate::net::{TcpStream, Ipv4Address};
     if !crate::net::is_initialized() { return u64::MAX; }
-    unsafe {
-        let net_tcp = &raw mut NET_TCP;
-        if (*net_tcp).is_some() { return u64::MAX; } // one connection at a time
+    {
+        let mut net_tcp = NET_TCP.lock();
+        if net_tcp.is_some() { return u64::MAX; } // one connection at a time
         let ip = Ipv4Address::new(
             (ipv4_be >> 24) as u8, (ipv4_be >> 16) as u8,
             (ipv4_be >> 8) as u8, ipv4_be as u8,
@@ -3448,7 +3458,7 @@ fn handle_tcp_connect(ipv4_be: u64, port: u64) -> u64 {
         match TcpStream::connect(ip, port as u16) {
             Ok(stream) => {
                 crate::net::poll(); // one poll to emit the SYN
-                (*net_tcp) = Some(stream);
+                *net_tcp = Some(stream);
                 NET_FD
             }
             Err(_) => u64::MAX,
@@ -3461,9 +3471,9 @@ fn handle_tcp_connect(ipv4_be: u64, port: u64) -> u64 {
 /// handshake from user space.
 fn handle_tcp_state(fd: u64) -> u64 {
     if fd != NET_FD { return u64::MAX; }
-    unsafe {
-        let net_tcp = &raw mut NET_TCP;
-        let stream = match (*net_tcp).as_ref() { Some(s) => s, None => return u64::MAX };
+    {
+        let net_tcp = NET_TCP.lock();
+        let stream = match net_tcp.as_ref() { Some(s) => s, None => return u64::MAX };
         crate::net::poll();
         if stream.is_established() { 2 }
         else if stream.is_closed() { 0 }
@@ -3480,9 +3490,9 @@ fn handle_tcp_read(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         Some(b) => b,
         None => return u64::MAX,
     };
-    unsafe {
-        let net_tcp = &raw mut NET_TCP;
-        let stream = match (*net_tcp).as_mut() { Some(s) => s, None => return u64::MAX };
+    {
+        let mut net_tcp = NET_TCP.lock();
+        let stream = match net_tcp.as_mut() { Some(s) => s, None => return u64::MAX };
         crate::net::poll();
         match stream.read(buf) {
             Ok(n) if n > 0 => n as u64,
@@ -3501,9 +3511,9 @@ fn handle_tcp_write(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
         Some(b) => b,
         None => return u64::MAX,
     };
-    unsafe {
-        let net_tcp = &raw mut NET_TCP;
-        let stream = match (*net_tcp).as_mut() { Some(s) => s, None => return u64::MAX };
+    {
+        let mut net_tcp = NET_TCP.lock();
+        let stream = match net_tcp.as_mut() { Some(s) => s, None => return u64::MAX };
         let r = match stream.write(buf) {
             Ok(n) if n > 0 => n as u64,
             Ok(_) => numbers::NET_WOULDBLOCK,   // tx ring full
@@ -3517,9 +3527,9 @@ fn handle_tcp_write(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
 /// SYS_TCP_CLOSE(fd) → 0. Sends FIN, polls a couple of times to flush, frees.
 fn handle_tcp_close(fd: u64) -> u64 {
     if fd != NET_FD { return u64::MAX; }
-    unsafe {
-        let net_tcp = &raw mut NET_TCP;
-        if let Some(mut stream) = (*net_tcp).take() {
+    {
+        let mut net_tcp = NET_TCP.lock();
+        if let Some(mut stream) = net_tcp.take() {
             stream.close();
             for _ in 0..8 { crate::net::poll(); }
             stream.release();

@@ -351,22 +351,22 @@ impl<const N: usize> VectorIndex<N> {
     }
 }
 
-/// Global vector index instance
-static mut GLOBAL_VECTOR_INDEX: VectorIndex<DEFAULT_DIMS> = VectorIndex {
-    entries: unsafe { core::mem::zeroed() },
-    count: 0,
-};
+/// Global vector index instance, behind the kernel mutex (2026-07-17
+/// review, P1).
+static GLOBAL_VECTOR_INDEX: crate::sync::Mutex<VectorIndex<DEFAULT_DIMS>> =
+    crate::sync::Mutex::new(VectorIndex {
+        entries: unsafe { core::mem::zeroed() },
+        count: 0,
+    });
 
-/// Get the global vector index
-pub unsafe fn global_vector_index() -> &'static mut VectorIndex<DEFAULT_DIMS> {
-    &mut *(&raw mut GLOBAL_VECTOR_INDEX as *mut VectorIndex<DEFAULT_DIMS>)
+/// Lock the global vector index.
+pub fn global_vector_index() -> crate::sync::MutexGuard<'static, VectorIndex<DEFAULT_DIMS>> {
+    GLOBAL_VECTOR_INDEX.lock()
 }
 
 /// Initialize the global vector index
 pub fn init_global_vector_index() {
-    unsafe {
-        GLOBAL_VECTOR_INDEX.init();
-    }
+    GLOBAL_VECTOR_INDEX.lock().init();
 }
 
 // ============================================================================

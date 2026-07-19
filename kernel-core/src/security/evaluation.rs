@@ -111,7 +111,7 @@ impl PolicyEngine {
         let mut policy_count = 0;
 
         // Search for policies in the semantic registry
-        unsafe {
+        {
             let registry = global_registry();
 
             // Scan policy SUID range for matching policies
@@ -330,19 +330,19 @@ impl PolicyEngine {
     }
 }
 
-/// Global policy engine instance
-static mut GLOBAL_POLICY_ENGINE: PolicyEngine = PolicyEngine::new();
+/// Global policy engine instance, behind the kernel mutex (same preemption
+/// race as the registry — 2026-07-17 review, P1).
+static GLOBAL_POLICY_ENGINE: crate::sync::Mutex<PolicyEngine> =
+    crate::sync::Mutex::new(PolicyEngine::new());
 
-/// Get the global policy engine
-pub unsafe fn global_policy_engine() -> &'static mut PolicyEngine {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_POLICY_ENGINE)
+/// Lock the global policy engine.
+pub fn global_policy_engine() -> crate::sync::MutexGuard<'static, PolicyEngine> {
+    GLOBAL_POLICY_ENGINE.lock()
 }
 
 /// Initialize the evaluation subsystem
 pub fn init() {
-    unsafe {
-        GLOBAL_POLICY_ENGINE.init();
-    }
+    GLOBAL_POLICY_ENGINE.lock().init();
 }
 
 /// Helper function to create evaluation context
@@ -353,7 +353,7 @@ pub fn create_evaluation_context(
     request_type: RequestType,
 ) -> EvaluationContext {
     // Look up target object info if available
-    let (target_tier, target_owner) = unsafe {
+    let (target_tier, target_owner) = {
         let registry = global_registry();
         if let Some(obj) = registry.get(&target_suid) {
             (Some(obj.tier), Some(obj.owner))

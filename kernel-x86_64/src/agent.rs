@@ -442,7 +442,7 @@ fn send_over_tls_once(
     configure_global(ip, PORT);
 
     unsafe {
-        let t = global_tls_transport();
+        let mut t = global_tls_transport();
         if t.connect(SNI, PORT).is_err() {
             t.close();
             return Err("tls connect failed");
@@ -521,7 +521,7 @@ impl Session {
         let ip = kernel_core::net::resolve(Self::SNI).unwrap_or(FALLBACK);
         configure_global(ip, Self::PORT);
         unsafe {
-            let t = global_tls_transport();
+            let mut t = global_tls_transport();
             if t.connect(Self::SNI, Self::PORT).is_err() {
                 t.close();
                 self.connected = false;
@@ -576,7 +576,7 @@ impl Session {
         use kernel_core::llm::transport::NetworkTransport;
         use kernel_core::tls::transport_tls::global_tls_transport;
         unsafe {
-            let t = global_tls_transport();
+            let mut t = global_tls_transport();
             // Send the whole request on the live connection.
             let mut sent = 0;
             while sent < request.len() {

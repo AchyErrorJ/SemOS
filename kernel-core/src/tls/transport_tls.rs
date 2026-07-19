@@ -238,7 +238,7 @@ impl TlsTransport {
     /// NetworkTransport surface collapses everything to
     /// `TransportError::Closed`, which loses the cause.
     pub fn last_handshake_error() -> Option<TlsError> {
-        unsafe { LAST_HANDSHAKE_ERROR }
+        *LAST_HANDSHAKE_ERROR.lock()
     }
 
     /// Last TCP-level state reached during connect(). `None` until at
@@ -246,13 +246,13 @@ impl TlsTransport {
     /// means TCP came up and any failure that follows is at the TLS
     /// layer (read [`Self::last_handshake_error`]).
     pub fn last_tcp_state() -> Option<TcpState> {
-        unsafe { LAST_TCP_STATE }
+        *LAST_TCP_STATE.lock()
     }
 
     /// Last `TlsError` from a post-handshake send/recv on the global
     /// singleton, if any. Diagnostic-only.
     pub fn last_io_error() -> Option<TlsError> {
-        unsafe { LAST_IO_ERROR }
+        *LAST_IO_ERROR.lock()
     }
 
     /// Drive the TCP socket from SYN-SENT to a terminal state.
@@ -315,12 +315,12 @@ impl NetworkTransport for TlsTransport {
         // Stage 1: open TCP socket, wait for SYN/SYN-ACK/ACK to complete.
         let mut stream = TcpStream::connect(remote_ip, remote_port)
             .map_err(|_| {
-                unsafe { LAST_TCP_STATE = Some(TcpState::Closed); }
+                *LAST_TCP_STATE.lock() = Some(TcpState::Closed);
                 TransportError::Io
             })?;
 
         let final_state = self.poll_to_terminal(&stream);
-        unsafe { LAST_TCP_STATE = Some(final_state); }
+        *LAST_TCP_STATE.lock() = Some(final_state);
         if final_state != TcpState::Established {
             // Couldn't reach the peer (RST, timeout, gateway dropped).
             // Release the socket so the next try gets a fresh slot.
@@ -378,7 +378,7 @@ impl NetworkTransport for TlsTransport {
                 // TcpStream's Drop releases the socket.
                 // Stash the last error so callers can diagnose;
                 // NetworkTransport's enum is too small for the detail.
-                unsafe { LAST_HANDSHAKE_ERROR = Some(e); }
+                *LAST_HANDSHAKE_ERROR.lock() = Some(e);
                 Err(TransportError::Closed)
             }
         }
@@ -387,7 +387,7 @@ impl NetworkTransport for TlsTransport {
     fn send(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         let conn = self.conn.as_mut().ok_or(TransportError::InvalidState)?;
         conn.write(data).map_err(|e| {
-            unsafe { LAST_IO_ERROR = Some(e); }
+            *LAST_IO_ERROR.lock() = Some(e);
             TransportError::Io
         })
     }
@@ -400,11 +400,11 @@ impl NetworkTransport for TlsTransport {
         // natural "I'm done sending, your turn" sync point for an HTTP
         // request/response flow.
         if let Err(e) = conn.flush() {
-            unsafe { LAST_IO_ERROR = Some(e); }
+            *LAST_IO_ERROR.lock() = Some(e);
             return Err(TransportError::Io);
         }
         conn.read(buf).map_err(|e| {
-            unsafe { LAST_IO_ERROR = Some(e); }
+            *LAST_IO_ERROR.lock() = Some(e);
             TransportError::Io
         })
     }
@@ -433,34 +433,41 @@ impl NetworkTransport for TlsTransport {
 // NetworkLlmProvider can route to whichever transport its Endpoint
 // selects without juggling owned references.
 
-static mut GLOBAL_TLS: TlsTransport = TlsTransport::new();
+// Behind the yield-on-contention kernel mutex (was `static mut` +
+// `&'static mut` under the false "syscalls are serialized" assumption —
+// 2026-07-17 review, P1). Callers bind `let t = global_tls_transport();`
+// and the guard serializes the whole TLS session against other tasks.
+static GLOBAL_TLS: crate::sync::Mutex<TlsTransport> =
+    crate::sync::Mutex::new(TlsTransport::new());
 
 /// Last embedded-tls handshake error, populated when `connect()` fails
 /// inside `TlsConnection::open`. Read via [`TlsTransport::last_handshake_error`].
-static mut LAST_HANDSHAKE_ERROR: Option<TlsError> = None;
+static LAST_HANDSHAKE_ERROR: crate::sync::Mutex<Option<TlsError>> =
+    crate::sync::Mutex::new(None);
 
 /// Final TCP state observed during the most recent `connect()`. Helps
 /// distinguish "TCP never came up" from "TLS handshake failed."
-static mut LAST_TCP_STATE: Option<TcpState> = None;
+static LAST_TCP_STATE: crate::sync::Mutex<Option<TcpState>> =
+    crate::sync::Mutex::new(None);
 
 /// Last `TlsError` from a failed `send`/`recv` after the handshake
 /// completed. Diagnostic-only — the NetworkTransport surface collapses
 /// every error to `TransportError::Io`, which loses the cause.
-static mut LAST_IO_ERROR: Option<TlsError> = None;
+static LAST_IO_ERROR: crate::sync::Mutex<Option<TlsError>> =
+    crate::sync::Mutex::new(None);
 
-/// Get the global TLS transport. Used by `NetworkLlmProvider` when
+/// Lock the global TLS transport. Used by `NetworkLlmProvider` when
 /// the configured `TransportKind` is `TlsTcp`.
 ///
-/// # Safety
-/// Single-threaded kernel; same soft-serialised contract as the
-/// other global transports.
-pub unsafe fn global_tls_transport() -> &'static mut TlsTransport {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_TLS)
+/// The guard is `DerefMut<Target = TlsTransport>`, so existing
+/// `t.connect(...)` / `t.send(...)` call sites read unchanged.
+pub fn global_tls_transport() -> crate::sync::MutexGuard<'static, TlsTransport> {
+    GLOBAL_TLS.lock()
 }
 
 /// Convenience used at boot to point the TLS transport at a fixed IP
 /// before the LLM provider tries to use it. Until DNS exists this
 /// must be called before any TLS connection is attempted.
 pub fn configure_global(ip: Ipv4Address, port: u16) {
-    unsafe { global_tls_transport().set_remote_endpoint(ip, port); }
+    global_tls_transport().set_remote_endpoint(ip, port);
 }

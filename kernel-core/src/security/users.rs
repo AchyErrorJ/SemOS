@@ -250,21 +250,20 @@ impl UserRegistry {
     }
 }
 
-/// Global instance. Single-threaded kernel = no locking needed beyond the
-/// usual soft-serialised contract everything else here uses.
-static mut GLOBAL_REGISTRY: UserRegistry = UserRegistry::new();
+/// Global instance, behind the yield-on-contention kernel mutex (the old
+/// "single-threaded kernel" contract was false for interrupts-enabled
+/// syscall handlers — 2026-07-17 review, P1).
+static GLOBAL_REGISTRY: crate::sync::Mutex<UserRegistry> =
+    crate::sync::Mutex::new(UserRegistry::new());
 
-/// Get the global user registry.
-///
-/// # Safety
-/// Same single-threaded contract as `global_policy_engine` / friends.
-pub unsafe fn global_user_registry() -> &'static mut UserRegistry {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_REGISTRY)
+/// Lock the global user registry.
+pub fn global_user_registry() -> crate::sync::MutexGuard<'static, UserRegistry> {
+    GLOBAL_REGISTRY.lock()
 }
 
 /// Initialise the registry. Idempotent.
 pub fn init() {
-    unsafe { GLOBAL_REGISTRY.init(); }
+    GLOBAL_REGISTRY.lock().init();
 }
 
 /// Convenience: is `id` allowed to perform privileged operations such as

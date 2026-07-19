@@ -316,7 +316,5 @@ impl Summarizer {
 
 /// Initialize the summarization subsystem
 pub fn init() {
-    unsafe {
-        super::context_builder::global_summarizer().init();
-    }
+    super::context_builder::global_summarizer().init();
 }

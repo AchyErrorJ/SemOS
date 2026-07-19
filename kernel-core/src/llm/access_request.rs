@@ -376,17 +376,17 @@ impl EscalationQueue {
     }
 }
 
-// Global escalation queue
-static mut GLOBAL_ESCALATION_QUEUE: EscalationQueue = EscalationQueue::new();
+// Global escalation queue, behind the yield-on-contention kernel mutex
+// (2026-07-17 review, P1).
+static GLOBAL_ESCALATION_QUEUE: crate::sync::Mutex<EscalationQueue> =
+    crate::sync::Mutex::new(EscalationQueue::new());
 
-/// Get the global escalation queue
-pub unsafe fn global_escalation_queue() -> &'static mut EscalationQueue {
-    &mut *core::ptr::addr_of_mut!(GLOBAL_ESCALATION_QUEUE)
+/// Lock the global escalation queue.
+pub fn global_escalation_queue() -> crate::sync::MutexGuard<'static, EscalationQueue> {
+    GLOBAL_ESCALATION_QUEUE.lock()
 }
 
 /// Initialize the escalation subsystem
 pub fn init() {
-    unsafe {
-        GLOBAL_ESCALATION_QUEUE.init();
-    }
+    GLOBAL_ESCALATION_QUEUE.lock().init();
 }

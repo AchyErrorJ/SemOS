@@ -352,7 +352,5 @@ fn is_email_char(c: u8) -> bool {
 
 /// Initialize the redaction subsystem
 pub fn init() {
-    unsafe {
-        super::context_builder::global_redactor().init();
-    }
+    super::context_builder::global_redactor().init();
 }
