@@ -365,10 +365,9 @@ pub fn aead_decrypt(
     poly.update(&lengths);
     let expected = poly.finalize();
 
-    let mut diff: u8 = 0;
-    for i in 0..16 { diff |= expected[i] ^ tag[i]; }
+    let tag_ok = super::ct_eq(&expected, tag);
     for b in &mut poly_key { unsafe { core::ptr::write_volatile(b, 0); } }
-    if diff != 0 { return Err(CryptoError::AuthenticationFailed); }
+    if !tag_ok { return Err(CryptoError::AuthenticationFailed); }
 
     plaintext[..ciphertext.len()].copy_from_slice(ciphertext);
     super::chacha20::chacha20_xor(key, nonce, 1, &mut plaintext[..ciphertext.len()]);

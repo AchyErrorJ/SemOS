@@ -1904,7 +1904,10 @@ fn spawn_namespace_elf(path: &str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
     // unless it can be shown to be safe." Baked-in /bin programs don't reach this
     // path — they're shipped-trusted and run at the launcher's clearance.
     let exec_cap: u8 = match vouch_lookup(&suid) {
-        Some((tier, hash)) if crate::crypto::sha256::hash(elf_data) == hash => tier,
+        // Constant-time compare: the recheck binds the grant to the exact
+        // vouched bytes — don't give a byte-prefix timing oracle on the
+        // stored hash (2026-07-17 review, medium #4.1).
+        Some((tier, hash)) if crate::crypto::ct_eq(&crate::crypto::sha256::hash(elf_data), &hash) => tier,
         _ => 0, // unvouched, or bytes changed since vouch → tier 0
     };
     let fenced_tier = spawn_tier.min(exec_cap);

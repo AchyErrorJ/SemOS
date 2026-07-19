@@ -40,6 +40,26 @@ pub mod p256;
 
 use crate::memory::SecurityTier;
 
+/// Constant-time equality for byte strings holding secrets.
+///
+/// Use this for ANY comparison where one side is attacker-influenced and
+/// the other is (derived from) a secret — MACs, MICs, digests of vouched
+/// content. `==` on byte arrays short-circuits at the first differing
+/// byte, which is a timing oracle (2026-07-17 review, medium #4.1).
+///
+/// The length check itself is NOT constant-time; that is fine for
+/// fixed-size secrets (hashes, tags, MICs), whose length is public.
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for i in 0..a.len() {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
+}
+
 /// Key size in bytes (256 bits)
 pub const KEY_SIZE: usize = 32;
 
@@ -228,3 +248,26 @@ pub fn init() {
 // and HMAC-SHA256 (now arbitrary-length, was capped at 64 bytes), with
 // RFC 6234 + RFC 4231 test vectors. API path `crypto::sha256::{hash, hmac}`
 // is unchanged — call sites need no edits.
+
+#[cfg(test)]
+mod ct_tests {
+    use super::ct_eq;
+
+    #[test]
+    fn ct_eq_equal_and_unequal() {
+        let a = [0xABu8; 32];
+        let mut b = a;
+        assert!(ct_eq(&a, &b));
+        b[31] ^= 1;
+        assert!(!ct_eq(&a, &b));
+        b[0] ^= 1;
+        assert!(!ct_eq(&a, &b));
+    }
+
+    #[test]
+    fn ct_eq_length_mismatch() {
+        assert!(!ct_eq(&[1, 2, 3], &[1, 2]));
+        assert!(!ct_eq(&[], &[0]));
+        assert!(ct_eq(&[] as &[u8], &[]));
+    }
+}

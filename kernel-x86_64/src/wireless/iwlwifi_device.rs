@@ -2488,13 +2488,16 @@ impl IwlDevice {
                 return None;
             }
             // Verify MIC: recompute over the received frame with its MIC field
-            // zeroed, compare to what the AP sent (key.mic).
+            // zeroed, compare to what the AP sent (key.mic). Constant-time:
+            // the MIC is attacker-influenced bytes checked against a
+            // KCK-derived secret — `!=` is a timing oracle (2026-07-17
+            // review, medium #4.1).
             let mut tmp = [0u8; 256];
             let fl = eapol.len().min(tmp.len());
             tmp[..fl].copy_from_slice(&eapol[..fl]);
             for b in &mut tmp[81..97.min(fl)] { *b = 0; }
             let want = super::wpa2::eapol_mic(&conn.kck, &tmp[..fl]);
-            if want != key.mic {
+            if !kernel_core::crypto::ct_eq(&want, &key.mic) {
                 println!("[wifi] 4-way: Msg3 MIC MISMATCH — wrong passphrase or attack; abort");
                 return None;
             }
