@@ -1,0 +1,25 @@
+[package]
+name = "sheaf"
+version = "0.1.0"
+edition = "2021"
+description = "Sheaf — bundle filesystem, Phase 0 userland prototype (dependency-free)."
+
+# Standalone: the repo-root workspace is stale (references non-existent members),
+# and Phase 0 is deliberately a self-contained std tool. Opt out of any parent
+# workspace like the other standalone crates in this repo.
+[workspace]
+
+[lib]
+name = "sheaf"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sheaf"
+path = "src/main.rs"
+
+# Zero external dependencies on purpose: the build sandbox has no network, so
+# TOML, SHA-256, tar, and randomness are all hand-rolled in-tree (see src/).
+[dependencies]
+
+[profile.release]
+opt-level = 2
