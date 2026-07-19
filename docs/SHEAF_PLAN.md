@@ -2,7 +2,9 @@
 ## Design & Implementation Plan (coding-agent handoff)
 
 **Status:** v0.1 design, ready for Phase 0 implementation
-**Author:** Jeremie (AchyErrorJ) · **Date:** 2026-07-17
+**Author:** Jeremie (AchyErrorJ) · **Date:** 2026-07-17 (agent-profile addendum 2026-07-19)
+**Spec note:** `.agent` files are optional **text leaves** with `role = "agent"` (§14),
+not a third leaf kind and not executable authority.
 **Context:** Designed for SemOS (semantic-object OS, SUID-addressed namespace) but
 Phase 0 is a standalone userland prototype so the model can be validated before
 kernel integration.
@@ -15,8 +17,11 @@ The file is dead; long live the bundle. In Sheaf, **the folder is the native
 unit of content**. Every "file" is a bundle: a folder containing its payload
 plus everything needed to describe, render, and verify it — a manifest, style
 facets, previews, provenance. Leaves are terminal and come in exactly two
-kinds: **text leaves** (.md / .toml / .css — agent- and human-editable) and
-**blob leaves** (raw bytes with a TOML sidecar). Nothing recurses below a leaf.
+structural kinds: **text leaves** (.md / .toml / .css / .agent — agent- and
+human-editable UTF-8) and **blob leaves** (raw bytes with a TOML sidecar).
+`.agent` is not a new structural leaf kind; it is an optional text leaf with
+`role = "agent"` that declares how an agent may interact with the bundle (§14).
+Nothing recurses below a leaf.
 
 Sharing is **export**, and export is a one-way *projection* of the bundle:
 PDF is a frozen visual projection, `.sheaf` (tar/zip) is a lossless transport
@@ -35,8 +40,9 @@ document is the contract; everything else is a rendering of it.
 | **Sheaf** | The filesystem as a whole. |
 | **Bundle** | A folder that presents as a single file. Identified by the presence of `bundle.toml`. |
 | **Facet** | A named member of a bundle (a leaf file or a sub-bundle). |
-| **Text leaf** | Terminal facet: `.md`, `.toml`, `.css`. UTF-8, diffable, LLM-fluent. |
+| **Text leaf** | Terminal facet: `.md`, `.toml`, `.css`, `.agent`. UTF-8, diffable, LLM-fluent. |
 | **Blob leaf** | Terminal facet: arbitrary bytes (png, elf, ucode…). MUST have a `<name>.toml` sidecar. |
+| **Agent-profile leaf** | Optional text leaf with extension `.agent` and `role = "agent"`. Declares requested tools, readable/writable facets, tier ceiling, and confirmation policy for an agent operating on this bundle. |
 | **SUID** | 128-bit semantic unique ID (two u64s, `high:low`), minted by the system at bundle creation. Globally unique, never reused. |
 | **Default facet** | The facet a bundle renders when opened normally (declared in manifest). |
 | **Export / projection** | One-way rendering of a bundle to a shareable artifact. |
@@ -74,14 +80,31 @@ quarterly-report/
 └── provenance.toml          ← export lineage (see §7)
 ```
 
+Example — a document with bundle-bound agents:
+
+```
+quarterly-report/
+├── bundle.toml
+├── content.md               ← default facet
+├── style.css                ← render facet
+├── editor.agent             ← agent leaf: "help maintain this bundle"
+├── reviewer.agent           ← agent leaf: "review before export"
+└── provenance.toml
+```
+
 Rules:
 
 - Bundles MAY contain sub-bundles. Sub-bundles present as files inside their
   parent. Depth is unbounded but cycles are impossible (tree structure).
-- Leaves are terminal. A `.md` file never contains a `bundle.toml`; there is
-  no third leaf kind. Do not add one without bumping this spec's major version.
+- Leaves are terminal. A `.md` or `.agent` file never contains a
+  `bundle.toml`; there is no recursion below any leaf. `.agent` remains a text
+  leaf; its special behavior comes from `role = "agent"`, not from a third leaf
+  kind.
 - Every blob leaf MUST have a sibling sidecar `<blobname>.toml`. A blob
   without a sidecar is a spec violation (`sheaf lint` fails).
+- Every `.agent` text leaf MUST be UTF-8 and MUST parse as an agent declaration
+  (§14). Agent-profile leaves need no sidecar; their hash + tier live in
+  `bundle.toml` like any other text facet.
 - `bundle.toml` is itself a text leaf but is NOT a facet — it is the bundle's
   identity, not its content.
 
@@ -104,18 +127,31 @@ tier = 1                          # 0=Public 1=Internal 2=Sensitive 3=Secret
                                   # advisory in userland prototype
 
 [facets."content.md"]
-role = "payload"                  # payload | render | preview | meta | data
+leaf = "text"                     # text | blob
+role = "payload"                  # payload | render | preview | meta | data | agent
 tier = 1                          # per-facet tier, MUST be <= bundle tier
 mime = "text/markdown"
+sha256 = "…"                      # REQUIRED for blob facets; recommended for text facets
 
 [facets."style.css"]
+leaf = "text"
 role = "render"
 tier = 0
+mime = "text/css"
+sha256 = "…"
 
 [facets."image.png"]
+leaf = "blob"
 role = "payload"
 tier = 2
 sha256 = "…"                      # REQUIRED for blob facets
+
+[facets."reviewer.agent"]
+leaf = "text"
+role = "agent"
+tier = 1
+mime = "application/sheaf-agent+toml"
+sha256 = "…"                      # of the .agent declaration bytes
 ```
 
 Blob sidecar (`image.toml`) — deliberately smaller than a manifest:
@@ -128,6 +164,19 @@ bytes = 184220
 title = "Beach, golden hour"
 ```
 
+Agent-profile text leaf (`reviewer.agent`) — see §14 for the full schema:
+
+```toml
+schema = 1
+name = "reviewer"
+purpose = "Review content.md before export and suggest fixes."
+model = "default-local-or-approved-remote"
+max_tier = 1
+tools = ["read_facet", "write_facet", "comment", "export"]
+inputs = ["content.md", "style.css"]
+outputs = ["review.md"]
+```
+
 Invariants an agent MUST maintain:
 
 - `suid` never changes after minting, even across rename/move/copy-in-place.
@@ -136,6 +185,10 @@ Invariants an agent MUST maintain:
   this; in userland, `sheaf lint` enforces it.
 - `default_facet` must resolve to an existing facet with role `payload`.
 - `sha256` fields must match reality after any write.
+- `.agent` facets MUST have `leaf = "text"` and `role = "agent"`. An agent
+  profile's declared `max_tier` MUST be `<= facets.<agent>.tier <= bundle
+  tier`. An agent profile can request tools, but it does not receive them until
+  the runtime grants them under the caller/vouch policy.
 
 ---
 
@@ -153,11 +206,13 @@ Bundle context menu (in this order):
 
 1. **Open** (same as double-click)
 2. **Edit Contents** — open the bundle *as a folder*: shows facets, allows
-   add/remove/rename facet, edit text leaves in place. This is the only way
-   "inside" from the GUI.
+   add/remove/rename facet, edit text leaves, including `.agent` profiles, in place. This is
+   the only way "inside" from the GUI.
 3. **Export as…** → PDF / `.sheaf` / flat `.md` (see §6)
 4. **Get Info** — manifest view: SUID, kind, tier, facet list, provenance chain
-5. **Reveal in Folder** — show the bundle as a directory in its parent
+5. **Run Agent…** — choose an `.agent` facet to run against this bundle. The UI
+   must show requested tools/tier before launch.
+6. **Reveal in Folder** — show the bundle as a directory in its parent
 
 Terminal verbs (and the Phase 0 CLI) mirror this exactly so agents and humans
 share one mental model:
@@ -167,6 +222,7 @@ sheaf open <path>            # render default facet
 sheaf edit <path>            # list facets / open as folder
 sheaf export <path> --to pdf|sheaf|md [--out …]
 sheaf info <path>            # manifest + provenance
+sheaf agent <path> <name>     # run <name>.agent after showing/confirming grants
 ```
 
 Design note: never show a bundle's guts by default in listings. If the user
@@ -236,8 +292,13 @@ every artifact in the wild is traceable home.
 - **Tier-per-facet** is the headline upgrade over per-object redaction: a
   manifest can be Public while its payload is Secret. The LLM/agent view of a
   bundle = the set of facets at or below the caller's tier, with text facets
-  passed through the existing redactor. Blobs are never redacted — they are
-  included or excluded wholesale.
+  (including `.agent` profiles) passed through the existing redactor. Blobs are
+  never redacted — they are included or excluded wholesale.
+- **`.agent` profiles are data, not authority.** A `.agent` text leaf declares desired
+  behavior and requested tools; it is not executable by itself and cannot grant
+  itself clearance. Runtime authority is still derived from the human caller,
+  SemOS task tier, vouch grants, and the agent profile's own `max_tier` ceiling.
+  Effective tier = `min(caller_tier, bundle_tier, facet_tier, agent.max_tier)`.
 - **The manifest cannot elevate itself.** `tier` fields are writable only by a
   caller whose clearance covers the change (same rule as today's semantic
   objects). Kernel-held, not bundle-held, in SemOS; the in-bundle copy is a
@@ -252,6 +313,9 @@ every artifact in the wild is traceable home.
   is older than its facets is dirty; `sheaf lint` reports it.
 - Agents identify as agents in provenance (`by = "agent:…"`). Non-negotiable —
   this is the audit trail for the vouch model.
+- Agent profiles MUST write provenance for material edits (`by =
+  "agent:<bundle-suid>/<agent-name>"`) and MUST NOT silently modify facets
+  above their effective tier.
 
 ---
 
@@ -263,8 +327,12 @@ Rust crate `sheaf` + CLI `sheaf`, pure std + serde/toml/sha2/tar/flate2.
 - [ ] `sheaf-core` lib: Bundle type, manifest/sidecar (de)serialization, SUID
       minting (random 128-bit), lint/verify
 - [ ] CLI verbs: `new`, `open`, `edit`, `add <facet>`, `rm <facet>`,
-      `export --to sheaf|md`, `import`, `info`, `lint`, `verify`
+      `export --to sheaf|md`, `import`, `info`, `lint`, `verify`,
+      `agent <bundle> <agent-name>`
       (PDF export stubbed behind a `pdf` feature; plain-text rendering OK)
+- [ ] Agent-profile leaves: parse/lint `.agent`, display requested grants, run a
+      stubbed/local "dry-run" executor that can read/write declared facets
+      through the same atomic commit path (real LLM backend can come later)
 - [ ] Torn-write safety: tmp+rename writes, dirty-bundle detection
 - [ ] Provenance: append on copy/export, stamp headers in `.md` exports
 - [ ] 90%+ of acceptance tests in §10 green
@@ -314,6 +382,11 @@ expensive place to discover the model is wrong.
 8. A 3-level nested bundle exports and re-imports with structure intact.
 9. A folder *without* `bundle.toml` is never treated as a bundle by any verb.
 10. `sheaf edit` on a text leaf opens the bytes as-is (no hidden transform).
+11. `.agent` facet with `leaf != "text"` or `role != "agent"` → lint FAILS.
+12. `.agent` facet with `max_tier > facet tier` or requested output facet
+    above effective tier → lint/run FAILS.
+13. `sheaf agent bundle reviewer` prints requested tools/tier before run and
+    records `by = "agent:<suid>/reviewer"` provenance for any edit.
 
 ---
 
@@ -332,6 +405,9 @@ expensive place to discover the model is wrong.
    text description of how the thing should look), or is CSS enough for agents?
 5. **Name of the archive magic bytes** — plain `.tar.gz` or a custom header so
    `file` can say "Sheaf bundle archive"?
+6. **Agent runtime backend** — local-only first, approved remote LLM, or both
+   behind per-run confirmation? Default for Phase 0: parse/lint + dry-run/local
+   executor, no network unless explicitly configured.
 
 ---
 
@@ -340,7 +416,8 @@ expensive place to discover the model is wrong.
 - No POSIX emulation layer. Legacy apps get exports, not mounts.
 - No in-place editing of blobs (images edited outside, re-added as facets).
 - No cross-bundle hard links in v1; reference by SUID in `provenance.toml`.
-- No third leaf kind. If you want one, that's spec v2.
+- No executable arbitrary scripts in v1. `.agent` is declarative data; execution
+  happens only through the Sheaf/SemOS agent runtime and its tool grant system.
 
 ---
 
@@ -372,18 +449,89 @@ automatically.
 
 Phase 0 additions: implement the read-projection and the readdir lie in the
 CLI/library (a FUSE mount is the natural demo vehicle), plus acceptance test
-11: `find`-style traversal of a tree containing bundles visits each bundle
-exactly once, as a file; test 12: an unaware write to a bundle path updates
+14: `find`-style traversal of a tree containing bundles visits each bundle
+exactly once, as a file; test 15: an unaware write to a bundle path updates
 only the default facet and the manifest stamp.
 
 ---
 
-- No POSIX emulation layer. Legacy apps get exports, not mounts.
-- No in-place editing of blobs (images edited outside, re-added as facets).
-- No cross-bundle hard links in v1; reference by SUID in `provenance.toml`.
-- No third leaf kind. If you want one, that's spec v2.
+## 14. Agent-profile text leaves (`.agent`)
 
----
+An **agent-profile leaf** is an optional terminal **text** facet with extension
+`.agent`, `leaf = "text"`, and `role = "agent"`. It is a UTF-8 TOML document
+that declares a bundle-bound helper profile: what an agent may read/write,
+which tools it requests, what tier ceiling applies, and when human confirmation
+is required. It is intentionally *not* a program: it cannot run outside the
+Sheaf/SemOS agent runtime, cannot grant itself tools, and cannot raise its own
+clearance.
+
+Use cases:
+
+- `editor.agent`: maintain style/content consistency inside the bundle.
+- `reviewer.agent`: review default facet before export.
+- `publisher.agent`: produce export projections and update provenance.
+- `ingest.agent`: normalize imported loose files into bundle facets.
+
+Minimal schema:
+
+```toml
+schema = 1
+name = "reviewer"                         # stable, unique within bundle
+purpose = "Review content.md before export and suggest fixes."
+model = "default-local-or-approved-remote" # policy label, not raw authority
+max_tier = 1                              # MUST be <= facet tier
+
+tools = [
+  "read_facet",
+  "write_facet",
+  "comment",
+  "export",
+]
+
+inputs = ["content.md", "style.css"]       # relative facet paths or globs
+outputs = ["review.md"]                    # facets this agent may create/write
+```
+
+Optional fields:
+
+```toml
+system = "You are a careful editor. Preserve the author's voice."
+temperature = 0.2
+requires_human_confirm = true              # default true for write/export tools
+network = false                            # default false; true still needs runtime grant
+```
+
+Rules:
+
+- `name` MUST match the filename stem (`reviewer.agent` → `name = "reviewer"`).
+- `max_tier <= facets."<name>.agent".tier <= bundle tier`.
+- Effective tier at runtime is `min(caller_tier, bundle_tier, facet_tier,
+  max_tier)`.
+- `tools` are requested capabilities, not granted capabilities. The runtime
+  must show requested tools and effective tier before launch, and SemOS must
+  enforce tool grants in the syscall/runtime layer.
+- `inputs` and `outputs` are bundle-relative. No `..`, absolute paths, network
+  paths, or references outside the bundle root.
+- Writes must use the same atomic commit path as human edits. Every material
+  write appends provenance with `by = "agent:<bundle-suid>/<agent-name>"`.
+- Agent-profile leaves are ordinary text leaves for diff/redaction/export, but
+  role-specific for execution. Flat `.md` export should list agent profiles as
+  metadata, not inline their full prompts unless `--include-agents` is
+  explicitly requested.
+
+Lint failures:
+
+- invalid TOML/UTF-8;
+- filename stem != `name`;
+- missing `leaf = "text"` or `role = "agent"` in `bundle.toml`;
+- `max_tier` above facet/bundle tier;
+- requested output facet above effective tier;
+- input/output path escapes the bundle root;
+- unknown tool name unless `--allow-unknown-tools` is passed for forward
+  compatibility.
+
+Phase 0 can implement `.agent` as parse/lint + dry-run/local execution only.
+Remote LLM execution is a later backend choice and must be opt-in.
 
 *Hand this file to a coding agent whole. It contains the model, the schemas,
 the UI contract, the phases, and the tests. Where it says "open question,"
