@@ -21,6 +21,7 @@
 
 use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr, Ipv4Address, Ipv4Cidr};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::adapter::NetDeviceAdapter;
 use super::clock;
@@ -59,6 +60,33 @@ static mut INITIALIZED: bool = false;
 /// `poll()`; a lease replaces the interface's static address + default
 /// route + DNS server (static config stays as the pre-lease fallback).
 static mut DHCP_HANDLE: Option<smoltcp::iface::SocketHandle> = None;
+
+/// Last applied network configuration, for read-only diagnostics. Kept
+/// separately from smoltcp's Interface so platform code can inspect status
+/// without borrowing the live singleton.
+static mut CURRENT_IP: [u8; 4] = [0; 4];
+static mut CURRENT_CIDR: u8 = 0;
+static mut CURRENT_GATEWAY: [u8; 4] = [0; 4];
+static mut DHCP_CONFIGURED: bool = false;
+static POLL_CALLS: AtomicU64 = AtomicU64::new(0);
+static POLL_WORKED: AtomicU64 = AtomicU64::new(0);
+
+/// Read-only network stack snapshot for shell/platform diagnostics.
+#[derive(Clone, Copy, Debug)]
+pub struct NetStatus {
+    pub initialized: bool,
+    pub device_name: &'static str,
+    pub mac: [u8; 6],
+    pub link_up: bool,
+    pub ip: [u8; 4],
+    pub prefix_len: u8,
+    pub gateway: [u8; 4],
+    pub dns: [u8; 4],
+    pub dhcp_started: bool,
+    pub dhcp_configured: bool,
+    pub poll_calls: u64,
+    pub poll_worked: u64,
+}
 
 // ============================================================================
 // Default IP config — v1 hardcoded, future DHCP via socket-dhcpv4.
@@ -153,6 +181,10 @@ pub fn init_with_ipconfig(
 
         // Record the DNS server so the resolver queries the right host.
         DNS_SERVER_IP = dns;
+        CURRENT_IP.copy_from_slice(ip.as_bytes());
+        CURRENT_CIDR = cidr;
+        CURRENT_GATEWAY.copy_from_slice(gateway.as_bytes());
+        DHCP_CONFIGURED = false;
 
         // Empty SocketSet — no sockets yet in v1. `addr_of_mut!` keeps
         // the borrow scoping explicit; we hand smoltcp a `&'static mut`
@@ -184,6 +216,7 @@ pub fn init_with_ipconfig(
 /// timer expired). The return is informational — useful for adaptive
 /// sleeping later; ignore for now.
 pub fn poll() -> bool {
+    POLL_CALLS.fetch_add(1, Ordering::Relaxed);
     unsafe {
         if !INITIALIZED { return false; }
         let iface = match IFACE.as_mut() {
@@ -200,6 +233,9 @@ pub fn poll() -> bool {
         };
         let worked = iface.poll(clock::now(), device, sockets);
         dhcp_process(iface, sockets);
+        if worked {
+            POLL_WORKED.fetch_add(1, Ordering::Relaxed);
+        }
         worked
     }
 }
@@ -244,8 +280,11 @@ unsafe fn dhcp_process(iface: &mut Interface, sockets: &mut SocketSet<'static>) 
                 addrs.clear();
                 let _ = addrs.push(IpCidr::Ipv4(config.address));
             });
+            CURRENT_IP.copy_from_slice(config.address.address().as_bytes());
+            CURRENT_CIDR = config.address.prefix_len();
             if let Some(router) = config.router {
                 let _ = iface.routes_mut().add_default_ipv4_route(router);
+                CURRENT_GATEWAY.copy_from_slice(router.as_bytes());
                 crate::platform::log(" via ");
                 log_ipv4(&router);
             }
@@ -254,6 +293,7 @@ unsafe fn dhcp_process(iface: &mut Interface, sockets: &mut SocketSet<'static>) 
                 crate::platform::log(" dns ");
                 log_ipv4(dns);
             }
+            DHCP_CONFIGURED = true;
             crate::platform::log("\n");
         }
         Some(dhcpv4::Event::Deconfigured) => {
@@ -267,6 +307,35 @@ unsafe fn dhcp_process(iface: &mut Interface, sockets: &mut SocketSet<'static>) 
 /// Has [`init`] completed successfully?
 pub fn is_initialized() -> bool {
     unsafe { INITIALIZED }
+}
+
+/// Snapshot current device/link/IP/DHCP state without exposing mutable
+/// smoltcp internals. Safe for diagnostics such as the `netinfo` shell command.
+pub fn status() -> NetStatus {
+    unsafe {
+        let (device_name, mac, link_up) = match DEVICE.as_ref() {
+            Some(adapter) => {
+                let dev = adapter.device();
+                (dev.name(), dev.mac_address(), dev.link_up())
+            }
+            None => ("(none)", [0; 6], false),
+        };
+        let dns = DNS_SERVER_IP.as_bytes();
+        NetStatus {
+            initialized: INITIALIZED,
+            device_name,
+            mac,
+            link_up,
+            ip: CURRENT_IP,
+            prefix_len: CURRENT_CIDR,
+            gateway: CURRENT_GATEWAY,
+            dns: [dns[0], dns[1], dns[2], dns[3]],
+            dhcp_started: DHCP_HANDLE.is_some(),
+            dhcp_configured: DHCP_CONFIGURED,
+            poll_calls: POLL_CALLS.load(Ordering::Relaxed),
+            poll_worked: POLL_WORKED.load(Ordering::Relaxed),
+        }
+    }
 }
 
 // ============================================================================

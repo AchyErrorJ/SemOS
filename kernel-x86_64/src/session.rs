@@ -155,6 +155,11 @@ pub(crate) fn interactive_session() {
                     // (PageUp/PageDown/End on the built-in keyboard).
                     crate::framebuffer::apply_pending_scroll();
                 }
+                // Tick the network stack so background work (DHCP lease
+                // acquisition on real Ethernet, ARP, socket timers) makes
+                // progress even while the shell is idle at its prompt. Cheap
+                // no-op until the stack is initialized.
+                kernel_core::net::poll();
                 let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
                 kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
             }
@@ -243,4 +248,3 @@ fn pump_console_input(prev: &mut [u8; 6]) {
         *prev = rep.keys;
     });
 }
-

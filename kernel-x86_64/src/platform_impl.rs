@@ -343,6 +343,42 @@ impl Platform for X86Platform {
         n + crate::usb::ehci::enumerate_incremental() as u64
     }
 
+    fn run_netinfo(&self) -> u64 {
+        let s = kernel_core::net::status();
+        crate::println!("netinfo:");
+        crate::println!(
+            "  stack={} device={} link={} registered_devices={}",
+            if s.initialized { "UP" } else { "DOWN" },
+            s.device_name,
+            if s.link_up { "UP" } else { "DOWN" },
+            kernel_core::drivers::registry::net_count(),
+        );
+        crate::println!(
+            "  MAC={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]
+        );
+        crate::println!(
+            "  IPv4={}.{}.{}.{}/{} gateway={}.{}.{}.{} DNS={}.{}.{}.{}",
+            s.ip[0], s.ip[1], s.ip[2], s.ip[3], s.prefix_len,
+            s.gateway[0], s.gateway[1], s.gateway[2], s.gateway[3],
+            s.dns[0], s.dns[1], s.dns[2], s.dns[3],
+        );
+        crate::println!(
+            "  DHCP started={} lease={} polls={} worked={}",
+            if s.dhcp_started { "yes" } else { "no" },
+            if s.dhcp_configured { "yes" } else { "no" },
+            s.poll_calls,
+            s.poll_worked,
+        );
+
+        if kernel_core::drivers::registry::get_net("e1000e0").is_some() {
+            if crate::e1000e::print_diagnostics() { 0 } else { u64::MAX }
+        } else {
+            crate::println!("e1000e: not registered (expected on QEMU/non-T540p)");
+            0
+        }
+    }
+
     fn run_fbinfo(&self) -> u64 {
         match crate::framebuffer::fb_info() {
             Some(info) => {

@@ -91,6 +91,11 @@ pub trait Platform: Send + Sync + 'static {
     /// number of devices that completed enumeration. Default: 0.
     fn run_usbenum(&self) -> u64 { 0 }
 
+    /// SYS_NETINFO: print read-only active network-stack and NIC diagnostics
+    /// to the current TTY. Used to validate real-hardware Ethernet without
+    /// requiring serial scrollback. Default: unavailable.
+    fn run_netinfo(&self) -> u64 { u64::MAX }
+
     /// SYS_FBINFO: print the current GOP framebuffer geometry/pixel format and
     /// (where known) how it compares to the internal panel's native mode, to
     /// the current TTY. Read-only. Returns 0. Default: unavailable.

@@ -28,7 +28,7 @@
 //! - No checksum/TSS/VLAN offloads.
 //! - Single RX/TX queue.
 
-use core::sync::atomic::{fence, Ordering};
+use core::sync::atomic::{fence, AtomicU64, Ordering};
 use crate::pci;
 use crate::paging;
 use kernel_core::drivers::traits::{NetDevice, DriverError, DriverResult};
@@ -197,6 +197,7 @@ static mut RX_RING_PHYS: u64 = 0;
 static mut TX_RING_PHYS: u64 = 0;
 
 static mut MMIO_BASE: u64 = 0;
+static mut MMIO_PHYS: u64 = 0;
 static mut MAC: [u8; 6] = [0; 6];
 
 // Per-ring indices. Software owns these; hardware owns the registers.
@@ -209,6 +210,22 @@ static mut RX_FREE: usize = 0;  // Last descriptor given back to hardware (write
 // descriptors at TX_RECLAIM by checking descriptor status bits.
 static mut TX_SUBMIT: usize = 0;   // Next free slot to submit into.
 static mut TX_RECLAIM: usize = 0;  // Next descriptor to reclaim after TX done.
+
+// Read-only diagnostic counters. Relaxed atomics are sufficient: this is a
+// single-core polled driver and the counters are observational only.
+static TX_CALLS: AtomicU64 = AtomicU64::new(0);
+static TX_OK: AtomicU64 = AtomicU64::new(0);
+static TX_BYTES: AtomicU64 = AtomicU64::new(0);
+static TX_DROPS: AtomicU64 = AtomicU64::new(0);
+static TX_TIMEOUTS: AtomicU64 = AtomicU64::new(0);
+static RX_CALLS: AtomicU64 = AtomicU64::new(0);
+static RX_OK: AtomicU64 = AtomicU64::new(0);
+static RX_BYTES: AtomicU64 = AtomicU64::new(0);
+static RX_WOULDBLOCK: AtomicU64 = AtomicU64::new(0);
+static RX_BAD_DESC: AtomicU64 = AtomicU64::new(0);
+static RX_TRUNCATED: AtomicU64 = AtomicU64::new(0);
+static LAST_RX_LEN: AtomicU64 = AtomicU64::new(0);
+static LAST_RX_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 // ============================================================================
 // MMIO helpers
@@ -281,7 +298,10 @@ pub fn init() -> bool {
         }
     };
 
-    unsafe { MMIO_BASE = paging::phys_to_virt(phys_base); }
+    unsafe {
+        MMIO_PHYS = phys_base;
+        MMIO_BASE = paging::phys_to_virt(phys_base);
+    }
 
     crate::println!(
         "[e1000e] PCI 00:{:02X}.{}  MMIO=0x{:016X}  ven=0x{:04X} dev=0x{:04X}",
@@ -486,8 +506,15 @@ fn enable_rx_tx() {
 
 /// Send one Ethernet frame. Returns `true` on success.
 pub fn send_frame(frame: &[u8]) -> bool {
-    if frame.len() > TX_BUFFER_SIZE { return false; }
-    if unsafe { MMIO_BASE == 0 } { return false; }
+    TX_CALLS.fetch_add(1, Ordering::Relaxed);
+    if frame.len() > TX_BUFFER_SIZE {
+        TX_DROPS.fetch_add(1, Ordering::Relaxed);
+        return false;
+    }
+    if unsafe { MMIO_BASE == 0 } {
+        TX_DROPS.fetch_add(1, Ordering::Relaxed);
+        return false;
+    }
 
     unsafe {
         // Reclaim any completed descriptors so TX_SUBMIT can advance.
@@ -507,6 +534,8 @@ pub fn send_frame(frame: &[u8]) -> bool {
                 spins = spins.wrapping_add(1);
                 if spins > 10_000_000 {
                     crate::println!("[e1000e] TX ring full, timeout waiting for completion");
+                    TX_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+                    TX_DROPS.fetch_add(1, Ordering::Relaxed);
                     return false;
                 }
                 core::hint::spin_loop();
@@ -541,6 +570,8 @@ pub fn send_frame(frame: &[u8]) -> bool {
             spins = spins.wrapping_add(1);
             if spins > 10_000_000 {
                 crate::println!("[e1000e] TX timeout");
+                TX_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
+                TX_DROPS.fetch_add(1, Ordering::Relaxed);
                 return false;
             }
             core::hint::spin_loop();
@@ -549,27 +580,40 @@ pub fn send_frame(frame: &[u8]) -> bool {
         fence(Ordering::Acquire);
     }
 
+    TX_OK.fetch_add(1, Ordering::Relaxed);
+    TX_BYTES.fetch_add(frame.len() as u64, Ordering::Relaxed);
     true
 }
 
 /// Receive one Ethernet frame into `out`. Returns `Ok(len)` or `WouldBlock`.
 pub fn recv_frame(out: &mut [u8]) -> DriverResult<usize> {
+    RX_CALLS.fetch_add(1, Ordering::Relaxed);
     if unsafe { MMIO_BASE == 0 } { return Err(DriverError::NotReady); }
 
     unsafe {
         // The descriptor at RX_CLEAN is the next one hardware may have filled.
         // If it equals RX_FREE, the ring is empty (hardware owns no buffers).
         if RX_CLEAN == RX_FREE {
+            RX_WOULDBLOCK.fetch_add(1, Ordering::Relaxed);
             return Err(DriverError::WouldBlock);
         }
 
         let desc = &mut RX_RING.0[RX_CLEAN];
         if desc.status & desc::RX_DD == 0 {
+            RX_WOULDBLOCK.fetch_add(1, Ordering::Relaxed);
             return Err(DriverError::WouldBlock);
         }
 
         let len = desc.len as usize;
         let copy_len = len.min(out.len());
+        LAST_RX_LEN.store(len as u64, Ordering::Relaxed);
+        LAST_RX_ERRORS.store(desc.errors as u64, Ordering::Relaxed);
+        if desc.errors != 0 || desc.status & desc::RX_EOP == 0 {
+            RX_BAD_DESC.fetch_add(1, Ordering::Relaxed);
+        }
+        if copy_len < len {
+            RX_TRUNCATED.fetch_add(1, Ordering::Relaxed);
+        }
         let src = (&raw const RX_BUFFERS) as *const u8;
         let buf_base = src.add(RX_CLEAN * RX_BUFFER_SIZE);
         core::ptr::copy_nonoverlapping(buf_base, out.as_mut_ptr(), copy_len);
@@ -584,6 +628,8 @@ pub fn recv_frame(out: &mut [u8]) -> DriverResult<usize> {
 
         fence(Ordering::Release);
 
+        RX_OK.fetch_add(1, Ordering::Relaxed);
+        RX_BYTES.fetch_add(copy_len as u64, Ordering::Relaxed);
         Ok(copy_len)
     }
 }
@@ -649,4 +695,84 @@ pub static E1000E_NET: E1000eNet = E1000eNet;
 /// Register with kernel-core's driver registry. Must be called after `init()`.
 pub fn register_with_kernel_core() -> bool {
     kernel_core::drivers::registry::register_net("e1000e0", &E1000E_NET)
+}
+
+/// Print a read-only e1000e diagnostic snapshot to the current TTY.
+///
+/// This is intentionally side-effect-free: no reset, no descriptor mutation,
+/// no register writes. It is safe to run repeatedly from the `netinfo` shell
+/// command during the first T540p cable validation.
+pub fn print_diagnostics() -> bool {
+    if unsafe { MMIO_BASE == 0 } {
+        crate::println!("e1000e: not initialized (MMIO base is zero)");
+        return false;
+    }
+
+    unsafe {
+        let ctrl = rd32(reg::CTRL);
+        let status_reg = rd32(reg::STATUS);
+        let rctl = rd32(reg::RCTL);
+        let tctl = rd32(reg::TCTL);
+        let rdh = rd32(reg::RDH);
+        let rdt = rd32(reg::RDT);
+        let tdh = rd32(reg::TDH);
+        let tdt = rd32(reg::TDT);
+        let mut rx_done = 0usize;
+        let mut tx_done = 0usize;
+        for i in 0..RING_SIZE {
+            if RX_RING.0[i].status & desc::RX_DD != 0 { rx_done += 1; }
+            if TX_RING.0[i].status & desc::TX_DD != 0 { tx_done += 1; }
+        }
+        let mac = MAC;
+        let speed = match (status_reg >> 6) & 0b11 {
+            0 => "10 Mb/s",
+            1 => "100 Mb/s",
+            2 => "1000 Mb/s",
+            _ => "unknown",
+        };
+
+        crate::println!("e1000e:");
+        crate::println!(
+            "  mmio phys=0x{:016X} virt=0x{:016X} MAC={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            MMIO_PHYS, MMIO_BASE, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
+        crate::println!(
+            "  link={} speed={} duplex={} STATUS=0x{:08X} CTRL=0x{:08X}",
+            if status_reg & status::LU != 0 { "UP" } else { "DOWN" },
+            speed,
+            if status_reg & status::FD != 0 { "full" } else { "half" },
+            status_reg,
+            ctrl,
+        );
+        crate::println!("  RCTL=0x{:08X} TCTL=0x{:08X}", rctl, tctl);
+        crate::println!(
+            "  RX hw head={} tail={} sw clean={} free={} DD={}/{} ring_phys=0x{:016X}",
+            rdh, rdt, RX_CLEAN, RX_FREE, rx_done, RING_SIZE, RX_RING_PHYS
+        );
+        crate::println!(
+            "  TX hw head={} tail={} sw submit={} reclaim={} DD={}/{} ring_phys=0x{:016X}",
+            tdh, tdt, TX_SUBMIT, TX_RECLAIM, tx_done, RING_SIZE, TX_RING_PHYS
+        );
+    }
+
+    crate::println!(
+        "  tx calls={} ok={} bytes={} drops={} timeouts={}",
+        TX_CALLS.load(Ordering::Relaxed),
+        TX_OK.load(Ordering::Relaxed),
+        TX_BYTES.load(Ordering::Relaxed),
+        TX_DROPS.load(Ordering::Relaxed),
+        TX_TIMEOUTS.load(Ordering::Relaxed),
+    );
+    crate::println!(
+        "  rx calls={} ok={} bytes={} wouldblock={} bad_desc={} truncated={} last_len={} last_errors=0x{:02X}",
+        RX_CALLS.load(Ordering::Relaxed),
+        RX_OK.load(Ordering::Relaxed),
+        RX_BYTES.load(Ordering::Relaxed),
+        RX_WOULDBLOCK.load(Ordering::Relaxed),
+        RX_BAD_DESC.load(Ordering::Relaxed),
+        RX_TRUNCATED.load(Ordering::Relaxed),
+        LAST_RX_LEN.load(Ordering::Relaxed),
+        LAST_RX_ERRORS.load(Ordering::Relaxed),
+    );
+    true
 }

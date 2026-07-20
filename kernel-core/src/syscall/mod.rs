@@ -146,6 +146,7 @@ pub mod numbers {
     pub const SYS_EDIT:         u64 = 113; // (path_ptr, path_len) -> 0/err; runs the modal text editor
     pub const SYS_USBINFO:      u64 = 114; // () -> 0; dumps every USB port + enumerated slot to the TTY
     pub const SYS_USBENUM:      u64 = 115; // () -> port_count; re-runs xHCI port enumeration (hot-plug retry)
+    pub const SYS_NETINFO:      u64 = 116; // () -> 0/err; read-only net stack + active NIC diagnostics
     pub const SYS_TTY_SUPPRESS: u64 = 117; // (on: u64) -> 0; 1 silences keyboard input from
                                            // committing to the cooked-mode line discipline.
     // M14 iGPU: display diagnostics + internal-panel backlight control.
@@ -300,6 +301,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // Hot-plug retry — re-runs xHCI port enumeration from the shell.
         SYS_USBENUM => crate::platform::get().run_usbenum(),
 
+        // Read-only network + NIC diagnostics (the `netinfo` builtin).
+        SYS_NETINFO => crate::platform::get().run_netinfo(),
 
         // WiFi scan (the `wifi` builtin) — scan + print numbered network list.
         SYS_WIFI_SCAN => crate::platform::get().run_wifi_scan(),

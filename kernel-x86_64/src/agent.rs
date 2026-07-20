@@ -110,7 +110,7 @@ pub fn tools_json() -> &'static str {
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},",
         "{\"name\":\"write_file\",\"description\":\"Write contents to a file (creates/overwrites).\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},",
-        "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false, ps (tasks+tiers), free (heap), uptime, fetch URL (HTTP GET), ask QUESTION. External programs run from /bin.\",",
+        "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false, ps (tasks+tiers), free (heap), uptime, netinfo (network/NIC diagnostics), fetch URL (HTTP GET), ask QUESTION. External programs run from /bin.\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}}",
         "]"
     )

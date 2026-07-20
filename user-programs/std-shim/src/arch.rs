@@ -69,6 +69,7 @@ pub const SYS_AGENT:        u64 = 112; // (flags) -> 0/err; runs the interactive
 pub const SYS_EDIT:         u64 = 113; // (path_ptr, path_len) -> 0/err; runs the modal editor
 pub const SYS_USBINFO:      u64 = 114; // () -> 0; dumps every USB port + enum'd slot to the TTY
 pub const SYS_USBENUM:      u64 = 115; // () -> port_count; re-runs xHCI port enumeration
+pub const SYS_NETINFO:      u64 = 116; // () -> 0/err; read-only network + active NIC diagnostics
 pub const SYS_TTY_SUPPRESS: u64 = 117; // (on: u64) -> 0; toggles kbd input drop for cooked-mode
 pub const SYS_FBINFO:       u64 = 118; // () -> 0; print framebuffer + native panel info
 pub const SYS_BACKLIGHT:    u64 = 119; // (op,arg) -> percent | MAX; brightness control

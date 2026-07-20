@@ -365,6 +365,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
                 println!("[e1000e] registered with driver registry as 'e1000e0'");
                 if let Some(nd) = kernel_core::drivers::registry::get_net("e1000e0") {
                     if kernel_core::net::init(nd) {
+                        // Real Ethernet cannot use QEMU SLIRP's fallback
+                        // 10.0.2.15 address. Start DHCP immediately; the static
+                        // config remains only until a lease arrives.
+                        if kernel_core::net::start_dhcp() {
+                            println!("[e1000e] DHCP client started (run `netinfo` after link-up)");
+                        }
                         kernel_core::net::poll();
                     }
                 }
