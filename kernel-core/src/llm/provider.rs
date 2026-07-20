@@ -32,7 +32,7 @@
 //! LlmResponse (answer + metadata)
 //! ```
 
-use super::{LlmContext, LlmError, MAX_CONTEXT_SIZE};
+use super::LlmError;
 
 /// Maximum request prompt length
 pub const MAX_PROMPT_LEN: usize = 1024;

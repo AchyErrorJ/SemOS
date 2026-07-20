@@ -171,7 +171,7 @@ impl Ramfs {
     }
 
     /// Iterate over all files
-    pub fn iter(&self) -> RamfsIter {
+    pub fn iter(&self) -> RamfsIter<'_> {
         RamfsIter {
             fs: self,
             index: 0,

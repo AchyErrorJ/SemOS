@@ -4,7 +4,7 @@
 
 use crate::memory::types::{Bytes, Frame, PhysicalAddress};
 use crate::memory::frames::FrameAllocator;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Security tier for memory pools
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -373,7 +373,7 @@ impl PoolAllocator {
             ("Secret", self.secret.stats()),
         ];
 
-        for (name, stats) in pools {
+        for (name, _stats) in pools {
             crate::platform::log(name);
             crate::platform::log(" pool: ");
             // Print used/total (simplified)

@@ -11,8 +11,6 @@ use crate::semantic::{SUID, SemanticObject};
 use crate::memory::SecurityTier;
 use crate::semantic::vector::SearchResult;
 use super::{MAX_CONTEXT_ENTRIES, MAX_ENTRY_SIZE, MAX_CONTEXT_SIZE, LlmError};
-use super::redact::Redactor;
-use super::summarize::Summarizer;
 
 /// A single entry in the LLM context
 #[derive(Clone, Copy)]

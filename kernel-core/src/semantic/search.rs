@@ -19,7 +19,7 @@ use super::suid::SUID;
 use super::object::{SemanticObject, SecurityTier, ObjectContent};
 use super::registry;
 use super::vector::{
-    Vector, DefaultVector, VectorIndex, SearchResult,
+    DefaultVector, SearchResult,
     DEFAULT_DIMS, MAX_VECTORS, global_vector_index, init_global_vector_index,
 };
 
@@ -144,7 +144,7 @@ impl SemanticSearch {
         let query_vec = DefaultVector::from_slice(query);
 
         {
-            let mut index = global_vector_index();
+            let index = global_vector_index();
             let found = index.search(&query_vec, max_tier, limit, results);
             Ok(found)
         }
@@ -181,7 +181,7 @@ impl SemanticSearch {
 
         {
             let registry = registry::global_registry();
-            let mut index = global_vector_index();
+            let index = global_vector_index();
 
             SearchStats {
                 object_count: registry.len(),

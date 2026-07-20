@@ -15,7 +15,6 @@
 //! In the future, this could call out to an external summarization
 //! service or use a small local model.
 
-use super::MAX_ENTRY_SIZE;
 
 /// Maximum summary length
 pub const MAX_SUMMARY_LEN: usize = 512;

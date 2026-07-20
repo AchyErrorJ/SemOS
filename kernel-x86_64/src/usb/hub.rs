@@ -18,7 +18,6 @@
 //! port-status layout; this module handles USB 2.0 today. SS support is
 //! a follow-up — the 40A1 dock exposes both USB-2 and USB-3 hub paths.
 
-use crate::println;
 
 /// USB 2.0 hub class. See USB 2.0 spec § 11.24.
 pub mod hub_request {

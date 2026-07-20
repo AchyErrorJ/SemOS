@@ -14,7 +14,6 @@
 //! - DIMS_MEDIUM (128): Balanced performance
 //! - DIMS_LARGE (384): MiniLM-compatible embeddings
 
-use core::cmp::Ordering;
 
 /// Small embedding dimension (for testing)
 pub const DIMS_SMALL: usize = 64;

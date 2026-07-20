@@ -12,7 +12,6 @@
 //! - IP addresses: 192.168.1.1 -> [IP]
 //! - API keys: sk-xxx... -> [KEY]
 
-use super::MAX_ENTRY_SIZE;
 
 /// Redaction level determines how aggressive the redaction is
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

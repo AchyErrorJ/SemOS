@@ -11,7 +11,7 @@
 
 use crate::println;
 use super::{MacAddr, BCAST, build_probe_request, build_open_auth_request,
-                       build_association_request, build_eapol_msg2, KeyInfo};
+                       build_association_request};
 
 /// Security profile for the target network.
 #[derive(Copy, Clone, Debug)]

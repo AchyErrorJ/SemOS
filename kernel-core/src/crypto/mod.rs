@@ -38,7 +38,6 @@ pub mod hkdf;
 pub mod x25519;
 pub mod p256;
 
-use crate::memory::SecurityTier;
 
 /// Constant-time equality for byte strings holding secrets.
 ///

@@ -38,7 +38,6 @@
 //! project memory's "boot-time DEMO pattern." DEMO 22 in `kernel-x86_64/main.rs`
 //! exercises every allocation path through SYS_HEAP_ALLOC/FREE.
 
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// Arena size — 16 MiB. Tunable via this single constant.

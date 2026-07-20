@@ -247,7 +247,7 @@ pub fn init() -> bool {
     // Prefer class scan so other e1000e-class NICs have a chance later.
     let loc = match pci::find_by_class(0x02, 0x00, 0x00) {
         Some(l) => {
-            let (c, sc, pi) = pci::class_triple(l);
+            let (_c, _sc, _pi) = pci::class_triple(l);
             let v = l.vendor_id();
             let d = l.device_id();
             if v != INTEL_VENDOR_ID || d != I217LM_DEVICE_ID {

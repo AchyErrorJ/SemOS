@@ -43,7 +43,7 @@ use crate::security::{
     evaluation::{create_evaluation_context, RequestType, PolicyResult, global_policy_engine},
     policy::RedactionProfile,
 };
-use super::redact::{Redactor, RedactionLevel, tokens};
+use super::redact::{Redactor, tokens};
 
 /// Context information for redaction decisions
 #[derive(Clone, Copy)]

@@ -47,7 +47,7 @@
 //!   matching the existing TcpStream single-socket invariant.
 
 use embedded_tls::{
-    Certificate, CryptoProvider, NoSign, TlsConfig, TlsContext, TlsError,
+    CryptoProvider, TlsConfig, TlsContext, TlsError,
     TlsVerifier,
 };
 use embedded_tls::blocking::TlsConnection;
@@ -313,7 +313,7 @@ impl NetworkTransport for TlsTransport {
         }
 
         // Stage 1: open TCP socket, wait for SYN/SYN-ACK/ACK to complete.
-        let mut stream = TcpStream::connect(remote_ip, remote_port)
+        let stream = TcpStream::connect(remote_ip, remote_port)
             .map_err(|_| {
                 *LAST_TCP_STATE.lock() = Some(TcpState::Closed);
                 TransportError::Io
@@ -410,7 +410,7 @@ impl NetworkTransport for TlsTransport {
     }
 
     fn close(&mut self) {
-        if let Some(mut conn) = self.conn.take() {
+        if let Some(conn) = self.conn.take() {
             // Send a close_notify alert; ignore errors (we're tearing
             // down anyway). embedded-tls's close() takes the underlying
             // socket back out via destruct, but we don't need the

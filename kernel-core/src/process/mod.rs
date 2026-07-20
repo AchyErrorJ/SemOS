@@ -753,7 +753,7 @@ pub fn get_mut(pid: ProcessId) -> Option<&'static mut Process> {
 
 /// Spawn a new kernel-mode process
 /// Note: name must be static for scheduler compatibility
-pub fn spawn(name: &'static str, entry: fn()) -> Option<ProcessId> {
+pub fn spawn(name: &'static str, _entry: fn()) -> Option<ProcessId> {
     let parent_pid = current_pid();
 
     unsafe {
@@ -798,7 +798,7 @@ pub fn spawn(name: &'static str, entry: fn()) -> Option<ProcessId> {
 
 /// Spawn a user-mode process
 /// Note: name must be static for scheduler compatibility
-pub fn spawn_user(name: &'static str, entry: fn()) -> Option<ProcessId> {
+pub fn spawn_user(name: &'static str, _entry: fn()) -> Option<ProcessId> {
     let parent_pid = current_pid();
 
     unsafe {

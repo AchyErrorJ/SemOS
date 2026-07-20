@@ -2654,7 +2654,7 @@ fn handle_llm_query(prompt_ptr: u64, prompt_len: u64, out_ptr: u64) -> u64 {
 
     unsafe {
         let mut provider = crate::llm::provider::global_provider();
-        let mut request = crate::llm::provider::LlmRequest::new(task_id, tier, prompt);
+        let request = crate::llm::provider::LlmRequest::new(task_id, tier, prompt);
 
         match provider.submit(request) {
             Ok(request_id) => {
@@ -2916,7 +2916,7 @@ fn handle_llm_access(requester_id: u64, current_tier: u64, requested_tier: u64, 
 /// SYS_LLM_STREAM_START(prompt_ptr, prompt_len, context_ptr) → request_id or u64::MAX
 /// Start a streaming LLM request. Returns request ID for polling with SYS_LLM_STREAM_READ.
 /// context_ptr points to serialized context data (same format as SYS_LLM_CONTEXT output).
-pub fn handle_llm_stream_start(prompt_ptr: u64, prompt_len: u64, context_ptr: u64) -> u64 {
+pub fn handle_llm_stream_start(prompt_ptr: u64, prompt_len: u64, _context_ptr: u64) -> u64 {
     let len = prompt_len as usize;
     if len == 0 || len > 1024 { return u64::MAX; }
 
@@ -3012,7 +3012,7 @@ pub fn handle_llm_set_policy(suid_high: u64, suid_low: u64, policy_data_ptr: u64
     }
 
     let requester_id = crate::scheduler::current_user_id();
-    let requester_tier = crate::scheduler::current_task_max_tier();
+    let _requester_tier = crate::scheduler::current_task_max_tier();
 
     // Read policy data from the caller's address space (validated for Ring 3).
     let policy_data = match unsafe { read_caller_slice(policy_data_ptr, policy_data_len) } {

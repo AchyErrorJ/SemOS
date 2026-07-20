@@ -16,7 +16,7 @@
 use super::{StorageHeader, StorageResult, StorageError};
 use crate::crypto::{
     Salt,
-    master_key::{MasterKey, unlock, lock, is_unlocked},
+    master_key::{unlock, lock, is_unlocked},
     key_hierarchy::KeyHierarchy,
 };
 
@@ -113,7 +113,7 @@ impl BootContext {
                         crate::platform::log("  [boot] System unlocked successfully\n");
                         Ok(())
                     }
-                    Err(e) => {
+                    Err(_e) => {
                         lock();
                         self.state = BootState::Failed;
                         crate::platform::log("  [boot] Key derivation failed\n");

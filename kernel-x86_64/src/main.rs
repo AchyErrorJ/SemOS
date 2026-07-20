@@ -16,6 +16,20 @@
 #![no_std]
 #![no_main]
 #![feature(abi_x86_interrupt)]
+// The x86 drivers (xHCI/EHCI/virtio/iwlwifi) reach hardware through fixed
+// mutable statics (rings, buffers, device tables) touched only from single-core
+// init/IRQ paths. That idiom trips `static_mut_refs`; kernel-core already opts
+// out of the same lint. Migrating these to `&raw`/UnsafeCell is a deliberate
+// future pass (needs hardware to re-validate each driver), so accept the lint
+// crate-wide here rather than churn ~60 untestable driver sites blind.
+#![allow(static_mut_refs)]
+// This crate is overwhelmingly hardware drivers: iwlwifi/e1000e/xHCI/EHCI/APIC
+// register maps and bring-up scaffolding keep complete constant tables and
+// staged structs on purpose (documentation + not-yet-wired paths). kernel-core
+// already opts out of dead_code for the same reason; match it here so the
+// register maps don't drown real warnings. NOTE: this hides genuinely-dead
+// first-party code too — a periodic manual triage is still worthwhile.
+#![allow(dead_code)]
 
 extern crate alloc;
 
@@ -79,7 +93,6 @@ pub mod rng;
 pub mod rtc;
 pub mod usb;
 
-use serial::Serial;
 use crate::session::{idle_with_heartbeat, interactive_session};
 use crate::legacy_demos::*;
 
@@ -1664,7 +1677,7 @@ fn enable_sse() {
         let mut cr0: u64;
         core::arch::asm!("mov {}, cr0", out(reg) cr0, options(nomem, nostack));
         cr0 &= !(1u64 << 2);  // clear EM
-        cr0 |=  (1u64 << 1);  // set MP
+        cr0 |=  1u64 << 1;  // set MP
         core::arch::asm!("mov cr0, {}", in(reg) cr0, options(nomem, nostack));
 
         let mut cr4: u64;

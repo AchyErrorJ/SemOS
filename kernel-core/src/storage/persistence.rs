@@ -12,10 +12,10 @@
 
 use super::{
     StorageHeader, PoolTable, PoolEntry, EncryptedPoolHeader,
-    StorageResult, StorageError, NUM_POOLS, MAX_POOL_DATA_SIZE,
+    StorageResult, StorageError, MAX_POOL_DATA_SIZE,
 };
 use crate::crypto::{
-    CryptoKey, Nonce, Salt, TAG_SIZE, NONCE_SIZE,
+    Nonce, Salt, TAG_SIZE, NONCE_SIZE,
     key_hierarchy::KeyHierarchy,
     poly1305::{aead_encrypt, aead_decrypt},
 };
@@ -279,7 +279,7 @@ pub fn save_pools(
     salt: &Salt,
     output: &mut [u8],
 ) -> StorageResult<usize> {
-    let mut offset = 0;
+    let _offset = 0;
 
     // Write storage header
     let header_offset = StorageHeader::SIZE;

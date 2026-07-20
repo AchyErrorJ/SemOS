@@ -56,8 +56,6 @@ pub use rules::{PolicyRule, RuleCondition};
 pub use context::{RequestContext, ContextInfo};
 pub use users::{UserAccount, UserRegistry, GroupId, UserFlags, global_user_registry, is_privileged};
 
-use crate::semantic::SUID;
-use crate::memory::SecurityTier;
 
 /// Policy SUID ranges - policies are semantic objects with special addressing
 pub mod policy_suids {

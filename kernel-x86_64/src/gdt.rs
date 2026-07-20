@@ -40,7 +40,6 @@ use x86_64::structures::tss::TaskStateSegment;
 use x86_64::registers::segmentation::{CS, DS, SS, Segment};
 use x86_64::instructions::tables::load_tss;
 use x86_64::VirtAddr;
-use x86_64::PrivilegeLevel;
 
 /// Kernel stack size for Ring 3 → Ring 0 transitions (32KB)
 const KERNEL_STACK_SIZE: usize = 32 * 1024;

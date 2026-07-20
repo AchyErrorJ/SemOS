@@ -10,7 +10,7 @@
 //! - 32-bit block counter
 //! - Resistant to timing attacks (constant-time operations)
 
-use super::{CryptoKey, Nonce, CryptoResult, CryptoError, KEY_SIZE, NONCE_SIZE};
+use super::{CryptoKey, Nonce};
 
 /// ChaCha20 block size in bytes
 pub const BLOCK_SIZE: usize = 64;

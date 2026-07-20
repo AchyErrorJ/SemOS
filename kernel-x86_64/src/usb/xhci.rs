@@ -2071,7 +2071,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
         unsafe {
             let ic = &mut INPUT_CTXS[si].0;
             ic.reset();
-            ic.input_ctrl_mut().add_flags = (1 << 0); // A0 = Slot Context only
+            ic.input_ctrl_mut().add_flags = 1 << 0; // A0 = Slot Context only
             let slot = ic.slot_mut();
             slot.set_is_hub(true);
             slot.set_context_entries(1);
@@ -2486,7 +2486,7 @@ fn control_in_phys(
         | (1u32 << 5)  /* IOC = Interrupt On Completion */;
 
     let si = slot_id as usize;
-    let status_trb_phys = unsafe {
+    let _status_trb_phys = unsafe {
         let idx_setup = EP0_PRODS[si].enqueue;
         // Setup
         enqueue_command(&raw mut EP0_TRANSFER_RINGS[si], &mut EP0_PRODS[si],
@@ -2610,7 +2610,7 @@ pub(crate) fn control_out(
         | (1u32 << 5);
 
     let si = slot_id as usize;
-    let status_trb_phys = unsafe {
+    let _status_trb_phys = unsafe {
         enqueue_command(&raw mut EP0_TRANSFER_RINGS[si], &mut EP0_PRODS[si],
             setup_param, setup_status, setup_control);
         let status_idx = EP0_PRODS[si].enqueue;
@@ -2753,7 +2753,7 @@ fn bulk_xfer(
     // control = trb_type Normal | IOC=1 | ISP=1 (interrupt on short packet).
     let control = ((trb_type::NORMAL as u32) << 10) | (1u32 << 5) | (1u32 << 2);
     let idx_before = unsafe { (*prod).enqueue };
-    let trb_phys = if idx_before == RING_SIZE - 1 {
+    let _trb_phys = if idx_before == RING_SIZE - 1 {
         ring_phys // enqueue_command wraps to index 0 when hitting the Link TRB
     } else {
         ring_phys + (idx_before as u64) * 16

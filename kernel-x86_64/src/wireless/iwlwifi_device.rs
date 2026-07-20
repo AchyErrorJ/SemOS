@@ -1436,7 +1436,7 @@ impl IwlDevice {
     /// is to ACK the FH/CSR interrupt in the TX completion path (or every drain
     /// iteration); if RX stays dead even with a clean int status, the halt is in
     /// the RF/MAC TX→RX turnaround, not the interrupt path.
-    fn post_tx_int_probe(&mut self, ms: u32) {
+    fn post_tx_int_probe(&mut self, _ms: u32) {
         use super::iwlwifi_csr::*;
         // The int-ACK hypothesis was REJECTED on 2026-06-26 (CSR_INT=0 after TX,
         // FH_INT only a stale RX bit, ACK didn't revive RX). The RX halt is NOT the

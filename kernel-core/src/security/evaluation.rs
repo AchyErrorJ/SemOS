@@ -6,7 +6,7 @@
 use crate::semantic::{SUID, registry::global_registry};
 use crate::memory::SecurityTier;
 use super::{
-    UserId, SecurityError,
+    UserId,
     policy::{PolicyObject, PolicyType, PolicyTarget, PolicyAction, RuleCondition},
     policy_suids,
 };

@@ -319,7 +319,7 @@ pub fn create_context(slot: usize, entry: fn()) -> TaskContext {
     let stack_aligned_top = stack_top & !0xF;
     let fake_ret_slot = stack_aligned_top - 8;
     unsafe {
-        *(fake_ret_slot as *mut u64) = task_exit_stub as u64;
+        *(fake_ret_slot as *mut u64) = task_exit_stub as *const () as u64;
     }
     // Saved RSP points at the fake return slot — exactly where `ret` would
     // jump from. Combined with `jmp [rsi+56]` to entry, the entry function

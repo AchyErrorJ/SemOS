@@ -282,7 +282,7 @@ pub(crate) fn cdc_ecm_demo() {
 /// handshake reply), validating each against the spec layout. Also confirms
 /// the iwlwifi PCI device-ID table recognises a known AX211 ID.
 pub(crate) fn wireless_demo() {
-    use wireless::{self, mgmt, ie, MacAddr};
+    use wireless::{self, ie, MacAddr};
 
     // --- Probe Request -------------------------------------------------------
     let mac: MacAddr = [0x02, 0x00, 0x00, 0x00, 0x00, 0x01];
@@ -957,7 +957,7 @@ pub(crate) fn persistence_demo() {
     use kernel_core::drivers::registry::get_block;
     use kernel_core::semantic::{SUID, SemanticObject};
     use kernel_core::memory::SecurityTier;
-    use kernel_core::storage::snapshot::{save_snapshot, load_snapshot};
+    use kernel_core::storage::snapshot::load_snapshot;
 
     let dev = match get_block("virtio0") {
         Some(d) => d,
@@ -1090,7 +1090,7 @@ pub(crate) fn seed_persistent_object(
 /// verbatim via LLM CTX too — Public objects are full-LLM-access by
 /// design. The visual contrast makes the model self-explanatory.
 pub(crate) fn sem_demo_kernel() {
-    use kernel_core::semantic::{SUID, SemanticObject};
+    use kernel_core::semantic::SUID;
     use kernel_core::memory::SecurityTier;
 
     // ---- Demo 2: Sensitive tier ----
@@ -1562,7 +1562,7 @@ pub(crate) fn user_identity_test() {
     }
 
     // ---- 4. Look alice up via SYS_LOOKUP_USER ----
-    let mut record = [0u8; 128];
+    let record = [0u8; 128];
     let n = dispatch(SYS_LOOKUP_USER,
         alice_uid,
         record.as_ptr() as u64,
@@ -3056,7 +3056,7 @@ pub(crate) fn threading_futex_test() {
     DEMO27_WAITER_RESULT.store(u64::MAX, Ordering::SeqCst);
 
     // Step 1: spawn a sibling thread.
-    let tid = dispatch(SYS_THREAD_SPAWN, demo27_waiter_entry as u64, 0, 0, 0);
+    let tid = dispatch(SYS_THREAD_SPAWN, demo27_waiter_entry as *const () as u64, 0, 0, 0);
     if tid == u64::MAX {
         println!("  [DEMO 27] FAIL: SYS_THREAD_SPAWN returned MAX (kernel-mode path missing?)");
         return;
