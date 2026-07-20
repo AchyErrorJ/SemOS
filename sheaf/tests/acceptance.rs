@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use sheaf::bundle;
 use sheaf::manifest::{BundleManifest, LeafKind, Role};
 use sheaf::LintLevel;
+use sheaf::traverse::{self, EntryKind};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -117,4 +118,55 @@ fn test9_plain_folder_is_not_a_bundle() {
     std::fs::write(dir.join("note.md"), b"hi").unwrap();
     assert!(!sheaf::is_bundle_dir(&dir));
     assert!(bundle::load_bundle(&dir).is_err());
+}
+
+#[test]
+fn test_pack_folder_becomes_lintable_bundle() {
+    let dir = tmp("pack");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("content.md"), b"# Packed\n").unwrap();
+    std::fs::write(dir.join("image.png"), b"\x89PNGfake").unwrap();
+    let info = bundle::pack_folder(&dir, Some("Packed")).unwrap();
+    assert!(sheaf::is_bundle_dir(&dir));
+    assert_eq!(info.manifest.default_facet, "content.md");
+    assert!(dir.join("image.png.toml").is_file(), "blob sidecar generated");
+    let issues = bundle::lint_bundle(&dir).unwrap();
+    assert!(issues.is_empty(), "packed bundle should lint clean: {issues:?}");
+}
+
+#[test]
+fn test6_repair_resyncs_dirty_manifest() {
+    let dir = tmp("repair");
+    bundle::new_document(&dir, Some("Doc")).unwrap();
+    // Simulate a torn write: facet body changed but manifest hash stale.
+    std::fs::write(dir.join("content.md"), b"# Doc\n\nedited out of band\n").unwrap();
+    let dirty = bundle::lint_bundle(&dir).unwrap();
+    assert!(has_error(&dirty, "sha256 mismatch"), "expected dirty: {dirty:?}");
+    // Add a loose file the manifest doesn't know about.
+    std::fs::write(dir.join("extra.md"), b"loose\n").unwrap();
+    let changes = bundle::repair_bundle(&dir).unwrap();
+    assert!(changes.iter().any(|c| c.contains("refreshed hash content.md")), "got {changes:?}");
+    assert!(changes.iter().any(|c| c.contains("added facet extra.md")), "got {changes:?}");
+    assert!(bundle::lint_bundle(&dir).unwrap().is_empty(), "repaired bundle should lint clean");
+}
+
+#[test]
+fn test14_find_visits_bundle_once_as_file() {
+    let root = tmp("tree");
+    std::fs::create_dir_all(root.join("plain")).unwrap();
+    std::fs::write(root.join("plain/loose.txt"), b"x").unwrap();
+    bundle::new_document(&root.join("doc"), Some("Doc")).unwrap();
+
+    let entries = traverse::find(&root, false).unwrap();
+    let bundles: Vec<_> = entries.iter().filter(|e| e.kind == EntryKind::Bundle).collect();
+    assert_eq!(bundles.len(), 1, "exactly one bundle: {entries:?}");
+    assert!(bundles[0].path.ends_with("doc"));
+    // The bundle's internals must NOT be listed without --contents.
+    assert!(!entries.iter().any(|e| e.path.ends_with("content.md")));
+    // The plain loose file is still visited.
+    assert!(entries.iter().any(|e| e.path.ends_with("loose.txt")));
+
+    // With --contents the bundle interior is visited.
+    let deep = traverse::find(&root, true).unwrap();
+    assert!(deep.iter().any(|e| e.path.ends_with("content.md")));
 }

@@ -13,6 +13,7 @@ pub mod provenance;
 pub mod sha256;
 pub mod suid;
 pub mod toml;
+pub mod traverse;
 
 pub use bundle::{BundleInfo, LintIssue, LintLevel};
 pub use manifest::{BundleManifest, Facet, LeafKind, Role};
@@ -82,4 +83,3 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::rename(&tmp, path)?;
     Ok(())
 }
-

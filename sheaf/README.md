@@ -22,7 +22,14 @@ sheaf rm  <dir> <facet>                  # remove a facet
 sheaf export <dir> md|sheaf <out>        # flat-md or .sheaf (uncompressed ustar) projection
 sheaf import <archive.sheaf> <dest-dir>  # copy-import: new SUID + derived_from
 sheaf agent <dir> <name>                 # show an .agent profile's requested grants (dry-run)
+sheaf pack <folder> [title]              # convert a loose folder into a bundle in place
+sheaf repair <dir>                       # resync manifest to reality (hashes, loose files, sidecars)
+sheaf find <root> [--contents]           # traversal with the bundle "readdir lie"
 ```
+
+`sheaf find` reports a bundle once as a single `bundle` entry and does not
+descend into it unless `--contents` is passed — the CLI twin of macOS's
+package bit (see `docs/SHEAF_PLAN.md` §13).
 
 ## Scope / deviations (Phase 0)
 

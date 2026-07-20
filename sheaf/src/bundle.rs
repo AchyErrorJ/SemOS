@@ -1,7 +1,7 @@
 use crate::agent::AgentProfile;
 use crate::manifest::{default_leaf_for_path, default_mime, default_role_for_path, BundleManifest, Facet, LeafKind, Role};
 use crate::{Result, SheafError, Suid};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
@@ -220,3 +220,211 @@ fn is_probable_blob(name: &str) -> bool {
     !matches!(name.rsplit('.').next().unwrap_or(""), "md" | "toml" | "css" | "agent" | "txt")
 }
 
+/// Collect regular files under `dir`, as bundle-root-relative slash paths.
+pub fn collect_rel_files(root: &Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    collect_rel(root, root, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn collect_rel(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rel(root, &path, out)?;
+        } else if path.is_file() {
+            let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+            out.push(rel);
+        }
+    }
+    Ok(())
+}
+
+/// Is `name` the auto-sidecar of a blob file that is also present in `files`?
+/// (e.g. `image.png.toml` next to `image.png`.)
+fn is_blob_sidecar(name: &str, files: &BTreeSet<String>) -> bool {
+    match name.strip_suffix(".toml") {
+        Some(base) if !base.is_empty() && files.contains(base) => {
+            default_leaf_for_path(base) == LeafKind::Blob
+        }
+        _ => false,
+    }
+}
+
+fn ensure_blob_sidecar(bundle: &Path, facet: &Facet) -> Result<()> {
+    let sidecar = bundle.join(sidecar_name(&facet.path));
+    if sidecar.exists() {
+        return Ok(());
+    }
+    let full = bundle.join(&facet.path);
+    let bytes = std::fs::metadata(&full)?.len();
+    let hash = crate::sha256::file_hex(&full)?;
+    if let Some(parent) = sidecar.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(
+        sidecar,
+        format!(
+            "schema = 1\nmime = \"{}\"\nsha256 = \"{}\"\nbytes = {}\ntitle = \"{}\"\n",
+            facet.mime, hash, bytes, facet.path,
+        ),
+    )?;
+    Ok(())
+}
+
+/// Pick the default (payload) facet for a packed/repaired bundle.
+fn pick_default_facet(facets: &BTreeMap<String, Facet>) -> Option<String> {
+    if facets.contains_key("content.md") {
+        return Some("content.md".into());
+    }
+    // First existing payload; else first .md; else first facet.
+    if let Some((name, _)) = facets.iter().find(|(_, f)| f.role == Role::Payload) {
+        return Some(name.clone());
+    }
+    if let Some((name, _)) = facets.iter().find(|(n, _)| n.ends_with(".md")) {
+        return Some(name.clone());
+    }
+    facets.keys().next().cloned()
+}
+
+/// Convert a plain folder of loose files into a bundle (in place).
+pub fn pack_folder(path: &Path, title: Option<&str>) -> Result<BundleInfo> {
+    if !path.is_dir() {
+        return Err(SheafError::Invalid(format!("not a directory: {}", path.display())));
+    }
+    if crate::is_bundle_dir(path) {
+        return Err(SheafError::Invalid(format!("already a bundle: {}", path.display())));
+    }
+
+    let files = collect_rel_files(path)?;
+    let file_set: BTreeSet<String> = files.iter().cloned().collect();
+
+    let mut facets: BTreeMap<String, Facet> = BTreeMap::new();
+    for rel in &files {
+        if rel == "bundle.toml" || rel == "provenance.toml" || rel.ends_with(".tmp") {
+            continue;
+        }
+        if is_blob_sidecar(rel, &file_set) {
+            continue; // it's a sidecar for a present blob, not its own facet
+        }
+        let leaf = default_leaf_for_path(rel);
+        let role = default_role_for_path(rel);
+        let mime = default_mime(rel, &leaf, &role);
+        facets.insert(rel.clone(), Facet { path: rel.clone(), leaf, role, tier: 0, mime, sha256: None });
+    }
+    if facets.is_empty() {
+        return Err(SheafError::Invalid("no packable files found".into()));
+    }
+
+    let default_facet = pick_default_facet(&facets)
+        .ok_or_else(|| SheafError::Invalid("could not determine default facet".into()))?;
+    // The default facet must be a payload.
+    if let Some(f) = facets.get_mut(&default_facet) {
+        f.role = Role::Payload;
+    }
+
+    let now = crate::iso_now();
+    let title = title
+        .map(str::to_string)
+        .unwrap_or_else(|| path.file_name().and_then(|s| s.to_str()).unwrap_or("Untitled").to_string());
+    let mut manifest = BundleManifest {
+        schema: 1,
+        suid: Suid::mint()?,
+        kind: "document".into(),
+        title,
+        created: now.clone(),
+        modified: now,
+        default_facet,
+        tier: 0,
+        derived_from: None,
+        facets,
+    };
+
+    let blob_facets: Vec<Facet> = manifest.facets.values().filter(|f| f.leaf == LeafKind::Blob).cloned().collect();
+    for f in &blob_facets {
+        ensure_blob_sidecar(path, f)?;
+    }
+    std::fs::write(path.join("provenance.toml"), crate::provenance::initial(manifest.suid, None))?;
+    sync_hashes(path, &mut manifest)?;
+    manifest.save(&crate::bundle_manifest_path(path))?;
+    Ok(BundleInfo { path: path.to_path_buf(), manifest })
+}
+
+/// Resync a bundle's manifest to reality: add loose files, drop missing
+/// facets, regenerate missing blob sidecars, and refresh hashes. Keeps SUID.
+pub fn repair_bundle(path: &Path) -> Result<Vec<String>> {
+    let mut info = load_bundle(path)?;
+    let mut changes = Vec::new();
+
+    let files = collect_rel_files(path)?;
+    let file_set: BTreeSet<String> = files.iter().cloned().collect();
+
+    // Add loose files missing from the manifest.
+    for rel in &files {
+        if rel == "bundle.toml" || rel == "provenance.toml" || rel.ends_with(".tmp") {
+            continue;
+        }
+        if is_blob_sidecar(rel, &file_set) {
+            continue;
+        }
+        if !info.manifest.facets.contains_key(rel) {
+            let leaf = default_leaf_for_path(rel);
+            let role = default_role_for_path(rel);
+            let mime = default_mime(rel, &leaf, &role);
+            info.manifest.facets.insert(rel.clone(), Facet {
+                path: rel.clone(), leaf, role, tier: 0, mime, sha256: None,
+            });
+            changes.push(format!("added facet {rel}"));
+        }
+    }
+
+    // Drop facets whose files vanished.
+    let missing: Vec<String> = info.manifest.facets.keys()
+        .filter(|k| !path.join(k).is_file())
+        .cloned()
+        .collect();
+    for k in missing {
+        info.manifest.facets.remove(&k);
+        changes.push(format!("removed facet {k} (file gone)"));
+    }
+
+    // Regenerate missing blob sidecars.
+    let blob_facets: Vec<Facet> = info.manifest.facets.values()
+        .filter(|f| f.leaf == LeafKind::Blob)
+        .cloned()
+        .collect();
+    for f in &blob_facets {
+        let sidecar = path.join(sidecar_name(&f.path));
+        if !sidecar.exists() {
+            ensure_blob_sidecar(path, f)?;
+            changes.push(format!("regenerated sidecar {}", sidecar_name(&f.path)));
+        }
+    }
+
+    // Fix a dangling default facet.
+    if !info.manifest.facets.contains_key(&info.manifest.default_facet) {
+        if let Some(def) = pick_default_facet(&info.manifest.facets) {
+            if let Some(f) = info.manifest.facets.get_mut(&def) {
+                f.role = Role::Payload;
+            }
+            changes.push(format!("default_facet {} -> {}", info.manifest.default_facet, def));
+            info.manifest.default_facet = def;
+        }
+    }
+
+    // Refresh hashes (this is also the "dirty manifest" repair for test 6).
+    let before: BTreeMap<String, Option<String>> =
+        info.manifest.facets.iter().map(|(k, f)| (k.clone(), f.sha256.clone())).collect();
+    sync_hashes(path, &mut info.manifest)?;
+    for (k, f) in &info.manifest.facets {
+        if before.get(k).and_then(|o| o.clone()) != f.sha256 {
+            changes.push(format!("refreshed hash {k}"));
+        }
+    }
+
+    info.manifest.modified = crate::iso_now();
+    info.manifest.save(&crate::bundle_manifest_path(path))?;
+    Ok(changes)
+}

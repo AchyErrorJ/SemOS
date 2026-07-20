@@ -1,3 +1,4 @@
+use sheaf::traverse::{self, EntryKind};
 use sheaf::manifest::Role;
 use sheaf::{Result, LintLevel};
 use std::path::Path;
@@ -93,6 +94,36 @@ fn run() -> Result<()> {
             let name = required(&args, 1, "name")?;
             show_agent(Path::new(bundle), name)?;
         }
+        "pack" => {
+            let path = required(&args, 0, "folder")?;
+            let title = args.get(1).map(String::as_str);
+            let info = sheaf::bundle::pack_folder(Path::new(path), title)?;
+            println!("packed {} suid={}", info.path.display(), info.manifest.suid);
+            println!("default facet: {}", info.manifest.default_facet);
+        }
+        "repair" => {
+            let path = required(&args, 0, "bundle")?;
+            let changes = sheaf::bundle::repair_bundle(Path::new(path))?;
+            if changes.is_empty() {
+                println!("repair: nothing to do");
+            } else {
+                for c in &changes {
+                    println!("repair: {c}");
+                }
+            }
+        }
+        "find" => {
+            let root = required(&args, 0, "root")?;
+            let contents = args.iter().any(|a| a == "--contents");
+            for e in traverse::find(Path::new(root), contents)? {
+                let tag = match e.kind {
+                    EntryKind::Bundle => "bundle",
+                    EntryKind::Dir => "dir",
+                    EntryKind::File => "file",
+                };
+                println!("{}\t{}", tag, e.path.display());
+            }
+        }
         _ => {
             usage();
             return Err(sheaf::SheafError::Invalid(format!("unknown command {cmd}")));
@@ -110,6 +141,9 @@ fn usage() {
     eprintln!("  sheaf export <bundle-dir> md|sheaf <out>");
     eprintln!("  sheaf import <archive.sheaf> <dest-dir>");
     eprintln!("  sheaf agent <bundle-dir> <name>");
+    eprintln!("  sheaf pack <folder> [title]");
+    eprintln!("  sheaf repair <bundle-dir>");
+    eprintln!("  sheaf find <root> [--contents]");
 }
 
 fn required<'a>(args: &'a [String], idx: usize, name: &str) -> Result<&'a str> {
@@ -169,4 +203,3 @@ fn show_agent(bundle: &Path, name: &str) -> Result<()> {
     println!("dry-run only: no LLM/backend execution in Phase 0");
     Ok(())
 }
-
