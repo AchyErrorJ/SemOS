@@ -1,7 +1,8 @@
 # T540p Intel I217-LM Ethernet — First Cable Validation
 
 **Prepared:** 2026-07-20  
-**Status:** diagnostic path implemented; **not yet validated on metal**  
+**Status:** first metal run captured 2026-07-21; link/RX work, TX descriptor
+fetch/completion is under repair  
 **Target:** Lenovo T540p/W540-class Intel I217-LM (`8086:153a`, PCI `00:19.0`)  
 **Driver:** `kernel-x86_64/src/e1000e.rs` (`e1000e0`, polled RX/TX)
 
@@ -169,3 +170,35 @@ Ethernet is considered working only when one T540p boot demonstrates:
    bad RX descriptors;
 6. the result and representative `netinfo` output are added to this document.
 
+## First metal result — 2026-07-21
+
+The first cable boot proved:
+
+```text
+stack=UP device=e1000e0 link=UP registered_devices=2
+MAC=54:EE:75:16:92:F9
+DHCP started=yes lease=no
+
+link=UP speed=1000 Mb/s duplex=full STATUS=0x00080483
+RCTL=0x04008002 TCTL=0x0103F0FA
+
+TX hw head=0 tail=1  sw submit=1 reclaim=0  DD=0/16
+tx calls=1 ok=0 bytes=0 drops=1 timeouts=1
+
+rx calls=223 ok=189 bytes=20360 wouldblock=34
+bad_desc=0 truncated=0 last_len=82 last_errors=0x00
+```
+
+Interpretation:
+
+- PCI/MMIO, bus mastering, MAC, PHY link, receive DMA/ring recycling, and
+  smoltcp polling work (189 clean RX frames).
+- The TX tail doorbell reaches hardware (`TDT=1`), but hardware never advances
+  the head (`TDH=0`) or writes descriptor done (`DD=0`).
+- This rules out a general DMA-address or link problem and localizes the fault
+  to I217/PCH-LPT transmit-engine initialization.
+
+The next build programs the PCH-LPT requirements used by Linux e1000e before
+`TCTL.EN`: TXDCTL full-descriptor writeback + required bit 22, TARC0/TARC1
+arbitration bits, and TIPG IPGT=8 for 1 Gb/s. `netinfo` now also prints
+TIPG/TXDCTL0/TXDCTL1/TARC0/TARC1 for confirmation.

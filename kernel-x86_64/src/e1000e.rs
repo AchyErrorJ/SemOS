@@ -49,6 +49,7 @@ mod reg {
     pub const STATUS: u32 = 0x00008; // Device status
     pub const RCTL:   u32 = 0x00100; // Receive control
     pub const TCTL:   u32 = 0x00400; // Transmit control
+    pub const TIPG:   u32 = 0x00410; // Transmit inter-packet gap
 
     pub const RDBAL:  u32 = 0x02800; // RX desc base low
     pub const RDBAH:  u32 = 0x02804; // RX desc base high
@@ -62,7 +63,11 @@ mod reg {
     pub const TDLEN:  u32 = 0x03808; // TX desc length
     pub const TDH:    u32 = 0x03810; // TX desc head
     pub const TDT:    u32 = 0x03818; // TX desc tail
+    pub const TXDCTL0: u32 = 0x03828; // TX descriptor control queue 0
+    pub const TARC0:  u32 = 0x03840; // TX arbitration count queue 0
     pub const TIDV:   u32 = 0x03820; // TX interrupt delay value
+    pub const TXDCTL1: u32 = 0x03928; // TX descriptor control queue 1
+    pub const TARC1:  u32 = 0x03940; // TX arbitration count queue 1
 
     pub const RAL0:   u32 = 0x05400; // Receive address low
     pub const RAH0:   u32 = 0x05404; // Receive address high
@@ -118,6 +123,28 @@ mod tctl {
     pub const CT:     u32 = 0x0F << 4; // Collision threshold
     pub const COLD:   u32 = 0x3F << 12; // Collision distance
     pub const RTLC:   u32 = 1 << 24; // Re-transmit on late collision
+    pub const MULR:   u32 = 1 << 28; // Multiple request support
+}
+
+// ============================================================================
+// PCH-LPT transmit setup bits (I217-LM)
+// ============================================================================
+
+mod pch_tx {
+    // Linux e1000e/ich8lan programs full-descriptor writeback plus bit 22 for
+    // both TX queues on PCH devices. WTHRESH is bits 21:16.
+    pub const TXDCTL_WTHRESH_MASK: u32 = 0x003F_0000;
+    pub const TXDCTL_FULL_DESC_WB: u32 = 1 << 16;
+    pub const TXDCTL_REQUIRED_BIT22: u32 = 1 << 22;
+
+    // Required PCH arbitration bits from e1000e_initialize_hw_bits_ich8lan().
+    pub const TARC0_REQUIRED: u32 = (1 << 23) | (1 << 24) | (1 << 26) | (1 << 27);
+    pub const TARC1_REQUIRED: u32 = (1 << 24) | (1 << 26) | (1 << 30);
+    pub const TARC1_MULR_COMPANION: u32 = 1 << 28;
+
+    // I217/PCH-LPT at 1 Gb/s uses IPGT=8. Preserve IPGR1/IPGR2 reset values.
+    pub const TIPG_IPGT_MASK: u32 = 0x0000_03FF;
+    pub const TIPG_IPGT_1G: u32 = 8;
 }
 
 // ============================================================================
@@ -491,6 +518,13 @@ fn enable_rx_tx() {
                  | rctl::SECRC;
         wr32(reg::RCTL, rctl);
 
+        // PCH-LPT/I217 is not QEMU's generic e1000: the Linux e1000e
+        // ich8lan path programs mandatory TX descriptor/arbitration bits
+        // before enabling the transmitter. Without them, TDT accepts the
+        // tail doorbell but TDH remains zero and descriptor DD never arrives
+        // (exactly the 2026-07-21 T540p netinfo observation).
+        configure_pch_lpt_tx();
+
         let tctl = tctl::EN
                  | tctl::PSP
                  | tctl::CT
@@ -498,6 +532,44 @@ fn enable_rx_tx() {
                  | tctl::RTLC;
         wr32(reg::TCTL, tctl);
     }
+}
+
+/// Program the PCH-LPT transmit requirements used by Intel I217-LM.
+///
+/// Derived from Linux e1000e's `e1000e_initialize_hw_bits_ich8lan()` and
+/// `e1000_check_for_copper_link_ich8lan()`:
+/// - full TX descriptor writeback + required bit 22 on queues 0/1;
+/// - TARC arbitration bits for the PCH transmit engine;
+/// - IPGT=8 for the 1 Gb/s copper link (preserving IPGR1/IPGR2).
+///
+/// Must be called after reset/ring programming and before TCTL.EN.
+unsafe fn configure_pch_lpt_tx() {
+    for reg in [reg::TXDCTL0, reg::TXDCTL1] {
+        let mut v = rd32(reg);
+        v &= !pch_tx::TXDCTL_WTHRESH_MASK;
+        v |= pch_tx::TXDCTL_FULL_DESC_WB | pch_tx::TXDCTL_REQUIRED_BIT22;
+        wr32(reg, v);
+    }
+
+    let mut tarc0 = rd32(reg::TARC0);
+    tarc0 |= pch_tx::TARC0_REQUIRED;
+    wr32(reg::TARC0, tarc0);
+
+    let mut tarc1 = rd32(reg::TARC1);
+    tarc1 |= pch_tx::TARC1_REQUIRED;
+    // Our desired TCTL does not set MULR; Linux pairs that with TARC1 bit 28.
+    if (rd32(reg::TCTL) & tctl::MULR) == 0 {
+        tarc1 |= pch_tx::TARC1_MULR_COMPANION;
+    } else {
+        tarc1 &= !pch_tx::TARC1_MULR_COMPANION;
+    }
+    wr32(reg::TARC1, tarc1);
+
+    let mut tipg = rd32(reg::TIPG);
+    tipg = (tipg & !pch_tx::TIPG_IPGT_MASK) | pch_tx::TIPG_IPGT_1G;
+    wr32(reg::TIPG, tipg);
+
+    fence(Ordering::SeqCst);
 }
 
 // ============================================================================
@@ -713,6 +785,11 @@ pub fn print_diagnostics() -> bool {
         let status_reg = rd32(reg::STATUS);
         let rctl = rd32(reg::RCTL);
         let tctl = rd32(reg::TCTL);
+        let tipg = rd32(reg::TIPG);
+        let txdctl0 = rd32(reg::TXDCTL0);
+        let txdctl1 = rd32(reg::TXDCTL1);
+        let tarc0 = rd32(reg::TARC0);
+        let tarc1 = rd32(reg::TARC1);
         let rdh = rd32(reg::RDH);
         let rdt = rd32(reg::RDT);
         let tdh = rd32(reg::TDH);
@@ -745,6 +822,11 @@ pub fn print_diagnostics() -> bool {
             ctrl,
         );
         crate::println!("  RCTL=0x{:08X} TCTL=0x{:08X}", rctl, tctl);
+        crate::println!(
+            "  TIPG=0x{:08X} TXDCTL0=0x{:08X} TXDCTL1=0x{:08X}",
+            tipg, txdctl0, txdctl1
+        );
+        crate::println!("  TARC0=0x{:08X} TARC1=0x{:08X}", tarc0, tarc1);
         crate::println!(
             "  RX hw head={} tail={} sw clean={} free={} DD={}/{} ring_phys=0x{:016X}",
             rdh, rdt, RX_CLEAN, RX_FREE, rx_done, RING_SIZE, RX_RING_PHYS
