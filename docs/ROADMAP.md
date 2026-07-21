@@ -8,6 +8,20 @@ When you finish a milestone, flip its checkbox in this file and update the [Proj
 
 Phase 8 (network → first remote LLM call) is closed. See [`PHASE_8_ROADMAP.md`](PHASE_8_ROADMAP.md) for that phase's historical detail. The current frontier is Phase 9.
 
+> **2026-07-21 — native Intel I217-LM Ethernet validated end-to-end on T540p.**
+> The new polled `e1000e0` driver now completes real TX/RX DMA on the on-board
+> `8086:153a` controller at 1 Gb/s full duplex. DHCP acquired
+> `192.168.1.20/24` via `192.168.1.1`; DNS, TCP, and HTTP all worked from the
+> Ring-3 `sem-sh` shell. `fetch http://example.com/` returned HTTP 200 and the
+> full Example Domain page; a second request to `http://google.com/` received
+> its HTTPS-redirect/error HTML, proving descriptor recycling across requests.
+> Root cause of the original TX hang (`TDT` advanced but `TDH=0`, no DD):
+> TXDCTL full-writeback lacked GRAN bit 24, and SemOS replaced TCTL instead of
+> preserving NVM/hardware bit 29 + enabling MULR bit 28. Working state:
+> `TCTL=0x3103F0FA`, `TXDCTL0/1=0x01410000`, zero TX drops/timeouts, clean RX.
+> Full capture and validation checklist:
+> [`ETHERNET_T540P_VALIDATION_2026-07-20.md`](ETHERNET_T540P_VALIDATION_2026-07-20.md).
+>
 > **2026-06-28 - WiFi pin placed; near-term networking pivots to USB dongle.**
 > Native Intel 7260 `iwlwifi` is **paused deliberately**, not abandoned. The
 > driver now reaches real scan + firmware ALIVE + Phase-A join plumbing and the

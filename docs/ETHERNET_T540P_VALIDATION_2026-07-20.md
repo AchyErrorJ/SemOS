@@ -1,8 +1,8 @@
 # T540p Intel I217-LM Ethernet — First Cable Validation
 
 **Prepared:** 2026-07-20  
-**Status:** first metal run captured 2026-07-21; link/RX work, TX descriptor
-fetch/completion is under repair  
+**Status:** **VALIDATED ON METAL 2026-07-21** — I217-LM link, RX/TX DMA,
+DHCP, DNS, TCP, and HTTP all working on the T540p  
 **Target:** Lenovo T540p/W540-class Intel I217-LM (`8086:153a`, PCI `00:19.0`)  
 **Driver:** `kernel-x86_64/src/e1000e.rs` (`e1000e0`, polled RX/TX)
 
@@ -231,3 +231,68 @@ The next build corrects full-descriptor writeback, changes TCTL programming to
 read-modify-write (preserving NVM/hardware bits), enables MULR, and clears the
 paired TARC1 bit 28. `netinfo` also gains TDBAL/TDBAH/TDLEN, the last submitted
 descriptor contents, TX buffer physical address, and MAC TX statistics.
+
+## Third metal result — SUCCESS — 2026-07-21
+
+The corrected TXDCTL/TCTL build brought native Ethernet fully online:
+
+```text
+[net] DHCP lease: 192.168.1.20/24 via 192.168.1.1 dns 192.168.1.1
+
+stack=UP device=e1000e0 link=UP registered_devices=2
+IPv4=192.168.1.20/24 gateway=192.168.1.1 DNS=192.168.1.1
+DHCP started=yes lease=yes
+
+TCTL=0x3103F0FA
+TIPG=0x00602008
+TXDCTL0=0x01410000 TXDCTL1=0x01410000
+
+TX hw head=3 tail=3 sw submit=3 reclaim=2 DD=3/16
+tx calls=3 ok=3 bytes=662 drops=0 timeouts=0
+
+rx calls=434 ok=292 bytes=29220
+bad_desc=0 truncated=0 last_errors=0x00
+```
+
+`fetch http://example.com/` returned:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/html
+Server: cloudflare
+```
+
+and rendered the complete Example Domain HTML in `sem-sh`.
+
+A second request to `http://google.com/` also received an HTTP response and
+HTML directing the client to HTTPS. `sem-sh fetch` intentionally supports
+plain HTTP only and does not follow HTTPS redirects; receiving that response
+still proves a second successful DNS/TCP/HTTP exchange and descriptor reuse.
+
+### Root cause
+
+The I217-LM TX engine stayed at `TDH=0` because:
+
+1. TXDCTL full-descriptor writeback was missing the GRAN bit (bit 24);
+2. SemOS replaced TCTL rather than preserving NVM/hardware bits;
+3. TCTL.MULR (bit 28) was not enabled.
+
+The successful configuration matches the committed Linux oracle:
+
+```text
+TCTL=0x3103F0FA
+TXDCTL0/1=0x01410000
+TIPG=0x00602008
+```
+
+### Acceptance gate
+
+- [x] I217-LM probe, MAC, 1 Gb/s full-duplex link
+- [x] DHCP lease
+- [x] DNS resolution
+- [x] TCP connection
+- [x] HTTP 200 + rendered body (`example.com`)
+- [x] second HTTP exchange (`google.com` redirect/error HTML)
+- [x] TX/RX counters increase
+- [x] zero TX timeout/drop
+- [x] zero bad/truncated RX descriptors
