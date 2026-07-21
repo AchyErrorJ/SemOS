@@ -202,3 +202,32 @@ The next build programs the PCH-LPT requirements used by Linux e1000e before
 `TCTL.EN`: TXDCTL full-descriptor writeback + required bit 22, TARC0/TARC1
 arbitration bits, and TIPG IPGT=8 for 1 Gb/s. `netinfo` now also prints
 TIPG/TXDCTL0/TXDCTL1/TARC0/TARC1 for confirmation.
+
+## Second metal result — 2026-07-21
+
+The first PCH-register build applied its writes, but TX still did not advance:
+
+```text
+TIPG=0x00602008
+TXDCTL0=0x00410000 TXDCTL1=0x00410000
+TARC0=0x0D800403 TARC1=0x45000403
+
+TX hw head=0 tail=4 sw submit=4 reclaim=0 DD=0/16
+tx calls=8 ok=0 bytes=0 drops=4 timeouts=4
+
+rx calls=48377 ok=290 bytes=28934
+bad_desc=0 truncated=0 last_errors=0x00
+```
+
+The registers exposed two implementation mistakes:
+
+1. `TXDCTL_FULL_TX_DESC_WB` is `0x01010000` (GRAN bit 24 plus WTHRESH=1);
+   the first build only set WTHRESH, producing `0x00410000` after bit 22.
+2. SemOS replaced TCTL with `0x0103F0FA`, while the Linux oracle capture has
+   `TCTL=0x3103F0FA`. Replacing the register cleared hardware-specific bit 29
+   and omitted MULR bit 28.
+
+The next build corrects full-descriptor writeback, changes TCTL programming to
+read-modify-write (preserving NVM/hardware bits), enables MULR, and clears the
+paired TARC1 bit 28. `netinfo` also gains TDBAL/TDBAH/TDLEN, the last submitted
+descriptor contents, TX buffer physical address, and MAC TX statistics.

@@ -74,6 +74,15 @@ mod reg {
 
     pub const IMS:    u32 = 0x000D0; // Interrupt mask set
     pub const IMC:    u32 = 0x000D8; // Interrupt mask clear
+
+    // MAC transmit statistics (read-only, self-clearing on read).
+    pub const TPT:    u32 = 0x040D4; // Total packets transmitted
+    pub const GPTC:   u32 = 0x04080; // Good packets transmitted
+    pub const COLC:   u32 = 0x04028; // Collision count
+    pub const ECOL:   u32 = 0x04018; // Excessive collisions
+    pub const LATECOL:u32 = 0x04020; // Late collisions
+    pub const TNCRS:  u32 = 0x04034; // Transmit with no CRS
+    pub const RNBC:   u32 = 0x040A0; // Receive no buffers count
 }
 
 // ============================================================================
@@ -134,7 +143,8 @@ mod pch_tx {
     // Linux e1000e/ich8lan programs full-descriptor writeback plus bit 22 for
     // both TX queues on PCH devices. WTHRESH is bits 21:16.
     pub const TXDCTL_WTHRESH_MASK: u32 = 0x003F_0000;
-    pub const TXDCTL_FULL_DESC_WB: u32 = 1 << 16;
+    // E1000_TXDCTL_FULL_TX_DESC_WB = GRAN(bit24) | WTHRESH(1).
+    pub const TXDCTL_FULL_DESC_WB: u32 = (1 << 24) | (1 << 16);
     pub const TXDCTL_REQUIRED_BIT22: u32 = 1 << 22;
 
     // Required PCH arbitration bits from e1000e_initialize_hw_bits_ich8lan().
@@ -523,13 +533,18 @@ fn enable_rx_tx() {
         // before enabling the transmitter. Without them, TDT accepts the
         // tail doorbell but TDH remains zero and descriptor DD never arrives
         // (exactly the 2026-07-21 T540p netinfo observation).
-        configure_pch_lpt_tx();
-
-        let tctl = tctl::EN
-                 | tctl::PSP
-                 | tctl::CT
-                 | tctl::COLD
-                 | tctl::RTLC;
+        // Preserve NVM/hardware-specific TCTL bits (the Linux oracle has
+        // reserved bit 29 set) instead of replacing the whole register. Set
+        // MULR as Linux e1000e does; TARC1 bit 28 is paired inversely with it.
+        let mut tctl = rd32(reg::TCTL);
+        tctl &= !(tctl::CT | tctl::COLD);
+        tctl |= tctl::EN
+              | tctl::PSP
+              | tctl::CT
+              | tctl::COLD
+              | tctl::RTLC
+              | tctl::MULR;
+        configure_pch_lpt_tx(tctl);
         wr32(reg::TCTL, tctl);
     }
 }
@@ -543,7 +558,7 @@ fn enable_rx_tx() {
 /// - IPGT=8 for the 1 Gb/s copper link (preserving IPGR1/IPGR2).
 ///
 /// Must be called after reset/ring programming and before TCTL.EN.
-unsafe fn configure_pch_lpt_tx() {
+unsafe fn configure_pch_lpt_tx(desired_tctl: u32) {
     for reg in [reg::TXDCTL0, reg::TXDCTL1] {
         let mut v = rd32(reg);
         v &= !pch_tx::TXDCTL_WTHRESH_MASK;
@@ -558,7 +573,7 @@ unsafe fn configure_pch_lpt_tx() {
     let mut tarc1 = rd32(reg::TARC1);
     tarc1 |= pch_tx::TARC1_REQUIRED;
     // Our desired TCTL does not set MULR; Linux pairs that with TARC1 bit 28.
-    if (rd32(reg::TCTL) & tctl::MULR) == 0 {
+    if (desired_tctl & tctl::MULR) == 0 {
         tarc1 |= pch_tx::TARC1_MULR_COMPANION;
     } else {
         tarc1 &= !pch_tx::TARC1_MULR_COMPANION;
@@ -794,6 +809,18 @@ pub fn print_diagnostics() -> bool {
         let rdt = rd32(reg::RDT);
         let tdh = rd32(reg::TDH);
         let tdt = rd32(reg::TDT);
+        let tdbal = rd32(reg::TDBAL);
+        let tdbah = rd32(reg::TDBAH);
+        let tdlen = rd32(reg::TDLEN);
+        // These MAC counters are read-to-clear. `netinfo` intentionally takes
+        // a point-in-time sample after the attempted DHCP/fetch transmissions.
+        let tpt = rd32(reg::TPT);
+        let gptc = rd32(reg::GPTC);
+        let colc = rd32(reg::COLC);
+        let ecol = rd32(reg::ECOL);
+        let latecol = rd32(reg::LATECOL);
+        let tncrs = rd32(reg::TNCRS);
+        let rnbc = rd32(reg::RNBC);
         let mut rx_done = 0usize;
         let mut tx_done = 0usize;
         for i in 0..RING_SIZE {
@@ -834,6 +861,22 @@ pub fn print_diagnostics() -> bool {
         crate::println!(
             "  TX hw head={} tail={} sw submit={} reclaim={} DD={}/{} ring_phys=0x{:016X}",
             tdh, tdt, TX_SUBMIT, TX_RECLAIM, tx_done, RING_SIZE, TX_RING_PHYS
+        );
+        crate::println!(
+            "  TX ring regs base=0x{:08X}{:08X} len={} buffer_phys=0x{:016X}",
+            tdbah, tdbal, tdlen, TX_BUFFER_PHYS
+        );
+        if TX_SUBMIT != TX_RECLAIM {
+            let idx = (TX_SUBMIT + RING_SIZE - 1) % RING_SIZE;
+            let d = TX_RING.0[idx];
+            crate::println!(
+                "  TX desc[{}] addr=0x{:016X} len={} cmd=0x{:02X} status=0x{:02X}",
+                idx, d.addr, d.len, d.cmd, d.status
+            );
+        }
+        crate::println!(
+            "  MAC stats(read-clear): TPT={} GPTC={} COLC={} ECOL={} LATECOL={} TNCRS={} RNBC={}",
+            tpt, gptc, colc, ecol, latecol, tncrs, rnbc
         );
     }
 
