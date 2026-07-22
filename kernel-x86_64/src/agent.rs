@@ -62,12 +62,118 @@ impl Message {
     }
 }
 
-/// The Anthropic API key for outbound requests. Compile-time only via the
-/// ANTHROPIC_KEY env var (so it lands in the gitignored binary, never in
-/// source/git); empty if not set. The persistent mechanism is a future
-/// `/etc/anthropic-api-key` read.
+/// First non-empty of the two compile-time env values, else `default`.
+///
+/// Critically treats a **set-but-empty** env var as absent. The dev shell
+/// exports `ANTHROPIC_BASE_URL=` / `ANTHROPIC_MODEL=` (empty) for Claude Code,
+/// and a plain `.or().unwrap_or()` chain would take that `Some("")` and
+/// shadow the default — which silently produced an empty host/model in the
+/// first bake (caught by the boot endpoint-probe on 2026-07-22).
+fn first_nonempty(
+    primary: Option<&'static str>,
+    secondary: Option<&'static str>,
+    default: &'static str,
+) -> &'static str {
+    if let Some(s) = primary {
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    if let Some(s) = secondary {
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    default
+}
+
+/// The API key for outbound requests. Compile-time only (so it lands in the
+/// gitignored binary, never in source/git); empty if not set. Reads the
+/// exo-agent-style `KIMI_API_KEY` first, falling back to the older
+/// `ANTHROPIC_KEY` so pre-existing build scripts keep working. The persistent
+/// (runtime) mechanism is a future `/etc/agent.conf` read.
 pub fn api_key() -> &'static str {
-    option_env!("ANTHROPIC_KEY").unwrap_or("")
+    first_nonempty(option_env!("KIMI_API_KEY"), option_env!("ANTHROPIC_KEY"), "")
+}
+
+/// Base URL of the (Anthropic-Messages-compatible) endpoint. Compile-time only
+/// (mirrors `api_key()` — lands only in the gitignored binary), so a build can
+/// target any provider that speaks the Anthropic Messages wire format. Reads
+/// `KIMI_BASE_URL` first, then `ANTHROPIC_BASE_URL`; defaults to the Kimi
+/// Coding endpoint (matches Orchestre's `kimi_worker.py`).
+///
+/// The TLS layer needs no changes to support an alternate provider as long as
+/// it's fronted by the same pinned intermediate (`tls::spki_pin`, GTS WE1) —
+/// confirmed for api.kimi.com 2026-07-22 (identical WE1 SPKI hash to
+/// api.anthropic.com). A provider behind a different CA would need a second
+/// pin added there.
+fn base_url() -> &'static str {
+    first_nonempty(
+        option_env!("KIMI_BASE_URL"),
+        option_env!("ANTHROPIC_BASE_URL"),
+        "https://api.kimi.com/coding",
+    )
+}
+
+/// Host portion of [`base_url`] — used as both the DNS/TCP target and the TLS
+/// SNI.
+pub fn endpoint_host() -> &'static str {
+    let u = base_url();
+    let u = u
+        .strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .unwrap_or(u);
+    match u.find('/') {
+        Some(i) => &u[..i],
+        None => u,
+    }
+}
+
+/// Path prefix from [`base_url`] (empty for the plain Anthropic API), with
+/// any trailing slash trimmed so it can be concatenated with `/v1/messages`.
+fn endpoint_path_prefix() -> &'static str {
+    let u = base_url();
+    let u = u
+        .strip_prefix("https://")
+        .or_else(|| u.strip_prefix("http://"))
+        .unwrap_or(u);
+    match u.find('/') {
+        Some(i) => u[i..].trim_end_matches('/'),
+        None => "",
+    }
+}
+
+/// Full Messages-API path for outbound requests, e.g. `/v1/messages` or
+/// `/coding/v1/messages`.
+pub fn endpoint_path() -> String {
+    format!("{}/v1/messages", endpoint_path_prefix())
+}
+
+/// Model identifier for outbound requests. Compile-time only (mirrors
+/// `api_key()`). Reads `KIMI_MODEL` first, then `ANTHROPIC_MODEL`; defaults to
+/// `kimi-k2.7` (matches Orchestre's `kimi_worker.py`).
+pub fn model_name() -> &'static str {
+    first_nonempty(
+        option_env!("KIMI_MODEL"),
+        option_env!("ANTHROPIC_MODEL"),
+        "kimi-k2.7",
+    )
+}
+
+/// Resolve the configured endpoint host to an IP. DNS first; if that fails we
+/// only have a hardcoded fallback for the real Anthropic API (its IP was
+/// captured for the SLIRP-era demos) — a custom provider must resolve via DNS,
+/// so this returns `None` there rather than connecting to the wrong host.
+fn resolve_endpoint() -> Option<kernel_core::net::Ipv4Address> {
+    use kernel_core::net::Ipv4Address;
+    let host = endpoint_host();
+    if let Some(ip) = kernel_core::net::resolve(host) {
+        return Some(ip);
+    }
+    if host == "api.anthropic.com" {
+        return Some(Ipv4Address::new(160, 79, 104, 10));
+    }
+    None
 }
 
 /// What the model asked for in a response: free text and/or one tool call.
@@ -338,8 +444,12 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// (see `Session`); otherwise `Connection: close` (one-shot, read-until-EOF).
 pub fn build_http_request(body: &str, api_key: &str, keep_alive: bool) -> String {
     let mut req = String::with_capacity(body.len() + 256);
-    req.push_str("POST /v1/messages HTTP/1.1\r\n");
-    req.push_str("Host: api.anthropic.com\r\n");
+    req.push_str("POST ");
+    req.push_str(&endpoint_path());
+    req.push_str(" HTTP/1.1\r\n");
+    req.push_str("Host: ");
+    req.push_str(endpoint_host());
+    req.push_str("\r\n");
     req.push_str("User-Agent: semantic-os/0.1\r\n");
     req.push_str("Content-Type: application/json\r\n");
     req.push_str("anthropic-version: 2023-06-01\r\n");
@@ -429,20 +539,21 @@ fn send_over_tls_once(
     attempt: u32,
 ) -> Result<usize, &'static str> {
     use kernel_core::llm::transport::NetworkTransport;
-    use kernel_core::net::Ipv4Address;
     use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
 
-    const SNI: &str = "api.anthropic.com";
+    let sni = endpoint_host();
     const PORT: u16 = 443;
-    const FALLBACK: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
 
-    let ip = kernel_core::net::resolve(SNI).unwrap_or(FALLBACK);
+    let ip = match resolve_endpoint() {
+        Some(ip) => ip,
+        None => return Err("dns resolve failed (no fallback for custom host)"),
+    };
     crate::println!("    [tls] attempt {}: resolved, connecting...", attempt);
     configure_global(ip, PORT);
 
     unsafe {
         let mut t = global_tls_transport();
-        if t.connect(SNI, PORT).is_err() {
+        if t.connect(sni, PORT).is_err() {
             t.close();
             return Err("tls connect failed");
         }
@@ -492,7 +603,6 @@ pub struct Session {
 }
 
 impl Session {
-    const SNI: &'static str = "api.anthropic.com";
     const PORT: u16 = 443;
 
     /// Open the session: resolve + TLS handshake, retried a few times to absorb
@@ -514,14 +624,19 @@ impl Session {
 
     fn connect(&mut self) -> bool {
         use kernel_core::llm::transport::NetworkTransport;
-        use kernel_core::net::Ipv4Address;
         use kernel_core::tls::transport_tls::{configure_global, global_tls_transport};
-        const FALLBACK: Ipv4Address = Ipv4Address::new(160, 79, 104, 10);
-        let ip = kernel_core::net::resolve(Self::SNI).unwrap_or(FALLBACK);
+        let sni = endpoint_host();
+        let ip = match resolve_endpoint() {
+            Some(ip) => ip,
+            None => {
+                self.connected = false;
+                return false;
+            }
+        };
         configure_global(ip, Self::PORT);
         unsafe {
             let mut t = global_tls_transport();
-            if t.connect(Self::SNI, Self::PORT).is_err() {
+            if t.connect(sni, Self::PORT).is_err() {
                 t.close();
                 self.connected = false;
                 return false;
@@ -656,7 +771,7 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
         return write_out(out, "ask: empty prompt");
     }
 
-    let model = "claude-haiku-4-5-20251001";
+    let model = model_name();
     let sys = "You are a terse assistant embedded in the Semantic OS shell. Answer in one or two plain sentences, no preamble.";
     let msgs = [Message::text("user", prompt)];
     let req = build_query(model, 512, sys, &msgs);

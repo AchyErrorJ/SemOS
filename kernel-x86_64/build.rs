@@ -96,6 +96,18 @@ fn main() {
     println!("cargo:rustc-env=SEMOS_BUILD_DATE={date}");
     println!("cargo:rustc-env=SEMOS_RUSTC_VERSION={rustc}");
 
+    // The agent endpoint credentials are read via `option_env!` in agent.rs.
+    // Cargo does not fingerprint those on its own, so without these lines a
+    // rebuild after `export KIMI_API_KEY=...` would silently keep the old
+    // (empty) key baked in. Declaring them makes the key/base-url/model take
+    // effect the moment they change.
+    println!("cargo:rerun-if-env-changed=KIMI_API_KEY");
+    println!("cargo:rerun-if-env-changed=KIMI_BASE_URL");
+    println!("cargo:rerun-if-env-changed=KIMI_MODEL");
+    println!("cargo:rerun-if-env-changed=ANTHROPIC_KEY");
+    println!("cargo:rerun-if-env-changed=ANTHROPIC_BASE_URL");
+    println!("cargo:rerun-if-env-changed=ANTHROPIC_MODEL");
+
     // Re-run when commit/dirty state can change. Git worktrees store .git as a
     // file, so also ask Git for the actual git-dir and watch its HEAD/index.
     println!("cargo:rerun-if-changed=build.rs");
