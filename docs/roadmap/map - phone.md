@@ -5,8 +5,8 @@
 > [gpu](map%20-%20gpu.md) · [platform](map%20-%20platform.md). Historical log: [ROADMAP.md](../ROADMAP.md).
 
 **Phone-as-peripheral.** The phone provides capabilities the OS doesn't have —
-crypto, identity, camera, GPS, audio, push, and (via the bridge in
-[networking.md](map%20-%20networking.md)) connectivity. **Pairing IS authentication:** no
+crypto, identity, camera, GPS, audio, push, rendered web pages, and (via the
+bridge in [networking.md](map%20-%20networking.md)) connectivity. **Pairing IS authentication:** no
 password, no login screen; the paired phone is the user account. The phone holds
 the keys; SemOS is the I/O layer.
 
@@ -20,29 +20,40 @@ and [`provenance-commitment.md`](../provenance-commitment.md).
 ## Phase 16 — QR-Code Pairing (the trust bootstrap)
 
 **Goal:** pair a SemOS device with a specific phone via QR code, establishing a
-TLS-protected channel. Build the companion app as an **Expo (React Native)
-prototype** first so it can be developed without a Mac (the native Swift rewrite
-is Phase 19, in [platform.md](map%20-%20platform.md)). Expo is acceptable here because the
-bridge is protocol + minimal UI with no ARKit dependency. Depends on Phase 15.
+TLS-protected channel.
 
-### M55 — Pairing protocol design `[  ]`
+> **DECISION 2026-07-22 — build the companion app in native Swift directly.**
+> The original plan sequenced an Expo (React Native) prototype first *because it
+> could be built without a Mac*. A Mac is now available, so we skip the Expo
+> detour and its throwaway Expo→Swift rewrite: **Phase 19 (M68–M71 in
+> [platform.md](map%20-%20platform.md)) folds into this phase.** Native from the start also
+> unblocks the capabilities that Expo Go structurally cannot host — ARKit sensor
+> offload and the M76 WKWebView render capability. Depends on Phase 15.
+
+### M55 — Pairing protocol design `[🔨 — draft spec landed 2026-07-22]`
 QR contains: companion app public key, listening IP+port, pairing nonce, protocol
 version. No camera in v1 — the QR string is *typed/pasted* into the device
-(optical scan is a Phase-18 camera feature).
-- [ ] spec `docs/pairing-v1.md`; wire format (Protobuf/Cap'n Proto)
-- [ ] threat model: replay, MITM-during-pairing, downgrade
-- [ ] test vectors: known run → known shared secret; Rust ↔ TypeScript stay in sync
+(optical scan is a Phase-18 camera feature). Design: X25519 key agreement +
+HKDF + a human-compared **SAS** to authenticate the untrusted TCP direction,
+reusing SemOS's existing crypto (`kernel-core::crypto`). Full spec:
+[`docs/pairing-v1.md`](../pairing-v1.md).
+- [x] spec `docs/pairing-v1.md`: binary wire format + base32 string, handshake
+- [x] threat model: replay, MITM-during-pairing (SAS), downgrade
+- [ ] resolve open questions (SAS length, mDNS vs typed ip:port, iOS key storage)
+- [ ] test vectors: fill from the Rust reference impl; Rust ↔ Swift stay in sync
 
 ### M56 — Pairing on the SemOS side `[  ]`
 - [ ] `sem-sh pair <qr-string>`; handshake against the Expo app
 - [ ] identity persists across reboots (`/etc/paired-devices/`)
 - [ ] `paired list` / `unpair <id>`; DEMO 86 (pair, reboot, still paired)
 
-### M57 — Expo bridge app skeleton `[  ]`
-TypeScript + Expo SDK, `react-native-tcp-socket`, `react-native-tls`,
-`expo-secure-store` (Keychain/Keystore), `react-native-zeroconf`, QR display.
+### M57 — Native Swift app skeleton `[  ]`
+Xcode + SwiftUI app (replaces the former Expo skeleton). `Network.framework`
+(`NWListener`/`NWConnection`) for the local TCP socket, `CryptoKit` for the
+X25519/HKDF handshake, Keychain for the stored peer key, `CoreImage` to render
+the QR. Runs on a real iPhone via a free dev-signed build (7-day) or TestFlight.
 - [ ] shows QR, listens on local TCP, completes pairing server-side, stores peer key
-- [ ] runs on iPhone via Expo Go (no TestFlight); DEMO 87 end-to-end pairing
+- [ ] DEMO 87: end-to-end pairing (SemOS `pair` ↔ Swift app) on a real iPhone
 
 ---
 
@@ -77,6 +88,27 @@ Private keys never leave the phone.
 ### M67 — Push notification capability `[  ]`
 - [ ] `request_notification(title, body, action)` + tap-to-action callback
 - [ ] DEMO 95: long compile finishes → "build done" notification on phone
+
+### M76 — Render capability (JS-rendered / anti-bot fallback) `[  ]`
+For pages the native HTTP+HTML-to-text path ([platform.md](map%20-%20platform.md)
+M29-M32) can't handle — JS-only SPAs, bot-check gates (Cloudflare, CAPTCHA), or
+sites that key off a real Safari-class TLS/UA fingerprint. The phone loads the
+URL in a hidden `WKWebView`, waits for load/JS settle, and returns extracted
+content over the paired channel. **Tiered fallback, not a replacement:** the
+agent always tries the native fetch + `html_to_text` path first; this only
+fires on empty/failed extraction. Keeps the sovereign from-scratch path as the
+default and confines the phone's rendering engine to the cases that structurally
+require it.
+- [ ] `request_render(url, wait_for_selector?)` → extracted text + links, or a
+  raw `outerHTML` snapshot for cases that need structure
+- [ ] authorization model decided at design time: reuse M62's Face/Touch-ID
+  gate, or a lighter per-session grant given the payload isn't a secret
+- [ ] rendered HTML/text returned to SemOS is treated as untrusted input, same
+  discipline as any other fetch response
+- [ ] DEMO 99: agent hits a JS-only doc page that fails native extraction,
+  falls back to phone render, gets usable text
+
+Depends on Phase 17's paired channel (M58-M61) — not startable before then.
 
 ---
 

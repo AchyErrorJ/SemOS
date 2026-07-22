@@ -72,7 +72,9 @@ builtin. DEMO 77.
 
 ### M32 — Text-mode browser (optional v1) `[  ]`
 lynx/w3m-style TUI: render HTML as formatted text, link nav, history. DEMO 78.
-(V2 CSS/JS/DOM is a multi-year project — deferred.)
+(V2 CSS/JS/DOM is a multi-year project — deferred; JS-only pages and anti-bot
+gates fall back to the phone's render capability — [phone.md](map%20-%20phone.md) M76 —
+instead.)
 
 ### M33 — Agent tool `web_search` `[  ]`
 Wire search into the agent loop; read top-N, extract text, citation tracking. DEMO 79.
@@ -104,19 +106,23 @@ in [self-extension.md](map%20-%20self-extension.md).)
 
 ---
 
-## Native Swift Bridge Rewrite (when Mac arrives — Phase 19)
+## Native Swift Bridge (Phase 19 — FOLDED INTO Phase 16, 2026-07-22)
 
-Replace the Expo bridge prototype ([phone.md](map%20-%20phone.md)) with production Swift.
-The pairing, Layer-4 RPC, and capability **protocols stay** — only the
-implementation changes (TypeScript → Swift, react-native → Network framework,
-expo-secure-store → Keychain/CryptoKit).
+> **Superseded by the 2026-07-22 decision to build the companion app in native
+> Swift from the start** (a Mac is now available). There is no Expo prototype to
+> rewrite, so the M68–M71 "rewrite" milestones collapse into the phone-side
+> milestones directly: **M57** (Swift app skeleton) subsumes M68; **M60/M59**
+> (Layer-4 bridge) is written in Swift from the start (was M69); **M62–M67**
+> capabilities are native from day one (was M70); distribution below is all that
+> remains as distinct forward work.
 
-- **M68** Swift app skeleton (Xcode, SwiftUI, TestFlight, pairing in Swift)
-- **M69** Layer-4 bridge in Swift (NWConnection, background entitlement, perf vs Expo)
-- **M70** capability migration (Keychain/CryptoKit, AVFoundation — parity with M62-67)
-- **M71** distribution (Apple Developer Program, TestFlight → App Store)
+- **M71** distribution (Apple Developer Program, TestFlight → App Store) — the
+  one Phase-19 milestone that stays separate; everything else is now native in
+  Phase 16–18 ([phone.md](map%20-%20phone.md)).
 
-Start when a used M2 Mac is acquired (after M35 lands on QEMU).
+The pairing, Layer-4 RPC, and capability **protocols are the durable artifact**
+(spec'd in `docs/pairing-v1.md` + `docs/network-bridge-v1.md`); the Swift app is
+their first and only client implementation.
 
 ---
 

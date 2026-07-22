@@ -54,18 +54,30 @@ INIT exchange, OID queries, packet framing on bulk endpoints. DEMO 82.
 DHCPDISCOVER → OFFER parse → REQUEST/ACK → apply IP/gw/DNS, T1 renewal. RFC 2131,
 ~200-300 LOC UDP, v4 client only. DEMO 83.
 
-### M53 — Real-world TLS validation `[NEXT — unblocked once tether traffic validates]`
+### M53 — Real-world TLS validation `[IN PROGRESS — native Ethernet unblocked this 2026-07-21]`
 Hardening pass against real Anthropic servers (cert paths, extensions, edge cases
-QEMU never sees) over whichever USB network path comes up first: ipheth tether,
-CDC-ECM/NCM/RNDIS dongle, or a simple vendor USB NIC.
-- [ ] real Anthropic cert chain validates on bare metal
+QEMU never sees). Superseded by the T540p's native `e1000e0` link
+([`ETHERNET_T540P_VALIDATION_2026-07-20.md`](../ETHERNET_T540P_VALIDATION_2026-07-20.md) —
+DHCP/DNS/TCP/HTTP already validated on hardware 2026-07-21) rather than the
+originally-planned USB tether/dongle path. The
+existing agent TLS path (`agent::send_over_tls`, `TlsTransport`) was already
+boot-tested against QEMU SLIRP as DEMO 48 (keyless, expects 401) / DEMO 49
+(keyed, full loop) and is NIC-agnostic — no new code identified, this is a
+hardware validation pass. Checklist: [`TLS_ANTHROPIC_T540P_VALIDATION.md`](../TLS_ANTHROPIC_T540P_VALIDATION.md).
+- [ ] real Anthropic cert chain validates on bare metal (DEMO 48 over `e1000e0`)
 - [ ] SNI sent for `api.anthropic.com`; TLS 1.3 handshake completes
-- [ ] HTTP/2 negotiation works or cleanly falls back to HTTP/1.1
-- [ ] DEMO 84: full agent turn on bare metal over real network, no QEMU
+- [ ] HTTP/1.1 response parses correctly (no HTTP/2 negotiation attempted — the
+  transport doesn't do ALPN/h2)
+- [ ] DEMO 48 PASS on metal: agent request round-trip over real TLS, no QEMU
 
 ### M54 — The first usable session `[NEXT after M53]`
-- [ ] boot → plug phone → `sem-sh` → `agent` → "time in Tokyo?" → correct answer
-- [ ] DEMO 85: ~5-minute video of the full session
+Native Ethernet also unblocks this without a phone: `boot → sem-sh → agent →
+"time in Tokyo?" → correct answer`, cable-only. Phone-bridge (Phase 17) remains
+the daily-use path once WiFi/cellular independence matters; this is the
+existence proof.
+- [ ] boot → (cable connected) → `sem-sh` → `agent` → real question → correct answer
+- [ ] DEMO 49 PASS on metal, keyed build (see checklist above)
+- [ ] ~5-minute video of the full session
 
 **Daily-use note:** Phase 15 proves the architecture end-to-end but burns cellular
 data even on WiFi (an iOS limitation). Phase 17 (Layer-4 bridge) is the fix.
