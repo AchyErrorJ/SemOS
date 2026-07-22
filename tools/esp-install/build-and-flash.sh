@@ -19,7 +19,11 @@ set -euo pipefail
 # Env:
 #   ESP=/boot/efi            ESP mount point (default /boot/efi)
 #   USER_PROGRAMS="a b c"    override the rebuilt user-program set
-#   ANTHROPIC_KEY=sk-...     optional, baked into the kernel for live agent demos
+#   KIMI_API_KEY=sk-...      optional, baked in so `ask`/`agent` reach the LLM
+#   KIMI_BASE_URL=...        optional, default https://api.kimi.com/coding
+#   KIMI_MODEL=...           optional, default kimi-k2.7
+#     (ANTHROPIC_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL still honored as
+#      fallbacks for older build invocations)
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
@@ -105,7 +109,10 @@ if [[ ! -d "$ESP" ]]; then
   echo "ESP mount not found: $ESP (set ESP=/path)" >&2
   exit 1
 fi
-if [[ ! -e "$ESP/kernel-x86_64" ]]; then
+# The ESP is mounted root-only (fmask/dmask 0077) on Pop!_OS, so an
+# unprivileged `-e` test can't see the file at all — check via sudo instead,
+# or we'd spuriously demand a --full install on every run.
+if ! sudo test -e "$ESP/kernel-x86_64"; then
   echo "No existing $ESP/kernel-x86_64 — run a --full install first." >&2
   exit 1
 fi

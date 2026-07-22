@@ -50,10 +50,13 @@ ORIGINAL_BOOTORDER="$(sudo efibootmgr | sed -n 's/^BootOrder: //p' || true)"
 
 sudo mkdir -p "$ESP/EFI/SemOS"
 TS="$(date +%Y%m%d-%H%M%S)"
-if [[ -e "$ESP/EFI/SemOS/BOOTX64.EFI" ]]; then
+# Existence checks go through sudo: the ESP is mounted root-only
+# (fmask/dmask 0077) on Pop!_OS, so unprivileged -e tests are blind and the
+# backups below would be silently skipped.
+if sudo test -e "$ESP/EFI/SemOS/BOOTX64.EFI"; then
   sudo cp -a "$ESP/EFI/SemOS/BOOTX64.EFI" "$ESP/EFI/SemOS/BOOTX64.EFI.bak-$TS"
 fi
-if [[ -e "$ESP/kernel-x86_64" ]]; then
+if sudo test -e "$ESP/kernel-x86_64"; then
   sudo cp -a "$ESP/kernel-x86_64" "$ESP/kernel-x86_64.bak-$TS"
 fi
 sudo cp -f "$TMP/BOOTX64.EFI" "$ESP/EFI/SemOS/BOOTX64.EFI"
