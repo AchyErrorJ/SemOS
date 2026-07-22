@@ -96,6 +96,11 @@ pub trait Platform: Send + Sync + 'static {
     /// requiring serial scrollback. Default: unavailable.
     fn run_netinfo(&self) -> u64 { u64::MAX }
 
+    /// SYS_DEMOS: run the full boot DEMO suite on demand (the `demos` shell
+    /// builtin). Blocks in the caller's context while the suite runs; ESC
+    /// aborts it early. Returns 0. Default: no-op (nothing to run).
+    fn run_demos(&self) -> u64 { 0 }
+
     /// SYS_FBINFO: print the current GOP framebuffer geometry/pixel format and
     /// (where known) how it compares to the internal panel's native mode, to
     /// the current TTY. Read-only. Returns 0. Default: unavailable.

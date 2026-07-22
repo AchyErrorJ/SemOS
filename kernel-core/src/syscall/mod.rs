@@ -155,6 +155,9 @@ pub mod numbers {
     pub const SYS_BACKLIGHT:    u64 = 119; // (op, arg) -> percent | u64::MAX. op: 0=get,
                                            // 1=set arg%, 2=up, 3=down, 4=restore. Clamped
                                            // to a visible floor by the platform impl.
+    pub const SYS_DEMOS:        u64 = 120; // () -> 0; run the full boot DEMO suite on demand
+                                           // (the `demos` builtin). Blocks in the caller's
+                                           // context; ESC aborts the run early.
     // M14-E: first app-facing framebuffer surface. Metadata is returned as
     // eight little-endian u64 words: width, height, stride_pixels,
     // bytes_per_pixel, format_code (1=RGB, 2=BGR, 3=U8, 0=unknown), byte_len,
@@ -313,6 +316,10 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // Toggle the TTY input-suppression flag from user-space.
         // Used by sem-sh to silence keyboard input while a child command runs.
         SYS_TTY_SUPPRESS => crate::platform::get().tty_suppress(arg0 != 0),
+
+        // Run the full boot DEMO suite on demand (the `demos` builtin) —
+        // blocks in the caller's context, like the agent/edit TUIs above.
+        SYS_DEMOS => crate::platform::get().run_demos(),
 
         // M14 display diagnostics and safe backlight control.
         SYS_FBINFO => crate::platform::get().run_fbinfo(),

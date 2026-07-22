@@ -286,6 +286,14 @@ impl Platform for X86Platform {
         crate::usb::xhci::print_usbinfo()
     }
 
+    fn run_demos(&self) -> u64 {
+        // Runs the whole boot suite in the caller's context (like the agent/edit
+        // TUIs). Some demos spawn Ring-3 ELFs and touch the framebuffer; running
+        // them post-boot from the shell is the intended `demos` builtin path.
+        crate::run_all_demos();
+        0
+    }
+
     fn run_wifi_scan(&self) -> u64 {
         // The scan is poll-based (busy-wait drain), so no interrupts needed.
         match crate::wireless::iwlwifi_device::device() {

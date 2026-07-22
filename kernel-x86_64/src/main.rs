@@ -104,8 +104,8 @@ pub static FULLSCREEN_APP_ACTIVE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 /// Run the kernel demo suite at boot. Default: OFF — boot lands at the
-/// shell immediately. The `demos` shell builtin (SYS_DEMOS, when wired
-/// up) is the on-demand entry point.
+/// shell immediately. The `demos` shell builtin (SYS_DEMOS) is the
+/// on-demand entry point.
 pub static DEMOS_ON_BOOT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -868,35 +868,64 @@ fn task_isolated() {
 /// has no guard page and overflows under the ELF loader's call depth).
 /// After firing the syscalls it idles in `hlt`.
 fn init_loader_task() {
+    // Demos are opt-in: default DEMOS_ON_BOOT=false boots straight to the
+    // shell. The full suite is reachable on demand via the `demos` builtin
+    // (SYS_DEMOS -> run_all_demos).
+    if DEMOS_ON_BOOT.load(core::sync::atomic::Ordering::Relaxed) {
+        run_all_demos();
+    }
+
+    // `--features autocompile`: headless DEMO 80 smoke for QEMU/serial runs.
+    // This avoids relying on the interactive keyboard path just to validate
+    // `semos-rustc` + the disk-backed sysroot blob.
+    #[cfg(feature = "autocompile")]
+    demo80_autocompile();
+
+    // `--features interactive`: hand the keyboard to a live sem-sh instead of
+    // idling. Returns only if the shell can't be spawned, then we fall through
+    // to the halt loop (same as a default build).
+    #[cfg(feature = "interactive")]
+    interactive_session();
+
+    // M10 watchdog (the "kernel didn't crash" heartbeat). Periodically print
+    // a line that proves the scheduler is still running — critical on bare
+    // metal without serial, where a frozen framebuffer would otherwise be
+    // indistinguishable from a panic'd or wedged kernel.
+    idle_with_heartbeat();
+}
+
+/// Run the full boot DEMO suite end-to-end. Invoked at boot when
+/// DEMOS_ON_BOOT is set, and on demand from the shell via the `demos`
+/// builtin (SYS_DEMOS). Pressing ESC during the run aborts it early.
+pub(crate) fn run_all_demos() {
     // The agent/shell/TUI demos now live in `demos.rs`; pull them into scope so
     // the calls below read the same as before. (Older demos are still local.)
     use crate::demos::*;
+    // Reset the ESC short-circuit so a shell-invoked (SYS_DEMOS) run starts
+    // fresh; ESC during the run still aborts it via the checks below.
+    crate::keyboard::SKIP_DEMOS.store(false, core::sync::atomic::Ordering::Relaxed);
 
     // Hot-key ESC short-circuit: press Escape during the demo run to
     // jump straight to the shell. SKIP_DEMOS is set by the keyboard
     // polling path the moment scancode 0x01 arrives.
     //
-    // (Inline `if SKIP_DEMOS { break 'demos; }` at each check point
+    // (Inline `if SKIP_DEMOS { return; }` at each check point
     // because Rust 2024's macro-hygiene scoping doesn't propagate
     // outer labels into macro_rules! expansions cleanly.)
 
-    'demos: {
     // Boot lands directly at the shell — demos are now opt-in via the
     // 'demos' shell builtin (SYS_DEMOS). The ESC-to-skip path becomes
     // irrelevant because we never enter the suite on boot.
-    if !DEMOS_ON_BOOT.load(core::sync::atomic::Ordering::Relaxed) {
-        break 'demos;
-    }
     if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
         println!("  [ESC pressed — skipping demos.]");
-        break 'demos;
+        return;
     }
 
     // Run kernel-side demos FIRST (demos 2 & 3 — the SemanticObject path).
     sem_demo_kernel();
     if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
         println!("  [ESC pressed — skipping demos.]");
-        break 'demos;
+        return;
     }
 
     // DEMO 0: real Rust user binary (hello-rs.elf, built from
@@ -1510,7 +1539,7 @@ fn init_loader_task() {
 
     if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
         println!("  [ESC pressed — skipping demos.]");
-        break 'demos;
+        return;
     }
 
     println!();
@@ -1521,7 +1550,7 @@ fn init_loader_task() {
 
     if crate::keyboard::SKIP_DEMOS.load(core::sync::atomic::Ordering::Relaxed) {
         println!("  [ESC pressed — skipping demos.]");
-        break 'demos;
+        return;
     }
 
     println!();
@@ -1530,11 +1559,9 @@ fn init_loader_task() {
     println!("================================================================");
     demo_82_iphone();
 
-    // End of the 'demos: { ... } labeled block. Any `break 'demos` from
-    // the ESC short-circuit jumps here, falling through to the shell.
-    } // 'demos
-
-    // Final marker before idling. On bare metal this is your "the kernel
+    // Final marker. An ESC short-circuit above `return`s straight out; when the
+    // suite completes normally we fall through to this banner.
+    // On bare metal this is your "the kernel
     // didn't crash" signal — without serial capture, the framebuffer is
     // the only feedback channel. Anything other than this banner on the
     // last line means the boot was interrupted mid-demo.
@@ -1546,23 +1573,6 @@ fn init_loader_task() {
         kernel_core::scheduler::current_task_index() + 1);
     println!("================================================================");
 
-    // `--features autocompile`: headless DEMO 80 smoke for QEMU/serial runs.
-    // This avoids relying on the interactive keyboard path just to validate
-    // `semos-rustc` + the disk-backed sysroot blob.
-    #[cfg(feature = "autocompile")]
-    demo80_autocompile();
-
-    // `--features interactive`: hand the keyboard to a live sem-sh instead of
-    // idling. Returns only if the shell can't be spawned, then we fall through
-    // to the halt loop (same as a default build).
-    #[cfg(feature = "interactive")]
-    interactive_session();
-
-    // M10 watchdog (the "kernel didn't crash" heartbeat). Periodically print
-    // a line that proves the scheduler is still running — critical on bare
-    // metal without serial, where a frozen framebuffer would otherwise be
-    // indistinguishable from a panic'd or wedged kernel.
-    idle_with_heartbeat();
 }
 
 /// Headless DEMO 80 runner:

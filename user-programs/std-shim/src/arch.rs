@@ -73,6 +73,7 @@ pub const SYS_NETINFO:      u64 = 116; // () -> 0/err; read-only network + activ
 pub const SYS_TTY_SUPPRESS: u64 = 117; // (on: u64) -> 0; toggles kbd input drop for cooked-mode
 pub const SYS_FBINFO:       u64 = 118; // () -> 0; print framebuffer + native panel info
 pub const SYS_BACKLIGHT:    u64 = 119; // (op,arg) -> percent | MAX; brightness control
+pub const SYS_DEMOS:        u64 = 120; // () -> 0; run the full boot DEMO suite on demand
 pub const SYS_FB_META:      u64 = 128; // (out_ptr,out_len>=64) -> 0/err
 pub const SYS_FB_BLIT:      u64 = 129; // (xy_pack,wh_pack,pixels_ptr,pixel_count) -> 0/err
 pub const SYS_MODESET:      u64 = 130; // (op) -> 0/err; guarded modeset control
