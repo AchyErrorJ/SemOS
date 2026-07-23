@@ -37,6 +37,8 @@ pub mod sha256;
 pub mod hkdf;
 pub mod x25519;
 pub mod p256;
+pub mod crockford;
+pub mod crc16;
 
 
 /// Constant-time equality for byte strings holding secrets.

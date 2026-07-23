@@ -1,0 +1,14 @@
+[package]
+name = "pairing-vectors"
+version = "0.1.0"
+edition = "2021"
+description = "Reference test-vector generator for the SemOS pairing protocol"
+
+[workspace]
+
+[[bin]]
+name = "pairing-vectors"
+path = "src/main.rs"
+
+[dependencies]
+kernel-core = { path = "../../kernel-core" }
