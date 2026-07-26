@@ -289,3 +289,49 @@ pub fn verify_confirm(
     let expected = confirm_mac(session_key, th, from_sem);
     crate::crypto::ct_eq(&expected, body)
 }
+
+// ============================================================================
+// Stored pairing record (pure byte layout; persistence lives in the platform
+// layer so this module stays I/O-free)
+// ============================================================================
+
+/// Bytes of a persisted pairing record. magic(2)="PR" ver(1) phone_pub(32)
+/// ip(4) port(2) created_at(8, BE) = 49 bytes.
+pub const RECORD_LEN: usize = 49;
+const RECORD_MAGIC: [u8; 2] = *b"PR";
+
+/// A paired device as stored under `/etc/paired-devices/<id>`.
+#[derive(Clone, Copy)]
+pub struct PairRecord {
+    pub phone_pub: [u8; 32],
+    pub ip: [u8; 4],
+    pub port: u16,
+    pub created_at: u64,
+}
+
+impl PairRecord {
+    pub fn to_bytes(&self) -> [u8; RECORD_LEN] {
+        let mut b = [0u8; RECORD_LEN];
+        b[0..2].copy_from_slice(&RECORD_MAGIC);
+        b[2] = VERSION;
+        b[3..35].copy_from_slice(&self.phone_pub);
+        b[35..39].copy_from_slice(&self.ip);
+        b[39..41].copy_from_slice(&self.port.to_be_bytes());
+        b[41..49].copy_from_slice(&self.created_at.to_be_bytes());
+        b
+    }
+
+    pub fn from_bytes(b: &[u8]) -> Option<Self> {
+        if b.len() != RECORD_LEN || b[0..2] != RECORD_MAGIC || b[2] != VERSION {
+            return None;
+        }
+        let mut phone_pub = [0u8; 32];
+        phone_pub.copy_from_slice(&b[3..35]);
+        let mut ip = [0u8; 4];
+        ip.copy_from_slice(&b[35..39]);
+        let port = u16::from_be_bytes([b[39], b[40]]);
+        let mut ca = [0u8; 8];
+        ca.copy_from_slice(&b[41..49]);
+        Some(Self { phone_pub, ip, port, created_at: u64::from_be_bytes(ca) })
+    }
+}

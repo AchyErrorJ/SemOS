@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_OPEN, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -255,7 +255,7 @@ fn is_builtin(name: &str) -> bool {
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
             | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "flash-sysroot" | "wifi"
-            | "vouch" | "unvouch" | "vouches" | "demos"
+            | "vouch" | "unvouch" | "vouches" | "demos" | "pair" | "paired" | "unpair"
     )
 }
 
@@ -931,6 +931,9 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
             println!("  netinfo             network stack + active NIC/e1000e diagnostics");
             println!("  demos               run the full boot DEMO suite (ESC aborts)");
+            println!("  pair QR-STRING      pair a phone (companion app) — console only");
+            println!("  paired              list paired devices");
+            println!("  unpair ID           forget a paired device — console only");
             println!("  exit [CODE]         leave the shell");
             println!("Composition:  |  pipes   > < >> redirect   && ||  $VAR   /path or bare name on $PATH");
             0
@@ -977,6 +980,31 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // (or ESC aborts it). Blocks the shell meanwhile.
             let rc = unsafe { syscall1(SYS_DEMOS, 0) };
             if rc == u64::MAX { 1 } else { rc as i32 }
+        }
+        "pair" => {
+            // `pair <qr-string>` — run the M56 handshake against the phone in
+            // the QR payload. Console-only (the kernel rejects the agent).
+            if argv.len() < 2 {
+                println!("pair: usage: pair <qr-string>   (paste the code the companion app shows)");
+                return 2;
+            }
+            let qr = &argv[1];
+            let rc = unsafe { syscall2(SYS_PAIR, qr.as_ptr() as u64, qr.len() as u64) };
+            if rc == 1 { 0 } else { 1 }
+        }
+        "paired" => {
+            // `paired` / `paired list` — show enrolled devices.
+            let rc = unsafe { syscall1(SYS_PAIRED, 0) };
+            if rc == u64::MAX { 1 } else { 0 }
+        }
+        "unpair" => {
+            if argv.len() < 2 {
+                println!("unpair: usage: unpair <device-id>");
+                return 2;
+            }
+            let id = &argv[1];
+            let rc = unsafe { syscall2(SYS_UNPAIR, id.as_ptr() as u64, id.len() as u64) };
+            if rc == 1 { 0 } else { 1 }
         }
         "wifi" => {
             // `wifi`                       → scan + numbered network list

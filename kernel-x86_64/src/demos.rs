@@ -1029,17 +1029,21 @@ pub(crate) fn pairing_self_test_demo() {
     let k_verify = verify_confirm(&s_box.session_key, &s_box.transcript_hash, false, &mac_phone)
         && !verify_confirm(&s_box.session_key, &s_box.transcript_hash, false, &mac_sem);
 
+    // Persistence layer (identity + paired-device store), no phone needed.
+    let k_store = crate::pairing_host::store_self_test();
+
     let ok = k_pub && k_th && k_key && k_sas && k_pid && k_macs && agree && k_payload && k_enc
-        && k_hyph && k_typo && k_hello && k_verify;
+        && k_hyph && k_typo && k_hello && k_verify && k_store;
     if ok {
         println!("  [DEMO 86] PASS: matches committed reference vectors (keys/th/session/SAS/id/MACs),");
         println!("  [DEMO 86]   QR payload+base32 exact, hyphenated decode OK, CRC catches typos,");
-        println!("  [DEMO 86]   HELLO frame byte-exact, CONFIRM verify accept/reject correct.");
+        println!("  [DEMO 86]   HELLO frame byte-exact, CONFIRM verify accept/reject correct,");
+        println!("  [DEMO 86]   identity+record store round-trips (save/read/parse/unpair).");
         println!("  [DEMO 86] => SemOS pairing core interoperates with the iOS companion app.");
     } else {
         println!(
-            "  [DEMO 86] FAIL: pub={} th={} key={} sas={} pid={} macs={} agree={} payload={} enc={} hyph={} typo={} hello={} verify={}",
-            k_pub, k_th, k_key, k_sas, k_pid, k_macs, agree, k_payload, k_enc, k_hyph, k_typo, k_hello, k_verify
+            "  [DEMO 86] FAIL: pub={} th={} key={} sas={} pid={} macs={} agree={} payload={} enc={} hyph={} typo={} hello={} verify={} store={}",
+            k_pub, k_th, k_key, k_sas, k_pid, k_macs, agree, k_payload, k_enc, k_hyph, k_typo, k_hello, k_verify, k_store
         );
     }
 }

@@ -101,6 +101,21 @@ pub trait Platform: Send + Sync + 'static {
     /// aborts it early. Returns 0. Default: no-op (nothing to run).
     fn run_demos(&self) -> u64 { 0 }
 
+    /// SYS_PAIR: run the M56 pairing handshake against the phone described by
+    /// the QR payload at `(qr_ptr, qr_len)` in caller memory. Blocks in the
+    /// caller's context (TCP + crypto + the interactive SAS confirm on the
+    /// console). Returns 1 on a completed pairing, 0 otherwise. The console
+    /// gate is enforced by the dispatcher. Default: unavailable.
+    fn run_pair(&self, _qr_ptr: u64, _qr_len: u64) -> u64 { 0 }
+
+    /// SYS_PAIRED: print the paired-devices list to the current TTY (read-only).
+    /// Returns the number of paired devices. Default: none.
+    fn run_paired_list(&self) -> u64 { 0 }
+
+    /// SYS_UNPAIR: forget the paired device whose id is at `(id_ptr, id_len)`.
+    /// Returns 1 if removed, 0 otherwise. Default: unavailable.
+    fn run_unpair(&self, _id_ptr: u64, _id_len: u64) -> u64 { 0 }
+
     /// SYS_FBINFO: print the current GOP framebuffer geometry/pixel format and
     /// (where known) how it compares to the internal panel's native mode, to
     /// the current TTY. Read-only. Returns 0. Default: unavailable.

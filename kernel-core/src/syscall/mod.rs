@@ -158,6 +158,12 @@ pub mod numbers {
     pub const SYS_DEMOS:        u64 = 120; // () -> 0; run the full boot DEMO suite on demand
                                            // (the `demos` builtin). Blocks in the caller's
                                            // context; ESC aborts the run early.
+    pub const SYS_PAIR:         u64 = 121; // (qr_ptr, qr_len) -> 1 ok / 0 fail; run the M56
+                                           // pairing handshake against the phone in the QR
+                                           // payload. CONSOLE ONLY (agent cannot enroll a device).
+    pub const SYS_PAIRED:       u64 = 122; // () -> count; print the paired-devices list (read-only).
+    pub const SYS_UNPAIR:       u64 = 124; // (id_ptr, id_len) -> 1/0; forget a paired device.
+                                           // CONSOLE ONLY.
     // M14-E: first app-facing framebuffer surface. Metadata is returned as
     // eight little-endian u64 words: width, height, stride_pixels,
     // bytes_per_pixel, format_code (1=RGB, 2=BGR, 3=U8, 0=unknown), byte_len,
@@ -320,6 +326,26 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // Run the full boot DEMO suite on demand (the `demos` builtin) —
         // blocks in the caller's context, like the agent/edit TUIs above.
         SYS_DEMOS => crate::platform::get().run_demos(),
+
+        // M56 pairing. `pair` and `unpair` mutate device trust, so they are
+        // gated to the interactive console (same authority as SYS_VOUCH) — the
+        // agent must never be able to enroll or forget a device. `paired` is a
+        // read-only listing, allowed at any tier.
+        SYS_PAIR => {
+            if !is_vouch_authority() {
+                crate::platform::log("[pair] DENIED: caller is not the interactive console\n");
+                return 0;
+            }
+            crate::platform::get().run_pair(arg0, arg1)
+        }
+        SYS_PAIRED => crate::platform::get().run_paired_list(),
+        SYS_UNPAIR => {
+            if !is_vouch_authority() {
+                crate::platform::log("[unpair] DENIED: caller is not the interactive console\n");
+                return 0;
+            }
+            crate::platform::get().run_unpair(arg0, arg1)
+        }
 
         // M14 display diagnostics and safe backlight control.
         SYS_FBINFO => crate::platform::get().run_fbinfo(),

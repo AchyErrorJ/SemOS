@@ -61,6 +61,7 @@ pub mod tty;
 pub mod agent;
 pub mod tui;
 pub mod demos; // agent/shell/TUI boot demos, extracted from main.rs (new demos go there)
+pub mod pairing_host; // M56 SYS_PAIR host side (identity, store, handshake)
 pub mod session; // interactive shell loop + idle/keepalive tasks
 pub mod legacy_demos; // older kernel-mode regression demos extracted from main.rs
 pub mod gdt;

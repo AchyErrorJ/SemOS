@@ -294,6 +294,20 @@ impl Platform for X86Platform {
         0
     }
 
+    fn run_pair(&self, qr_ptr: u64, qr_len: u64) -> u64 {
+        // The console gate is enforced by the dispatcher; here we just run the
+        // handshake (TCP + crypto + SAS confirm) in the caller's context.
+        crate::pairing_host::run_pair(qr_ptr, qr_len)
+    }
+
+    fn run_paired_list(&self) -> u64 {
+        crate::pairing_host::run_paired_list()
+    }
+
+    fn run_unpair(&self, id_ptr: u64, id_len: u64) -> u64 {
+        crate::pairing_host::run_unpair(id_ptr, id_len)
+    }
+
     fn run_wifi_scan(&self) -> u64 {
         // The scan is poll-based (busy-wait drain), so no interrupts needed.
         match crate::wireless::iwlwifi_device::device() {
