@@ -926,3 +926,120 @@ pub(crate) fn chunked_decode_demo() {
         println!("  [DEMO 33] FAIL: one or more chunked-decoder sub-checks failed");
     }
 }
+
+/// DEMO 86: M56 pairing protocol KAT + self-test.
+///
+/// Per the project's crypto discipline, a round-trip test is NOT sufficient —
+/// this asserts against the **committed reference vectors** in
+/// `docs/pairing-v1-test-vectors.md`, which were produced by an independent
+/// implementation (`tools/pairing-vectors`) and which the iOS app's
+/// `PairingCryptoTests` also pin. Agreement here is the actual proof that
+/// SemOS and the companion app will interoperate.
+pub(crate) fn pairing_self_test_demo() {
+    use kernel_core::crypto::x25519::x25519_base;
+    use kernel_core::pairing::{
+        build_hello, confirm_mac, decode_payload, derive_session, encode_payload, pairing_id,
+        verify_confirm, PairingPayload, NONCE_LEN, VERSION,
+    };
+
+    /// Parse hex into `out`; returns bytes written.
+    fn unhex(s: &str, out: &mut [u8]) -> usize {
+        let b = s.as_bytes();
+        let mut n = 0;
+        let mut i = 0;
+        while i + 1 < b.len() && n < out.len() {
+            let hi = (b[i] as char).to_digit(16).unwrap_or(0) as u8;
+            let lo = (b[i + 1] as char).to_digit(16).unwrap_or(0) as u8;
+            out[n] = (hi << 4) | lo;
+            n += 1;
+            i += 2;
+        }
+        n
+    }
+    fn eq_hex(actual: &[u8], expect_hex: &str) -> bool {
+        let mut e = [0u8; 64];
+        let n = unhex(expect_hex, &mut e);
+        n == actual.len() && &e[..n] == actual
+    }
+
+    // ---- Reference inputs, exactly as pinned in the committed vector doc ----
+    let mut phone_priv = [0u8; 32];
+    phone_priv[0] = 0x01;
+    let mut sem_priv = [0u8; 32];
+    sem_priv[0] = 0x02;
+    let phone_pub = x25519_base(&phone_priv);
+    let sem_pub = x25519_base(&sem_priv);
+    let nonce_p = [0x50u8; NONCE_LEN];
+    let nonce_s = [0x53u8; NONCE_LEN];
+
+    let s_box = derive_session(VERSION, &phone_pub, &nonce_p, &sem_pub, &nonce_s, &sem_priv, &phone_pub);
+    let s_phone = derive_session(VERSION, &phone_pub, &nonce_p, &sem_pub, &nonce_s, &phone_priv, &sem_pub);
+
+    let mac_sem = confirm_mac(&s_box.session_key, &s_box.transcript_hash, true);
+    let mac_phone = confirm_mac(&s_box.session_key, &s_box.transcript_hash, false);
+    let mut pid = [0u8; 16];
+    pairing_id(&phone_pub, &sem_pub, &mut pid);
+
+    // KAT assertions against the committed reference vectors.
+    let k_pub = eq_hex(&phone_pub, "2fe57da347cd62431528daac5fbb290730fff684afc4cfc2ed90995f58cb3b74");
+    let k_th = eq_hex(&s_box.transcript_hash, "9e1f7c29636ff8c36d18f101435983d6f3d48df84be1f8158d27e4e5b5a7160a");
+    let k_key = eq_hex(&s_box.session_key, "787bd15f1aeccb296c85854731b8cbab9f6994f2c19e6b4a81597686eeba7fe3");
+    let k_sas = s_box.sas == 239413;
+    let k_pid = &pid[..] == b"11b7cd9cfd0fdf50";
+    let k_macs = eq_hex(&mac_sem, "04d2433da0945fbb7d32d8395d30f29b84659941c4b1d43e5909f1ff35fb2da3")
+        && eq_hex(&mac_phone, "dc6f4b95232e6befe12f606a5448eba8df0dbc2163a068e7e2d9e02c5eab984d");
+
+    // Both roles derive the same session (mutual agreement).
+    let agree = s_box.session_key == s_phone.session_key
+        && s_box.transcript_hash == s_phone.transcript_hash
+        && s_box.sas == s_phone.sas;
+
+    // QR payload bytes + base32 must match the committed vectors (port 8080).
+    let payload = PairingPayload { version: VERSION, phone_pub, ip: [192, 168, 1, 42], port: 8080, nonce_p };
+    let raw = payload.to_bytes();
+    let k_payload = eq_hex(
+        &raw,
+        "5350012fe57da347cd62431528daac5fbb290730fff684afc4cfc2ed90995f58cb3b74c0a8012a1f9050505050505050505050505050505050ba55",
+    );
+    let mut enc = [0u8; 96];
+    let elen = encode_payload(&payload, &mut enc);
+    let enc_str = core::str::from_utf8(&enc[..elen]).unwrap_or("");
+    // Committed string with hyphens stripped.
+    let k_enc = enc_str == "AD802BZ5FPHMFKB28CAJHPNCBYXJJ1SGZZV89BY4SZ1EV44SBXCCPEVMR2M02AGZJ1850M2GA1850M2GA1850M2GA18BMN8";
+    // Decoder must accept the HYPHENATED form the app actually displays.
+    let hyph = "AD802BZ5-FPHMFKB2-8CAJHPNC-BYXJJ1SG-ZZV89BY4-SZ1EV44S-BXCCPEVM-R2M02AGZ-J1850M2G-A1850M2G-A1850M2G-A18BMN8";
+    let k_hyph = match decode_payload(hyph) {
+        Ok(d) => d.phone_pub == phone_pub && d.port == 8080 && d.ip == [192, 168, 1, 42] && d.nonce_p == nonce_p,
+        Err(_) => false,
+    };
+    // CRC must reject a single-character transcription typo.
+    let mut typo = [0u8; 96];
+    typo[..elen].copy_from_slice(&enc[..elen]);
+    typo[10] = if typo[10] == b'Z' { b'Y' } else { b'Z' };
+    let k_typo = decode_payload(core::str::from_utf8(&typo[..elen]).unwrap_or("")).is_err();
+
+    // Wire framing must match the committed HELLO frame.
+    let mut hello = [0u8; 64];
+    let hlen = build_hello(&sem_pub, &nonce_s, &mut hello);
+    let k_hello = eq_hex(
+        &hello[..hlen],
+        "003201012fe57da347cd62431528daac5fbb290730fff684afc4cfc2ed90995f58cb3b7453535353535353535353535353535353",
+    );
+    // CONFIRM verification accepts the right MAC and rejects the wrong one.
+    let k_verify = verify_confirm(&s_box.session_key, &s_box.transcript_hash, false, &mac_phone)
+        && !verify_confirm(&s_box.session_key, &s_box.transcript_hash, false, &mac_sem);
+
+    let ok = k_pub && k_th && k_key && k_sas && k_pid && k_macs && agree && k_payload && k_enc
+        && k_hyph && k_typo && k_hello && k_verify;
+    if ok {
+        println!("  [DEMO 86] PASS: matches committed reference vectors (keys/th/session/SAS/id/MACs),");
+        println!("  [DEMO 86]   QR payload+base32 exact, hyphenated decode OK, CRC catches typos,");
+        println!("  [DEMO 86]   HELLO frame byte-exact, CONFIRM verify accept/reject correct.");
+        println!("  [DEMO 86] => SemOS pairing core interoperates with the iOS companion app.");
+    } else {
+        println!(
+            "  [DEMO 86] FAIL: pub={} th={} key={} sas={} pid={} macs={} agree={} payload={} enc={} hyph={} typo={} hello={} verify={}",
+            k_pub, k_th, k_key, k_sas, k_pid, k_macs, agree, k_payload, k_enc, k_hyph, k_typo, k_hello, k_verify
+        );
+    }
+}

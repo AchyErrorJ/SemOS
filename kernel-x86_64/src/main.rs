@@ -1559,6 +1559,12 @@ pub(crate) fn run_all_demos() {
     println!("================================================================");
     demo_82_iphone();
 
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 86: pairing protocol self-test (M56)");
+    println!("================================================================");
+    pairing_self_test_demo();
+
     // Final marker. An ESC short-circuit above `return`s straight out; when the
     // suite completes normally we fall through to this banner.
     // On bare metal this is your "the kernel
