@@ -230,6 +230,12 @@ pub fn build_request(model: &str, max_tokens: u32, system: &str, messages: &[Mes
     body.push_str(&json_escape(model));
     body.push_str("\",\"max_tokens\":");
     body.push_str(&format!("{}", max_tokens));
+    // Disable extended thinking: reasoning models (e.g. kimi-k2.7) otherwise
+    // return a huge `"type":"thinking"` block (with a multi-KB signature) that
+    // overflows the fixed response buffer and can burn the whole token budget
+    // before any `"type":"text"` block is emitted — surfacing as "no answer".
+    // Valid for the Anthropic fallback endpoint too.
+    body.push_str(",\"thinking\":{\"type\":\"disabled\"}");
     if !system.is_empty() {
         body.push_str(",\"system\":\"");
         body.push_str(&json_escape(system));
@@ -260,6 +266,9 @@ pub fn build_query(model: &str, max_tokens: u32, system: &str, messages: &[Messa
     body.push_str(&json_escape(model));
     body.push_str("\",\"max_tokens\":");
     body.push_str(&format!("{}", max_tokens));
+    // See build_request: disable extended thinking so reasoning models return a
+    // compact `"type":"text"` answer that fits the response buffer.
+    body.push_str(",\"thinking\":{\"type\":\"disabled\"}");
     if !system.is_empty() {
         body.push_str(",\"system\":\"");
         body.push_str(&json_escape(system));
