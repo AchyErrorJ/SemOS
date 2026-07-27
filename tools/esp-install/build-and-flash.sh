@@ -79,11 +79,13 @@ if [[ -z "${KIMI_API_KEY:-}" && -z "${ANTHROPIC_KEY:-}" ]]; then
   done
 fi
 if [[ "$DO_BUILD" == "1" ]]; then
-  if [[ -n "${KIMI_API_KEY:-}${ANTHROPIC_KEY:-}" ]]; then
-    log "LLM key present — baking into kernel (len ${#KIMI_API_KEY} / ${#ANTHROPIC_KEY})"
+  _k="${KIMI_API_KEY:-}"; _a="${ANTHROPIC_KEY:-}"
+  if [[ -n "$_k$_a" ]]; then
+    log "LLM key present — baking into kernel (kimi len ${#_k} / anthropic len ${#_a})"
   else
     log "WARNING: no LLM key (KIMI_API_KEY / .kimi-key) — 'ask' will be disabled"
   fi
+  unset _k _a
 fi
 
 if [[ "$DO_BUILD" == "1" ]]; then
