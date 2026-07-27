@@ -36,3 +36,4 @@ test_assert.rs
 .DS_Store
 Thumbs.db
 .anthropic-key
+.kimi-key

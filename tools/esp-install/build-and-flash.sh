@@ -66,6 +66,26 @@ done
 
 log() { printf '\n=== %s ===\n' "$*"; }
 
+# Bake the LLM key into the kernel automatically. If KIMI_API_KEY is already
+# set in the environment it wins; otherwise fall back to a gitignored key file
+# so a fresh shell / rebuild never silently bakes an empty key (which surfaces
+# on-device as "no ANTHROPIC_KEY configured in this build").
+if [[ -z "${KIMI_API_KEY:-}" && -z "${ANTHROPIC_KEY:-}" ]]; then
+  for keyfile in "$REPO_ROOT/.kimi-key" "$REPO_ROOT/.anthropic-key"; do
+    if [[ -f "$keyfile" ]]; then
+      export KIMI_API_KEY="$(cat "$keyfile")"
+      break
+    fi
+  done
+fi
+if [[ "$DO_BUILD" == "1" ]]; then
+  if [[ -n "${KIMI_API_KEY:-}${ANTHROPIC_KEY:-}" ]]; then
+    log "LLM key present — baking into kernel (len ${#KIMI_API_KEY} / ${#ANTHROPIC_KEY})"
+  else
+    log "WARNING: no LLM key (KIMI_API_KEY / .kimi-key) — 'ask' will be disabled"
+  fi
+fi
+
 if [[ "$DO_BUILD" == "1" ]]; then
   log "Building user programs (release)"
   for p in $PROGRAMS; do
