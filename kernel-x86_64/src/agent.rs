@@ -15,6 +15,7 @@
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use kernel_core::syscall::{dispatch, numbers::*};
 
@@ -817,14 +818,190 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
     }
 }
 
+/// The system prompt for the agentic loop. Tells the model it drives a real
+/// bare-metal shell through tools, and to finish with a short plain-text answer
+/// once the work is done (a text turn with no tool_use ends the loop).
+const AGENT_SYSTEM: &str = "You are the resident agent of Semantic OS, a bare-metal \
+Rust operating system. You act by calling tools: read_file, write_file, and bash \
+(the sem-sh shell). Work in small concrete steps — inspect with bash/read_file \
+before you change anything, and verify your work after. Paths are absolute (e.g. \
+/apps/foo). When the task is complete, reply with a short plain-text summary and \
+no further tool call; that ends your turn.";
+
+/// Maximum model turns in one `run_agent` invocation. Each turn is one request:
+/// a tool_use turn runs the tool and loops; a text-only turn ends. The cap stops
+/// a confused or looping model from spending the whole token budget / stalling
+/// the console — hitting it is reported, not silently swallowed.
+const AGENT_MAX_TURNS: u32 = 16;
+
+/// A sink for live progress from `run_agent`, so the same loop core can render
+/// into the framebuffer TUI (interactive terminal) or, later, a byte buffer /
+/// serial log (a headless `agent "goal"` builtin). Every hook is optional.
+pub trait AgentReporter {
+    /// The model's free-text thinking/narration for a turn (may be empty).
+    fn on_text(&mut self, _text: &str) {}
+    /// The model requested a tool call, about to run.
+    fn on_tool_call(&mut self, _name: &str, _input_json: &str) {}
+    /// The tool returned this result (fed back to the model next turn).
+    fn on_tool_result(&mut self, _result: &str) {}
+    /// A transient status word for a spinner/status line ("thinking", "read_file").
+    fn on_status(&mut self, _status: &str) {}
+    /// A loop-level error (connection/parse/turn-cap) — terminal for this run.
+    fn on_error(&mut self, _msg: &str) {}
+}
+
+/// A no-op reporter for callers that only want the final return value.
+pub struct NullReporter;
+impl AgentReporter for NullReporter {}
+
+/// Renders `run_agent` progress into the split-pane framebuffer TUI: assistant
+/// text and tool calls/results land in the conversation pane, status words in
+/// the spinner line. Borrows the `Tui` for the duration of one `run_agent` call.
+struct TuiReporter<'a> {
+    tui: &'a mut crate::tui::Tui,
+}
+impl<'a> AgentReporter for TuiReporter<'a> {
+    fn on_text(&mut self, text: &str) {
+        self.tui.push_assistant(text);
+    }
+    fn on_tool_call(&mut self, name: &str, input_json: &str) {
+        self.tui.push_tool_call(name, input_json);
+    }
+    fn on_tool_result(&mut self, result: &str) {
+        self.tui.push_tool_result(result);
+    }
+    fn on_status(&mut self, status: &str) {
+        self.tui.set_status(status);
+    }
+    fn on_error(&mut self, msg: &str) {
+        self.tui.push_error(msg);
+    }
+}
+
+/// The agentic tool loop — the self-extension keystone. Given a natural-language
+/// `goal`, drive a multi-turn Messages conversation with the tool set:
+///
+///   send(goal + tools) → parse → if tool_use { run it, append the assistant
+///   tool_use turn + the tool_result turn, loop } else { done, return the text }
+///
+/// Bounded by `AGENT_MAX_TURNS`. Reuses the one keep-alive `Session` for every
+/// turn (the connection survives between requests), so a whole task is one TLS
+/// handshake. Live progress flows through `rep`; the final assistant text (or an
+/// error line) is returned.
+///
+/// SECURITY (Rung 1): tools run UNGUARDED here — `run_tool` executes whatever the
+/// model asks. Tier-gating write_file/bash against `current_task_max_tier()` is
+/// the immediate follow-up (Rung 2) and lands before this is trusted with real work.
+pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
+    let key = api_key();
+    if key.is_empty() {
+        let m = "agent: no ANTHROPIC_KEY configured in this build";
+        rep.on_error(m);
+        return String::from(m);
+    }
+    if goal.trim().is_empty() {
+        let m = "agent: empty goal";
+        rep.on_error(m);
+        return String::from(m);
+    }
+
+    let model = model_name();
+    // The running transcript. Grows by two turns per tool call (the assistant's
+    // tool_use, then our tool_result) so the model always sees the full history.
+    let mut msgs: Vec<Message> = Vec::new();
+    msgs.push(Message::text("user", goal));
+
+    let mut session = match Session::open() {
+        Ok(s) => s,
+        Err(e) => {
+            let m = format!("agent: connection failed ({})", e);
+            rep.on_error(&m);
+            return m;
+        }
+    };
+
+    // Fixed transport buffers on the heap (see `ask`): this runs under the
+    // fullscreen TUI, so large stack arrays risk the layout-sensitive overflow.
+    let mut resp = Box::new([0u8; 8192]);
+    let mut body = Box::new([0u8; 8192]);
+    let mut final_text = String::new();
+
+    for turn in 0..AGENT_MAX_TURNS {
+        rep.on_status("thinking");
+        let req = build_request(model, 1024, AGENT_SYSTEM, &msgs);
+        let http = build_http_request(&req, key, true);
+
+        let n = match session.request(http.as_bytes(), &mut resp[..]) {
+            Ok(n) => n,
+            Err(e) => {
+                let m = format!("agent: request failed on turn {} ({})", turn + 1, e);
+                rep.on_error(&m);
+                session.close();
+                return m;
+            }
+        };
+
+        let bn = decode_body(&resp[..n], &mut body[..]);
+        let parsed = parse_response(&String::from_utf8_lossy(&body[..bn]));
+
+        // Narrate any free text the model emitted alongside (or instead of) a call.
+        if let Some(t) = parsed.text.as_ref() {
+            let t = t.trim();
+            if !t.is_empty() {
+                rep.on_text(t);
+                final_text = String::from(t);
+            }
+        }
+
+        match parsed.tool_use {
+            Some(tu) => {
+                // Replay the assistant's tool_use turn verbatim (the API requires
+                // the tool_use to precede its tool_result), run the tool, then
+                // feed the result back as a user turn for the next iteration.
+                rep.on_status(&tu.name);
+                rep.on_tool_call(&tu.name, &tu.input_json);
+                let result = run_tool(&tu.name, &tu.input_json);
+                rep.on_tool_result(&result);
+                msgs.push(Message::assistant_tool_use(&tu));
+                msgs.push(Message::tool_result(&tu.id, &result));
+                // fall through to the next turn
+            }
+            None => {
+                // No tool call: the model is done (or produced only text).
+                session.close();
+                if final_text.is_empty() {
+                    let status = http_status(&resp[..n]).unwrap_or(0);
+                    let m = format!("agent: no answer (HTTP {})", status);
+                    rep.on_error(&m);
+                    return m;
+                }
+                return final_text;
+            }
+        }
+    }
+
+    // Ran out of turns while still calling tools.
+    session.close();
+    let m = format!(
+        "agent: stopped after {} turns (task not finished)",
+        AGENT_MAX_TURNS
+    );
+    rep.on_error(&m);
+    if final_text.is_empty() {
+        m
+    } else {
+        final_text
+    }
+}
+
 /// SYS_AGENT — the interactive split-pane agent terminal launched by the
-/// shell's `agent` builtin. Runs a chat loop over the framebuffer TUI: each
-/// line the user types is sent to Claude via the one-shot `ask` path and the
-/// reply lands in the conversation pane, until they type `exit`/`quit`. Reuses
-/// the tested `ask` query, so each turn is independent for now (multi-turn
-/// memory + the read_file/bash tools in the loop are a follow-up). Without a
-/// baked-in key it still runs — you can see the UI and type — and reports that
-/// chatting needs a key. Headless (no framebuffer) → nothing to show, returns 1.
+/// shell's `agent` builtin. Each task the user types drives the full agentic
+/// tool loop (`run_agent`): the model reads/writes files and runs shell commands
+/// via tools until the work is done, with every turn — assistant text, tool
+/// calls, tool results — rendered live in the conversation pane, until they type
+/// `exit`/`quit`. Without a baked-in key it still runs — you can see the UI and
+/// type — and reports that acting needs a key. Headless (no framebuffer) →
+/// nothing to show, returns 1.
 ///
 /// While this runs, the shell is blocked in the syscall and the interactive
 /// wait loop must not pump the HID ring (it would race our `read_line` pump),
@@ -845,16 +1022,15 @@ pub fn run_interactive(_flags: u64) -> u64 {
         Some(t) => Box::new(t),
         None => return 1, // headless — no framebuffer to draw the TUI
     };
-    tui.push_assistant("Agent terminal — type a question, Enter to send. 'exit' returns to the shell.");
+    tui.push_assistant("Agent terminal — describe a task, Enter to send. I can read/write files and run shell commands to do it. 'exit' returns to the shell.");
 
     let have_key = !api_key().is_empty();
     if !have_key {
-        tui.push_error("(no ANTHROPIC_KEY in this build — you can type, but chatting needs a key)");
+        tui.push_error("(no ANTHROPIC_KEY in this build — you can type, but acting needs a key)");
     }
 
     crate::FULLSCREEN_APP_ACTIVE.store(true, Ordering::Relaxed);
 
-    let mut out = Box::new([0u8; 8192]);
     loop {
         tui.set_status("ready");
         let mut qbuf = [0u8; 512];
@@ -871,10 +1047,11 @@ pub fn run_interactive(_flags: u64) -> u64 {
             tui.push_error("can't reach Claude: no ANTHROPIC_KEY baked into this build");
             continue;
         }
-        tui.set_status("thinking");
-        let m = ask(q, &mut out[..]).min(out.len());
-        let answer = core::str::from_utf8(&out[..m]).unwrap_or("(decode error)");
-        tui.push_assistant(answer);
+        // Drive the full agentic tool loop. `run_agent` renders every turn —
+        // assistant text, tool calls, tool results — through the reporter as it
+        // goes, so the return value is already on screen; we discard it here.
+        let mut rep = TuiReporter { tui: &mut *tui };
+        let _ = run_agent(q, &mut rep);
     }
 
     crate::FULLSCREEN_APP_ACTIVE.store(false, Ordering::Relaxed);
@@ -1125,8 +1302,29 @@ fn read_file(path: &str) -> Result<String, &'static str> {
     Ok(out)
 }
 
-/// Write a file (create/overwrite) via SYS_OPEN(CREATE) + SYS_FWRITE.
+/// Create every ancestor directory of `path` (mkdir -p on its parent), so a
+/// write to e.g. `/apps/hello.txt` succeeds even when `/apps` doesn't exist yet.
+/// Errors are ignored on purpose: SYS_MKDIR on an existing dir is a harmless
+/// no-op for us, and any real failure surfaces at the subsequent SYS_OPEN.
+fn ensure_parent_dirs(path: &str) {
+    let bytes = path.as_bytes();
+    // Walk interior '/' separators; each prefix up to (not including) a slash is
+    // an ancestor directory. The leading '/' (root) and the final path component
+    // (the file itself, no trailing slash) are both naturally skipped.
+    let mut i = 1;
+    while i < bytes.len() {
+        if bytes[i] == b'/' {
+            let dir = &path[..i];
+            dispatch(SYS_MKDIR, dir.as_ptr() as u64, dir.len() as u64, 0, 0);
+        }
+        i += 1;
+    }
+}
+
+/// Write a file (create/overwrite) via SYS_OPEN(CREATE) + SYS_FWRITE, creating
+/// any missing parent directories first so the agent can write to a fresh path.
 fn write_file(path: &str, data: &[u8]) -> Result<(), &'static str> {
+    ensure_parent_dirs(path);
     let fd = dispatch(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, 1 /*CREATE*/, 0);
     if fd == u64::MAX {
         return Err("open failed");
