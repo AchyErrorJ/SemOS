@@ -828,11 +828,10 @@ before you change anything, and verify your work after. Paths are absolute (e.g.
 /apps/foo). When the task is complete, reply with a short plain-text summary and \
 no further tool call; that ends your turn.";
 
-/// Maximum model turns in one `run_agent` invocation. Each turn is one request:
-/// a tool_use turn runs the tool and loops; a text-only turn ends. The cap stops
-/// a confused or looping model from spending the whole token budget / stalling
-/// the console — hitting it is reported, not silently swallowed.
-const AGENT_MAX_TURNS: u32 = 16;
+/// The loop runs until the model finishes (a text turn with no tool_use). There
+/// is no artificial turn cap: tools are tier-clamped so an agent that loops only
+/// spends model tokens, it can't escalate. (A manual keypress-interrupt is a
+/// planned follow-up alongside the TUI scrollback work.)
 
 /// A sink for live progress from `run_agent`, so the same loop core can render
 /// into the framebuffer TUI (interactive terminal) or, later, a byte buffer /
@@ -884,14 +883,16 @@ impl<'a> AgentReporter for TuiReporter<'a> {
 ///   send(goal + tools) → parse → if tool_use { run it, append the assistant
 ///   tool_use turn + the tool_result turn, loop } else { done, return the text }
 ///
-/// Bounded by `AGENT_MAX_TURNS`. Reuses the one keep-alive `Session` for every
-/// turn (the connection survives between requests), so a whole task is one TLS
-/// handshake. Live progress flows through `rep`; the final assistant text (or an
-/// error line) is returned.
+/// Runs until the model returns a text turn with no tool_use (no artificial cap:
+/// tools are tier-clamped, so a looping agent only burns tokens, not access).
+/// Reuses the one keep-alive `Session` for every turn (the connection survives
+/// between requests), so a whole task is one TLS handshake. Live progress flows
+/// through `rep`; the final assistant text (or an error line) is returned.
 ///
-/// SECURITY (Rung 1): tools run UNGUARDED here — `run_tool` executes whatever the
-/// model asks. Tier-gating write_file/bash against `current_task_max_tier()` is
-/// the immediate follow-up (Rung 2) and lands before this is trusted with real work.
+/// SECURITY: tools are tier-clamped. `bash` runs in a shell spawned at tier 0
+/// (Public), and `read_file`/`write_file` are clamped to `AGENT_TIER` (Public) by
+/// `agent_may_access`, so the agent can only touch Public objects even though
+/// those tools execute in (higher-clearance) kernel context.
 pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
     let key = api_key();
     if key.is_empty() {
@@ -926,7 +927,9 @@ pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
     let mut body = Box::new([0u8; 8192]);
     let mut final_text = String::new();
 
-    for turn in 0..AGENT_MAX_TURNS {
+    let mut turn: u32 = 0;
+    loop {
+        turn += 1;
         rep.on_status("thinking");
         let req = build_request(model, 1024, AGENT_SYSTEM, &msgs);
         let http = build_http_request(&req, key, true);
@@ -934,7 +937,7 @@ pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
         let n = match session.request(http.as_bytes(), &mut resp[..]) {
             Ok(n) => n,
             Err(e) => {
-                let m = format!("agent: request failed on turn {} ({})", turn + 1, e);
+                let m = format!("agent: request failed on turn {} ({})", turn, e);
                 rep.on_error(&m);
                 session.close();
                 return m;
@@ -978,19 +981,6 @@ pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
                 return final_text;
             }
         }
-    }
-
-    // Ran out of turns while still calling tools.
-    session.close();
-    let m = format!(
-        "agent: stopped after {} turns (task not finished)",
-        AGENT_MAX_TURNS
-    );
-    rep.on_error(&m);
-    if final_text.is_empty() {
-        m
-    } else {
-        final_text
     }
 }
 
@@ -1282,8 +1272,45 @@ fn run_bash(cmd: &str) -> String {
     }
 }
 
-/// Read a path-namespace file via SYS_OPEN + SYS_FREAD.
+/// The agent's security clearance. The LLM is the least-trusted component in the
+/// 4-tier model, so both its shell (spawned at tier 0) and its direct file tools
+/// (read_file/write_file, which run in kernel context) are clamped to Public —
+/// the agent can only ever touch Public-tier objects, never Internal/Sensitive/
+/// Secret, regardless of the kernel task's own (higher) clearance.
+///
+/// This constant is the single mutation point for the agent's tier: when tasks
+/// gain a real per-task agent tier, thread `current_task_max_tier()` through here
+/// instead of the hard-coded Public.
+const AGENT_TIER: kernel_core::memory::pools::SecurityTier =
+    kernel_core::memory::pools::SecurityTier::Public;
+
+/// Look up the tier of the object at `path`. Returns None if the path doesn't
+/// resolve (a write would then *create* it — treated as the agent's own tier).
+fn path_tier(path: &str) -> Option<kernel_core::memory::pools::SecurityTier> {
+    use kernel_core::fs::Namespace;
+    let suid = Namespace::resolve(path).ok()?;
+    kernel_core::semantic::registry::global_registry()
+        .get(&suid)
+        .map(|o| o.tier)
+}
+
+/// Gate one file tool against the agent's tier: deny if the target object's tier
+/// exceeds the agent's clearance. A not-yet-existing path (write→create) passes
+/// and is created Public, which the agent by definition can access.
+fn agent_may_access(path: &str) -> bool {
+    match path_tier(path) {
+        Some(t) => (t as u8) <= (AGENT_TIER as u8),
+        None => true,
+    }
+}
+
+/// Read a path-namespace file via SYS_OPEN + SYS_FREAD. Clamped to the agent's
+/// tier (Public) — reading a higher-tier object is denied here, before the
+/// kernel's own (kernel-task) clearance would allow it.
 fn read_file(path: &str) -> Result<String, &'static str> {
+    if !agent_may_access(path) {
+        return Err("denied: path exceeds agent tier (Public)");
+    }
     let fd = dispatch(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, 0, 0);
     if fd == u64::MAX {
         return Err("open failed");
@@ -1323,7 +1350,13 @@ fn ensure_parent_dirs(path: &str) {
 
 /// Write a file (create/overwrite) via SYS_OPEN(CREATE) + SYS_FWRITE, creating
 /// any missing parent directories first so the agent can write to a fresh path.
+/// Clamped to the agent's tier (Public): overwriting a higher-tier object is
+/// denied before we touch it (the kernel task's own clearance would otherwise
+/// allow it). A not-yet-existing path is created Public — allowed by definition.
 fn write_file(path: &str, data: &[u8]) -> Result<(), &'static str> {
+    if !agent_may_access(path) {
+        return Err("denied: path exceeds agent tier (Public)");
+    }
     ensure_parent_dirs(path);
     let fd = dispatch(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, 1 /*CREATE*/, 0);
     if fd == u64::MAX {
