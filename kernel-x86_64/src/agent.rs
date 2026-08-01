@@ -217,8 +217,10 @@ pub fn tools_json() -> &'static str {
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},",
         "{\"name\":\"write_file\",\"description\":\"Write contents to a file (creates/overwrites).\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},",
-        "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false, ps (tasks+tiers), free (heap), uptime, netinfo (network/NIC diagnostics), fetch URL (HTTP GET), ask QUESTION. External programs run from /bin.\",",
-        "\"input_schema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}}",
+        "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false, ps (tasks+tiers), free (heap), uptime, netinfo (network/NIC diagnostics), fetch URL (HTTP GET), ask QUESTION. External programs run from /bin (PATH also includes /apps), so an ELF the agent compiles into /apps runs by name.\",",
+        "\"input_schema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}},",
+        "{\"name\":\"compile\",\"description\":\"Compile a Rust source file to a runnable ELF with the on-device compiler (semos-rustc, Cranelift backend) and return the compiler's output. Provide source and out; out defaults to source with .rs replaced by .elf. The result is a no_std/no_main SemOS program: write it to /apps/<name>.elf and it runs from the shell as <name>.\",",
+        "\"input_schema\":{\"type\":\"object\",\"properties\":{\"source\":{\"type\":\"string\"},\"out\":{\"type\":\"string\"}},\"required\":[\"source\"]}}",
         "]"
     )
 }
@@ -822,11 +824,14 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
 /// bare-metal shell through tools, and to finish with a short plain-text answer
 /// once the work is done (a text turn with no tool_use ends the loop).
 const AGENT_SYSTEM: &str = "You are the resident agent of Semantic OS, a bare-metal \
-Rust operating system. You act by calling tools: read_file, write_file, and bash \
-(the sem-sh shell). Work in small concrete steps — inspect with bash/read_file \
-before you change anything, and verify your work after. Paths are absolute (e.g. \
-/apps/foo). When the task is complete, reply with a short plain-text summary and \
-no further tool call; that ends your turn.";
+Rust operating system. You act by calling tools: read_file, write_file, bash (the \
+sem-sh shell), and compile. Work in small concrete steps — inspect with \
+bash/read_file before you change anything, and verify your work after. Paths are \
+absolute (e.g. /apps/foo). You can extend the OS: to add a program, write a \
+no_std/no_main Rust source (e.g. write_file /apps/foo.rs), compile it (compile \
+source=/apps/foo.rs), then run it from the shell by name (bash foo) — semos-rustc \
+emits a runnable ELF. When the task is complete, reply with a short plain-text \
+summary and no further tool call; that ends your turn.";
 
 /// The loop runs until the model finishes (a text turn with no tool_use). There
 /// is no artificial turn cap: tools are tier-clamped so an agent that loops only
@@ -1127,8 +1132,44 @@ pub fn run_tool(name: &str, input_json: &str) -> String {
             Some(cmd) => run_bash(&cmd),
             None => String::from("error: missing 'command'"),
         },
+        "compile" => {
+            let source = field_str(input_json, "source");
+            let out = field_str(input_json, "out");
+            match source {
+                Some(src) => compile_source(&src, out.as_deref()),
+                None => String::from("error: missing 'source'"),
+            }
+        }
         other => format!("error: unknown tool '{}'", other),
     }
+}
+
+/// The agent's `compile` tool: run the on-device Rust compiler on `source` and
+/// return its output. Implemented by spawning `/bin/semos-rustc <src> -o <out>`
+/// through the same tier-0 `bash` sandbox as the `bash` tool, so the compiler
+/// inherits the agent's Public clearance — it can't read a higher-tier source or
+/// write a higher-tier output. `out` defaults to `source` with a trailing `.rs`
+/// swapped for `.elf` (or `.elf` appended).
+fn compile_source(source: &str, out: Option<&str>) -> String {
+    if !agent_may_access(source) {
+        return String::from("error: denied: source exceeds agent tier (Public)");
+    }
+    let default_out;
+    let out = match out {
+        Some(o) => o,
+        None => {
+            default_out = if let Some(stem) = source.strip_suffix(".rs") {
+                format!("{}.elf", stem)
+            } else {
+                format!("{}.elf", source)
+            };
+            &default_out
+        }
+    };
+    if !agent_may_access(out) {
+        return String::from("error: denied: output exceeds agent tier (Public)");
+    }
+    run_bash(&format!("/bin/semos-rustc {} -o {}", source, out))
 }
 
 /// Pull a string field out of a small JSON object (the tool input).
