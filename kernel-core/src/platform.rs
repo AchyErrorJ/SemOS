@@ -116,6 +116,11 @@ pub trait Platform: Send + Sync + 'static {
     /// Returns 1 if removed, 0 otherwise. Default: unavailable.
     fn run_unpair(&self, _id_ptr: u64, _id_len: u64) -> u64 { 0 }
 
+    /// SYS_NETLOG: drain the kernel log ring and UDP-send it to the LAN target
+    /// at `(target_ptr, target_len)` — "a.b.c.d" or "a.b.c.d:port" (port
+    /// defaults to 9000). Returns the number of bytes sent. Default: no-op.
+    fn run_netlog(&self, _target_ptr: u64, _target_len: u64) -> u64 { 0 }
+
     /// SYS_FBINFO: print the current GOP framebuffer geometry/pixel format and
     /// (where known) how it compares to the internal panel's native mode, to
     /// the current TTY. Read-only. Returns 0. Default: unavailable.

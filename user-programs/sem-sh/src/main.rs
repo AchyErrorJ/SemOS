@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -254,7 +254,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "flash-sysroot" | "wifi"
+            | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "flash-sysroot" | "wifi"
             | "vouch" | "unvouch" | "vouches" | "demos" | "pair" | "paired" | "unpair"
     )
 }
@@ -980,6 +980,28 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // (or ESC aborts it). Blocks the shell meanwhile.
             let rc = unsafe { syscall1(SYS_DEMOS, 0) };
             if rc == u64::MAX { 1 } else { rc as i32 }
+        }
+        "netlog" => {
+            // `netlog <ip> [port]` — drain the kernel log ring and UDP-send it
+            // to a LAN listener. On your Mac: `nc -u -l 9000` (UDP, so nothing
+            // to accept; datagrams just print). Default port 9000.
+            if argv.len() < 2 {
+                println!("netlog: usage: netlog <a.b.c.d> [port]   (on the Mac: nc -u -l 9000)");
+                return 2;
+            }
+            let target = if argv.len() >= 3 {
+                format!("{}:{}", argv[1], argv[2])
+            } else {
+                argv[1].clone()
+            };
+            let sent = unsafe { syscall2(SYS_NETLOG, target.as_ptr() as u64, target.len() as u64) };
+            if sent == 0 {
+                println!("netlog: sent 0 bytes (log empty, stack down, or bad target)");
+                1
+            } else {
+                println!("netlog: sent {} bytes to {}", sent, target);
+                0
+            }
         }
         "pair" => {
             // `pair <qr-string>` — run the M56 handshake against the phone in

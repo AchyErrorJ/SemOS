@@ -932,8 +932,20 @@ pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
     let mut body = Box::new([0u8; 8192]);
     let mut final_text = String::new();
 
+    // Arm Ctrl+C abort: the PS/2 IRQ handler sets ABORT_REQUESTED even while
+    // we're blocked in a network wait or tool call, so polling it here gives a
+    // responsive interrupt for a runaway or unwanted loop.
+    crate::keyboard::clear_abort();
+
     let mut turn: u32 = 0;
     loop {
+        // Ctrl+C between turns (and on entry) → stop cleanly, closing the session.
+        if crate::keyboard::abort_requested() {
+            session.close();
+            let m = format!("agent: aborted by user (Ctrl+C) after {} turn(s)", turn);
+            rep.on_error(&m);
+            return m;
+        }
         turn += 1;
         rep.on_status("thinking");
         let req = build_request(model, 1024, AGENT_SYSTEM, &msgs);
@@ -1032,6 +1044,9 @@ pub fn run_interactive(_flags: u64) -> u64 {
         let n = tui.read_line(&mut qbuf);
         let q = core::str::from_utf8(&qbuf[..n]).unwrap_or("").trim();
         if q.is_empty() {
+            // Empty line (user just hit Enter): show the prompt again but don't
+            // busy-spin a request. read_line already blocks on input, so looping
+            // here is cheap only because we immediately block again — keep it.
             continue;
         }
         if q.eq_ignore_ascii_case("exit") || q.eq_ignore_ascii_case("quit") {

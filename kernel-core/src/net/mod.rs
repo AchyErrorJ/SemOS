@@ -37,6 +37,7 @@ pub mod adapter;
 pub mod clock;
 pub mod dns;
 pub mod http;
+pub mod netlog;
 pub mod state;
 pub mod tcp;
 

@@ -300,6 +300,10 @@ impl Platform for X86Platform {
         crate::pairing_host::run_pair(qr_ptr, qr_len)
     }
 
+    fn run_netlog(&self, target_ptr: u64, target_len: u64) -> u64 {
+        crate::netlog::run(target_ptr, target_len)
+    }
+
     fn run_paired_list(&self) -> u64 {
         crate::pairing_host::run_paired_list()
     }

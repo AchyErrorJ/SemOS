@@ -155,6 +155,12 @@ pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
     // Disable interrupts while printing to avoid deadlock
     x86_64::instructions::interrupts::without_interrupts(|| {
+        // Mirror into the netlog ring first. This is a pure byte copy — no net,
+        // no alloc, no printing — so it's safe here with interrupts off and the
+        // serial lock held. The actual UDP send happens later in SYS_NETLOG
+        // (normal syscall context), never from inside _print (that would
+        // recurse/deadlock: net::poll prints status).
+        crate::netlog::mirror(args);
         SERIAL.lock().write_fmt(args).unwrap();
         // Mirror to framebuffer (no-op if not yet initialized). Skip only when
         // a fullscreen kernel app (agent/editor) owns the screen;

@@ -179,6 +179,9 @@ pub mod numbers {
     pub const SYS_WIFI_CONNECT: u64 = 125; // (idx, pass_ptr, pass_len) -> 1/0; connect to network idx
     pub const SYS_VOUCH:        u64 = 126; // (path_ptr, path_len, grant_tier) -> 1/0; mark a namespace tool safe to run at grant_tier. Interactive console ONLY (the agent cannot reach this).
     pub const SYS_VOUCHES:      u64 = 127; // () -> count; print the active vouch grants (audit list)
+    pub const SYS_NETLOG:       u64 = 132; // (target_ptr, target_len) -> bytes sent; drain the kernel
+                                           // log ring and UDP-send it to "a.b.c.d[:port]" (port 9000
+                                           // default) for off-box debugging (`nc -u -l 9000` on a Mac).
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -346,6 +349,11 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
             }
             crate::platform::get().run_unpair(arg0, arg1)
         }
+        // netlog: drain the kernel log ring and UDP-send it to a LAN target.
+        // Read-only over the log (and the log is already tier-agnostic debug
+        // output), so no console gate. The target string is copied out of
+        // validated caller memory by the platform impl.
+        SYS_NETLOG => crate::platform::get().run_netlog(arg0, arg1),
 
         // M14 display diagnostics and safe backlight control.
         SYS_FBINFO => crate::platform::get().run_fbinfo(),

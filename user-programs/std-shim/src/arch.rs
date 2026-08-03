@@ -77,6 +77,7 @@ pub const SYS_DEMOS:        u64 = 120; // () -> 0; run the full boot DEMO suite 
 pub const SYS_PAIR:         u64 = 121; // (qr_ptr,qr_len) -> 1/0; M56 pairing handshake (console only)
 pub const SYS_PAIRED:       u64 = 122; // () -> count; list paired devices
 pub const SYS_UNPAIR:       u64 = 124; // (id_ptr,id_len) -> 1/0; forget a device (console only)
+pub const SYS_NETLOG:       u64 = 132; // (target_ptr,target_len) -> bytes sent; UDP-send the kernel log ring
 pub const SYS_FB_META:      u64 = 128; // (out_ptr,out_len>=64) -> 0/err
 pub const SYS_FB_BLIT:      u64 = 129; // (xy_pack,wh_pack,pixels_ptr,pixel_count) -> 0/err
 pub const SYS_MODESET:      u64 = 130; // (op) -> 0/err; guarded modeset control
