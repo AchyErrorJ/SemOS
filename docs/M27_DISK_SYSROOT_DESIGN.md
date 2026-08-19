@@ -241,8 +241,8 @@ compiler_builtins.rmeta (RAM path) AND enumerates the disk blob, streaming each
 #    → libcore-<hash>.rmeta + libcompiler_builtins-<hash>.rmeta
 # 2. pack the blob
 python tools/pack-sysroot-blob.py sysroot.img \
-  libcore-<hash>.rmeta=<deps>/libcore-<hash>.rmeta \
-  libcompiler_builtins-<hash>.rmeta=<deps>/libcompiler_builtins-<hash>.rmeta
+  libcore-<hash>.rlib=<deps>/libcore-<hash>.rlib \
+  libcompiler_builtins-<hash>.rlib=<deps>/libcompiler_builtins-<hash>.rlib
 # 3. build kernel image (bakes semos-rustc): kernel-x86_64 build, then x86_64-runner
 ```
 
@@ -263,6 +263,9 @@ qemu-system-x86_64 -cpu max -m 2048 \
 to the internal SATA disk (LBA 0). The kernel's AHCI reads `sata0`; expect
 `[sysroot] blob found: 2 file(s)` then, from `--c3-selftest`,
 `[c3] get_header DECODED: name="compiler_builtins"` and `name="core"`.
+
+
+> **2026-08-19 correction:** pack the .rlib files, not .rmeta. rustc dependency_formats final pass requires statically linked deps in rlib form; an rmeta-only blob compiles but dies at the link check (metadata_lib_required, exit 101). Verified by the DEMO 80 M1 PASS in QEMU.
 
 **Smoke-tested 2026-06-12 (QEMU, stubbed kernel):** `probe()` found the AHCI
 blob, parsed both records with exact LBAs/sizes. The streaming `read()` + the
@@ -289,7 +292,7 @@ workstation (previously Windows-only). Steps:
    `bash user-programs/rustc-host/build-core-linux.sh`
    (Linux port of `build-core.sh`; the original still documents the Windows paths).
 5. Pack the blob:
-   `python3 tools/pack-sysroot-blob.py out/sysroot.img libcore-<hash>.rmeta=<deps>/libcore-<hash>.rmeta libcompiler_builtins-<hash>.rmeta=<deps>/libcompiler_builtins-<hash>.rmeta`.
+   `python3 tools/pack-sysroot-blob.py out/sysroot.img libcore-<hash>.rlib=<deps>/libcore-<hash>.rlib libcompiler_builtins-<hash>.rlib=<deps>/libcompiler_builtins-<hash>.rlib`.
 6. Flash to the named GPT partition (NOT LBA 0 of the OS disk):
    `sudo dd if=out/sysroot.img of=/dev/disk/by-partlabel/SEMOS_SYSROOT bs=4M conv=fsync` after
    confirming `PARTLABEL == SEMOS_SYSROOT`.

@@ -1,6 +1,6 @@
 # M14 — Intel HD 4600 integrated graphics plan (T540p)
 
-Status: planned  
+Status: M14-A/B/C/D/E implemented and verified on metal; GOP 1920×1080 mode request added; brightness-key mapping in progress; M14-F being pursued if GOP cannot deliver native resolution.
 Target machine: ThinkPad T540p/W540-class host running Pop!_OS + SemOS dual boot  
 Target GPU: Intel HD 4600 / Haswell GT2, PCI `00:02.0`, vendor/device `8086:0416`
 
@@ -47,6 +47,9 @@ Already done:
   - `fb_scroll_region`
   - `fb_present`
   - readback helpers for headless verification.
+- Fixed an R/B channel swap in `FbSurface::write_pixel` / `fb_fill_rect` so logical
+  `0x00RRGGBB` colors render correctly on RGB and BGR framebuffers (verified with
+  a red `fb-demo.elf` rectangle).
 - `kernel-x86_64/src/font.rs` and `kernel-x86_64/src/gfx2d.rs` provide TTF and
   anti-aliased 2D drawing over that framebuffer.
 - Hardware inventory confirms:
@@ -54,6 +57,17 @@ Already done:
     `8086:0416`
   - bus location: `00:02.0`
   - Linux oracle driver: `i915`
+- M14-A: Pop!_OS oracle capture committed under `docs/hardware/igpu-2026-07-02/`.
+- M14-B: read-only PCI probe in `kernel-x86_64/src/igpu.rs`.
+- M14-C: framebuffer boot diagnostics and `fbinfo` shell builtin via `SYS_FBINFO`.
+- M14-D: safe Haswell PCH PWM backlight control in `kernel-x86_64/src/backlight.rs`,
+  `brightness` shell builtin via `SYS_BRIGHTNESS_GET/SET`, clamped to 10% minimum.
+  Brightness keys are being mapped from PS/2 extended scancodes (first unknown
+  code observed: `0x63`).
+- M14-E: user-space framebuffer surface via `SYS_FB_BLIT` and `semos_std::fb`,
+  with `fb-demo` sample app.
+- M14-phase-0: bootloader now requests a minimum 1920×1080 GOP framebuffer via
+  `BootConfig` in `x86_64-runner/src/main.rs`.
 
 Not done yet:
 
@@ -64,6 +78,13 @@ Not done yet:
 - No native Haswell modeset.
 - Direct shared framebuffer mapping remains deferred; M14-E uses a safer blit
   syscall first.
+
+Next steps (from local WIP notes):
+
+- Confirm whether the bootloader GOP request delivers 1920×1080 on the T540p.
+- Map the second brightness-key scancode and verify up/down stepping.
+- If GOP cannot deliver native resolution, implement native Haswell modesetting
+  (M14-F) in small, feature-gated, reversible steps.
 
 ---
 
@@ -247,9 +268,13 @@ Implementation should be a tiny capability, not a full display driver:
 - add shell commands:
   - `brightness`
   - `brightness 50`
+  - `brightness 80`
   - `brightness up`
   - `brightness down`
-- optionally map brightness keys later after shell control is stable.
+- map brightness keys: a diagnostic in `kernel-x86_64/src/keyboard.rs` logs
+  unknown extended PS/2 scancodes. The T540p brightness-key combo emits at least
+  extended scancode `0x63`; the matching up/down codes will be mapped to
+  `backlight::set_percent` once confirmed.
 
 First metal test:
 
@@ -293,9 +318,11 @@ Done when:
 
 ---
 
-### M14-F — Native modesetting research spike, optional
+### M14-F — Native modesetting research/implementation, conditional
 
-Only start this after brightness and app framebuffer are stable.
+Start this only if the bootloader cannot deliver the panel's native 1920×1080
+mode. The current build requests at least 1920×1080 via `BootConfig`; if that
+succeeds, native modeset is unnecessary and M14-F stays as a researched fallback.
 
 Scope:
 
@@ -303,17 +330,13 @@ Scope:
 - model only the internal panel path;
 - understand pipes, planes, transcoders, DPLL, FDI/eDP/LVDS path, watermarks,
   and required power wells;
-- write a design doc before any mode-register writes.
+- write a design doc before any mode-register writes;
+- capture EDID and `i915_display_info`/`i915_opregion` from Pop!_OS with sudo.
 
 Hard rule:
 
 - Native modeset writes require an explicit feature gate and a restore/reboot
   fallback plan.
-
-Done when:
-
-- We can explain the exact register write sequence for the T540p internal panel,
-  or decide to defer native modesetting and keep GOP long-term.
 
 ---
 
@@ -324,8 +347,9 @@ Done when:
 3. Better SemOS framebuffer info diagnostics.
 4. Backlight control.
 5. User/app framebuffer syscall.
-6. Optional GOP mode selection.
-7. Optional native Haswell modesetting design.
+6. GOP mode selection via `BootConfig` (request 1920×1080).
+7. Brightness-key mapping from PS/2 extended scancodes.
+8. Native Haswell modesetting design/implementation, only if step 6 fails.
 
 This order makes the laptop more usable quickly while avoiding the huge trap of
 starting with full `i915`-style KMS.

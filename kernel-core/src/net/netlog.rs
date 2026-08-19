@@ -21,9 +21,14 @@ const LOCAL_PORT: u16 = 49154;
 const MTU: usize = 1400;
 
 static mut RX_META: [udp::PacketMetadata; 2] = [udp::PacketMetadata::EMPTY; 2];
-static mut TX_META: [udp::PacketMetadata; 2] = [udp::PacketMetadata::EMPTY; 2];
+static mut TX_META: [udp::PacketMetadata; 16] = [udp::PacketMetadata::EMPTY; 16];
 static mut RX_PAYLOAD: [u8; 1600] = [0; 1600];
-static mut TX_PAYLOAD: [u8; 1600] = [0; 1600];
+// TX payload must hold SEVERAL full datagrams: with only ~1.14 packets of
+// headroom (1600 B vs 1400 B MTU) every second chunk hits smoltcp's ring-wrap
+// padding path, which panics in `enqueue_with` ("range end index 1400 out of
+// range for slice of length 400") when a cold ARP leaves the first datagram
+// queued. 16 KiB holds the whole 8 KiB log ring with room to spare.
+static mut TX_PAYLOAD: [u8; 16384] = [0; 16384];
 
 /// Send `bytes` to `dest:port` as a sequence of MTU-sized UDP datagrams.
 /// Returns the number of bytes handed to the socket (0 if the stack is down or

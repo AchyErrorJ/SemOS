@@ -39,6 +39,11 @@ use kernel_core::drivers::traits::{NetDevice, DriverError, DriverResult};
 
 const INTEL_VENDOR_ID: u16 = 0x8086;
 const I217LM_DEVICE_ID: u16 = 0x153a;
+/// QEMU's `-device e1000e` (82574L). Same legacy register map; accepted so
+/// the driver can be exercised under QEMU (netlog/CI runs) where no I217-LM
+/// exists. QEMU pre-configures the emulated PHY with link-up when the netdev
+/// backend is connected, matching this driver's no-PHY-setup assumption.
+const QEMU_82574L_DEVICE_ID: u16 = 0x10d3;
 
 // ============================================================================
 // Register offsets (legacy e1000e MMIO layout)
@@ -304,9 +309,9 @@ pub fn init() -> bool {
             let (_c, _sc, _pi) = pci::class_triple(l);
             let v = l.vendor_id();
             let d = l.device_id();
-            if v != INTEL_VENDOR_ID || d != I217LM_DEVICE_ID {
+            if v != INTEL_VENDOR_ID || (d != I217LM_DEVICE_ID && d != QEMU_82574L_DEVICE_ID) {
                 crate::println!(
-                    "[e1000e] PCI class 02/00/00 device {:04X}:{:04X} is not I217-LM; skipping",
+                    "[e1000e] PCI class 02/00/00 device {:04X}:{:04X} is not I217-LM/82574L; skipping",
                     v, d
                 );
                 return false;

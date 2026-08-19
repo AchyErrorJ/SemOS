@@ -46,6 +46,10 @@ struct KeyboardState {
     ctrl: bool,
     /// The previous byte was the 0xE0 extended-scancode prefix.
     ext: bool,
+    /// ThinkPad Fn key held. The Fn key itself sends 0xE0 0x63 press /
+    /// 0xE0 0xE3 release. While this flag is set we intercept Fn+F5/F6
+    /// for brightness control.
+    fn_key: bool,
 }
 
 impl KeyboardState {
@@ -58,6 +62,7 @@ impl KeyboardState {
             caps_lock: false,
             ctrl: false,
             ext: false,
+            fn_key: false,
         }
     }
 
@@ -364,9 +369,28 @@ pub fn report_poll_stats(tick: u64) {
     crate::println!("[ps/2 poll] bytes={} kbd={} aux={}", b, k, a);
 }
 
+/// Adjust the panel brightness by `delta` percent (negative = darker),
+/// clamped to the visible floor. Called from the Fn+F5/F6 hotkey path.
+fn adjust_brightness(delta: i16) {
+    let current = crate::backlight::get_percent().unwrap_or(50) as i16;
+    let next = (current + delta).clamp(10, 100) as u8;
+    let _ = crate::backlight::set_percent(next);
+}
+
 /// Process a scancode from the PS/2 keyboard controller.
 /// Called from the keyboard interrupt handler.
 pub fn handle_scancode(scancode: u8) {
+    // Temporary raw-byte trace. Set to true while debugging "second byte
+    // not recorded" / key-combination issues. Logs every byte that reaches
+    // the driver, so we can compare observed sequences against expected
+    // scancode-set-1 tables.
+    const LOG_ALL_SCANCODES: bool = false;
+    if LOG_ALL_SCANCODES {
+        kernel_core::platform::log("[kbd] byte 0x");
+        kernel_core::platform::log_hex_byte(scancode);
+        kernel_core::platform::log("\n");
+    }
+
     // ESC (scancode set 1 → 0x01) sets the global skip flag. The demo
     // runner polls this; one keypress is enough to abort the rest of
     // the demo dispatch and land in the interactive shell.
@@ -414,6 +438,27 @@ pub fn handle_scancode(scancode: u8) {
                 crate::tty::input_push(letter);
                 return;
             }
+            // ThinkPad T540p Fn key: 0xE0 0x63 press, 0xE0 0xE3 release.
+            // Track it as a modifier so we can intercept Fn+F5/F6 for
+            // brightness control.
+            if scancode == 0x63 {
+                kb.fn_key = true;
+                return;
+            }
+            if scancode == 0xE3 {
+                kb.fn_key = false;
+                return;
+            }
+            // Diagnostic: log any other extended scancode so we can see what
+            // Fn+Fx combos (e.g. brightness keys) the T540p delivers. Printed
+            // to the framebuffer console so it is visible without a serial cable.
+            // This briefly takes the console lock from IRQ context, same as the
+            // normal character-echo path in tty::input_push.
+            const LOG_UNKNOWN_EXT: bool = true;
+            if LOG_UNKNOWN_EXT {
+                drop(kb);
+                crate::println!("[kbd] unknown ext scancode 0x{:02X}", scancode);
+            }
         }
         return;
     }
@@ -444,6 +489,23 @@ pub fn handle_scancode(scancode: u8) {
             return;
         }
         _ => {}
+    }
+
+    // ThinkPad T540p brightness hotkeys: Fn+F5 = down, Fn+F6 = up.
+    // The Fn key itself sends 0xE0 0x63 press / 0xE0 0xE3 release, and
+    // F5/F6 keep their normal scancodes (0x3F / 0x40) while Fn is held.
+    if kb.fn_key {
+        match scancode {
+            0x3F => { drop(kb); adjust_brightness(-10); return; }
+            0x40 => { drop(kb); adjust_brightness(10); return; }
+            _ => {}
+        }
+    }
+
+    // Diagnostic: when Fn is held, log the raw scancode of any other
+    // non-extended key so we can discover additional Fn+Fx combos.
+    if kb.fn_key {
+        crate::println!("[kbd] Fn+key scancode 0x{:02X}", scancode);
     }
 
     if (scancode as usize) >= SCANCODE_TABLE.len() {

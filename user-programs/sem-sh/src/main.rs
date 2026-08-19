@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_WIFI_SCAN, SYS_WIFI_CONNECT, SYS_VOUCH, SYS_VOUCHES,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -255,7 +255,7 @@ fn is_builtin(name: &str) -> bool {
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
             | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "flash-sysroot" | "wifi"
-            | "vouch" | "unvouch" | "vouches" | "demos" | "pair" | "paired" | "unpair"
+            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "pair" | "paired" | "unpair"
     )
 }
 
@@ -1069,6 +1069,74 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             0
         }
         "vouch" => {
+            // `vouch --session <tier 0-3> <dur>` — self-dev loop session
+            // ceiling (plan §3.1): for <dur> (e.g. 300, 5m, 8h), EVERY
+            // agent-authored namespace tool may run at up to <tier> without a
+            // per-path vouch. `vouch --session off` revokes. Password-gated:
+            // first use sets the password (this boot only). NOTE: the TTY has
+            // no echo-off yet, so the password is visible while typed.
+            if argv.len() >= 2 && argv[1] == "--session" {
+                if argv.len() >= 3 && argv[2] == "off" {
+                    // Kernel treats duration 0 as revoke but still verifies the
+                    // password when one is set — prompt first.
+                    print!("vouch password: ");
+                    let pw = read_line().unwrap_or_default();
+                    let rc = unsafe {
+                        syscall4(SYS_VOUCH_SESSION, 0, 0, pw.as_ptr() as u64, pw.len() as u64)
+                    };
+                    if rc == 1 {
+                        println!("vouch: session revoked — agent tools fenced to tier 0");
+                        return 0;
+                    }
+                    println!("vouch: denied — console-only, or wrong password");
+                    return 1;
+                }
+                if argv.len() < 4 {
+                    println!("vouch: usage: vouch --session <tier 0-3> <dur: 300 | 5m | 8h> | --session off");
+                    return 2;
+                }
+                let tb = argv[2].as_bytes();
+                if tb.len() != 1 || !tb[0].is_ascii_digit() || tb[0] > b'3' {
+                    println!("vouch: tier must be 0, 1, 2 or 3");
+                    return 2;
+                }
+                let tier = (tb[0] - b'0') as u64;
+                let dur = argv[3].as_bytes();
+                let (digits, mult): (&[u8], u64) = match dur.last() {
+                    Some(b'm') => (&dur[..dur.len() - 1], 60),
+                    Some(b'h') => (&dur[..dur.len() - 1], 3600),
+                    Some(b's') => (&dur[..dur.len() - 1], 1),
+                    _ => (dur, 1),
+                };
+                let mut secs: u64 = 0;
+                for &c in digits {
+                    if !c.is_ascii_digit() {
+                        println!("vouch: bad duration '{}'", argv[3]);
+                        return 2;
+                    }
+                    secs = secs.saturating_mul(10).saturating_add((c - b'0') as u64);
+                }
+                let secs = secs.saturating_mul(mult);
+                if secs == 0 {
+                    println!("vouch: duration must be > 0 (use '--session off' to revoke)");
+                    return 2;
+                }
+                print!("vouch password: ");
+                let pw = read_line().unwrap_or_default();
+                let rc = unsafe {
+                    syscall4(SYS_VOUCH_SESSION, tier, secs, pw.as_ptr() as u64, pw.len() as u64)
+                };
+                if rc == 1 {
+                    println!(
+                        "vouch: session ceiling tier {} for {}s — agent tools may run up to that tier",
+                        tier, secs
+                    );
+                    0
+                } else {
+                    println!("vouch: denied — console-only, wrong password, or tier above clearance");
+                    1
+                }
+            } else {
             // `vouch <path> [tier]` — mark an agent-created tool safe to run at
             // `tier` (default 1 = Internal: LLM-capable, still can't read Secret
             // credentials). Console-ONLY: the kernel rejects this unless THIS
@@ -1076,6 +1144,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // its own tools. The grant is bound to the tool's exact bytes.
             if argv.len() < 2 {
                 println!("vouch: usage: vouch <path> [tier 0-3]  (default 1)");
+                println!("        or:    vouch --session <tier> <dur> | --session off");
                 println!("  marks an agent-created tool safe to run with privilege");
                 return 2;
             }
@@ -1098,6 +1167,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
                 println!("vouch: denied — console-only, or path/tier/clearance invalid");
                 1
             }
+            }
         }
         "unvouch" => {
             // Reset a tool to tier 0 (re-sandbox it). Same console-only gate.
@@ -1116,8 +1186,30 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             }
         }
         "vouches" => {
-            // Audit list: print every active vouch grant (kernel prints them).
+            // Audit list: kernel prints the session ceiling + per-path grants.
             let _ = unsafe { syscall1(SYS_VOUCHES, 0) };
+            // Add the countdown (SYS_GET_VOUCH packs tier<<32 | remaining_secs).
+            let v = unsafe { syscall1(SYS_GET_VOUCH, 0) };
+            if v != 0 {
+                println!("  session: tier {} ceiling, {}s left", v >> 32, v & 0xFFFF_FFFF);
+            }
+            0
+        }
+        "sleep" => {
+            // `sleep <secs>` — block the shell via SYS_SLEEP (62 Hz ticks).
+            if argv.len() < 2 {
+                println!("sleep: usage: sleep <secs>");
+                return 2;
+            }
+            let mut secs: u64 = 0;
+            for &c in argv[1].as_bytes() {
+                if !c.is_ascii_digit() {
+                    println!("sleep: bad number '{}'", argv[1]);
+                    return 2;
+                }
+                secs = secs.saturating_mul(10).saturating_add((c - b'0') as u64);
+            }
+            unsafe { syscall1(SYS_SLEEP, secs.saturating_mul(62)); }
             0
         }
         "flash-sysroot" => {

@@ -86,6 +86,8 @@ pub const SYS_WIFI_SCAN:    u64 = 123; // () -> n; scans WiFi, prints numbered n
 pub const SYS_WIFI_CONNECT: u64 = 125; // (idx, pass_ptr, pass_len) -> 1/0; connect to network idx
 pub const SYS_VOUCH:        u64 = 126; // (path_ptr, path_len, grant_tier) -> 1/0; vouch a tool safe (console only)
 pub const SYS_VOUCHES:      u64 = 127; // () -> count; print the active vouch grants
+pub const SYS_VOUCH_SESSION: u64 = 133; // (tier, duration_secs, pw_ptr, pw_len) -> 1/0; session ceiling (console only)
+pub const SYS_GET_VOUCH:    u64 = 134; // () -> (tier << 32) | remaining_secs, 0 when no live session
 
 /// SYS_TCP_READ/WRITE return this when the socket isn't ready yet (retry
 /// after yielding). Distinct from 0 (EOF) and u64::MAX (hard error).

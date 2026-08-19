@@ -172,8 +172,8 @@ impl FbSurface {
             let g = ((color >>  8) & 0xFF) as u32;
             let b = ((color      ) & 0xFF) as u32;
             let packed: u32 = match self.format {
-                PixelFormat::Rgb => (r << 16) | (g << 8) | b,
-                PixelFormat::Bgr => (b << 16) | (g << 8) | r,
+                PixelFormat::Rgb => (b << 16) | (g << 8) | r,
+                PixelFormat::Bgr => (r << 16) | (g << 8) | b,
                 _ => return,
             };
             if self.bpp == 4 {
@@ -247,8 +247,8 @@ pub fn fb_fill_rect(x: usize, y: usize, w: usize, h: usize, color: Color) {
         let g = ((color >>  8) & 0xFF) as u32;
         let b = ((color      ) & 0xFF) as u32;
         let packed: u32 = match s.format {
-            PixelFormat::Rgb => (r << 16) | (g << 8) | b,
-            PixelFormat::Bgr => (b << 16) | (g << 8) | r,
+            PixelFormat::Rgb => (b << 16) | (g << 8) | r,
+            PixelFormat::Bgr => (r << 16) | (g << 8) | b,
             _ => { /* fallback below */ 0 }
         };
         if matches!(s.format, PixelFormat::Rgb | PixelFormat::Bgr) {
@@ -426,6 +426,44 @@ pub fn fb_info() -> Option<FbInfo> {
         bytes_per_pixel: s.bpp,
         format: s.format,
     })
+}
+
+/// Stable framebuffer metadata layout written to a user buffer by SYS_FBINFO.
+#[repr(C)]
+pub struct FbInfoOut {
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub bpp: u32,
+    /// 0=unknown, 1=RGB, 2=BGR
+    pub format: u32,
+    pub byte_len: u64,
+}
+
+/// Copy framebuffer metadata into `out_ptr` as `FbInfoOut`. Returns 0 on
+/// success, u64::MAX if the framebuffer is unavailable or the buffer is too
+/// small. This is the x86_64 implementation of `Platform::fbinfo`.
+pub fn fb_info_out(out_ptr: u64, out_len: u64) -> u64 {
+    if out_len < core::mem::size_of::<FbInfoOut>() as u64 {
+        return u64::MAX;
+    }
+    let info = match fb_info() {
+        Some(i) => i,
+        None => return u64::MAX,
+    };
+    let format_code: u32 = match info.format {
+        PixelFormat::Rgb => 1,
+        PixelFormat::Bgr => 2,
+        _ => 0,
+    };
+    let out = unsafe { &mut *(out_ptr as *mut FbInfoOut) };
+    out.width = info.width as u32;
+    out.height = info.height as u32;
+    out.stride = info.stride as u32;
+    out.bpp = info.bytes_per_pixel as u32;
+    out.format = format_code;
+    out.byte_len = info.byte_len as u64;
+    0
 }
 
 /// Human-readable pixel-format name for boot logs and shell diagnostics.

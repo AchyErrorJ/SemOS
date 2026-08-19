@@ -22,6 +22,16 @@ interactive = []
 # (`-serial stdio`). Off by default so normal boots don't spawn the 88 MB
 # compiler every time.
 autocompile = []
+# `netlog-test`: headless SYS_NETLOG smoke for QEMU/serial runs. Waits for
+# DHCP, then pre-types `netlog 10.0.2.2 9000` through the TTY line discipline
+# (DEMO 49 pattern) so sem-sh runs it as its first command — a Windows
+# listener (`nc -u -l 9000` / ncat) should receive the kernel log ring.
+# 10.0.2.2 is the QEMU slirp host address. Off by default.
+netlog-test = []
+# `vouch-test`: headless session-vouch smoke — pre-types a vouch flow
+# (grant / audit / wrong-password deny / expiry / re-grant) through the TTY
+# so sem-sh runs it at the prompt. Off by default.
+vouch-test = []
 
 [dependencies]
 # Bootloader handles Real→Protected→Long mode transition

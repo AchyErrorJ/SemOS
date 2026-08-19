@@ -46,6 +46,8 @@ The hardcoded `/bin` spawn table is **removed** → any ramfs/namespace ELF runs
 name (`spawn_namespace_elf` + `$PATH`), tier-scoped. The command "table" is **data,
 not code**, so it updates live AND survives a kernel rebuild for free.
 
+**M1 hello loop — DONE 2026-08-19 (QEMU):** `--features autocompile` boots to `demo80_autocompile`, which compiles `/hello.rs` with on-device semos-rustc (disk-blob sysroot, .rlib), spawns the ELF via `sem-sh -c` **fenced at tier 0**, and verifies its captured stdout byte-for-byte (`[DEMO 80] PASS: M1 hello loop`).
+
 **Remaining for the headline demo:** an agent tool that drops a compiled ELF at
 `/apps/<name>` and spawns it at **tier 0**; then the demo — "ask the agent to add a
 `greet` command, it works seconds later, the kernel never rebuilt." The tier-0

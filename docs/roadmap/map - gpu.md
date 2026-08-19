@@ -11,7 +11,7 @@ Hardware-gated on real silicon. The T540p/W540 has an Intel iGPU (Haswell HD 460
 
 ---
 
-## Phase 11 — M14 iGPU rendering `[  ]`
+## Phase 11 — M14 iGPU rendering `[~]`
 
 Intel iGPU (Iris Xe on the P1 / HD 4600 on Haswell) — the LegibleStudios CAD view,
 video, games. Reference: the Linux `i915` driver. Prerequisite for QuickSync
@@ -24,6 +24,16 @@ safe backlight control, then expose an app-facing framebuffer path. Native
 Haswell modesetting is a later sub-milestone only if GOP cannot provide the
 panel's usable/native mode. See
 [`M14_IGPU_HASWELL_PLAN.md`](../M14_IGPU_HASWELL_PLAN.md).
+
+Status update:
+- M14-A through M14-E are implemented and verified on T540p metal.
+- `fb-demo.elf` renders a correct red rectangle (fixed an R/B channel-swap bug).
+- Backlight control works from the shell (`brightness 50/80/up/down`).
+- The bootloader now requests a minimum 1920×1080 GOP framebuffer via `BootConfig`.
+- Brightness-key mapping is in progress: the T540p emits extended PS/2 scancode
+  `0x63` for one of the brightness-key combos.
+- If GOP delivers 1920×1080, M14 resolution is complete and only key mapping
+  remains. If not, native Haswell modesetting (M14-F) begins.
 
 ---
 

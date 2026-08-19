@@ -602,12 +602,29 @@ extern "x86-interrupt" fn timer_interrupt_handler(stack_frame: InterruptStackFra
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     use x86_64::instructions::port::Port;
 
-    // Read the scancode from the PS/2 data port
-    let mut port: Port<u8> = Port::new(0x60);
-    let scancode = unsafe { port.read() };
+    // Drain every pending byte from the PS/2 controller. Extended keys
+    // (Windows key, Fn+Fx brightness combos, arrow keys) are two-byte
+    // sequences; some i8042 implementations queue both bytes before the
+    // IRQ is delivered, and reading only one byte per ISR drops the
+    // second scancode. Reading the status port in a loop matches the
+    // poll_one_scancode fallback and ensures no bytes are left behind.
+    let mut data: Port<u8> = Port::new(0x60);
+    let mut status: Port<u8> = Port::new(0x64);
+    const STATUS_OUTPUT_FULL: u8 = 1 << 0;
 
-    // Delegate to the keyboard driver
-    crate::keyboard::handle_scancode(scancode);
+    for _ in 0..8 {
+        let s = unsafe { status.read() };
+        if s & STATUS_OUTPUT_FULL == 0 {
+            break;
+        }
+        let byte = unsafe { data.read() };
+        // Dispatch all bytes through the keyboard scancode path. Some
+        // firmware (W540) sets the AUX bit spuriously on built-in
+        // keyboard bytes, so gating on STATUS_AUX drops real keypresses.
+        // Trackpoint bytes that happen to match scancodes are rare noise
+        // and much better than losing keys.
+        crate::keyboard::handle_scancode(byte);
+    }
 
     // EOI — must match the deliverer. On real hardware the IRQ is
     // routed via IOAPIC -> LAPIC (PIC is masked), so the LAPIC ISR bit

@@ -31,18 +31,27 @@ fn main() {
         std::process::exit(1);
     }
 
+    // M14: ask the bootloader for at least a 1920x1080 framebuffer. The
+    // bootloader passes this to GOP SetMode; if the mode is unavailable it
+    // falls back to whatever the firmware offers.
+    let mut boot_config = bootloader::BootConfig::default();
+    boot_config.frame_buffer.minimum_framebuffer_width = Some(1920);
+    boot_config.frame_buffer.minimum_framebuffer_height = Some(1080);
+
     // Create UEFI and BIOS disk images
     let uefi_path = kernel_path.with_extension("img");
     let bios_path = kernel_path.with_file_name("semantic-os-x86_64-bios.img");
 
     println!("Creating UEFI disk image: {}", uefi_path.display());
     bootloader::UefiBoot::new(&kernel_path)
+        .set_boot_config(&boot_config)
         .create_disk_image(&uefi_path)
         .expect("Failed to create UEFI disk image");
     println!("UEFI image created: {}", uefi_path.display());
 
     println!("Creating BIOS disk image: {}", bios_path.display());
     bootloader::BiosBoot::new(&kernel_path)
+        .set_boot_config(&boot_config)
         .create_disk_image(&bios_path)
         .expect("Failed to create BIOS disk image");
     println!("BIOS image created: {}", bios_path.display());

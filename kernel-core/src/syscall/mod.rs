@@ -182,6 +182,16 @@ pub mod numbers {
     pub const SYS_NETLOG:       u64 = 132; // (target_ptr, target_len) -> bytes sent; drain the kernel
                                            // log ring and UDP-send it to "a.b.c.d[:port]" (port 9000
                                            // default) for off-box debugging (`nc -u -l 9000` on a Mac).
+    // Self-dev loop (docs/semos_selfdev_loop_plan.md §3.1): session vouch.
+    // Where SYS_VOUCH binds one tool's bytes to a tier, SYS_VOUCH_SESSION
+    // raises the ceiling for ALL namespace (agent-authored) executables for a
+    // bounded time — the human opens the door once instead of per tool.
+    pub const SYS_VOUCH_SESSION: u64 = 133; // (tier, duration_secs, pw_ptr, pw_len) -> 1 ok / 0 err.
+                                            // Interactive console ONLY. duration_secs==0 revokes.
+                                            // First call sets the vouch password (hash kept in RAM);
+                                            // later calls must match it (constant-time compare).
+    pub const SYS_GET_VOUCH:    u64 = 134;  // () -> (tier << 32) | remaining_secs, or 0 when no
+                                            // live session. Any task may query (read-only).
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -261,6 +271,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_SPAWN => handle_spawn(arg0, arg1, arg2, arg3),
         SYS_VOUCH => handle_vouch(arg0, arg1, arg2),
         SYS_VOUCHES => handle_vouches(),
+        SYS_VOUCH_SESSION => handle_vouch_session(arg0, arg1, arg2, arg3),
+        SYS_GET_VOUCH => handle_get_vouch(),
         SYS_WAIT => handle_wait(arg0),
         SYS_KILL => handle_kill(arg0),
         SYS_DUP => handle_dup(arg0),
@@ -2018,6 +2030,11 @@ fn spawn_namespace_elf(path: &str, spawn_tier: u8, spawn_args_ptr: u64) -> u64 {
         Some((tier, hash)) if crate::crypto::ct_eq(&crate::crypto::sha256::hash(elf_data), &hash) => tier,
         _ => 0, // unvouched, or bytes changed since vouch → tier 0
     };
+    // Session vouch (SYS_VOUCH_SESSION): while the human holds a live session
+    // the ceiling applies to EVERY namespace tool, not just individually
+    // vouched ones. Per-path vouch still wins when it's higher (it binds the
+    // exact bytes; the session is the broader but weaker grant).
+    let exec_cap = exec_cap.max(session_ceiling());
     let fenced_tier = spawn_tier.min(exec_cap);
     if fenced_tier != spawn_tier {
         if exec_cap == 0 {
@@ -2140,7 +2157,20 @@ fn handle_vouch(path_ptr: u64, path_len: u64, grant_tier: u64) -> u64 {
 fn handle_vouches() -> u64 {
     let table = VOUCH_TABLE.lock();
     let mut n = 0u64;
-    crate::platform::log("[vouches] active grants (reset on reboot):\n");
+    // Session ceiling first — it applies to every namespace tool.
+    let v = handle_get_vouch();
+    if v == 0 {
+        crate::platform::log("[vouches] no live session vouch (namespace exec ceiling: 0)\n");
+    } else {
+        crate::platform::log("[vouches] SESSION vouch live: tier ceiling ");
+        crate::platform::log(match (v >> 32) as u8 {
+            1 => "1 (internal)  ",
+            2 => "2 (sensitive) ",
+            _ => "3 (secret)    ",
+        });
+        crate::platform::log("\n");
+    }
+    crate::platform::log("[vouches] active per-path grants (reset on reboot):\n");
     for e in table.iter() {
         if !e.used {
             continue;
@@ -2161,6 +2191,149 @@ fn handle_vouches() -> u64 {
         crate::platform::log("  (none)\n");
     }
     n
+}
+
+// ============================================================================
+// Session vouch (self-dev loop, docs/semos_selfdev_loop_plan.md §3.1)
+//
+// The per-path vouch above binds ONE tool's exact bytes to a tier. The
+// session vouch is the human opening the door for a whole working session:
+// for `duration`, every namespace (agent-authored) executable may run at up
+// to `tier` without an individual vouch. The agent still can't grant it —
+// the syscall is gated to the same interactive-console authority as
+// SYS_VOUCH, and a password (set on first use, SHA-256 + constant-time
+// compare) must accompany every grant so a borrowed/idle console can't be
+// driven by injected input alone.
+//
+// Deliberate deviations from the plan text, with reasons:
+//   * State is a kernel global, not a PCB field — there is exactly one
+//     interactive console session, and the ceiling is a property of THAT
+//     session, not of any one process.
+//   * Password echo: SemOS has no echo-off in the TTY line discipline yet,
+//     so the password is visible on the local screen while typed (shoulder
+//     -surf risk only; the agent never sees the console). Filed for follow-up.
+// ============================================================================
+
+/// Live session-vouch state. In RAM only: reboot clears it (deny-by-default
+/// re-asserts every boot), and expiry is checked on every read, so an expired
+/// session downgrades itself with no timer task.
+struct VouchSession {
+    /// SHA-256 of the vouch password; `pw_set` distinguishes "no password
+    /// yet" from an all-zero hash.
+    pw_hash: [u8; 32],
+    pw_set: bool,
+    active: bool,
+    tier: u8,
+    /// platform::ticks() value at which the session ends.
+    expiry_ticks: u64,
+}
+
+static VOUCH_SESSION: crate::sync::Mutex<VouchSession> =
+    crate::sync::Mutex::new(VouchSession {
+        pw_hash: [0; 32],
+        pw_set: false,
+        active: false,
+        tier: 0,
+        expiry_ticks: 0,
+    });
+
+/// The current session ceiling: the granted tier while a session is live,
+/// 0 otherwise. Called from `spawn_namespace_elf` on every agent-tool spawn.
+/// Lazily clears (and audit-logs) an expired session.
+pub fn session_ceiling() -> u8 {
+    let mut s = VOUCH_SESSION.lock();
+    if !s.active {
+        return 0;
+    }
+    if crate::platform::ticks() >= s.expiry_ticks {
+        s.active = false;
+        s.tier = 0;
+        crate::platform::log("[vouch] session expired — namespace exec ceiling back to 0\n");
+        return 0;
+    }
+    s.tier
+}
+
+/// SYS_VOUCH_SESSION(tier, duration_secs, pw_ptr, pw_len) -> 1 ok / 0 err.
+///
+/// Grant (or with duration_secs==0, revoke) the session ceiling. Gates:
+///   1. caller is the interactive console (the agent cannot reach this), AND
+///   2. tier <= the console's own clearance (can't grant more than you have), AND
+///   3. password: first call SETS it; later calls must match (ct_eq).
+fn handle_vouch_session(tier: u64, duration_secs: u64, pw_ptr: u64, pw_len: u64) -> u64 {
+    if !is_vouch_authority() {
+        crate::platform::log("[vouch] session DENIED: caller is not the interactive console\n");
+        return 0;
+    }
+    if tier > 3 || (tier as u8) > crate::scheduler::current_task_max_tier() {
+        crate::platform::log("[vouch] session DENIED: tier exceeds caller clearance\n");
+        return 0;
+    }
+    let pw = match unsafe { read_caller_str(pw_ptr, pw_len) } {
+        Some(s) if !s.is_empty() && s.len() <= 64 => s,
+        _ => {
+            crate::platform::log("[vouch] session DENIED: bad password (empty or > 64 chars)\n");
+            return 0;
+        }
+    };
+    let pw_hash = crate::crypto::sha256::hash(pw.as_bytes());
+    let mut s = VOUCH_SESSION.lock();
+    if !s.pw_set {
+        s.pw_hash = pw_hash;
+        s.pw_set = true;
+        crate::platform::log("[vouch] session password set (this console, this boot only)\n");
+    } else if !crate::crypto::ct_eq(&s.pw_hash, &pw_hash) {
+        crate::platform::log("[vouch] session DENIED: wrong password\n");
+        return 0;
+    }
+    if duration_secs == 0 {
+        s.active = false;
+        s.tier = 0;
+        crate::platform::log("[vouch] session revoked — namespace exec ceiling back to 0\n");
+        return 1;
+    }
+    let hz = crate::scheduler::SCHEDULER_TICK_HZ;
+    let now = crate::platform::ticks();
+    s.active = true;
+    s.tier = tier as u8;
+    s.expiry_ticks = now.saturating_add(duration_secs.saturating_mul(hz));
+    crate::platform::log("[vouch] SESSION tier=");
+    crate::platform::log(match tier {
+        0 => "0 (public)    ",
+        1 => "1 (internal)  ",
+        2 => "2 (sensitive) ",
+        _ => "3 (secret)    ",
+    });
+    crate::platform::log(" granted for ");
+    // u64 → decimal without alloc (audit line only).
+    let mut buf = [0u8; 20];
+    let mut v = duration_secs;
+    let mut i = buf.len();
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    crate::platform::log(unsafe { core::str::from_utf8_unchecked(&buf[i..]) });
+    crate::platform::log("s — namespace exec ceiling raised\n");
+    1
+}
+
+/// SYS_GET_VOUCH() -> (tier << 32) | remaining_secs, or 0 when no session is
+/// live. Read-only; any task (the agent included) may query its ceiling so it
+/// can fail fast instead of attempting a spawn that would be fenced.
+fn handle_get_vouch() -> u64 {
+    let tier = session_ceiling(); // also lazily expires
+    if tier == 0 {
+        return 0;
+    }
+    let s = VOUCH_SESSION.lock();
+    let now = crate::platform::ticks();
+    let remaining_secs = s.expiry_ticks.saturating_sub(now) / crate::scheduler::SCHEDULER_TICK_HZ;
+    ((tier as u64) << 32) | remaining_secs
 }
 
 fn handle_spawn(path_ptr: u64, path_len: u64, max_tier: u64, spawn_args_ptr: u64) -> u64 {

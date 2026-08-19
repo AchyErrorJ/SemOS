@@ -883,6 +883,50 @@ fn init_loader_task() {
     #[cfg(feature = "autocompile")]
     demo80_autocompile();
 
+    // `--features netlog-test`: headless SYS_NETLOG smoke. Wait for DHCP so
+    // the UDP send has a source address, then pre-type the shell command
+    // through the TTY line discipline (DEMO 49 pattern — the same entry the
+    // PS/2 ISR and USB HID poll feed). sem-sh's first SYS_READ commits the
+    // line and runs `netlog` for real. 10.0.2.2 is the QEMU slirp host.
+    #[cfg(feature = "netlog-test")]
+    {
+        use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+        for _ in 0..15 {
+            // ~1 s per iteration at the ~62 Hz scheduler tick.
+            kernel_core::net::poll();
+            if kernel_core::net::status().dhcp_configured {
+                break;
+            }
+            let _ = dispatch(SYS_SLEEP, 62, 0, 0, 0);
+        }
+        println!(
+            "[netlog-test] dhcp_configured={} ip={:?} — pre-typing netlog command",
+            kernel_core::net::status().dhcp_configured,
+            kernel_core::net::status().ip
+        );
+        // Three copies: if the first send races ARP/DHCP the shell just runs
+        // it again — each is one `netlog` invocation at the prompt.
+        for _ in 0..3 {
+            for &b in b"netlog 10.0.2.2 9000\n" {
+                tty::input_push(b);
+            }
+        }
+    }
+
+    // `--features vouch-test`: headless session-vouch smoke (plan §3.1).
+    // A kernel task feeds one line at a time into the TTY line discipline
+    // (DEMO 49 pattern), paced by SYS_SLEEP so sem-sh's read_line never
+    // swallows two lines in one SYS_READ. Exercises: password set on first
+    // use, grant, `vouches` audit + countdown, wrong-password denial, expiry
+    // downgrade, re-grant after expiry.
+    #[cfg(feature = "vouch-test")]
+    {
+        match crate::context::spawn_task("vouch-test", vouch_test_task) {
+            Some(slot) => println!("[vouch-test] feeder task in slot {}", slot),
+            None => println!("[vouch-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -894,6 +938,40 @@ fn init_loader_task() {
     // metal without serial, where a frozen framebuffer would otherwise be
     // indistinguishable from a panic'd or wedged kernel.
     idle_with_heartbeat();
+}
+
+/// `--features vouch-test` feeder task: types the session-vouch flow into the
+/// TTY line discipline ONE LINE AT A TIME, paced by SYS_SLEEP. Pacing matters:
+/// sem-sh's read_line drains up to 128 bytes per SYS_READ and splits on '\n',
+/// so lines pushed in a burst arrive as one multi-line blob and the password
+/// prompt ends up consuming command text. Two seconds apart, each line is its
+/// own read.
+#[cfg(feature = "vouch-test")]
+fn vouch_test_task() {
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+    // (line, pause in seconds after pushing it)
+    let script: [(&str, u64); 11] = [
+        ("vouch --session 2 8s\n", 2), // grant tier 2 for 8s (first use: sets password)
+        ("hunter2\n", 2),              // password line
+        ("vouches\n", 2),              // expect: session live, tier 2, ~6s left
+        ("vouch --session 3 1h\n", 2), // prompts…
+        ("wrongpw\n", 2),              // …expect: DENIED (wrong password)
+        ("vouches\n", 2),              // expect: unchanged tier-2 session
+        ("sleep 9\n", 12),             // shell sleeps past the 8s expiry
+        ("vouches\n", 2),              // expect: no live session (ceiling 0)
+        ("vouch --session 2 1h\n", 2), // re-grant after expiry, same password
+        ("hunter2\n", 2),              // expect: granted
+        ("vouches\n", 1),              // expect: tier 2, ~1h left
+    ];
+    // Let the shell spawn and reach its first prompt before typing.
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    for (line, pause) in script {
+        for &b in line.as_bytes() {
+            tty::input_push(b);
+        }
+        let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+    }
+    println!("[vouch-test] feeder done — flow complete");
 }
 
 /// Run the full boot DEMO suite end-to-end. Invoked at boot when
@@ -1583,77 +1661,38 @@ pub(crate) fn run_all_demos() {
 
 }
 
-/// Headless DEMO 80 runner:
-///   semos-rustc /hello.rs -o /tmp/hello.elf
+/// Headless DEMO 80 / self-dev-loop M1 runner:
+///   1. compile:  semos-rustc /hello.rs -o /tmp/hello.elf
+///   2. run:      /tmp/hello.elf > /tmp/hello.out   (via `sem-sh -c`; the
+///      unvouched ELF is fenced to tier 0 by the spawn fence — that sandboxed
+///      spawn IS the M1 milestone, not a workaround)
+///   3. verify:   /tmp/hello.out contains the expected greeting
 ///
 /// Use with QEMU serial, e.g. `cargo build --release --features autocompile`
 /// and boot with a sysroot blob attached as AHCI. Success criteria:
-/// - `semos-rustc` exits 0,
-/// - `/tmp/hello.elf` exists and has non-zero size.
+/// - `semos-rustc` exits 0 and `/tmp/hello.elf` has non-zero size,
+/// - the compiled program runs (fenced, tier 0) and exits 0,
+/// - its captured stdout matches `EXPECTED_HELLO` byte-for-byte.
 #[cfg(feature = "autocompile")]
 fn demo80_autocompile() {
-    use alloc::vec::Vec;
-    use kernel_core::scheduler::{self, TaskState};
-    use kernel_core::syscall::{dispatch, numbers::*, SpawnArgs, StatX};
+    use kernel_core::syscall::{dispatch, numbers::*, StatX};
+
+    const EXPECTED_HELLO: &[u8] = b"Hello, world from bare-metal semos-rustc!\n";
 
     println!();
     println!("================================================================");
-    println!("  DEMO 80 AUTOCOMPILE: semos-rustc /hello.rs -o /tmp/hello.elf");
+    println!("  DEMO 80 M1: compile /hello.rs -> run it -> verify its output");
     println!("================================================================");
 
-    let items: [&str; 4] = ["/bin/semos-rustc", "/hello.rs", "-o", "/tmp/hello.elf"];
-    let mut argv_blob: Vec<u8> = Vec::new();
-    argv_blob.extend_from_slice(&(items.len() as u32).to_le_bytes());
-    for it in items {
-        argv_blob.extend_from_slice(&(it.len() as u32).to_le_bytes());
-        argv_blob.extend_from_slice(it.as_bytes());
-    }
-
-    let spawn_args = SpawnArgs {
-        argv_blob_ptr: argv_blob.as_ptr() as u64,
-        argv_blob_len: argv_blob.len() as u32,
-        envp_blob_ptr: 0,
-        envp_blob_len: 0,
-    };
-
-    let path = "/bin/semos-rustc";
-    let pid = dispatch(
-        SYS_SPAWN,
-        path.as_ptr() as u64,
-        path.len() as u64,
+    // --- Phase 1: compile -------------------------------------------------
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", "/hello.rs", "-o", "/tmp/hello.elf"],
         3, // trusted user tier, matching manual interactive-shell use
-        &spawn_args as *const SpawnArgs as u64,
-    );
-    if pid == u64::MAX {
-        println!("  [DEMO 80] FAIL: SYS_SPAWN({}) returned MAX", path);
-        return;
-    }
-    println!("  [DEMO 80] spawned semos-rustc PID {}", pid);
-
-    let process_id = kernel_core::process::ProcessId(pid as u32);
-    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
-        Some(s) => s,
-        None => {
-            println!("  [DEMO 80] FAIL: PID {} has no task_id", pid);
-            return;
-        }
+    ) {
+        Some(c) => c,
+        None => return,
     };
-
-    let mut polled = 0u64;
-    loop {
-        if scheduler::task_state(slot) == TaskState::Exited {
-            break;
-        }
-        if polled > 120_000 {
-            println!("  [DEMO 80] FAIL: semos-rustc did not exit within 120000 ticks");
-            return;
-        }
-        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
-        polled += 1;
-    }
-
-    let code = scheduler::task_exit_code(slot);
-    println!("  [DEMO 80] semos-rustc exited code={} after {} ticks", code, polled);
     if code != 0 {
         println!("  [DEMO 80] FAIL: compiler returned non-zero");
         return;
@@ -1685,7 +1724,125 @@ fn demo80_autocompile() {
         println!("  [DEMO 80] FAIL: {} exists but size is 0", out_path);
         return;
     }
-    println!("  [DEMO 80] PASS: {} written ({} bytes)", out_path, st.size);
+    println!("  [DEMO 80] compile OK: {} ({} bytes)", out_path, st.size);
+
+    // --- Phase 2: run the freshly compiled ELF ----------------------------
+    // `sem-sh -c` handles the fd redirection and exits with the program's
+    // status. /tmp/hello.elf is unvouched, so the spawn fence runs it at
+    // tier 0 — the sandboxed-agent-tool case the self-dev loop targets.
+    let code = match demo80_spawn_wait(
+        "/bin/sem-sh",
+        &["/bin/sem-sh", "-c", "/tmp/hello.elf > /tmp/hello.out"],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 80] FAIL: compiled program exited code={}", code);
+        return;
+    }
+
+    // --- Phase 3: verify the captured output ------------------------------
+    let cap_path = "/tmp/hello.out";
+    let fd = dispatch(SYS_OPEN, cap_path.as_ptr() as u64, cap_path.len() as u64, 0, 0);
+    if fd == u64::MAX {
+        println!("  [DEMO 80] FAIL: open({}) failed", cap_path);
+        return;
+    }
+    let mut captured = alloc::vec::Vec::new();
+    let mut buf = [0u8; 256];
+    loop {
+        let n = dispatch(SYS_FREAD, fd, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+        if n == u64::MAX {
+            println!("  [DEMO 80] FAIL: read({}) errored", cap_path);
+            let _ = dispatch(SYS_CLOSE, fd, 0, 0, 0);
+            return;
+        }
+        if n == 0 {
+            break;
+        }
+        captured.extend_from_slice(&buf[..n as usize]);
+    }
+    let _ = dispatch(SYS_CLOSE, fd, 0, 0, 0);
+
+    if captured != EXPECTED_HELLO {
+        println!(
+            "  [DEMO 80] FAIL: output mismatch ({} bytes): {:?}",
+            captured.len(),
+            core::str::from_utf8(&captured).unwrap_or("<non-utf8>")
+        );
+        return;
+    }
+    println!(
+        "  [DEMO 80] run OK: tier-0 fenced spawn printed {:?}",
+        core::str::from_utf8(EXPECTED_HELLO).unwrap_or("")
+            .trim_end()
+    );
+    println!("  [DEMO 80] PASS: M1 hello loop — write/compile/spawn/verify end-to-end");
+}
+
+/// Spawn `path` with `args` (argv[0] included) at `tier`, poll until it exits,
+/// and return its exit code. `None` on spawn failure, missing task slot, or
+/// timeout. Shared by the DEMO 80 compile and run phases.
+#[cfg(feature = "autocompile")]
+fn demo80_spawn_wait(path: &str, args: &[&str], tier: u64) -> Option<u64> {
+    use alloc::vec::Vec;
+    use kernel_core::scheduler::{self, TaskState};
+    use kernel_core::syscall::{dispatch, numbers::*, SpawnArgs};
+
+    let mut argv_blob: Vec<u8> = Vec::new();
+    argv_blob.extend_from_slice(&(args.len() as u32).to_le_bytes());
+    for it in args {
+        argv_blob.extend_from_slice(&(it.len() as u32).to_le_bytes());
+        argv_blob.extend_from_slice(it.as_bytes());
+    }
+
+    let spawn_args = SpawnArgs {
+        argv_blob_ptr: argv_blob.as_ptr() as u64,
+        argv_blob_len: argv_blob.len() as u32,
+        envp_blob_ptr: 0,
+        envp_blob_len: 0,
+    };
+
+    let pid = dispatch(
+        SYS_SPAWN,
+        path.as_ptr() as u64,
+        path.len() as u64,
+        tier,
+        &spawn_args as *const SpawnArgs as u64,
+    );
+    if pid == u64::MAX {
+        println!("  [DEMO 80] FAIL: SYS_SPAWN({}) returned MAX", path);
+        return None;
+    }
+    println!("  [DEMO 80] spawned {} PID {}", path, pid);
+
+    let process_id = kernel_core::process::ProcessId(pid as u32);
+    let slot = match kernel_core::process::get(process_id).and_then(|p| p.task_id) {
+        Some(s) => s,
+        None => {
+            println!("  [DEMO 80] FAIL: PID {} has no task_id", pid);
+            return None;
+        }
+    };
+
+    let mut polled = 0u64;
+    loop {
+        if scheduler::task_state(slot) == TaskState::Exited {
+            break;
+        }
+        if polled > 120_000 {
+            println!("  [DEMO 80] FAIL: {} did not exit within 120000 ticks", path);
+            return None;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        polled += 1;
+    }
+
+    let code = scheduler::task_exit_code(slot);
+    println!("  [DEMO 80] {} exited code={} after {} ticks", path, code, polled);
+    Some(code)
 }
 
 /// Enable SSE and SSE2 instructions.
