@@ -48,6 +48,8 @@ not code**, so it updates live AND survives a kernel rebuild for free.
 
 **M1 hello loop — DONE 2026-08-19 (QEMU):** `--features autocompile` boots to `demo80_autocompile`, which compiles `/hello.rs` with on-device semos-rustc (disk-blob sysroot, .rlib), spawns the ELF via `sem-sh -c` **fenced at tier 0**, and verifies its captured stdout byte-for-byte (`[DEMO 80] PASS: M1 hello loop`).
 
+**M2 bug fix — DONE 2026-08-19 (QEMU):** same `autocompile` boot now runs `demo83_bugfix` after DEMO 80: seeds `/tmp/agentgen/m2/` with a bug report + buggy `calc.rs`, reproduces the failing selftest, writes the fix, recompiles, verifies byte-exact, then asks the human on serial (`Install /apps/calc? [y/N]`, fail-fast on n/timeout) before an atomic `/apps/.staging` rename install and a bare-name tier-0 smoke run. Approve and deny paths both PASS.
+
 **Remaining for the headline demo:** an agent tool that drops a compiled ELF at
 `/apps/<name>` and spawns it at **tier 0**; then the demo — "ask the agent to add a
 `greet` command, it works seconds later, the kernel never rebuilt." The tier-0

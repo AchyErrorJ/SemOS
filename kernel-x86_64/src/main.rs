@@ -883,6 +883,11 @@ fn init_loader_task() {
     #[cfg(feature = "autocompile")]
     demo80_autocompile();
 
+    // DEMO 83 / self-dev-loop M2: scripted agent bug fix with a real
+    // human-approval prompt on the serial console before the /apps install.
+    #[cfg(feature = "autocompile")]
+    demo83_bugfix();
+
     // `--features netlog-test`: headless SYS_NETLOG smoke. Wait for DHCP so
     // the UDP send has a source address, then pre-type the shell command
     // through the TTY line discipline (DEMO 49 pattern — the same entry the
@@ -1843,6 +1848,289 @@ fn demo80_spawn_wait(path: &str, args: &[&str], tier: u64) -> Option<u64> {
     let code = scheduler::task_exit_code(slot);
     println!("  [DEMO 80] {} exited code={} after {} ticks", path, code, polled);
     Some(code)
+}
+
+
+/// Headless DEMO 83 / self-dev-loop M2 runner: scripted agent bug fix.
+///   1. seed:      /tmp/agentgen/m2/{bug-report.txt,src/calc.rs}  (buggy)
+///   2. reproduce: compile + run -> selftest FAILS (bug confirmed; a PASS
+///      here is a demo failure)
+///   3. fix:       the "agent" rewrites src/calc.rs, recompiles
+///   4. verify:    re-run -> selftest PASSES (exit 0 + exact stdout)
+///   5. approve:   human answers "Install /apps/calc? [y/N]" on the serial
+///      console. Fail-fast per the plan: n / any other key / timeout = DENY.
+///   6. install:   atomic staging rename -> /apps/calc, then a post-install
+///      smoke run by BARE NAME via sem-sh's $PATH (/bin:/apps). The installed
+///      ELF is unvouched, so the spawn fence still runs it at tier 0.
+///
+/// The agent steps are scripted (const fixed source), same as M1 — the
+/// milestone is the loop machinery: reproduce/fix/verify + the approval gate.
+/// The approval prompt is real and interactive over serial; serial RX is not
+/// wired into the TTY, so the prompt polls `Serial::getc()` directly.
+#[cfg(feature = "autocompile")]
+fn demo83_bugfix() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    use kernel_core::syscall::{dispatch, numbers::*, StatX};
+
+    const CALC_BUGGY: &[u8] =
+        include_bytes!("../../user-programs/semos-rustc/test-sources/calc-buggy.rs");
+    const CALC_FIXED: &[u8] =
+        include_bytes!("../../user-programs/semos-rustc/test-sources/calc-fixed.rs");
+    const BUG_REPORT: &[u8] = b"M2 bug report: calc selftest fails - sum_to(100) returns 4950, expected 5050. Suspect off-by-one in the accumulator loop.\n";
+    const EXPECT_PASS: &[u8] = b"calc selftest PASS: sum_to(100) = 5050\n";
+
+    const SRC: &str = "/tmp/agentgen/m2/src/calc.rs";
+    const ELF: &str = "/tmp/agentgen/m2/out/calc";
+    const TEST1_OUT: &str = "/tmp/agentgen/m2/out/test1.out";
+    const TEST2_OUT: &str = "/tmp/agentgen/m2/out/test2.out";
+    const TEST3_OUT: &str = "/tmp/agentgen/m2/out/test3.out";
+
+    println!();
+    println!("================================================================");
+    println!("  DEMO 83 M2: bug report -> fix -> verify -> approved install");
+    println!("================================================================");
+
+    // --- Phase 1: seed the scratch workspace -------------------------------
+    for d in [
+        "/tmp/agentgen",
+        "/tmp/agentgen/m2",
+        "/tmp/agentgen/m2/src",
+        "/tmp/agentgen/m2/out",
+    ] {
+        let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+    }
+    let _ = Namespace::unlink("/tmp/agentgen/m2/bug-report.txt");
+    let _ = Namespace::unlink(SRC);
+    let seeded = Namespace::create_file(
+        "/tmp/agentgen/m2/bug-report.txt",
+        SecurityTier::Public,
+        BUG_REPORT,
+    )
+    .is_ok()
+        && Namespace::create_file(SRC, SecurityTier::Public, CALC_BUGGY).is_ok();
+    if !seeded {
+        println!("  [DEMO 83] FAIL: could not seed scratch workspace");
+        return;
+    }
+    println!("  [DEMO 83] bug report + buggy source seeded in /tmp/agentgen/m2");
+
+    // --- Phase 2: reproduce the bug -----------------------------------------
+    let _ = Namespace::unlink(ELF);
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", SRC, "-o", ELF],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 83] FAIL: buggy source did not compile (code={})", code);
+        return;
+    }
+    let _ = Namespace::unlink(TEST1_OUT);
+    let run1 = [
+        "/bin/sem-sh",
+        "-c",
+        "/tmp/agentgen/m2/out/calc > /tmp/agentgen/m2/out/test1.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run1, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code == 0 {
+        println!("  [DEMO 83] FAIL: buggy build PASSED its selftest — bug not reproduced");
+        return;
+    }
+    println!(
+        "  [DEMO 83] bug reproduced: selftest exit={} (expected non-zero)",
+        code
+    );
+
+    // --- Phase 3: agent writes the fix --------------------------------------
+    let _ = Namespace::unlink(SRC);
+    if Namespace::create_file(SRC, SecurityTier::Public, CALC_FIXED).is_err() {
+        println!("  [DEMO 83] FAIL: could not write fixed source");
+        return;
+    }
+    let _ = Namespace::unlink(ELF);
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", SRC, "-o", ELF],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 83] FAIL: fixed source did not compile (code={})", code);
+        return;
+    }
+    println!("  [DEMO 83] fix written + recompiled: {}", ELF);
+
+    // --- Phase 4: verify the fix --------------------------------------------
+    let _ = Namespace::unlink(TEST2_OUT);
+    let run2 = [
+        "/bin/sem-sh",
+        "-c",
+        "/tmp/agentgen/m2/out/calc > /tmp/agentgen/m2/out/test2.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run2, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 83] FAIL: fixed build still fails selftest (code={})", code);
+        return;
+    }
+    match demo83_read_file(TEST2_OUT) {
+        Some(out) if out == EXPECT_PASS => {}
+        Some(out) => {
+            println!(
+                "  [DEMO 83] FAIL: fixed build output mismatch: {:?}",
+                core::str::from_utf8(&out).unwrap_or("<non-utf8>")
+            );
+            return;
+        }
+        None => {
+            println!("  [DEMO 83] FAIL: could not read {}", TEST2_OUT);
+            return;
+        }
+    }
+    println!("  [DEMO 83] fix verified: selftest PASS, output byte-exact");
+
+    // --- Phase 5: human approval (fail-fast) --------------------------------
+    // ~58 s at the ~62 Hz scheduler tick. Deny on n / any other key / timeout.
+    let approved = demo83_prompt_serial("  Install /apps/calc? [y/N] ", 3600);
+    if !approved {
+        println!("[AUDIT] DENY install /apps/calc reason=denied_or_timeout (fail-fast)");
+        println!("  [DEMO 83] SKIP-INSTALL: no human approval — /apps untouched");
+        println!("  [DEMO 83] PASS(partial): bug reproduced + fix verified; install gated");
+        return;
+    }
+    println!("[AUDIT] APPROVE install /apps/calc by=human tty=/dev/ttyS0");
+
+    // --- Phase 6: atomic install via staging rename --------------------------
+    let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, 5, 0, 0);
+    let staging_dir = "/apps/.staging";
+    let _ = dispatch(
+        SYS_MKDIR,
+        staging_dir.as_ptr() as u64,
+        staging_dir.len() as u64,
+        0,
+        0,
+    );
+    let _ = Namespace::unlink("/apps/calc");
+    let _ = Namespace::unlink("/apps/.staging/calc");
+    if Namespace::rename(ELF, "/apps/.staging/calc").is_err()
+        || Namespace::rename("/apps/.staging/calc", "/apps/calc").is_err()
+    {
+        println!("  [DEMO 83] FAIL: staging rename into /apps failed");
+        return;
+    }
+    let mut st = StatX {
+        size: 0,
+        suid_high: 0,
+        suid_low: 0,
+        created_at: 0,
+        modified_at: 0,
+        file_type: 0,
+        tier: 0,
+        _reserved: [0; 3],
+    };
+    let app = "/apps/calc";
+    let rc = dispatch(
+        SYS_STATX,
+        app.as_ptr() as u64,
+        app.len() as u64,
+        &mut st as *mut _ as u64,
+        0,
+    );
+    if rc != 0 || st.size == 0 {
+        println!("  [DEMO 83] FAIL: statx(/apps/calc) rc={} size={}", rc, st.size);
+        return;
+    }
+    println!("  [DEMO 83] installed: /apps/calc ({} bytes, via /apps/.staging)", st.size);
+
+    // --- Phase 7: post-install smoke by bare name ----------------------------
+    // sem-sh's $PATH is /bin:/apps, so `calc` resolves to the fresh install.
+    // Unvouched namespace ELF -> spawn fence runs it at tier 0.
+    let _ = Namespace::unlink(TEST3_OUT);
+    let run3 = [
+        "/bin/sem-sh",
+        "-c",
+        "calc > /tmp/agentgen/m2/out/test3.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run3, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 83] FAIL: installed calc exited code={}", code);
+        return;
+    }
+    match demo83_read_file(TEST3_OUT) {
+        Some(out) if out == EXPECT_PASS => {}
+        _ => {
+            println!("  [DEMO 83] FAIL: installed calc output mismatch");
+            return;
+        }
+    }
+    println!("  [DEMO 83] post-install smoke OK: bare `calc` ran fenced at tier 0");
+    println!("  [DEMO 83] PASS: M2 bug fix — reproduce/fix/verify/approve/install end-to-end");
+}
+
+/// Print `prompt` on the serial console and wait up to `timeout_ticks`
+/// scheduler ticks for a human keypress. `y`/`Y` approves; anything else —
+/// including the timeout — denies (fail-fast, plan section 4 decision 2).
+/// Polls `Serial::getc()` directly: serial RX is not wired into the TTY.
+#[cfg(feature = "autocompile")]
+fn demo83_prompt_serial(prompt: &str, timeout_ticks: u64) -> bool {
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    print!("{}", prompt);
+    let mut waited = 0u64;
+    loop {
+        if let Some(b) = crate::serial::Serial::getc() {
+            let yes = b == b'y' || b == b'Y';
+            println!("{}", if yes { "y" } else { "n" });
+            return yes;
+        }
+        if waited >= timeout_ticks {
+            println!("(no answer — timeout)");
+            return false;
+        }
+        let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
+        waited += 1;
+    }
+}
+
+/// Read a namespace file fully via SYS_OPEN + SYS_FREAD (kernel-context demo
+/// helper — same loop as DEMO 80 phase 3). `None` on open/read error.
+#[cfg(feature = "autocompile")]
+fn demo83_read_file(path: &str) -> Option<alloc::vec::Vec<u8>> {
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    let fd = dispatch(SYS_OPEN, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if fd == u64::MAX {
+        return None;
+    }
+    let mut out = alloc::vec::Vec::new();
+    let mut buf = [0u8; 256];
+    loop {
+        let n = dispatch(SYS_FREAD, fd, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+        if n == u64::MAX {
+            let _ = dispatch(SYS_CLOSE, fd, 0, 0, 0);
+            return None;
+        }
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n as usize]);
+    }
+    let _ = dispatch(SYS_CLOSE, fd, 0, 0, 0);
+    Some(out)
 }
 
 /// Enable SSE and SSE2 instructions.
