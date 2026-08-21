@@ -173,7 +173,7 @@ Every vouch grant, every approval, every denial is logged:
 |-----------|-------------------|
 | M1: Hello Loop | ✅ DONE 2026-08-19 (QEMU): `demo80_autocompile` compiles `/hello.rs` → runs the ELF fenced at tier 0 via `sem-sh -c` → verifies captured stdout byte-for-byte. Human-approve-on-spawn still open (spawn fence covers it for now) |
 | M2: Bug Fix | ✅ DONE 2026-08-19 (QEMU): `demo83_bugfix` seeds a bug report + buggy `calc.rs` in `/tmp/agentgen/m2/`, reproduces the failing selftest, writes the fix, recompiles, verifies byte-exact PASS, prompts `Install /apps/calc? [y/N]` on serial (fail-fast: deny on n/timeout), installs via `/apps/.staging` rename, and smoke-runs it by bare name fenced at tier 0. Both approve and deny runs verified |
-| M3: Feature Add | Agent adds a new syscall or driver module, compiles, tests in isolation, installs |
+| M3: Feature Add | ✅ DONE 2026-08-21 (QEMU): `demo87_featureadd` seeds a feature spec + `wc.rs` + sample data in `/tmp/agentgen/m3/`, compiles with the on-device rustc, tests in isolation (byte-exact `3 15 79` — first guest file read via new `sys_open`/`sys_fread`/`sys_close` aot_semos stubs), prompts `Install /apps/wc? [y/N]` (fail-fast), installs via `/apps/.staging`, smoke-runs bare `wc` fenced at tier 0. Both approve and deny runs verified. Required two real bug fixes: syscall_entry clobbered callee-saved `r15` on every syscall (user RSP stashed in r15 before it was saved), and the `sys_fread` stub was 7 bytes (missing imm32 zero) |
 | M4: Self-Repair | Agent detects its own failure (panic log), writes patch, compiles, installs — minimal human intervention |
 
 ---

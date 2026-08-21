@@ -97,22 +97,30 @@ pub fn init() {
 /// kernel stack immediately, before pushing anything.
 ///
 /// Flow:
-///   1. Swap to kernel stack (save user RSP in a scratch register)
+///   1. Swap to kernel stack (save user RSP in a scratch memory slot)
 ///   2. Save user context on kernel stack
 ///   3. Remap registers to dispatch(num, arg0, arg1, arg2, arg3)
 ///   4. Call dispatch
 ///   5. Restore user context
 ///   6. Swap back to user stack
 ///   7. SYSRETQ
+///
+/// Scratch slot for the user RSP during entry. Using r15 as the scratch
+/// instead clobbered the guest's callee-saved r15 with its own RSP on EVERY
+/// syscall (M3 probe-open caught it: cg_clif cached `fd` in r15 across two
+/// syscalls and got its stack pointer back). SFMASK masks IF on entry and we
+/// don't `sti` until the scratch has been pushed onto the kernel stack, so
+/// the single global is race-free on this UP kernel.
+pub static mut USER_RSP_SCRATCH: u64 = 0;
+
 #[unsafe(naked)]
 extern "C" fn syscall_entry() {
     core::arch::naked_asm!(
         // --- Step 1: Switch to kernel stack ---
-        // Save user RSP in a scratch location. We use SWAPGS-style manual swap:
-        // r15 is callee-saved — we'll save it on the kernel stack shortly.
-        // For now, stash user RSP in r15 temporarily.
-        "mov r15, rsp",                     // r15 = user RSP
-        "mov rsp, [rip + {kernel_rsp}]",    // rsp = kernel RSP
+        // Stash user RSP in the scratch slot (NOT r15 — the guest's r15 is
+        // live state we must preserve; see USER_RSP_SCRATCH above).
+        "mov [rip + {user_rsp_scratch}], rsp", // scratch = user RSP
+        "mov rsp, [rip + {kernel_rsp}]",       // rsp = kernel RSP
 
         // --- Step 2: Save user context on kernel stack ---
         // Linux x86-64 syscall convention: only rcx and r11 are clobbered,
@@ -120,7 +128,7 @@ extern "C" fn syscall_entry() {
         // arg registers (rdi/rsi/rdx/r10/r8/r9), so we save them here and
         // restore after dispatch — otherwise compilers (rightly) assume
         // rdx/rsi/etc. survive a syscall and miscompile user code.
-        "push r15",          // user RSP
+        "push qword ptr [rip + {user_rsp_scratch}]", // user RSP
         "push rcx",          // user RIP (SYSCALL saved it in RCX)
         "push r11",          // user RFLAGS (SYSCALL saved it in R11)
         "push rbp",
@@ -128,7 +136,7 @@ extern "C" fn syscall_entry() {
         "push r12",
         "push r13",
         "push r14",
-        "push r15",          // save r15 again (we clobbered it for user RSP)
+        "push r15",          // guest's callee-saved r15 (preserved this time!)
         "push r9",           // user arg5 — preserve across dispatch
         "push r8",           // user arg4
         "push r10",          // user arg3
@@ -165,7 +173,7 @@ extern "C" fn syscall_entry() {
         "pop r9",
 
         // --- Step 5b: Restore callee-saved + sysret regs ---
-        "pop r15",           // (the extra r15 save)
+        "pop r15",           // guest's callee-saved r15
         "pop r14",
         "pop r13",
         "pop r12",
@@ -183,6 +191,7 @@ extern "C" fn syscall_entry() {
 
         dispatch = sym kernel_core::syscall::dispatch,
         kernel_rsp = sym crate::gdt::KERNEL_RSP,
+        user_rsp_scratch = sym USER_RSP_SCRATCH,
     );
 }
 

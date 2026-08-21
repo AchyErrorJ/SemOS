@@ -888,6 +888,12 @@ fn init_loader_task() {
     #[cfg(feature = "autocompile")]
     demo83_bugfix();
 
+    // DEMO 87 / self-dev-loop M3: scripted agent FEATURE add — the `wc`
+    // tool, first guest to read files via the new sys_open/sys_fread/
+    // sys_close stubs. Same human-approval gate as M2.
+    #[cfg(feature = "autocompile")]
+    demo87_featureadd();
+
     // `--features netlog-test`: headless SYS_NETLOG smoke. Wait for DHCP so
     // the UDP send has a source address, then pre-type the shell command
     // through the TTY line discipline (DEMO 49 pattern — the same entry the
@@ -1692,7 +1698,7 @@ fn demo80_autocompile() {
     // --- Phase 1: compile -------------------------------------------------
     let code = match demo80_spawn_wait(
         "/bin/semos-rustc",
-        &["/bin/semos-rustc", "/hello.rs", "-o", "/tmp/hello.elf"],
+        &["/bin/semos-rustc", "/hello.rs", "-o", "/tmp/hello.elf", "-C", "overflow-checks=off"],
         3, // trusted user tier, matching manual interactive-shell use
     ) {
         Some(c) => c,
@@ -1919,7 +1925,7 @@ fn demo83_bugfix() {
     let _ = Namespace::unlink(ELF);
     let code = match demo80_spawn_wait(
         "/bin/semos-rustc",
-        &["/bin/semos-rustc", SRC, "-o", ELF],
+        &["/bin/semos-rustc", SRC, "-o", ELF, "-C", "overflow-checks=off"],
         3,
     ) {
         Some(c) => c,
@@ -1957,7 +1963,7 @@ fn demo83_bugfix() {
     let _ = Namespace::unlink(ELF);
     let code = match demo80_spawn_wait(
         "/bin/semos-rustc",
-        &["/bin/semos-rustc", SRC, "-o", ELF],
+        &["/bin/semos-rustc", SRC, "-o", ELF, "-C", "overflow-checks=off"],
         3,
     ) {
         Some(c) => c,
@@ -2131,6 +2137,217 @@ fn demo83_read_file(path: &str) -> Option<alloc::vec::Vec<u8>> {
     }
     let _ = dispatch(SYS_CLOSE, fd, 0, 0, 0);
     Some(out)
+}
+
+
+/// Headless DEMO 87 / self-dev-loop M3 runner: scripted agent FEATURE add.
+///   1. seed:    /tmp/agentgen/m3/{feature-spec.txt,src/wc.rs,data/sample.txt}
+///   2. compile: semos-rustc builds wc — the first guest to READ a file,
+///      via the sys_open/sys_fread/sys_close stubs added to aot_semos for M3
+///   3. test:    run in isolation; stdout must byte-match the expected
+///      line/word/byte counts (computed here from the same sample bytes)
+///   4. approve: same fail-fast serial prompt as M2
+///   5. install: staging rename -> /apps/wc + bare-name tier-0 smoke run
+///
+/// wc has no argv (cg_clif has no assembler for the rsp-grab trampoline
+/// std-shim uses), so its input path is compiled in — documented in wc.rs.
+#[cfg(feature = "autocompile")]
+fn demo87_featureadd() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    use kernel_core::syscall::{dispatch, numbers::*, StatX};
+
+    const WC_SRC: &[u8] =
+        include_bytes!("../../user-programs/semos-rustc/test-sources/wc.rs");
+    const FEATURE_SPEC: &[u8] = b"M3 feature spec: add a `wc` tool - read a file and print its line/word/byte counts. First guest program to use the new sys_open/sys_fread/sys_close stubs. Test: byte-exact counts of /tmp/agentgen/m3/data/sample.txt.\n";
+    const SAMPLE: &[u8] = b"the quick brown fox\njumps over the lazy dog\nsemos agents write their own tools\n";
+
+    const SRC: &str = "/tmp/agentgen/m3/src/wc.rs";
+    const ELF: &str = "/tmp/agentgen/m3/out/wc";
+    const TEST1_OUT: &str = "/tmp/agentgen/m3/out/test1.out";
+    const TEST2_OUT: &str = "/tmp/agentgen/m3/out/test2.out";
+
+    println!();
+    println!("================================================================");
+    println!("  DEMO 87 M3: feature spec -> add `wc` -> test -> approved install");
+    println!("================================================================");
+
+    // Expected counts, computed from the same bytes the guest will count.
+    let mut exp_lines = 0u64;
+    let mut exp_words = 0u64;
+    let mut in_word = false;
+    for &b in SAMPLE {
+        if b == b'\n' {
+            exp_lines += 1;
+        }
+        let space = matches!(b, b' ' | b'\n' | b'\t' | b'\r');
+        if space {
+            in_word = false;
+        } else if !in_word {
+            in_word = true;
+            exp_words += 1;
+        }
+    }
+    let expected = alloc::format!("{} {} {}\n", exp_lines, exp_words, SAMPLE.len());
+
+    // --- Phase 1: seed the scratch workspace -------------------------------
+    for d in [
+        "/tmp/agentgen/m3",
+        "/tmp/agentgen/m3/src",
+        "/tmp/agentgen/m3/out",
+        "/tmp/agentgen/m3/data",
+    ] {
+        let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+    }
+    let _ = Namespace::unlink("/tmp/agentgen/m3/feature-spec.txt");
+    let _ = Namespace::unlink(SRC);
+    let _ = Namespace::unlink("/tmp/agentgen/m3/data/sample.txt");
+    let seeded = Namespace::create_file(
+        "/tmp/agentgen/m3/feature-spec.txt",
+        SecurityTier::Public,
+        FEATURE_SPEC,
+    )
+    .is_ok()
+        && Namespace::create_file(SRC, SecurityTier::Public, WC_SRC).is_ok()
+        && Namespace::create_file(
+            "/tmp/agentgen/m3/data/sample.txt",
+            SecurityTier::Public,
+            SAMPLE,
+        )
+        .is_ok();
+    if !seeded {
+        println!("  [DEMO 87] FAIL: could not seed scratch workspace");
+        return;
+    }
+    println!("  [DEMO 87] feature spec + wc.rs + sample data seeded in /tmp/agentgen/m3");
+
+    // --- Phase 2: compile the new tool --------------------------------------
+    let _ = Namespace::unlink(ELF);
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", SRC, "-o", ELF, "-C", "overflow-checks=off"],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 87] FAIL: wc.rs did not compile (code={})", code);
+        return;
+    }
+    println!("  [DEMO 87] compiled: {}", ELF);
+
+    // --- Phase 3: test in isolation -----------------------------------------
+    let _ = Namespace::unlink(TEST1_OUT);
+    let run1 = [
+        "/bin/sem-sh",
+        "-c",
+        "/tmp/agentgen/m3/out/wc > /tmp/agentgen/m3/out/test1.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run1, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 87] FAIL: wc exited code={}", code);
+        return;
+    }
+    match demo83_read_file(TEST1_OUT) {
+        Some(out) if out == expected.as_bytes() => {}
+        Some(out) => {
+            println!(
+                "  [DEMO 87] FAIL: count mismatch: got {:?}, want {:?}",
+                core::str::from_utf8(&out).unwrap_or("<non-utf8>"),
+                expected
+            );
+            return;
+        }
+        None => {
+            println!("  [DEMO 87] FAIL: could not read {}", TEST1_OUT);
+            return;
+        }
+    }
+    println!(
+        "  [DEMO 87] isolation test PASS: wc printed {:?} (first guest file read)",
+        expected.trim_end()
+    );
+
+    // --- Phase 4: human approval (fail-fast) --------------------------------
+    let approved = demo83_prompt_serial("  Install /apps/wc? [y/N] ", 3600);
+    if !approved {
+        println!("[AUDIT] DENY install /apps/wc reason=denied_or_timeout (fail-fast)");
+        println!("  [DEMO 87] SKIP-INSTALL: no human approval — /apps untouched");
+        println!("  [DEMO 87] PASS(partial): feature added + tested; install gated");
+        return;
+    }
+    println!("[AUDIT] APPROVE install /apps/wc by=human tty=/dev/ttyS0");
+
+    // --- Phase 5: atomic install via staging rename --------------------------
+    let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, 5, 0, 0);
+    let staging_dir = "/apps/.staging";
+    let _ = dispatch(
+        SYS_MKDIR,
+        staging_dir.as_ptr() as u64,
+        staging_dir.len() as u64,
+        0,
+        0,
+    );
+    let _ = Namespace::unlink("/apps/wc");
+    let _ = Namespace::unlink("/apps/.staging/wc");
+    if Namespace::rename(ELF, "/apps/.staging/wc").is_err()
+        || Namespace::rename("/apps/.staging/wc", "/apps/wc").is_err()
+    {
+        println!("  [DEMO 87] FAIL: staging rename into /apps failed");
+        return;
+    }
+    let mut st = StatX {
+        size: 0,
+        suid_high: 0,
+        suid_low: 0,
+        created_at: 0,
+        modified_at: 0,
+        file_type: 0,
+        tier: 0,
+        _reserved: [0; 3],
+    };
+    let app = "/apps/wc";
+    let rc = dispatch(
+        SYS_STATX,
+        app.as_ptr() as u64,
+        app.len() as u64,
+        &mut st as *mut _ as u64,
+        0,
+    );
+    if rc != 0 || st.size == 0 {
+        println!("  [DEMO 87] FAIL: statx(/apps/wc) rc={} size={}", rc, st.size);
+        return;
+    }
+    println!("  [DEMO 87] installed: /apps/wc ({} bytes, via /apps/.staging)", st.size);
+
+    // --- Phase 6: post-install smoke by bare name ----------------------------
+    let _ = Namespace::unlink(TEST2_OUT);
+    let run2 = [
+        "/bin/sem-sh",
+        "-c",
+        "wc > /tmp/agentgen/m3/out/test2.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run2, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 87] FAIL: installed wc exited code={}", code);
+        return;
+    }
+    match demo83_read_file(TEST2_OUT) {
+        Some(out) if out == expected.as_bytes() => {}
+        _ => {
+            println!("  [DEMO 87] FAIL: installed wc output mismatch");
+            return;
+        }
+    }
+    println!("  [DEMO 87] post-install smoke OK: bare `wc` ran fenced at tier 0");
+    println!("  [DEMO 87] PASS: M3 feature add — spec/compile/test/approve/install end-to-end");
 }
 
 /// Enable SSE and SSE2 instructions.

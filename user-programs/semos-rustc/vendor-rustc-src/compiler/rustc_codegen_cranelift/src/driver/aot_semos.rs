@@ -237,6 +237,40 @@ fn known_stub(name: &str) -> Option<&'static [u8]> {
         "sys_write" => Some(&[0xB8, 0x0D, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xC3]),
         // sys_exit(code): SYS_EXIT = 2 (noreturn; ret never reached)
         "sys_exit" => Some(&[0xB8, 0x02, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xC3]),
+        // M3: file-read trio, so generated programs can consume namespace
+        // files (first user: the `wc` tool, DEMO 84). SysV args line up with
+        // the kernel handlers: rdi/rsi/rdx = (path_ptr, path_len, flags) /
+        // (fd) / (fd, buf, len). rax carries the return (fd / 0 / bytes).
+        // sys_open(path_ptr, path_len, flags): SYS_OPEN = 10
+        "sys_open" => Some(&[0xB8, 0x0A, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xC3]),
+        // sys_close(fd): SYS_CLOSE = 11
+        "sys_close" => Some(&[0xB8, 0x0B, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xC3]),
+        // sys_fread(fd, buf, len): SYS_FREAD = 12
+        "sys_fread" => Some(&[0xB8, 0x0C, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xC3]),
+        // M3: compiler-rt memory intrinsics. cg_clif lowers aggregate init /
+        // copies to calls to these; without them any guest with a buffer
+        // fails to link ("GOT symbol `memset` unresolved").
+        //
+        // memset(dst=rdi, val=esi, n=rdx) -> dst:
+        //   mov r8, rdi; mov eax, esi; mov rcx, rdx; cld; rep stosb;
+        //   mov rax, r8; ret
+        "memset" => Some(&[
+            0x49, 0x89, 0xF8, 0x89, 0xF0, 0x48, 0x89, 0xD1, 0xFC, 0xF3, 0xAA, 0x4C, 0x89, 0xC0,
+            0xC3,
+        ]),
+        // memcpy(dst=rdi, src=rsi, n=rdx) -> dst:
+        //   mov r8, rdi; mov rcx, rdx; cld; rep movsb; mov rax, r8; ret
+        "memcpy" => Some(&[
+            0x49, 0x89, 0xF8, 0x48, 0x89, 0xD1, 0xFC, 0xF3, 0xA4, 0x4C, 0x89, 0xC0, 0xC3,
+        ]),
+        // memcmp(a=rdi, b=rsi, n=rdx) -> i32 (sign of first diff, 0 if equal):
+        //   test rdx, rdx; jz equal; mov rcx, rdx; cld; repe cmpsb;
+        //   je equal; movzx eax, [rdi-1]; movzx edx, [rsi-1]; sub eax, edx;
+        //   ret; equal: xor eax, eax; ret
+        "memcmp" => Some(&[
+            0x48, 0x85, 0xD2, 0x74, 0x13, 0x48, 0x89, 0xD1, 0xFC, 0xF3, 0xA6, 0x74, 0x0B, 0x0F,
+            0xB6, 0x47, 0xFF, 0x0F, 0xB6, 0x56, 0xFF, 0x29, 0xD0, 0xC3, 0x31, 0xC0, 0xC3,
+        ]),
         _ => None,
     }
 }

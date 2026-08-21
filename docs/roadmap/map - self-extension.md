@@ -50,6 +50,9 @@ not code**, so it updates live AND survives a kernel rebuild for free.
 
 **M2 bug fix — DONE 2026-08-19 (QEMU):** same `autocompile` boot now runs `demo83_bugfix` after DEMO 80: seeds `/tmp/agentgen/m2/` with a bug report + buggy `calc.rs`, reproduces the failing selftest, writes the fix, recompiles, verifies byte-exact, then asks the human on serial (`Install /apps/calc? [y/N]`, fail-fast on n/timeout) before an atomic `/apps/.staging` rename install and a bare-name tier-0 smoke run. Approve and deny paths both PASS.
 
+**M3 feature add — DONE 2026-08-21 (QEMU):** `demo87_featureadd` runs after DEMO 83 in the same `autocompile` boot: seeds `/tmp/agentgen/m3/` with a feature spec, `wc.rs`, and sample data; compiles `wc` on-device; verifies it in isolation (byte-exact `3 15 79` against kernel-computed counts — the first guest program to read a namespace file, via new `sys_open`/`sys_fread`/`sys_close` stubs in aot_semos's built-in stub table); then the serial approval gate (`Install /apps/wc? [y/N]`, fail-fast) and the same atomic `/apps/.staging` install + bare-name tier-0 smoke as M2. Approve and deny paths both PASS. Getting there surfaced two real bugs, both fixed: (1) `syscall_entry` destroyed the guest's callee-saved `r15` on EVERY syscall — it stashed the user RSP in r15 before saving it, so every syscall returned r15 = user RSP (cg_clif guests keep live values in r15; LLVM std-shim binaries rarely did, which is why it hid for months); fix stashes user RSP in a memory scratch slot instead. (2) the hand-assembled `sys_fread` stub was 7 bytes — one missing imm32 zero turned `mov eax, 12` into `mov eax, 0x0F00000C`.
+
+
 **Remaining for the headline demo:** an agent tool that drops a compiled ELF at
 `/apps/<name>` and spawns it at **tier 0**; then the demo — "ask the agent to add a
 `greet` command, it works seconds later, the kernel never rebuilt." The tier-0
