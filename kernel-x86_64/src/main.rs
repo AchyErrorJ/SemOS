@@ -894,6 +894,13 @@ fn init_loader_task() {
     #[cfg(feature = "autocompile")]
     demo87_featureadd();
 
+    // DEMO 88 / self-dev-loop M4: scripted agent SELF-REPAIR — a previously
+    // installed /apps tool starts crashing after its data file is truncated;
+    // the agent detects the fault-sentinel exit, writes a patched source,
+    // verifies it, and a human approves the replacement install.
+    #[cfg(feature = "autocompile")]
+    demo88_selfrepair();
+
     // `--features netlog-test`: headless SYS_NETLOG smoke. Wait for DHCP so
     // the UDP send has a source address, then pre-type the shell command
     // through the TTY line discipline (DEMO 49 pattern — the same entry the
@@ -2348,6 +2355,266 @@ fn demo87_featureadd() {
     }
     println!("  [DEMO 87] post-install smoke OK: bare `wc` ran fenced at tier 0");
     println!("  [DEMO 87] PASS: M3 feature add — spec/compile/test/approve/install end-to-end");
+}
+
+/// Headless DEMO 88 / self-dev-loop M4 runner: scripted agent SELF-REPAIR.
+///   1. seed:    /apps/head1 v1 (buggy — traps on empty input, compiled here
+///      and "pre-installed" via staging as if approved last week) plus its
+///      data file /apps/data/motd.txt, truncated to ZERO bytes — the data
+///      change that starts the crashes
+///   2. detect:  health check runs `head1`; exit == 0xFA01FA17 (the kernel
+///      fault sentinel from kill_current_task) is the crash signal — logged
+///      to /tmp/agentgen/m4/crash.log (the agent's panic log)
+///   3. patch:   agent writes v2 (empty input exits 0 quietly) over the
+///      tool's source and recompiles
+///   4. verify:  v2 on empty motd -> exit 0; motd swapped to live content ->
+///      byte-exact first line; installed v1 re-run -> still crashes
+///   5. approve: same fail-fast serial prompt as M2/M3 (the ONLY human
+///      intervention in the loop)
+///   6. repair:  staging rename v2 -> /apps/head1, post-repair health check
+#[cfg(feature = "autocompile")]
+fn demo88_selfrepair() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    use kernel_core::syscall::{dispatch, numbers::*, StatX};
+
+    const V1_SRC: &[u8] =
+        include_bytes!("../../user-programs/semos-rustc/test-sources/head1-buggy.rs");
+    const V2_SRC: &[u8] =
+        include_bytes!("../../user-programs/semos-rustc/test-sources/head1-fixed.rs");
+    const MOTD_LIVE: &[u8] = b"hello semos\nsecond line\n";
+    const EXPECTED_LIVE: &[u8] = b"hello semos\n";
+    /// kill_current_task()'s fault sentinel — the crash signal (see
+    /// kernel-x86_64/src/interrupts.rs). sem-sh propagates the child exit
+    /// status through an i32, so the sentinel can come back sign-extended
+    /// (0xFFFF_FFFF_FA01_FA17) or zero-extended (0x0000_0000_FA01_FA17);
+    /// compare the low 32 bits.
+    const FAULT_SENTINEL: u64 = 0xFA01_FA17;
+    let crashed = |code: u64| code & 0xFFFF_FFFF == FAULT_SENTINEL;
+
+    const SRC: &str = "/tmp/agentgen/m4/src/head1.rs";
+    const V1_ELF: &str = "/tmp/agentgen/m4/out/head1-v1";
+    const V2_ELF: &str = "/tmp/agentgen/m4/out/head1-v2";
+    const CRASH_LOG: &str = "/tmp/agentgen/m4/crash.log";
+    const VERIFY_OUT: &str = "/tmp/agentgen/m4/out/verify.out";
+    const MOTD: &str = "/apps/data/motd.txt";
+    const TOOL: &str = "/apps/head1";
+
+    println!();
+    println!("================================================================");
+    println!("  DEMO 88 M4: crash -> detect -> patch -> verify -> approved repair");
+    println!("================================================================");
+
+    // --- Phase 1: seed the "previously installed" tool + empty data --------
+    for d in [
+        "/tmp/agentgen/m4",
+        "/tmp/agentgen/m4/src",
+        "/tmp/agentgen/m4/out",
+        "/apps",
+        "/apps/data",
+        "/apps/.staging",
+    ] {
+        let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+    }
+    let _ = Namespace::unlink(SRC);
+    let _ = Namespace::unlink(V1_ELF);
+    let _ = Namespace::unlink(V2_ELF);
+    let _ = Namespace::unlink(MOTD);
+    let _ = Namespace::unlink(TOOL);
+    let _ = Namespace::unlink("/apps/.staging/head1");
+    let seeded = Namespace::create_file(SRC, SecurityTier::Public, V1_SRC).is_ok()
+        && Namespace::create_file(MOTD, SecurityTier::Public, b"").is_ok();
+    if !seeded {
+        println!("  [DEMO 88] FAIL: could not seed v1 source / empty motd");
+        return;
+    }
+    println!("  [DEMO 88] seeded: head1.rs v1 + /apps/data/motd.txt (0 bytes — the data change)");
+
+    // Compile v1 and "pre-install" it: represents the install a human
+    // approved last week. No prompt — the gate is exercised at repair time.
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", SRC, "-o", V1_ELF, "-C", "overflow-checks=off"],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 88] FAIL: head1 v1 did not compile (code={})", code);
+        return;
+    }
+    if Namespace::rename(V1_ELF, "/apps/.staging/head1").is_err()
+        || Namespace::rename("/apps/.staging/head1", TOOL).is_err()
+    {
+        println!("  [DEMO 88] FAIL: v1 pre-install rename failed");
+        return;
+    }
+    println!("  [DEMO 88] /apps/head1 v1 installed (the previously-approved install)");
+
+    // --- Phase 2: detect the crash (health check -> fault sentinel) --------
+    let health1 = ["/bin/sem-sh", "-c", "head1"];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &health1, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if !crashed(code) {
+        println!(
+            "  [DEMO 88] FAIL: health check expected fault sentinel 0x{:x}, got {}",
+            FAULT_SENTINEL, code
+        );
+        return;
+    }
+    let crash_rec = alloc::format!(
+        "panic log: /apps/head1 health check crashed: exit=0x{:x} (fault sentinel) input={} (0 bytes)\n",
+        code, MOTD
+    );
+    let _ = Namespace::unlink(CRASH_LOG);
+    if Namespace::create_file(CRASH_LOG, SecurityTier::Public, crash_rec.as_bytes()).is_err() {
+        println!("  [DEMO 88] FAIL: could not write crash log");
+        return;
+    }
+    println!(
+        "  [DEMO 88] crash DETECTED: /apps/head1 exit=0x{:x} (fault sentinel) — logged to {}",
+        code, CRASH_LOG
+    );
+
+    // --- Phase 3: diagnose (agent reads the panic log + the tool source) ---
+    let log_ok = demo83_read_file(CRASH_LOG).map(|b| b == crash_rec.as_bytes()).unwrap_or(false);
+    let src_ok = demo83_read_file(SRC).map(|b| b == V1_SRC).unwrap_or(false);
+    if !log_ok || !src_ok {
+        println!("  [DEMO 88] FAIL: agent could not read crash log / tool source");
+        return;
+    }
+    println!("  [DEMO 88] diagnosis: v1 assumes motd.txt non-empty; zero-byte file traps");
+
+    // --- Phase 4: write the patch + recompile -------------------------------
+    let _ = Namespace::unlink(SRC);
+    if Namespace::create_file(SRC, SecurityTier::Public, V2_SRC).is_err() {
+        println!("  [DEMO 88] FAIL: could not write v2 source");
+        return;
+    }
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", SRC, "-o", V2_ELF, "-C", "overflow-checks=off"],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 88] FAIL: head1 v2 did not compile (code={})", code);
+        return;
+    }
+    println!("  [DEMO 88] patch written + recompiled: {}", V2_ELF);
+
+    // --- Phase 5: verify the fix in isolation -------------------------------
+    // (a) empty motd (the crash trigger): v2 must exit 0 quietly.
+    let v2_run = ["/bin/sem-sh", "-c", "/tmp/agentgen/m4/out/head1-v2"];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &v2_run, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 88] FAIL: v2 on empty motd exited code={}", code);
+        return;
+    }
+    // (b) live motd: v2 must still do its job — byte-exact first line.
+    let _ = Namespace::unlink(MOTD);
+    if Namespace::create_file(MOTD, SecurityTier::Public, MOTD_LIVE).is_err() {
+        println!("  [DEMO 88] FAIL: could not swap motd to live content");
+        return;
+    }
+    let _ = Namespace::unlink(VERIFY_OUT);
+    let v2_live = [
+        "/bin/sem-sh",
+        "-c",
+        "/tmp/agentgen/m4/out/head1-v2 > /tmp/agentgen/m4/out/verify.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &v2_live, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    let out_ok = demo83_read_file(VERIFY_OUT)
+        .map(|b| b == EXPECTED_LIVE)
+        .unwrap_or(false);
+    // Swap motd back to empty for the post-repair health check.
+    let _ = Namespace::unlink(MOTD);
+    let _ = Namespace::create_file(MOTD, SecurityTier::Public, b"");
+    if code != 0 || !out_ok {
+        println!(
+            "  [DEMO 88] FAIL: v2 on live motd code={} byte-exact={}",
+            code, out_ok
+        );
+        return;
+    }
+    println!("  [DEMO 88] fix verified: empty input exits 0; live input byte-exact");
+
+    // (c) the installed v1 still crashes — the repair actually replaces
+    // something broken.
+    let code = match demo80_spawn_wait("/bin/sem-sh", &health1, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if !crashed(code) {
+        println!("  [DEMO 88] FAIL: installed v1 no longer crashes? code={}", code);
+        return;
+    }
+    println!("  [DEMO 88] reproduced: installed /apps/head1 v1 still crashes");
+
+    // --- Phase 6: human approval (fail-fast — the only human step) ---------
+    let approved = demo83_prompt_serial("  Install /apps/head1 (repaired v2)? [y/N] ", 3600);
+    if !approved {
+        println!("[AUDIT] DENY install /apps/head1 reason=denied_or_timeout (fail-fast)");
+        println!("  [DEMO 88] SKIP-INSTALL: no human approval — v1 left in place");
+        println!("  [DEMO 88] PASS(partial): crash detected + patch verified; install gated");
+        return;
+    }
+    println!("[AUDIT] APPROVE install /apps/head1 by=human tty=/dev/ttyS0");
+
+    // --- Phase 7: atomic repair via staging rename --------------------------
+    let _ = Namespace::unlink(TOOL);
+    let _ = Namespace::unlink("/apps/.staging/head1");
+    if Namespace::rename(V2_ELF, "/apps/.staging/head1").is_err()
+        || Namespace::rename("/apps/.staging/head1", TOOL).is_err()
+    {
+        println!("  [DEMO 88] FAIL: staging rename into /apps failed");
+        return;
+    }
+    let mut st = StatX {
+        size: 0,
+        suid_high: 0,
+        suid_low: 0,
+        created_at: 0,
+        modified_at: 0,
+        file_type: 0,
+        tier: 0,
+        _reserved: [0; 3],
+    };
+    let rc = dispatch(
+        SYS_STATX,
+        TOOL.as_ptr() as u64,
+        TOOL.len() as u64,
+        &mut st as *mut _ as u64,
+        0,
+    );
+    if rc != 0 || st.size == 0 {
+        println!("  [DEMO 88] FAIL: statx(/apps/head1) rc={} size={}", rc, st.size);
+        return;
+    }
+    println!("  [DEMO 88] repaired: /apps/head1 v2 ({} bytes, via /apps/.staging)", st.size);
+
+    // --- Phase 8: post-repair health check ----------------------------------
+    let code = match demo80_spawn_wait("/bin/sem-sh", &health1, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 88] FAIL: repaired head1 health check exited code={}", code);
+        return;
+    }
+    println!("  [DEMO 88] post-repair health OK: bare `head1` exits 0 on the crash input");
+    println!("  [DEMO 88] PASS: M4 self-repair — detect/diagnose/patch/verify/approve/repair end-to-end");
 }
 
 /// Enable SSE and SSE2 instructions.
