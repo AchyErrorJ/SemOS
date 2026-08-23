@@ -2015,14 +2015,14 @@ fn demo83_bugfix() {
 
     // --- Phase 5: human approval (fail-fast) --------------------------------
     // ~58 s at the ~62 Hz scheduler tick. Deny on n / any other key / timeout.
-    let approved = demo83_prompt_serial("  Install /apps/calc? [y/N] ", 3600);
+    let (approved, tty) = demo83_prompt_serial("  Install /apps/calc? [y/N] ", 3600);
     if !approved {
         println!("[AUDIT] DENY install /apps/calc reason=denied_or_timeout (fail-fast)");
         println!("  [DEMO 83] SKIP-INSTALL: no human approval — /apps untouched");
         println!("  [DEMO 83] PASS(partial): bug reproduced + fix verified; install gated");
         return;
     }
-    println!("[AUDIT] APPROVE install /apps/calc by=human tty=/dev/ttyS0");
+    println!("[AUDIT] APPROVE install /apps/calc by=human tty={}", tty);
 
     // --- Phase 6: atomic install via staging rename --------------------------
     let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, 5, 0, 0);
@@ -2099,7 +2099,11 @@ fn demo83_bugfix() {
 /// including the timeout — denies (fail-fast, plan section 4 decision 2).
 /// Polls `Serial::getc()` directly: serial RX is not wired into the TTY.
 #[cfg(feature = "autocompile")]
-fn demo83_prompt_serial(prompt: &str, timeout_ticks: u64) -> bool {
+/// Fail-fast install-approval gate (M2/M3/M4). Returns (approved, source).
+/// Polls BOTH serial (QEMU harness / headless) and the PS/2 keyboard (bare
+/// metal — laptops have no serial port); the first answer from either wins.
+/// Anything but y/Y, or a timeout, denies.
+fn demo83_prompt_serial(prompt: &str, timeout_ticks: u64) -> (bool, &'static str) {
     use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
 
     print!("{}", prompt);
@@ -2108,11 +2112,21 @@ fn demo83_prompt_serial(prompt: &str, timeout_ticks: u64) -> bool {
         if let Some(b) = crate::serial::Serial::getc() {
             let yes = b == b'y' || b == b'Y';
             println!("{}", if yes { "y" } else { "n" });
-            return yes;
+            return (yes, "serial");
+        }
+        // Drain the PS/2 controller ourselves so the gate works even where
+        // the timer-ISR keyboard poll is gated off; then pop a decoded key.
+        // NOTE: handle_scancode also feeds the TTY, so the answer key lands
+        // in the interactive shell's input buffer too — harmless stray char.
+        let _ = crate::keyboard::poll_one_scancode();
+        if let Some(b) = crate::keyboard::read_key() {
+            let yes = b == b'y' || b == b'Y';
+            println!("{}", if yes { "y" } else { "n" });
+            return (yes, "kbd");
         }
         if waited >= timeout_ticks {
             println!("(no answer — timeout)");
-            return false;
+            return (false, "timeout");
         }
         let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
         waited += 1;
@@ -2280,14 +2294,14 @@ fn demo87_featureadd() {
     );
 
     // --- Phase 4: human approval (fail-fast) --------------------------------
-    let approved = demo83_prompt_serial("  Install /apps/wc? [y/N] ", 3600);
+    let (approved, tty) = demo83_prompt_serial("  Install /apps/wc? [y/N] ", 3600);
     if !approved {
         println!("[AUDIT] DENY install /apps/wc reason=denied_or_timeout (fail-fast)");
         println!("  [DEMO 87] SKIP-INSTALL: no human approval — /apps untouched");
         println!("  [DEMO 87] PASS(partial): feature added + tested; install gated");
         return;
     }
-    println!("[AUDIT] APPROVE install /apps/wc by=human tty=/dev/ttyS0");
+    println!("[AUDIT] APPROVE install /apps/wc by=human tty={}", tty);
 
     // --- Phase 5: atomic install via staging rename --------------------------
     let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, 5, 0, 0);
@@ -2563,14 +2577,14 @@ fn demo88_selfrepair() {
     println!("  [DEMO 88] reproduced: installed /apps/head1 v1 still crashes");
 
     // --- Phase 6: human approval (fail-fast — the only human step) ---------
-    let approved = demo83_prompt_serial("  Install /apps/head1 (repaired v2)? [y/N] ", 3600);
+    let (approved, tty) = demo83_prompt_serial("  Install /apps/head1 (repaired v2)? [y/N] ", 3600);
     if !approved {
         println!("[AUDIT] DENY install /apps/head1 reason=denied_or_timeout (fail-fast)");
         println!("  [DEMO 88] SKIP-INSTALL: no human approval — v1 left in place");
         println!("  [DEMO 88] PASS(partial): crash detected + patch verified; install gated");
         return;
     }
-    println!("[AUDIT] APPROVE install /apps/head1 by=human tty=/dev/ttyS0");
+    println!("[AUDIT] APPROVE install /apps/head1 by=human tty={}", tty);
 
     // --- Phase 7: atomic repair via staging rename --------------------------
     let _ = Namespace::unlink(TOOL);
