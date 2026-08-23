@@ -145,6 +145,12 @@ impl OutlineBuilder for SkOutline<'_> {
 /// glyphs `px` tall, in `color`, via tiny_skia AA. Returns the end pen x.
 /// The run is rasterized into one pixmap (opaque-black background) and blitted.
 pub fn aa_draw_text(x: usize, baseline_y: usize, text: &str, px: f32, color: Color) -> usize {
+    aa_draw_text_clip(x, baseline_y, text, px, color, crate::font::full_clip())
+}
+
+/// [`aa_draw_text`] with an explicit clip rect — the blit is confined to
+/// `clip`, so a text run wider than its pane can't spill into the next pane.
+pub fn aa_draw_text_clip(x: usize, baseline_y: usize, text: &str, px: f32, color: Color, clip: crate::font::Clip) -> usize {
     let face = match Face::parse(FONT_DATA, 0) {
         Ok(f) => f,
         Err(_) => return x,
@@ -203,6 +209,6 @@ pub fn aa_draw_text(x: usize, baseline_y: usize, text: &str, px: f32, color: Col
     for p in pm.pixels() {
         buf.push(fb::rgb(p.red(), p.green(), p.blue()));
     }
-    fb::fb_blit(&buf, x, oy, w, h);
+    fb::fb_blit_clip(&buf, x, oy, w, h, clip);
     (x as f32 + total) as usize
 }

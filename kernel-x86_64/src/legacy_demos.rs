@@ -3968,7 +3968,9 @@ pub(crate) fn tty_demo() {
     let y_b = y_a + h_a + 16;
 
     // ---- Sharp (M7): multi-line write that overflows the region → scroll ----
-    let mut con = TtyConsole::new(x0, y_a, w, h_a, px, white, black);
+    // Boxed: a TtyConsole is ~17 KiB of scrollback ring — too big for the
+    // demo task stack (see SB_W note in tty.rs).
+    let mut con = alloc::boxed::Box::new(TtyConsole::new(x0, y_a, w, h_a, px, white, black));
     con.write(Aa::Sharp, "M7 sharp TTF console.\n");
     for i in 0..8u32 {
         // Per-line content + newline; 8 lines into a 4-line region forces the
@@ -4006,7 +4008,7 @@ pub(crate) fn tty_demo() {
     let cov_a = if area_a > 0 { lit_a * 100 / area_a } else { 0 };
 
     // ---- Smooth (M8): one AA line; look for blended edge pixels ----
-    let mut con_b = TtyConsole::new(x0, y_b, w, h_b, px, white, black);
+    let mut con_b = alloc::boxed::Box::new(TtyConsole::new(x0, y_b, w, h_b, px, white, black));
     con_b.write(Aa::Smooth, "M8 smooth (anti-aliased) TTF console 0123");
 
     let mut lit_b = 0usize;
@@ -4102,8 +4104,8 @@ pub(crate) fn tty_m19_demo() {
         let green = fb::rgb(0x00, 0xCC, 0x00);
         let black = fb::rgb(0x00, 0x00, 0x00);
 
-        let con = TtyConsole::new(x0, y0, w, h, px, white, black);
-        let mut ansi = AnsiTty::new(con, Aa::Sharp, white);
+        let con = alloc::boxed::Box::new(TtyConsole::new(x0, y0, w, h, px, white, black));
+        let mut ansi = AnsiTty::new(*con, Aa::Sharp, white);
         // Clear, switch to green (SGR 32), echo the read line, reset (SGR 0).
         ansi.write_str("\x1b[2J\x1b[32m");
         if let Ok(s) = core::str::from_utf8(read_slice) {
@@ -4455,7 +4457,7 @@ pub(crate) fn scrollback_demo() {
     let white = fb::rgb(0xFF, 0xFF, 0xFF);
     let black = fb::rgb(0x00, 0x00, 0x00);
 
-    let mut con = TtyConsole::new(x0, y0, w, h, px, white, black);
+    let mut con = alloc::boxed::Box::new(TtyConsole::new(x0, y0, w, h, px, white, black));
     // Line 0 is dense; lines 1..=6 are sparse. 7 lines into a 3-row region
     // pushes line 0 well off the live view.
     con.write(Aa::Sharp, "MMMMMMMMMMMMMMMM\n");

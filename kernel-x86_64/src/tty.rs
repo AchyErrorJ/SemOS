@@ -57,7 +57,12 @@ pub struct TtyConsole {
 
 /// Scrollback ring: lines kept × max bytes recorded per line.
 const SB_N: usize = 64;
-const SB_W: usize = 96;
+/// Max bytes retained per scrollback logical line. 256 so the agent TUI's
+/// tool-call JSON / long assistant lines survive into scrollback unharmed.
+/// Size note: one console costs SB_N×(SB_W+8)+SB_W ≈ 16.6 KiB — the agent
+/// TUI's four consoles live in a `Box` (agent.rs), and the legacy demos Box
+/// theirs too. Never construct a TtyConsole bare on a task stack.
+const SB_W: usize = 256;
 
 impl TtyConsole {
     /// Create a console over region `(x0, y0, w, h)` with em height `px`,
@@ -119,30 +124,58 @@ impl TtyConsole {
     /// Re-render the region showing scrollback starting at logical line
     /// `top` (clamped to retained range). Used to scroll back through output
     /// that has scrolled off the live view. Does not disturb the live cursor.
+    ///
+    /// Logical lines are RE-WRAPPED to the region width on redraw (same
+    /// advance-width rule as the live `write` path), so the scrollback view
+    /// matches what the user saw live and long lines can never spill past the
+    /// right edge. Glyphs are additionally clipped to the region rect.
     pub fn show_scrollback(&mut self, top: usize) {
         let rows = self.visible_rows();
         let oldest = self.scrollback_oldest();
         let top = top.max(oldest).min(self.sb_count);
         fb::fb_fill_rect(self.x0, self.y0, self.w, self.h, self.bg);
-        for r in 0..rows {
-            let line_idx = top + r;
-            if line_idx >= self.sb_count {
-                break;
-            }
-            let phys = line_idx % SB_N;
-            let len = self.sb_len[phys];
-            let baseline = (self.y0 + r * self.line_h + (self.line_h * 4) / 5) as f32;
-            let x0 = self.x0 as f32;
-            let fg = self.fg;
-            if let Ok(s) = core::str::from_utf8(&self.sb[phys][..len]) {
-                font::with_face(self.px, |f| {
-                    let mut x = x0;
-                    for ch in s.chars() {
-                        x += f.draw_char(x, baseline, ch, fg);
+        // Hoist everything the draw loop needs so the closure only borrows
+        // the scrollback ring immutably.
+        let clip = self.clip();
+        let px = self.px;
+        let fg = self.fg;
+        let x0 = self.x0 as f32;
+        let x_right = (self.x0 + self.w) as f32;
+        let line_h = self.line_h;
+        let y0 = self.y0;
+        font::with_face_clip(px, clip, |f| {
+            let mut row = 0usize;
+            let mut line_idx = top;
+            while row < rows && line_idx < self.sb_count {
+                let phys = line_idx % SB_N;
+                let len = self.sb_len[phys];
+                line_idx += 1;
+                let Ok(s) = core::str::from_utf8(&self.sb[phys][..len]) else {
+                    continue;
+                };
+                let mut x = x0;
+                for ch in s.chars() {
+                    let adv = f.advance(ch);
+                    if x + adv > x_right {
+                        row += 1;
+                        if row >= rows {
+                            return;
+                        }
+                        x = x0;
                     }
-                });
+                    let baseline = (y0 + row * line_h + (line_h * 4) / 5) as f32;
+                    x += f.draw_char(x, baseline, ch, fg);
+                }
+                row += 1;
             }
-        }
+        });
+    }
+
+    /// This console's rect as a font/gfx clip — every glyph drawn by this
+    /// console is confined to its own region.
+    #[inline]
+    fn clip(&self) -> font::Clip {
+        (self.x0, self.y0, self.x0 + self.w, self.y0 + self.h)
     }
 
     /// Set the foreground color used for subsequent glyphs (ANSI SGR).
@@ -205,8 +238,11 @@ impl TtyConsole {
         match mode {
             Aa::Sharp => {
                 // One parse for the whole write; draw glyph-by-glyph so we can
-                // wrap at the region's right edge.
-                font::with_face(self.px, |face| {
+                // wrap at the region's right edge. Ink is clipped to the
+                // region: the wrap test uses advance width, so overhanging
+                // glyph ink must not be allowed to leak past it.
+                let clip = self.clip();
+                font::with_face_clip(self.px, clip, |face| {
                     for ch in text.chars() {
                         if ch == '\n' {
                             self.newline();
@@ -223,7 +259,10 @@ impl TtyConsole {
             }
             Aa::Smooth => {
                 // tiny-skia rasterizes a whole run per pixmap, so render one
-                // line segment at a time (no mid-line wrap in this mode).
+                // line segment at a time (no mid-line wrap in this mode — an
+                // overlong segment is clipped at the region's right edge
+                // rather than spilling into the neighbouring pane).
+                let clip = self.clip();
                 let mut first = true;
                 for seg in text.split('\n') {
                     if !first {
@@ -231,8 +270,8 @@ impl TtyConsole {
                     }
                     first = false;
                     if !seg.is_empty() {
-                        let end = gfx2d::aa_draw_text(self.pen_x, self.baseline(), seg, self.px, self.fg);
-                        self.pen_x = end;
+                        let end = gfx2d::aa_draw_text_clip(self.pen_x, self.baseline(), seg, self.px, self.fg, clip);
+                        self.pen_x = end.min(self.x0 + self.w);
                     }
                 }
             }

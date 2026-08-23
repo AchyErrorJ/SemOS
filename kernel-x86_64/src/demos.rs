@@ -189,6 +189,34 @@ pub(crate) fn agent_tui_demo() {
     let r_result = tui::count_color(ax, ay, aw, ah, tui::ROLE_COLORS[3]);
     let r_user = tui::count_color(ax, ay, aw, ah, tui::ROLE_COLORS[0]);
 
+    // ---- spill regression (pane clipping) ----
+    // Drive an overlong line into the LEFT pane — far wider than the pane —
+    // then verify zero role-coloured ink landed in the gap strip between the
+    // panes (the divider itself is ACCENT, not a role colour, so it doesn't
+    // pollute the count). Repeat after a scrollback redraw: before the clip
+    // fix, both the live write and the unwrapped show_scrollback spilled ink
+    // across the divider into the activity pane.
+    let spill_line = "spill-check: a deliberately overlong assistant line — \
+                      0123456789 0123456789 0123456789 0123456789 0123456789 \
+                      0123456789 0123456789 0123456789 0123456789 0123456789 \
+                      0123456789 0123456789 0123456789 0123456789 0123456789";
+    t.push_assistant(spill_line);
+    let gap_x = tx + tw;
+    let gap_w = ax.saturating_sub(gap_x);
+    // Live write: the label is assistant-green, the overlong text is FG —
+    // count both (the divider is ACCENT, so it never pollutes these counts).
+    let gap_live = tui::count_color(gap_x, ty, gap_w, th, tui::ROLE_COLORS[1])
+        + tui::count_color(gap_x, ty, gap_w, th, tui::FG_C);
+    let left_ink = tui::count_color(tx, ty, tw, th, tui::ROLE_COLORS[1])
+        + tui::count_color(tx, ty, tw, th, tui::FG_C);
+    t.scroll_to(0); // redraw from the oldest retained line — every visible row
+                    // goes through the (now wrapping) scrollback redraw path.
+                    // The redraw is monochrome FG (console's current pen), so
+                    // the spill/ink checks below count FG, not role colours.
+    let gap_sb = tui::count_color(gap_x, ty, gap_w, th, tui::FG_C);
+    let sb_ink = tui::count_color(tx, ty, tw, th, tui::FG_C);
+    let spill_ok = gap_live == 0 && gap_sb == 0 && left_ink > 10 && sb_ink > 10;
+
     // ---- verdicts ----
     let chrome_ok = status_ink > 100 && prompt_ink > 20;
     // Left pane: conversation present, no tool ink. Right pane: tool activity
@@ -211,7 +239,13 @@ pub(crate) fn agent_tui_demo() {
     } else {
         println!("  [DEMO 50] FAIL: right pane tool={} result={} convo-bleed={}", r_tool, r_result, r_user);
     }
-    if chrome_ok && left_ok && right_ok {
+    if spill_ok {
+        println!("  [DEMO 50] PASS: pane clipping — overlong line + scrollback stay out of the divider gap");
+    } else {
+        println!("  [DEMO 50] FAIL: pane clipping — gap live={} scrollback={} (left ink {} sb ink {})",
+            gap_live, gap_sb, left_ink, sb_ink);
+    }
+    if chrome_ok && left_ok && right_ok && spill_ok {
         println!("  [DEMO 50] => M22 TUI: side-by-side panes — conversation | activity, with status + prompt");
     }
 }

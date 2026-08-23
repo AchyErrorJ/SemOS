@@ -76,9 +76,11 @@ pub struct Tui {
 }
 
 impl Tui {
-    /// Lay the TUI out over the framebuffer for `model`. Anchored to the lower
-    /// portion of the screen so the boot bitmap console (top) doesn't clobber
-    /// it mid-run. Returns `None` if there's no framebuffer.
+    /// Lay the TUI out over the whole framebuffer for `model`: status bar at
+    /// the top, prompt strip at the bottom, and the middle row (conversation
+    /// left, activity right) filling everything in between. The caller clears
+    /// the boot console first, so the TUI owns the screen. Returns `None` if
+    /// there's no framebuffer.
     pub fn new(model: &'static str) -> Option<Self> {
         let (fbw, fbh) = fb::fb_dimensions();
         if fbw == 0 || fbh == 0 {
@@ -94,16 +96,13 @@ impl Tui {
 
         let status_h = lh + 8;
         let prompt_h = lh + 8;
-        let trans_rows = 10usize;
-        let trans_h = lh * trans_rows;
 
-        let total = status_h + gap + trans_h + gap + prompt_h;
-        // Anchor near the bottom; clamp to the top if the screen is short.
-        let top = fbh.saturating_sub(total + 16).max(8);
-
-        let status_y = top;
+        // Full screen: status at the top margin, prompt pinned to the bottom,
+        // middle row takes whatever is left.
+        let status_y = margin;
+        let prompt_y = fbh.saturating_sub(margin + prompt_h);
         let trans_y = status_y + status_h + gap;
-        let prompt_y = trans_y + trans_h + gap;
+        let trans_h = prompt_y.saturating_sub(trans_y + gap);
 
         // Split the middle row into a wider conversation pane (left) and a
         // narrower activity pane (right), separated by a vertical gap.
@@ -269,13 +268,36 @@ impl Tui {
         self.activity.write(Aa::Sharp, "\n");
     }
 
-    /// The result fed back to the model (truncated) — right-hand activity pane.
+    /// The result fed back to the model — right-hand activity pane. Truncated
+    /// to a few lines' worth (600 chars) so a big file read doesn't flood the
+    /// stream; the full text still goes to the model, this is only the view.
     pub fn push_tool_result(&mut self, text: &str) {
-        let shown = if text.len() > 64 { &text[..64] } else { text };
+        const MAX: usize = 600;
+        // Cut at a char boundary — a raw byte slice could split a multi-byte
+        // UTF-8 char and panic.
+        let cut = if text.len() > MAX {
+            text.char_indices().map(|(i, _)| i).take_while(|&i| i <= MAX).last().unwrap_or(0)
+        } else {
+            text.len()
+        };
+        let shown = &text[..cut];
         self.activity.set_fg(C_RESULT);
         self.activity.write(Aa::Sharp, "\u{21b3} result\n");
         self.activity.set_fg(FG);
         self.activity.write(Aa::Sharp, shown);
+        if text.len() > cut {
+            self.activity.write(Aa::Sharp, " \u{2026}");
+        }
+        self.activity.write(Aa::Sharp, "\n");
+    }
+
+    /// A status beat (`connecting`, `thinking`, a tool name) — right-hand
+    /// activity pane, dim, so the stream shows what the agent is doing between
+    /// tool calls.
+    pub fn push_activity_status(&mut self, status: &str) {
+        self.activity.set_fg(C_RESULT);
+        self.activity.write(Aa::Sharp, "\u{2026} ");
+        self.activity.write(Aa::Sharp, status);
         self.activity.write(Aa::Sharp, "\n");
     }
 
@@ -347,6 +369,10 @@ pub fn count_non_bg(x: usize, y: usize, w: usize, h: usize, bg: Color) -> usize 
 
 /// The role colours, exported so a demo can assert each one rendered.
 pub const ROLE_COLORS: [Color; 4] = [C_USER, C_ASSISTANT, C_TOOL, C_RESULT];
+/// The default text colour — scrollback redraws are monochrome FG (the
+/// console redraws with its current pen, not per-line colours), so spill
+/// tests must count FG ink, not role colours, after a `scroll_to`.
+pub const FG_C: Color = FG;
 pub const TRANSCRIPT_BG: Color = TRANS_BG;
 pub const STATUS_BG_C: Color = STATUS_BG;
 pub const PROMPT_BG_C: Color = PROMPT_BG;

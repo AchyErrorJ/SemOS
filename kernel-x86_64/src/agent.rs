@@ -858,9 +858,10 @@ pub trait AgentReporter {
 pub struct NullReporter;
 impl AgentReporter for NullReporter {}
 
-/// Renders `run_agent` progress into the split-pane framebuffer TUI: assistant
-/// text and tool calls/results land in the conversation pane, status words in
-/// the spinner line. Borrows the `Tui` for the duration of one `run_agent` call.
+/// Renders `run_agent` progress into the split-pane framebuffer TUI: user and
+/// assistant text land in the left conversation pane, tool calls/results and
+/// status words stream down the right activity pane. Borrows the `Tui` for
+/// the duration of one `run_agent` call.
 struct TuiReporter<'a> {
     tui: &'a mut crate::tui::Tui,
 }
@@ -876,6 +877,7 @@ impl<'a> AgentReporter for TuiReporter<'a> {
     }
     fn on_status(&mut self, status: &str) {
         self.tui.set_status(status);
+        self.tui.push_activity_status(status);
     }
     fn on_error(&mut self, msg: &str) {
         self.tui.push_error(msg);
@@ -1025,7 +1027,7 @@ pub fn run_interactive(_flags: u64) -> u64 {
     // (measured via -Zemit-stack-sizes) — one nested ask() away from smashing
     // the 64 KiB task stack. The pane state lives on the heap instead; the
     // ask output buffer goes with it. See 2026-07-17 review, medium #4.2.
-    let mut tui: Box<Tui> = match Tui::new("claude-haiku-4-5") {
+    let mut tui: Box<Tui> = match Tui::new(model_name()) {
         Some(t) => Box::new(t),
         None => return 1, // headless — no framebuffer to draw the TUI
     };

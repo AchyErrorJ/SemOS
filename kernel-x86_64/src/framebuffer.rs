@@ -292,6 +292,31 @@ pub fn fb_blit(src: &[Color], x: usize, y: usize, w: usize, h: usize) {
     mark_damage(&s, x, y, w, h);
 }
 
+/// [`fb_blit`] with an explicit clip rect `(x0, y0, x1, y1)` (half-open):
+/// source pixels that would land outside the rect are skipped. This is the
+/// pane-containment variant — pane-owned text passes its pane rect so ink can
+/// never spill into a neighbouring pane.
+pub fn fb_blit_clip(src: &[Color], x: usize, y: usize, w: usize, h: usize, clip: (usize, usize, usize, usize)) {
+    let s = match surface() { Some(s) => s, None => return };
+    if src.len() < w * h { return; }
+    let (cx0, cy0, cx1, cy1) = clip;
+    let cx1 = cx1.min(s.width);
+    let cy1 = cy1.min(s.height);
+    if cx0 >= cx1 || cy0 >= cy1 { return; }
+    for row in 0..h {
+        let dy = y + row;
+        if dy < cy0 { continue; }
+        if dy >= cy1 { break; }
+        for col in 0..w {
+            let dx = x + col;
+            if dx < cx0 { continue; }
+            if dx >= cx1 { break; }
+            s.write_pixel(dx, dy, src[row * w + col]);
+        }
+    }
+    mark_damage(&s, x.max(cx0), y.max(cy0), w.min(cx1.saturating_sub(x.max(cx0))), h.min(cy1.saturating_sub(y.max(cy0))));
+}
+
 /// Scroll the whole framebuffer by (dx, dy) pixels. Positive dy scrolls
 /// content UP by dy (toward the origin); positive dx scrolls content LEFT.
 /// Vacated edges are filled black. Negative deltas scroll the other way.

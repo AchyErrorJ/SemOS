@@ -156,13 +156,31 @@ impl OutlineBuilder for GlyphRaster {
     }
 }
 
+/// Clip rect `(x0, y0, x1, y1)` — half-open pixel bounds a draw may touch.
+/// [`full_clip`] is the whole framebuffer (the historical behaviour).
+pub type Clip = (usize, usize, usize, usize);
+
+/// The whole framebuffer as a clip rect — the default for callers that never
+/// heard of panes (editor, legacy demos, boot console).
+pub fn full_clip() -> Clip {
+    let (w, h) = fb::fb_dimensions();
+    (0, 0, w, h)
+}
+
 /// Scanline-fill the collected edges into the framebuffer (even-odd rule,
-/// 1-bit coverage). Clips to the framebuffer bounds.
-fn fill_glyph(r: &GlyphRaster, color: Color) {
+/// 1-bit coverage). Clips to `clip` (intersected with the framebuffer bounds),
+/// so pane-owned text can never spill ink into a neighbouring pane.
+fn fill_glyph(r: &GlyphRaster, color: Color, clip: Clip) {
     if r.n == 0 {
         return;
     }
     let (fb_w, fb_h) = fb::fb_dimensions();
+    let (cx0, cy0, cx1, cy1) = clip;
+    let cx1 = cx1.min(fb_w);
+    let cy1 = cy1.min(fb_h);
+    if cx0 >= cx1 || cy0 >= cy1 {
+        return;
+    }
 
     // Vertical extent of the glyph in pixel space.
     let mut min_y = f32::MAX;
@@ -174,6 +192,9 @@ fn fill_glyph(r: &GlyphRaster, color: Color) {
     }
     let mut row = if min_y < 0.0 { 0 } else { min_y as usize };
     let row_end = if max_y < 0.0 { 0 } else { (max_y as usize + 1).min(fb_h) };
+    // Intersect with the clip's vertical span.
+    let mut row = row.max(cy0);
+    let row_end = row_end.min(cy1);
 
     while row < row_end {
         let sy = row as f32 + 0.5; // sample at pixel-row center
@@ -221,11 +242,13 @@ fn fill_glyph(r: &GlyphRaster, color: Color) {
                 let xi = xr as usize;
                 (if xr > xi as f32 { xi + 1 } else { xi }).min(fb_w)
             };
+            // Intersect the span with the clip's horizontal span — this is
+            // the line that keeps pane text inside its pane. (x0 >= fb_w is
+            // now impossible when x0 < x1: x1 <= cx1 <= fb_w.)
+            let x0 = x0.max(cx0);
+            let x1 = x1.min(cx1);
             if x0 < x1 {
-                if x0 >= fb_w { x0 = fb_w; }
-                if x1 > x0 {
-                    fb::fb_fill_rect(x0, row, x1 - x0, 1, color);
-                }
+                fb::fb_fill_rect(x0, row, x1 - x0, 1, color);
             }
             k += 2;
         }
@@ -257,7 +280,7 @@ pub fn fb_draw_text(x: usize, baseline_y: usize, text: &str, px: f32, color: Col
         // Rasterize the glyph at the current pen origin.
         let mut r = GlyphRaster::new(scale, pen_x, baseline);
         let _ = face.outline_glyph(gid, &mut r);
-        fill_glyph(&r, color);
+        fill_glyph(&r, color, full_clip());
         // Advance the pen by the glyph's horizontal advance.
         if let Some(adv) = face.glyph_hor_advance(gid) {
             pen_x += adv as f32 * scale;
@@ -293,6 +316,7 @@ pub struct FaceCtx<'a> {
     face: Face<'a>,
     scale: f32,
     upem: f32,
+    clip: Clip,
 }
 
 impl FaceCtx<'_> {
@@ -309,7 +333,9 @@ impl FaceCtx<'_> {
     }
 
     /// Draw `ch` with its left edge at `pen_x` on `baseline` (both in pixels),
-    /// using M7's 1-bit scanline fill. Returns the pen advance in pixels.
+    /// using M7's 1-bit scanline fill. Ink is clipped to this context's clip
+    /// rect (full framebuffer unless built via [`with_face_clip`]). Returns
+    /// the pen advance in pixels.
     pub fn draw_char(&self, pen_x: f32, baseline: f32, ch: char, color: Color) -> f32 {
         let gid = match self.face.glyph_index(ch) {
             Some(g) => g,
@@ -317,7 +343,7 @@ impl FaceCtx<'_> {
         };
         let mut r = GlyphRaster::new(self.scale, pen_x, baseline);
         let _ = self.face.outline_glyph(gid, &mut r);
-        fill_glyph(&r, color);
+        fill_glyph(&r, color, self.clip);
         self.face
             .glyph_hor_advance(gid)
             .map(|a| a as f32 * self.scale)
@@ -332,12 +358,20 @@ impl FaceCtx<'_> {
 
 /// Parse the embedded face once and run `f` with a `FaceCtx` for size `px`
 /// (em height). Returns `None` (closure not run) if the font fails to parse.
+/// The context clips to the full framebuffer; use [`with_face_clip`] to draw
+/// inside a pane rect.
 pub fn with_face<R>(px: f32, f: impl FnOnce(&FaceCtx) -> R) -> Option<R> {
+    with_face_clip(px, full_clip(), f)
+}
+
+/// [`with_face`] with an explicit clip rect: every glyph drawn through the
+/// context is clipped to `clip` (intersected with the framebuffer bounds).
+pub fn with_face_clip<R>(px: f32, clip: Clip, f: impl FnOnce(&FaceCtx) -> R) -> Option<R> {
     let face = Face::parse(FONT_DATA, 0).ok()?;
     let upem = face.units_per_em() as f32;
     if upem <= 0.0 {
         return None;
     }
-    let ctx = FaceCtx { face, scale: px / upem, upem };
+    let ctx = FaceCtx { face, scale: px / upem, upem, clip };
     Some(f(&ctx))
 }
