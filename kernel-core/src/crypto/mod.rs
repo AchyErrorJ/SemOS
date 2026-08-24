@@ -39,6 +39,7 @@ pub mod x25519;
 pub mod p256;
 pub mod crockford;
 pub mod crc16;
+pub mod blake2s;
 
 
 /// Constant-time equality for byte strings holding secrets.

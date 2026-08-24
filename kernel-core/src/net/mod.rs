@@ -40,6 +40,7 @@ pub mod http;
 pub mod netlog;
 pub mod state;
 pub mod tcp;
+pub mod wireguard;
 
 pub use http::{chunked_complete, decode_chunked, is_chunked, ChunkedError};
 
