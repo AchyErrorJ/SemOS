@@ -408,6 +408,10 @@ pub fn handle_scancode(scancode: u8) {
     }
     if kb.ext {
         kb.ext = false;
+        // Tee the raw event (press AND release) into the Ring-3 game-kit
+        // stream before any consumption below (scrollback paging, arrow
+        // escapes, Fn tracking all stay kernel-side).
+        crate::keyevents::push(scancode & 0x80 == 0, true, scancode & 0x7F);
         // Only presses (bit 7 clear). Map the cursor keys to ANSI escapes the
         // TTY line discipline understands: ESC [ A/B/C/D.
         if scancode & 0x80 == 0 {
@@ -466,6 +470,7 @@ pub fn handle_scancode(scancode: u8) {
     // Key release (bit 7 set)
     if scancode & 0x80 != 0 {
         let released = scancode & 0x7F;
+        crate::keyevents::push(false, false, released);
         match released {
             0x2A | 0x36 => kb.shift = false,   // Shift released
             0x1D => kb.ctrl = false,            // Ctrl released
@@ -475,6 +480,7 @@ pub fn handle_scancode(scancode: u8) {
     }
 
     // Key press
+    crate::keyevents::push(true, false, scancode);
     match scancode {
         0x2A | 0x36 => { kb.shift = true; return; }   // Shift pressed
         0x1D => { kb.ctrl = true; return; }            // Ctrl pressed

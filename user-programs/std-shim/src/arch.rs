@@ -45,9 +45,15 @@ pub const SYS_GET_ENV:      u64 = 76;
 pub const SYS_SET_ENV:      u64 = 77;
 
 // M27 DEMO 80 — read-only sysroot blob staged on a SATA disk (Layer B).
-pub const SYS_SYSROOT_INFO: u64 = 120; // (idx, name_buf_ptr, name_buf_len) -> len | MAX
-pub const SYS_SYSROOT_READ: u64 = 121; // (idx, offset, buf_ptr, buf_len) -> n (0=EOF) | MAX
-pub const SYS_FLASH_SYSROOT: u64 = 122; // () -> bytes copied | MAX; FAT usb0 -> sata0
+// Renumbered 120-122 -> 136-138: those collided with SYS_DEMOS/PAIR/PAIRED
+// (kernel dispatch matched the sysroot arms first). Keep both tables in sync.
+pub const SYS_SYSROOT_INFO: u64 = 136; // (idx, name_buf_ptr, name_buf_len) -> len | MAX
+pub const SYS_SYSROOT_READ: u64 = 137; // (idx, offset, buf_ptr, buf_len) -> n (0=EOF) | MAX
+pub const SYS_FLASH_SYSROOT: u64 = 138; // () -> bytes copied | MAX; FAT usb0 -> sata0
+
+// Game kit — raw input + fullscreen claim for Ring-3 apps.
+pub const SYS_KB_POLL: u64 = 139;  // (out_ptr, out_len_bytes) -> n u32 events | MAX; non-blocking
+pub const SYS_FB_CLAIM: u64 = 140; // (on) -> 0; 1 = claim screen+keyboard, 0 = release
 
 pub const SYS_FUTEX_WAIT:   u64 = 90;
 pub const SYS_FUTEX_WAKE:   u64 = 91;
@@ -88,6 +94,7 @@ pub const SYS_VOUCH:        u64 = 126; // (path_ptr, path_len, grant_tier) -> 1/
 pub const SYS_VOUCHES:      u64 = 127; // () -> count; print the active vouch grants
 pub const SYS_VOUCH_SESSION: u64 = 133; // (tier, duration_secs, pw_ptr, pw_len) -> 1/0; session ceiling (console only)
 pub const SYS_GET_VOUCH:    u64 = 134; // () -> (tier << 32) | remaining_secs, 0 when no live session
+pub const SYS_SELFDEV:      u64 = 135; // (demo_n) -> 0/MAX; run self-dev demo 80|83|87|88 (console only)
 
 /// SYS_TCP_READ/WRITE return this when the socket isn't ready yet (retry
 /// after yielding). Distinct from 0 (EOF) and u64::MAX (hard error).

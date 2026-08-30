@@ -3,9 +3,12 @@
 //! The T540p currently boots through UEFI GOP. Before replacing GOP ownership,
 //! this module models the panel's EDID-native 1920x1080@60.007 timing and
 //! exposes shell-controlled read/verify/poke commands. Nothing here runs at
-//! boot. The only write operation is `modeset poke-60`, which is deliberately
-//! narrow: it writes timing registers only, and does **not** disable/enable the
-//! pipe, program DPLL/DDI, relink eDP, or touch the framebuffer base.
+//! boot. Write operations stay narrow and reversible: `poke-60` writes timing
+//! registers only (no pipe/DPLL/DDI changes, no eDP relink, no framebuffer
+//! move), `restore-gop` writes back a `modeset snapshot` taken earlier in the
+//! same boot, and `wells` does one bounded force-wake acquire/release. The
+//! full DPLL/DDI/pipe takeover (native-60) remains gated on the refreshed
+//! Pop!_OS i915 oracle capture.
 
 use crate::{igpu, println};
 use crate::display::mmio::MmioReg;
@@ -16,8 +19,14 @@ use crate::display::mmio::MmioReg;
 // Power wells / force-wake
 const PWR_WELL_CTL:       u64 = 0x45400;
 const PWR_WELL_CTL2:      u64 = 0x45404;
-const FORCEWAKE_MEDIA:    u64 = 0xA254;  // render/media force-wake request
-const FORCEWAKE_ACK_MEDIA: u64 = 0xA258; // render/media force-wake acknowledge
+// Haswell force-wake (i915 FORCEWAKE_MT path — the gen6-era split
+// render/media registers at 0xA254/0xA258 do not exist on HSW; writes there
+// land nowhere and reads return 0). These are masked-write registers: the
+// upper 16 bits are the write-enable mask, so acquire is a plain
+// _MASKED_BIT_ENABLE-style constant write, not a read-modify-write.
+const FORCEWAKE_MT:      u64 = 0xA188;  // multi-threaded force-wake request
+const FORCEWAKE_MT_ACK:  u64 = 0x130040; // multi-threaded force-wake acknowledge
+const FORCEWAKE_KERNEL:  u32 = 0x1;      // kernel-driver hold bit
 
 // DPLL 0 (display PLL for the eDP path)
 const DPLL_CTRL1:         u64 = 0x6C058;
@@ -62,7 +71,12 @@ pub enum ModeOp {
     Snapshot,
     Native60,
     RestoreGop,
+    Wells,
 }
+
+/// The saved display state `restore-gop` writes back. Filled by
+/// `modeset snapshot`; one-shot — cleared by a successful restore.
+static SNAP: spin::Mutex<Option<DisplaySnapshot>> = spin::Mutex::new(None);
 
 #[derive(Clone, Copy)]
 struct Timing1080p60 {
@@ -107,8 +121,8 @@ struct DisplaySnapshot {
     // Power / force-wake
     pwr_well_ctl: u32,
     pwr_well_ctl2: u32,
-    forcewake_media: u32,
-    forcewake_ack_media: u32,
+    forcewake_mt: u32,
+    forcewake_mt_ack: u32,
 
     // DPLL 0
     dpll_ctrl1: u32,
@@ -147,8 +161,8 @@ impl DisplaySnapshot {
         Self {
             pwr_well_ctl: mmio.read32(PWR_WELL_CTL),
             pwr_well_ctl2: mmio.read32(PWR_WELL_CTL2),
-            forcewake_media: mmio.read32(FORCEWAKE_MEDIA),
-            forcewake_ack_media: mmio.read32(FORCEWAKE_ACK_MEDIA),
+            forcewake_mt: mmio.read32(FORCEWAKE_MT),
+            forcewake_mt_ack: mmio.read32(FORCEWAKE_MT_ACK),
 
             dpll_ctrl1: mmio.read32(DPLL_CTRL1),
             dpll_cfgcr1: mmio.read32(DPLL_CFGCR1),
@@ -182,8 +196,8 @@ impl DisplaySnapshot {
         println!("modeset snapshot:");
         println!("  PWR_WELL_CTL          [0x{:05X}] = 0x{:08X}", PWR_WELL_CTL, self.pwr_well_ctl);
         println!("  PWR_WELL_CTL2         [0x{:05X}] = 0x{:08X}", PWR_WELL_CTL2, self.pwr_well_ctl2);
-        println!("  FORCEWAKE_MEDIA       [0x{:05X}] = 0x{:08X}", FORCEWAKE_MEDIA, self.forcewake_media);
-        println!("  FORCEWAKE_ACK_MEDIA   [0x{:05X}] = 0x{:08X}", FORCEWAKE_ACK_MEDIA, self.forcewake_ack_media);
+        println!("  FORCEWAKE_MT          [0x{:05X}] = 0x{:08X}", FORCEWAKE_MT, self.forcewake_mt);
+        println!("  FORCEWAKE_MT_ACK      [0x{:05X}] = 0x{:08X}", FORCEWAKE_MT_ACK, self.forcewake_mt_ack);
         println!("  DPLL_CTRL1            [0x{:05X}] = 0x{:08X}", DPLL_CTRL1, self.dpll_ctrl1);
         println!("  DPLL_CFGCR1           [0x{:05X}] = 0x{:08X}", DPLL_CFGCR1, self.dpll_cfgcr1);
         println!("  DPLL_CFGCR2           [0x{:05X}] = 0x{:08X}", DPLL_CFGCR2, self.dpll_cfgcr2);
@@ -261,6 +275,7 @@ pub fn run(op: ModeOp) -> u64 {
         ModeOp::Snapshot => snapshot(&mmio),
         ModeOp::Native60 => native_60(&mmio),
         ModeOp::RestoreGop => restore_gop(&mmio),
+        ModeOp::Wells => wells(&mmio),
     }
 }
 
@@ -328,12 +343,18 @@ fn poke_60_timings(mmio: &MmioReg) -> u64 {
     0
 }
 
-/// Capture a read-only snapshot of every display register M14-I may touch.
-/// This is the first step before any native modeset write and the data source
-/// for `docs/DISPLAY_HASWELL_NATIVE_MODESET.md`.
+/// Capture a snapshot of every display register M14-I may touch, print it,
+/// and KEEP it — this is what `restore-gop` writes back. Save-before-restore
+/// is the M14 hard rule, so restore refuses to run until a snapshot exists.
 fn snapshot(mmio: &MmioReg) -> u64 {
     let s = DisplaySnapshot::read(mmio);
     s.print();
+    let mut slot = SNAP.lock();
+    println!(
+        "modeset snapshot: {}saved for restore-gop (valid this boot only)",
+        if slot.is_some() { "overwrote previous; " } else { "" }
+    );
+    *slot = Some(s);
     0
 }
 
@@ -341,16 +362,177 @@ fn snapshot(mmio: &MmioReg) -> u64 {
 /// The implementation is gated until the refreshed `i915_display_info.txt`
 /// oracle values are committed and the design doc is written.
 fn native_60(_mmio: &MmioReg) -> u64 {
-    println!("modeset native-60: M14-I not yet implemented");
-    println!("modeset native-60: run `modeset snapshot` and refresh the Pop!_OS oracle capture first");
+    println!("modeset native-60: M14-I takeover not yet implemented");
+    println!("modeset native-60: refresh the Pop!_OS oracle capture first (see docs/DISPLAY_HASWELL_NATIVE_MODESET.md)");
+    if SNAP.lock().is_some() {
+        println!("modeset native-60: snapshot saved — restore-gop is armed for when the takeover lands");
+    } else {
+        println!("modeset native-60: no snapshot yet — run `modeset snapshot` so restore-gop has something to restore");
+    }
     u64::MAX
 }
 
-/// M14-I placeholder: restore the original GOP-driven display state.
-fn restore_gop(_mmio: &MmioReg) -> u64 {
-    println!("modeset restore-gop: M14-I not yet implemented");
-    println!("modeset restore-gop: reboot to return to GOP if native-60 was not run");
-    u64::MAX
+/// Restore the saved display state (GOP-driven, captured by `modeset
+/// snapshot`). Conservative by construction: today the saved values are the
+/// live ones, so the writes are the same class poke-60 already does. The
+/// point is a PROVEN restore path for the day native-60 scrambles something.
+/// Write order keeps scanout consistent: plane first, timing next, then the
+/// func/DPLL/DDI enables, power/force-wake last.
+fn restore_gop(mmio: &MmioReg) -> u64 {
+    let s = match SNAP.lock().take() {
+        Some(s) => s,
+        None => {
+            println!("modeset restore-gop: no snapshot this boot — run `modeset snapshot` first");
+            println!("modeset restore-gop: (reboot always returns to GOP)");
+            return u64::MAX;
+        }
+    };
+    println!("modeset restore-gop: writing back snapshot...");
+
+    // Plane A first — scanout keeps pointing at a consistent surface.
+    write_reg(mmio, "DSPCNTR_A", DSPCNTR_A, s.dspcntr_a);
+    write_reg(mmio, "DSPSTRIDE_A", DSPSTRIDE_A, s.dspstride_a);
+    write_reg(mmio, "DSPSURF_A", DSPSURF_A, s.dspsurf_a);
+    write_reg(mmio, "DSPTILEOFF_A", DSPTILEOFF_A, s.dsptileoff_a);
+    write_reg(mmio, "DSPPOS_A", DSPPOS_A, s.dsppos_a);
+    write_reg(mmio, "DSPSIZE_A", DSPSIZE_A, s.dspsize_a);
+
+    // Transcoder A timing.
+    write_reg(mmio, "TRANS_HTOTAL_A", TRANS_HTOTAL_A, s.trans_htotal_a);
+    write_reg(mmio, "TRANS_HBLANK_A", TRANS_HBLANK_A, s.trans_hblank_a);
+    write_reg(mmio, "TRANS_HSYNC_A", TRANS_HSYNC_A, s.trans_hsync_a);
+    write_reg(mmio, "TRANS_VTOTAL_A", TRANS_VTOTAL_A, s.trans_vtotal_a);
+    write_reg(mmio, "TRANS_VBLANK_A", TRANS_VBLANK_A, s.trans_vblank_a);
+    write_reg(mmio, "TRANS_VSYNC_A", TRANS_VSYNC_A, s.trans_vsync_a);
+    write_reg(mmio, "PIPEASRC", PIPEASRC, s.pipeasrc);
+    write_reg(mmio, "TRANS_DDI_FUNC_CTL_A", TRANS_DDI_FUNC_CTL_A, s.trans_ddi_func_ctl_a);
+
+    // Pipe + DPLL 0 + DDI A.
+    write_reg(mmio, "PIPECONF_A", PIPECONF_A, s.pipeconf_a);
+    write_reg(mmio, "DPLL_CFGCR1", DPLL_CFGCR1, s.dpll_cfgcr1);
+    write_reg(mmio, "DPLL_CFGCR2", DPLL_CFGCR2, s.dpll_cfgcr2);
+    write_reg(mmio, "DPLL_CTRL1", DPLL_CTRL1, s.dpll_ctrl1);
+    write_reg(mmio, "DDI_BUF_CTL_A", DDI_BUF_CTL_A, s.ddi_buf_ctl_a);
+    write_reg(mmio, "DP_TP_CTL_A", DP_TP_CTL_A, s.dp_tp_ctl_a);
+
+    // Power wells / force-wake last.
+    write_reg(mmio, "PWR_WELL_CTL", PWR_WELL_CTL, s.pwr_well_ctl);
+    write_reg(mmio, "PWR_WELL_CTL2", PWR_WELL_CTL2, s.pwr_well_ctl2);
+    // Snapshot value written raw: FORCEWAKE_MT is masked-write (upper 16 bits
+    // are the enable mask), so restoring a live value of 0 is a harmless
+    // no-op — the restore never asserts or drops a hold by accident.
+    write_reg(mmio, "FORCEWAKE_MT", FORCEWAKE_MT, s.forcewake_mt);
+
+    // Readback audit: any register that didn't take the write is a finding.
+    let now = DisplaySnapshot::read(mmio);
+    let mut diffs = 0u64;
+    macro_rules! audit {
+        ($name:literal, $off:expr, $want:expr, $got:expr) => {
+            if $want != $got {
+                println!("  DIFF {:<20} want=0x{:08X} got=0x{:08X}", $name, $want, $got);
+                diffs += 1;
+            }
+        };
+    }
+    audit!("DSPSURF_A", DSPSURF_A, s.dspsurf_a, now.dspsurf_a);
+    audit!("TRANS_HTOTAL_A", TRANS_HTOTAL_A, s.trans_htotal_a, now.trans_htotal_a);
+    audit!("TRANS_VTOTAL_A", TRANS_VTOTAL_A, s.trans_vtotal_a, now.trans_vtotal_a);
+    audit!("PIPEASRC", PIPEASRC, s.pipeasrc, now.pipeasrc);
+    audit!("TRANS_DDI_FUNC_CTL_A", TRANS_DDI_FUNC_CTL_A, s.trans_ddi_func_ctl_a, now.trans_ddi_func_ctl_a);
+    audit!("PIPECONF_A", PIPECONF_A, s.pipeconf_a, now.pipeconf_a);
+    audit!("DPLL_CTRL1", DPLL_CTRL1, s.dpll_ctrl1, now.dpll_ctrl1);
+    audit!("DDI_BUF_CTL_A", DDI_BUF_CTL_A, s.ddi_buf_ctl_a, now.ddi_buf_ctl_a);
+    audit!("PWR_WELL_CTL", PWR_WELL_CTL, s.pwr_well_ctl, now.pwr_well_ctl);
+    if diffs == 0 {
+        println!("modeset restore-gop: OK — snapshot written back, screen should be unchanged");
+        0
+    } else {
+        println!("modeset restore-gop: {} register(s) did not take the write — note them and reboot if the screen misbehaves", diffs);
+        u64::MAX
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Force-wake / power-well helpers (M14-I runway). Bounded polls everywhere —
+// a force-wake or power-well sequence error can hang the GPU, so every wait
+// has a timeout and reports instead of spinning forever.
+// ---------------------------------------------------------------------------
+
+const FORCEWAKE_SPIN_LIMIT: u64 = 5_000_000;
+const POWERWELL_SPIN_LIMIT: u64 = 5_000_000;
+
+/// Request the Haswell kernel force-wake and wait for the ACK. Returns false
+/// (with a message) on timeout. No-op true if the ACK is already set.
+/// Masked-write register: acquire = mask|KERNEL, no read-modify-write.
+fn forcewake_acquire(mmio: &MmioReg) -> bool {
+    if mmio.read32(FORCEWAKE_MT_ACK) & FORCEWAKE_KERNEL != 0 {
+        return true;
+    }
+    mmio.write32(FORCEWAKE_MT, (FORCEWAKE_KERNEL << 16) | FORCEWAKE_KERNEL);
+    for _ in 0..FORCEWAKE_SPIN_LIMIT {
+        core::hint::spin_loop();
+        if mmio.read32(FORCEWAKE_MT_ACK) & FORCEWAKE_KERNEL != 0 {
+            return true;
+        }
+    }
+    println!("modeset: FORCEWAKE_MT ack timeout (ack=0x{:08X})", mmio.read32(FORCEWAKE_MT_ACK));
+    false
+}
+
+/// Drop the kernel hold (masked-disable) and wait for the ACK to clear.
+/// Returns false (with a message) on timeout — a stale hold keeps the GT
+/// awake and wastes power but does not corrupt display state.
+fn forcewake_release(mmio: &MmioReg) -> bool {
+    mmio.write32(FORCEWAKE_MT, FORCEWAKE_KERNEL << 16);
+    for _ in 0..FORCEWAKE_SPIN_LIMIT {
+        core::hint::spin_loop();
+        if mmio.read32(FORCEWAKE_MT_ACK) & FORCEWAKE_KERNEL == 0 {
+            return true;
+        }
+    }
+    println!("modeset: FORCEWAKE_MT release timeout (ack=0x{:08X})", mmio.read32(FORCEWAKE_MT_ACK));
+    false
+}
+
+/// Enable one power-well field if (and only if) its state bit is off — the
+/// BIOS/GOP almost certainly has the eDP wells on already, and re-requesting
+/// a live well is the risky direction. i915 encoding: request = mask<<1,
+/// state = mask<<0 within the field. Returns true when the well is on.
+/// Used by native-60 when the takeover lands (runway helper).
+#[allow(dead_code)]
+fn power_well_enable_if_off(mmio: &MmioReg, ctl: u64, field_mask: u32) -> bool {
+    let val = mmio.read32(ctl);
+    if val & field_mask != 0 {
+        return true; // state bit already set — nothing to do
+    }
+    mmio.write32(ctl, val | (field_mask << 1));
+    for _ in 0..POWERWELL_SPIN_LIMIT {
+        core::hint::spin_loop();
+        if mmio.read32(ctl) & field_mask != 0 {
+            return true;
+        }
+    }
+    println!("modeset: power-well [0x{:05X}] mask 0x{:08X} enable timeout", ctl, field_mask);
+    false
+}
+
+/// `modeset wells` (op 8): read-only dump of the power/force-wake state plus
+/// one force-wake acquire/release round-trip — a smoke test for the helpers
+/// the takeover will depend on.
+fn wells(mmio: &MmioReg) -> u64 {
+    dump_reg(mmio, "PWR_WELL_CTL", PWR_WELL_CTL);
+    dump_reg(mmio, "PWR_WELL_CTL2", PWR_WELL_CTL2);
+    dump_reg(mmio, "FORCEWAKE_MT", FORCEWAKE_MT);
+    dump_reg(mmio, "FORCEWAKE_MT_ACK", FORCEWAKE_MT_ACK);
+    if !forcewake_acquire(mmio) {
+        return u64::MAX;
+    }
+    println!("modeset wells: force-wake acquire OK (ack=0x{:08X})", mmio.read32(FORCEWAKE_MT_ACK));
+    if !forcewake_release(mmio) {
+        return u64::MAX;
+    }
+    println!("modeset wells: force-wake released (ack=0x{:08X})", mmio.read32(FORCEWAKE_MT_ACK));
+    0
 }
 
 /// Public 60 Hz pacing primitive for the present path. Read-only: constructs a

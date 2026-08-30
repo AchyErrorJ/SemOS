@@ -3,7 +3,7 @@
 //! These mirror the M14 syscalls and give apps a small, safe drawing surface
 //! without owning the kernel's framebuffer directly.
 
-use crate::arch::{syscall2, syscall4, SYS_BACKLIGHT, SYS_FB_BLIT, SYS_FB_META};
+use crate::arch::{syscall0, syscall1, syscall2, syscall4, SYS_BACKLIGHT, SYS_FB_BLIT, SYS_FB_CLAIM, SYS_FB_META, SYS_FB_WAIT_VBLANK};
 
 /// Stable framebuffer metadata returned by [`fbinfo`].
 #[repr(C)]
@@ -83,4 +83,20 @@ pub fn brightness() -> Option<u8> {
 pub fn set_brightness(percent: u8) -> bool {
     let r = unsafe { syscall2(SYS_BACKLIGHT, 1, percent.min(100) as u64) };
     r != u64::MAX
+}
+
+/// Block until the display engine crosses a frame boundary
+/// (SYS_FB_WAIT_VBLANK). Returns `false` when no pacing source exists on
+/// this machine (e.g. QEMU) — callers should fall back to tick sleeping.
+pub fn wait_vblank() -> bool {
+    unsafe { syscall0(SYS_FB_WAIT_VBLANK) == 0 }
+}
+
+/// Claim (`true`) or release (`false`) the screen + keyboard for a
+/// fullscreen app (SYS_FB_CLAIM). Claiming clears the framebuffer, mutes
+/// console prints and cooked input, and enables raw key events via
+/// [`crate::kb::poll`]. Released automatically if the process exits, but
+/// well-behaved apps release explicitly. Returns `true` on success.
+pub fn claim(on: bool) -> bool {
+    unsafe { syscall1(SYS_FB_CLAIM, on as u64) != u64::MAX }
 }

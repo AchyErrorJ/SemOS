@@ -38,7 +38,7 @@ KERNEL_ELF="$REPO_ROOT/kernel-x86_64/target/x86_64-unknown-none/release/semantic
 # plain kernel toolchain. The special trees (compiler/, cg-clif-hello, semos-cc,
 # semos-rustc) are NOT rebuilt here — they are expensive / prebuilt, and the
 # kernel link will fail loudly if their artifacts are missing.
-DEFAULT_PROGRAMS="hello hello-std sem-demo sem-sh net-demo std-demo thread-demo vec-demo spawn-demo exfil-demo sync-demo ptr-guard-test fb-demo"
+DEFAULT_PROGRAMS="hello hello-std sem-demo sem-sh net-demo std-demo thread-demo vec-demo spawn-demo exfil-demo sync-demo ptr-guard-test fb-demo snake"
 PROGRAMS="${USER_PROGRAMS:-$DEFAULT_PROGRAMS}"
 
 DO_BUILD=1
@@ -164,6 +164,10 @@ fi
 sudo cp -a "$ESP/kernel-x86_64" "$ESP/kernel-x86_64.bak-$TS"
 sudo cp -f "$TMP/kernel-x86_64" "$ESP/kernel-x86_64"
 sync
+
+# The kernel is ~17-110 MB and the ESP is shared with Pop!_OS — keep only the
+# two newest backups or a handful of flashes fills the partition.
+ls -1dt "$ESP"/kernel-x86_64.bak-* 2>/dev/null | tail -n +3 | sudo xargs -r rm -rf
 
 log "Done"
 printf 'Reboot, press F12, choose SemOS. At the shell run: netinfo\n'

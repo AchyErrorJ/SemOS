@@ -294,6 +294,11 @@ impl Platform for X86Platform {
         0
     }
 
+    fn run_selfdev(&self, demo: u64) -> u64 {
+        // One self-dev demo in the caller's context (same model as run_demos).
+        crate::run_selfdev(demo)
+    }
+
     fn run_pair(&self, qr_ptr: u64, qr_len: u64) -> u64 {
         // The console gate is enforced by the dispatcher; here we just run the
         // handshake (TCP + crypto + SAS confirm) in the caller's context.
@@ -528,8 +533,9 @@ impl Platform for X86Platform {
             5 => crate::display::modeset::ModeOp::Snapshot,
             6 => crate::display::modeset::ModeOp::Native60,
             7 => crate::display::modeset::ModeOp::RestoreGop,
+            8 => crate::display::modeset::ModeOp::Wells,
             _ => {
-                crate::println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank|snapshot|native-60|restore-gop]");
+                crate::println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank|snapshot|wells|native-60|restore-gop]");
                 return u64::MAX;
             }
         };
@@ -568,6 +574,42 @@ impl Platform for X86Platform {
         let pixels = unsafe { core::slice::from_raw_parts(pixels_ptr as *const u32, needed) };
         crate::framebuffer::fb_blit(pixels, x, y, w, h);
         let _ = crate::framebuffer::fb_present();
+        0
+    }
+
+    fn kb_poll(&self, out_ptr: u64, out_len: u64) -> u64 {
+        const USER_LIMIT: u64 = 0x0000_8000_0000_0000;
+        if out_ptr == 0 || out_len < 4 || out_ptr >= USER_LIMIT {
+            return u64::MAX;
+        }
+        let byte_len = out_len & !3; // whole u32 records only
+        if out_ptr.checked_add(byte_len).map_or(true, |end| end > USER_LIMIT) {
+            return u64::MAX;
+        }
+        // USB keyboards are poll-driven and the shell's session pump stops
+        // while a fullscreen app owns input — so the app itself must pump
+        // here, or its USB keys never arrive. When no fullscreen app is
+        // active the session pump owns USB and we leave its reports alone.
+        if crate::FULLSCREEN_APP_ACTIVE.load(core::sync::atomic::Ordering::Acquire) {
+            crate::keyevents::pump_usb_hid();
+        }
+        crate::keyevents::drain_into(out_ptr as *mut u32, (byte_len / 4) as usize) as u64
+    }
+
+    fn fb_claim(&self, on: u64) -> u64 {
+        if on != 0 {
+            crate::FULLSCREEN_APP_ACTIVE.store(true, core::sync::atomic::Ordering::Release);
+            crate::tty::SUPPRESS_TTY_INPUT.store(true, core::sync::atomic::Ordering::Release);
+            // Stale input must not leak into the app: neither raw events
+            // queued before the claim nor a half-typed shell line.
+            crate::keyevents::reset();
+            let mut sink = [0u8; 128];
+            while crate::tty::drain(&mut sink) > 0 {}
+        } else {
+            crate::FULLSCREEN_APP_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
+            crate::tty::SUPPRESS_TTY_INPUT.store(false, core::sync::atomic::Ordering::Release);
+        }
+        crate::framebuffer::clear();
         0
     }
 

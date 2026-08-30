@@ -1,0 +1,16 @@
+[    0.400703] ACPI: bus type drm_connector registered
+[    0.431406] simple-framebuffer simple-framebuffer.0: [drm] Registered 1 planes with drm panic
+[    0.431456] [drm] Initialized simpledrm 1.0.0 for simple-framebuffer.0 on minor 0
+[    0.433301] simple-framebuffer simple-framebuffer.0: [drm] fb0: simpledrmdrmfb frame buffer device
+[    2.193676] i915 0000:00:02.0: enabling device (0006 -> 0007)
+[    2.193767] i915 0000:00:02.0: [drm] Found haswell (device ID 0416) integrated display version 7.00 stepping N/A
+[    2.208290] i915 0000:00:02.0: vgaarb: deactivate vga console
+[    2.211924] i915 0000:00:02.0: vgaarb: VGA decodes changed: olddecodes=io+mem,decodes=none:owns=mem
+[    2.268446] i915 0000:00:02.0: [drm] Registered 3 planes with drm panic
+[    2.275525] [drm] Initialized i915 1.6.0 for 0000:00:02.0 on minor 1
+[    2.382645] fbcon: i915drmfb (fb0) is primary device
+[    2.382652] i915 0000:00:02.0: [drm] fb0: i915drmfb frame buffer device
+[   10.130256] systemd[1]: Starting modprobe@drm.service - Load Kernel Module drm...
+[   10.147093] systemd[1]: modprobe@drm.service: Deactivated successfully.
+[   10.148092] systemd[1]: Finished modprobe@drm.service - Load Kernel Module drm.
+[   10.982282] snd_hda_intel 0000:00:03.0: bound 0000:00:02.0 (ops intel_audio_component_bind_ops [i915])

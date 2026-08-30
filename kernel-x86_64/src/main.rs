@@ -73,6 +73,7 @@ mod platform_impl;
 pub mod context;
 mod syscall;
 mod keyboard;
+mod keyevents;
 mod editor;
 mod nvme;
 mod ahci;
@@ -341,20 +342,30 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     println!();
 
-    println!("[*] Probing Intel HDA audio controller...");
-    hda::init();
-    println!();
+    // HDA probe: nothing consumes the device today; `--features hda` re-enables.
+    #[cfg(feature = "hda")]
+    {
+        println!("[*] Probing Intel HDA audio controller...");
+        hda::init();
+        println!();
+    }
 
-    println!("[*] Probing VirtIO network device...");
-    if virtio::net::init() {
-        if virtio::net::register_with_kernel_core() {
-            println!("[virtio-net] registered with driver registry as 'virtio-net0'");
-            // Bring up the smoltcp Interface on top of virtio-net0.
-            // Hardcoded IP per QEMU SLIRP defaults (10.0.2.15/24 via 10.0.2.2).
-            if let Some(nd) = kernel_core::drivers::registry::get_net("virtio-net0") {
-                if kernel_core::net::init(nd) {
-                    // One initial poll to flush any startup state.
-                    kernel_core::net::poll();
+    // virtio-net is the QEMU-only NIC; on bare metal the e1000e below is the
+    // network. `--features net-extra` re-enables (QEMU harnesses that need
+    // slirp networking — e.g. self-dev demo agent steps — want this).
+    #[cfg(feature = "net-extra")]
+    {
+        println!("[*] Probing VirtIO network device...");
+        if virtio::net::init() {
+            if virtio::net::register_with_kernel_core() {
+                println!("[virtio-net] registered with driver registry as 'virtio-net0'");
+                // Bring up the smoltcp Interface on top of virtio-net0.
+                // Hardcoded IP per QEMU SLIRP defaults (10.0.2.15/24 via 10.0.2.2).
+                if let Some(nd) = kernel_core::drivers::registry::get_net("virtio-net0") {
+                    if kernel_core::net::init(nd) {
+                        // One initial poll to flush any startup state.
+                        kernel_core::net::poll();
+                    }
                 }
             }
         }
@@ -381,9 +392,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 
     // M11 iwlwifi — register NetDevice stub if PCI probe finds a NIC.
-    // On QEMU this silently returns false (no Intel wireless).  On metal
-    // it creates the device skeleton and registers "iwlwifi0" so smoltcp
-    // can use it once firmware + association land.
+    // Probe-stub only (no firmware/association yet); `--features wifi`
+    // re-enables. DEMO 65's wireless_demo references the module regardless.
+    #[cfg(feature = "wifi")]
     if wireless::iwlwifi_net::register_with_kernel_core() {
         println!("[iwlwifi] registered with driver registry as 'iwlwifi0'");
     }
@@ -584,31 +595,29 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static FB_DEMO_ELF: &[u8] = include_bytes!(
         "../../user-programs/fb-demo/target/x86_64-unknown-none/release/fb-demo"
     );
+    // Userland game kit: fullscreen Ring-3 snake on SYS_FB_CLAIM +
+    // SYS_KB_POLL raw key events.
+    static SNAKE_ELF: &[u8] = include_bytes!(
+        "../../user-programs/snake/target/x86_64-unknown-none/release/snake"
+    );
     // M20 native shell: parses + runs commands, spawns ELF children.
     static SEM_SH_ELF: &[u8] = include_bytes!(
         "../../user-programs/sem-sh/target/x86_64-unknown-none/release/sem-sh"
     );
     // M27 Phase 5b iter 5 — DEMO 80: rustc-on-SemOS. The 88 MB binary is
     // the full rustc compiler infrastructure plus the Cranelift codegen
-    // stack statically linked into one Ring-3 ELF.
-    //
-    // Note (2026-06-10): the 88 MB include makes a 102 MB kernel that
-    // never reaches serial under QEMU's BIOS bootloader (size > legacy
-    // load-segment ceiling). It loads fine on real hardware (T540p
-    // validated) and under UEFI — but parallel EHCI-validation sessions
-    // running under QEMU-BIOS need to keep this stub'd. If you're a
-    // sub-agent reaching this comment: only flip the stub on if your
-    // tests run on hardware or UEFI; for QEMU-BIOS leave the &[] in.
-    // UN-STUBBED for the DEMO 80 post-compile-hang investigation (real HW /
-    // UEFI boot). Re-stub to `&[]` for QEMU-BIOS validation sessions.
-    // UN-STUBBED for DEMO 80 hardware boots. Re-stub to `&[]` for QEMU-BIOS
-    // validation sessions (e.g. WiFi work) where the 89 MB include won't boot.
+    // stack statically linked into one Ring-3 ELF. Only linked under
+    // `--features autocompile` (the `selfdev` demos are its only consumers);
+    // a default build stays ~88 MB smaller and boots under QEMU-BIOS again
+    // (the 102 MB image exceeds the legacy load-segment ceiling).
+    #[cfg(feature = "autocompile")]
     static SEMOS_RUSTC_ELF: &[u8] = include_bytes!(
         "../../user-programs/semos-rustc/target/x86_64-unknown-none/release/semos-rustc"
     );
     // DEMO 80 input source: a trivial no_std/no_main Rust program. The
     // SemOS-resident semos-rustc compiles this to /tmp/hello.elf which
     // SYS_SPAWN can then load.
+    #[cfg(feature = "autocompile")]
     static HELLO_RS_SOURCE: &[u8] = include_bytes!(
         "../../user-programs/semos-rustc/test-sources/hello.rs"
     );
@@ -688,11 +697,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         } else {
             println!("    [WARN] failed to register fb-demo.elf");
         }
+        if fs.add("snake.elf", kernel_core::fs::ramfs::FileType::Executable, SNAKE_ELF) {
+            println!("    Registered snake.elf ({} bytes, userland game kit)", SNAKE_ELF.len());
+        } else {
+            println!("    [WARN] failed to register snake.elf");
+        }
         if fs.add("sem-sh.elf", kernel_core::fs::ramfs::FileType::Executable, SEM_SH_ELF) {
             println!("    Registered sem-sh.elf ({} bytes, M20 native shell)", SEM_SH_ELF.len());
         } else {
             println!("    [WARN] failed to register sem-sh.elf");
         }
+        #[cfg(feature = "autocompile")]
+        {
         if fs.add("semos-rustc.elf", kernel_core::fs::ramfs::FileType::Executable, SEMOS_RUSTC_ELF) {
             println!("    Registered semos-rustc.elf ({} bytes, M27 Phase 5b iter 5: rustc-on-SemOS)", SEMOS_RUSTC_ELF.len());
         } else {
@@ -702,6 +718,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered hello.rs ({} bytes, DEMO 80 source)", HELLO_RS_SOURCE.len());
         } else {
             println!("    [WARN] failed to register hello.rs");
+        }
         }
     }
 
@@ -722,10 +739,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     if kernel_core::fs::paths::Namespace::init().is_err() {
         println!("    Path namespace: FAILED to install root");
     }
+    // /tmp holds compiler output (`semos-rustc /hello.rs -o /tmp/hello.elf`)
+    // and general scratch; create it unconditionally.
+    let _ = kernel_core::fs::paths::Namespace::mkdir("/tmp");
     // M27 DEMO 80: the SemOS-resident semos-rustc reads its input source
     // through SYS_OPEN (path namespace), NOT the flat ramfs. Register the
-    // hello.rs source as a namespace file and a /tmp directory for the
-    // compiled output (`semos-rustc /hello.rs -o /tmp/hello.elf`).
+    // hello.rs source as a namespace file (autocompile builds only — the
+    // compiler payload itself is gated the same way).
+    #[cfg(feature = "autocompile")]
     {
         use kernel_core::fs::paths::Namespace;
         use kernel_core::semantic::object::SecurityTier;
@@ -734,7 +755,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         } else {
             println!("    DEMO 80: /hello.rs registered ({} bytes) + /tmp dir", HELLO_RS_SOURCE.len());
         }
-        let _ = Namespace::mkdir("/tmp");
     }
     if let Some(dev) = kernel_core::drivers::registry::get_block("virtio0") {
         match kernel_core::fs::paths::Namespace::load(dev) {
@@ -877,29 +897,9 @@ fn init_loader_task() {
         run_all_demos();
     }
 
-    // `--features autocompile`: headless DEMO 80 smoke for QEMU/serial runs.
-    // This avoids relying on the interactive keyboard path just to validate
-    // `semos-rustc` + the disk-backed sysroot blob.
-    #[cfg(feature = "autocompile")]
-    demo80_autocompile();
-
-    // DEMO 83 / self-dev-loop M2: scripted agent bug fix with a real
-    // human-approval prompt on the serial console before the /apps install.
-    #[cfg(feature = "autocompile")]
-    demo83_bugfix();
-
-    // DEMO 87 / self-dev-loop M3: scripted agent FEATURE add — the `wc`
-    // tool, first guest to read files via the new sys_open/sys_fread/
-    // sys_close stubs. Same human-approval gate as M2.
-    #[cfg(feature = "autocompile")]
-    demo87_featureadd();
-
-    // DEMO 88 / self-dev-loop M4: scripted agent SELF-REPAIR — a previously
-    // installed /apps tool starts crashing after its data file is truncated;
-    // the agent detects the fault-sentinel exit, writes a patched source,
-    // verifies it, and a human approves the replacement install.
-    #[cfg(feature = "autocompile")]
-    demo88_selfrepair();
+    // Self-dev demos (80/83/87/88) no longer run at boot — they are shell
+    // commands now: `selfdev 80|83|87|88` -> SYS_SELFDEV -> run_selfdev.
+    // Interaction (the approval gate) happens while the command runs.
 
     // `--features netlog-test`: headless SYS_NETLOG smoke. Wait for DHCP so
     // the UDP send has a source address, then pre-type the shell command
@@ -990,6 +990,55 @@ fn vouch_test_task() {
         let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
     }
     println!("[vouch-test] feeder done — flow complete");
+}
+
+/// SYS_SELFDEV backing: run ONE self-dev demo (80|83|87|88) on demand from
+/// the shell's `selfdev` builtin, in the caller's context (same model as
+/// run_all_demos). The console gate is enforced by the dispatcher. The demo
+/// bodies — and the ~88 MB semos-rustc payload they drive — only exist in
+/// `--features autocompile` builds; without it we say so and fail.
+///
+/// Interruptible: Ctrl+C (keyboard::ABORT_REQUESTED, set by the PS/2 IRQ
+/// handler) is checked in the spawn-wait polls and the approval gate.
+pub(crate) fn run_selfdev(demo: u64) -> u64 {
+    #[cfg(feature = "autocompile")]
+    {
+        // Fresh-start hygiene (same model as run_usbenum): a Ctrl+C from a
+        // previous command must not pre-abort this run, and bytes committed
+        // before the demo starts must not answer its approval gate later.
+        crate::keyboard::clear_abort();
+        {
+            let mut sink = [0u8; 128];
+            while crate::tty::drain(&mut sink) > 0 {}
+        }
+        let rc = match demo {
+            80 => { demo80_autocompile(); 0 }
+            83 => { demo83_bugfix(); 0 }
+            87 => { demo87_featureadd(); 0 }
+            88 => { demo88_selfrepair(); 0 }
+            _ => {
+                println!("selfdev: unknown demo {} (want 80|83|87|88)", demo);
+                u64::MAX
+            }
+        };
+        // Keys mashed during the run (Ctrl+C, stray Enters, a retyped
+        // `selfdev ...` line) must not execute as shell commands when the
+        // REPL resumes — that read as "the demo restarts itself".
+        {
+            let mut sink = [0u8; 128];
+            while crate::tty::drain(&mut sink) > 0 {}
+        }
+        if crate::keyboard::abort_requested() {
+            println!("selfdev: demo {} aborted by user (Ctrl+C)", demo);
+        }
+        rc
+    }
+    #[cfg(not(feature = "autocompile"))]
+    {
+        let _ = demo;
+        println!("selfdev: not built (rebuild kernel with --features autocompile)");
+        u64::MAX
+    }
 }
 
 /// Run the full boot DEMO suite end-to-end. Invoked at boot when
@@ -1692,7 +1741,7 @@ pub(crate) fn run_all_demos() {
 /// - the compiled program runs (fenced, tier 0) and exits 0,
 /// - its captured stdout matches `EXPECTED_HELLO` byte-for-byte.
 #[cfg(feature = "autocompile")]
-fn demo80_autocompile() {
+pub(crate) fn demo80_autocompile() {
     use kernel_core::syscall::{dispatch, numbers::*, StatX};
 
     const EXPECTED_HELLO: &[u8] = b"Hello, world from bare-metal semos-rustc!\n";
@@ -1850,6 +1899,15 @@ fn demo80_spawn_wait(path: &str, args: &[&str], tier: u64) -> Option<u64> {
         if scheduler::task_state(slot) == TaskState::Exited {
             break;
         }
+        if crate::keyboard::abort_requested() {
+            // No task-kill API: the child finishes on its own (semos-rustc /
+            // sem-sh children always exit); we just stop waiting for it.
+            println!(
+                "  [DEMO] Ctrl+C — stopped waiting for {} (PID {} finishes in background)",
+                path, pid
+            );
+            return None;
+        }
         if polled > 120_000 {
             println!("  [DEMO 80] FAIL: {} did not exit within 120000 ticks", path);
             return None;
@@ -1878,10 +1936,11 @@ fn demo80_spawn_wait(path: &str, args: &[&str], tier: u64) -> Option<u64> {
 ///
 /// The agent steps are scripted (const fixed source), same as M1 — the
 /// milestone is the loop machinery: reproduce/fix/verify + the approval gate.
-/// The approval prompt is real and interactive over serial; serial RX is not
-/// wired into the TTY, so the prompt polls `Serial::getc()` directly.
+/// The approval prompt is real and interactive: the user answers on the
+/// console keyboard (cooked TTY) while `selfdev 83` runs, or over serial in
+/// headless QEMU runs — see demo_approval_prompt.
 #[cfg(feature = "autocompile")]
-fn demo83_bugfix() {
+pub(crate) fn demo83_bugfix() {
     use kernel_core::fs::paths::Namespace;
     use kernel_core::semantic::object::SecurityTier;
     use kernel_core::syscall::{dispatch, numbers::*, StatX};
@@ -2015,7 +2074,7 @@ fn demo83_bugfix() {
 
     // --- Phase 5: human approval (fail-fast) --------------------------------
     // ~58 s at the ~62 Hz scheduler tick. Deny on n / any other key / timeout.
-    let (approved, tty) = demo83_prompt_serial("  Install /apps/calc? [y/N] ", 3600);
+    let (approved, tty) = demo_approval_prompt("  Install /apps/calc? [y/N] ", 18600);
     if !approved {
         println!("[AUDIT] DENY install /apps/calc reason=denied_or_timeout (fail-fast)");
         println!("  [DEMO 83] SKIP-INSTALL: no human approval — /apps untouched");
@@ -2094,39 +2153,84 @@ fn demo83_bugfix() {
     println!("  [DEMO 83] PASS: M2 bug fix — reproduce/fix/verify/approve/install end-to-end");
 }
 
-/// Print `prompt` on the serial console and wait up to `timeout_ticks`
-/// scheduler ticks for a human keypress. `y`/`Y` approves; anything else —
-/// including the timeout — denies (fail-fast, plan section 4 decision 2).
-/// Polls `Serial::getc()` directly: serial RX is not wired into the TTY.
-#[cfg(feature = "autocompile")]
 /// Fail-fast install-approval gate (M2/M3/M4). Returns (approved, source).
-/// Polls BOTH serial (QEMU harness / headless) and the PS/2 keyboard (bare
-/// metal — laptops have no serial port); the first answer from either wins.
-/// Anything but y/Y, or a timeout, denies.
-fn demo83_prompt_serial(prompt: &str, timeout_ticks: u64) -> (bool, &'static str) {
+/// Answers come from the cooked TTY (PS/2 and USB HID both feed
+/// `tty::input_push` — the user types the answer at the shell while the
+/// `selfdev` command runs) and, for headless QEMU harnesses, directly from
+/// `Serial::getc()`. The first answer from either wins; `y`/`Y` approves,
+/// anything else — including the timeout — denies (fail-fast, plan section 4
+/// decision 2).
+#[cfg(feature = "autocompile")]
+fn demo_approval_prompt(prompt: &str, timeout_ticks: u64) -> (bool, &'static str) {
     use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
 
-    print!("{}", prompt);
+    // Own the screen: a single quiet no-newline line gets buried by the
+    // concurrent shell banner / heartbeat / demo output on bare metal (no
+    // serial to fall back on). Print a loud boxed banner up front, silence
+    // the heartbeat for the duration, and re-print a countdown reminder
+    // every ~2s so the ask is always the last thing on screen.
+    const TICK_HZ: u64 = kernel_core::scheduler::SCHEDULER_TICK_HZ;
+    APPROVAL_GATE_ACTIVE.store(true, core::sync::atomic::Ordering::Relaxed);
+    let finish = |r: (bool, &'static str)| {
+        APPROVAL_GATE_ACTIVE.store(false, core::sync::atomic::Ordering::Relaxed);
+        r
+    };
+    // Drop any bytes committed before the prompt — the `selfdev 83\n` line
+    // itself (and anything typed while the demo ran) must not answer the gate.
+    {
+        let mut sink = [0u8; 128];
+        while crate::tty::drain(&mut sink) > 0 {}
+    }
+    println!();
+    println!("  ########################################################");
+    println!("  ##        HUMAN APPROVAL REQUIRED — act now          ##");
+    println!("  ########################################################");
+    println!("  ##  {}", prompt);
+    println!("  ##  press  y  = install      any other key = deny");
+    println!("  ##  (keyboard or serial; timeout in ~{}s denies)", timeout_ticks / TICK_HZ);
+    println!("  ########################################################");
+
     let mut waited = 0u64;
     loop {
+        // Ctrl+C is a deny (fail-safe direction): the PS/2 IRQ handler sets
+        // ABORT_REQUESTED even when the 0x03 byte gets eaten elsewhere.
+        if crate::keyboard::abort_requested() {
+            println!("  ## aborted by user (Ctrl+C) — DENIED");
+            return finish((false, "abort"));
+        }
+        // Headless arm: the QEMU harness answers over the serial pipe.
         if let Some(b) = crate::serial::Serial::getc() {
             let yes = b == b'y' || b == b'Y';
-            println!("{}", if yes { "y" } else { "n" });
-            return (yes, "serial");
+            println!("  ## answer: {}", if yes { "y — APPROVED" } else { "n — DENIED" });
+            return finish((yes, "serial"));
         }
-        // Drain the PS/2 controller ourselves so the gate works even where
-        // the timer-ISR keyboard poll is gated off; then pop a decoded key.
-        // NOTE: handle_scancode also feeds the TTY, so the answer key lands
-        // in the interactive shell's input buffer too — harmless stray char.
-        let _ = crate::keyboard::poll_one_scancode();
-        if let Some(b) = crate::keyboard::read_key() {
-            let yes = b == b'y' || b == b'Y';
-            println!("{}", if yes { "y" } else { "n" });
-            return (yes, "kbd");
+        // Interactive arm: cooked TTY bytes (echoed by the line discipline, so
+        // the user sees their answer). First y/Y approves; any other
+        // printable — or an Enter — denies.
+        let mut buf = [0u8; 64];
+        let n = crate::tty::drain(&mut buf);
+        if n > 0 {
+            let mut yes = false;
+            for &b in &buf[..n] {
+                if b == b'y' || b == b'Y' {
+                    yes = true;
+                    break;
+                }
+                if b == b'\n' || b == b'\r' {
+                    break;
+                }
+            }
+            println!("  ## answer: {}", if yes { "y — APPROVED" } else { "n — DENIED" });
+            return finish((yes, "tty"));
         }
         if waited >= timeout_ticks {
-            println!("(no answer — timeout)");
-            return (false, "timeout");
+            println!("  ## (no answer — timeout, DENIED)");
+            return finish((false, "timeout"));
+        }
+        // Countdown reminder every ~2s keeps the ask at the bottom of the
+        // screen no matter what else printed since the banner.
+        if waited > 0 && waited % (2 * TICK_HZ) == 0 {
+            println!("  >>> waiting for y/N — {}s left", (timeout_ticks - waited) / TICK_HZ);
         }
         let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
         waited += 1;
@@ -2173,7 +2277,7 @@ fn demo83_read_file(path: &str) -> Option<alloc::vec::Vec<u8>> {
 /// wc has no argv (cg_clif has no assembler for the rsp-grab trampoline
 /// std-shim uses), so its input path is compiled in — documented in wc.rs.
 #[cfg(feature = "autocompile")]
-fn demo87_featureadd() {
+pub(crate) fn demo87_featureadd() {
     use kernel_core::fs::paths::Namespace;
     use kernel_core::semantic::object::SecurityTier;
     use kernel_core::syscall::{dispatch, numbers::*, StatX};
@@ -2294,7 +2398,7 @@ fn demo87_featureadd() {
     );
 
     // --- Phase 4: human approval (fail-fast) --------------------------------
-    let (approved, tty) = demo83_prompt_serial("  Install /apps/wc? [y/N] ", 3600);
+    let (approved, tty) = demo_approval_prompt("  Install /apps/wc? [y/N] ", 18600);
     if !approved {
         println!("[AUDIT] DENY install /apps/wc reason=denied_or_timeout (fail-fast)");
         println!("  [DEMO 87] SKIP-INSTALL: no human approval — /apps untouched");
@@ -2387,7 +2491,7 @@ fn demo87_featureadd() {
 ///      intervention in the loop)
 ///   6. repair:  staging rename v2 -> /apps/head1, post-repair health check
 #[cfg(feature = "autocompile")]
-fn demo88_selfrepair() {
+pub(crate) fn demo88_selfrepair() {
     use kernel_core::fs::paths::Namespace;
     use kernel_core::semantic::object::SecurityTier;
     use kernel_core::syscall::{dispatch, numbers::*, StatX};
@@ -2577,7 +2681,7 @@ fn demo88_selfrepair() {
     println!("  [DEMO 88] reproduced: installed /apps/head1 v1 still crashes");
 
     // --- Phase 6: human approval (fail-fast — the only human step) ---------
-    let (approved, tty) = demo83_prompt_serial("  Install /apps/head1 (repaired v2)? [y/N] ", 3600);
+    let (approved, tty) = demo_approval_prompt("  Install /apps/head1 (repaired v2)? [y/N] ", 18600);
     if !approved {
         println!("[AUDIT] DENY install /apps/head1 reason=denied_or_timeout (fail-fast)");
         println!("  [DEMO 88] SKIP-INSTALL: no human approval — v1 left in place");
@@ -2680,6 +2784,12 @@ fn panic(info: &PanicInfo) -> ! {
         x86_64::instructions::hlt();
     }
 }
+
+/// Set while a self-dev approval gate (demo_approval_prompt) is waiting for
+/// a human keypress. The heartbeat checks this and stays quiet so its 5s
+/// beats don't scroll the prompt off the framebuffer mid-decision.
+pub static APPROVAL_GATE_ACTIVE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 /// Print macro for serial output
 #[macro_export]

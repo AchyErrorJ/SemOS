@@ -101,6 +101,13 @@ pub trait Platform: Send + Sync + 'static {
     /// aborts it early. Returns 0. Default: no-op (nothing to run).
     fn run_demos(&self) -> u64 { 0 }
 
+    /// SYS_SELFDEV: run one self-dev demo (80|83|87|88) on demand (the
+    /// `selfdev` shell builtin). Blocks in the caller's context like
+    /// `run_demos`. The console gate is enforced by the dispatcher. Returns 0
+    /// on success, u64::MAX when the demo is unknown or the platform wasn't
+    /// built with self-dev support. Default: unavailable.
+    fn run_selfdev(&self, _demo: u64) -> u64 { u64::MAX }
+
     /// SYS_PAIR: run the M56 pairing handshake against the phone described by
     /// the QR payload at `(qr_ptr, qr_len)` in caller memory. Blocks in the
     /// caller's context (TCP + crypto + the interactive SAS confirm on the
@@ -152,6 +159,18 @@ pub trait Platform: Send + Sync + 'static {
     /// boundary (read-only scanline wrap). Returns 0 on success, u64::MAX if no
     /// pacing source is available. Default: unavailable.
     fn fb_wait_vblank(&self) -> u64 { u64::MAX }
+
+    /// SYS_KB_POLL: drain up to `out_len / 4` raw key events (u32 records:
+    /// bit 31 pressed, bit 7 extended, bits 6:0 set-1 scancode) into the user
+    /// buffer at `out_ptr`. Non-blocking; returns the event count.
+    /// Default: unavailable.
+    fn kb_poll(&self, _out_ptr: u64, _out_len: u64) -> u64 { u64::MAX }
+
+    /// SYS_FB_CLAIM: `on != 0` claims the screen + keyboard for a fullscreen
+    /// Ring-3 app (console prints and cooked input suppressed, framebuffer
+    /// cleared); `on == 0` releases. reset_tty_flags releases on process exit.
+    /// Default: unavailable.
+    fn fb_claim(&self, _on: u64) -> u64 { u64::MAX }
 
     /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
     /// list to the TTY (`wifi` shell command). Blocks for the scan duration.

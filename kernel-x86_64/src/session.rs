@@ -72,8 +72,15 @@ fn kernel_idle_task() {
     loop {
         let now = kernel_core::platform::ticks();
         if now >= next_emit {
-            let elapsed_s = now.saturating_sub(start) / TICK_HZ;
-            println!("[heartbeat] T+{}s — alive (ticks={})", elapsed_s, now);
+            // Stay quiet while an approval gate owns the screen — a 5s beat
+            // would scroll the [y/N] prompt away mid-decision (bare metal
+            // has no serial to read it back from). The beat RESUMES on the
+            // next cycle after the gate closes; next_emit still advances so
+            // we don't burst the missed beats.
+            if !crate::APPROVAL_GATE_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
+                let elapsed_s = now.saturating_sub(start) / TICK_HZ;
+                println!("[heartbeat] T+{}s — alive (ticks={})", elapsed_s, now);
+            }
             next_emit = now + BEAT_TICKS;
         }
         unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }

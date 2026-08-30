@@ -192,20 +192,39 @@ pub mod numbers {
                                             // later calls must match it (constant-time compare).
     pub const SYS_GET_VOUCH:    u64 = 134;  // () -> (tier << 32) | remaining_secs, or 0 when no
                                             // live session. Any task may query (read-only).
+    pub const SYS_SELFDEV:      u64 = 135;  // (demo_n) -> 0 / u64::MAX; run one self-dev
+                                            // demo (80|83|87|88) on demand (the `selfdev`
+                                            // builtin). CONSOLE ONLY — demos install into
+                                            // /apps; the agent must never trigger a
+                                            // self-modify cycle. Blocks in the caller's
+                                            // context like SYS_DEMOS.
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
     // M27 DEMO 80 — read-only sysroot blob staged on a SATA disk (Layer B).
+    // NOTE: 120-122 were SYS_DEMOS/PAIR/PAIRED first; the duplicate numbers
+    // shadowed those arms in dispatch (first match wins). Renumbered to
+    // 136-138 — keep the two tables collision-free.
     /// SYS_SYSROOT_INFO(idx, name_buf_ptr, name_buf_len) -> file byte length,
     /// or u64::MAX if idx is out of range / no blob. Writes the file name (up to
     /// name_buf_len bytes) into name_buf_ptr.
-    pub const SYS_SYSROOT_INFO: u64 = 120;
+    pub const SYS_SYSROOT_INFO: u64 = 136;
     /// SYS_SYSROOT_READ(idx, offset, buf_ptr, buf_len) -> bytes read (0 = EOF),
     /// or u64::MAX on error. Streams file `idx` from disk at byte `offset`.
-    pub const SYS_SYSROOT_READ: u64 = 121;
+    pub const SYS_SYSROOT_READ: u64 = 137;
     /// SYS_FLASH_SYSROOT() -> bytes copied, or u64::MAX on error. Copies
     /// sysroot.img off the FAT USB stick (usb0) onto the SATA disk (sata0).
-    pub const SYS_FLASH_SYSROOT: u64 = 122;
+    pub const SYS_FLASH_SYSROOT: u64 = 138;
+    /// SYS_KB_POLL(out_ptr, out_len_bytes) -> event count | u64::MAX.
+    /// Non-blocking drain of the raw key-event ring: u32 records, bit 31 =
+    /// pressed, bit 7 = PS/2-extended, bits 6:0 = normalized set-1 scancode.
+    /// Pumps USB HID itself while a fullscreen app owns input.
+    pub const SYS_KB_POLL: u64 = 139;
+    /// SYS_FB_CLAIM(on) -> 0. 1 = claim screen+keyboard for a fullscreen app
+    /// (FULLSCREEN_APP_ACTIVE + SUPPRESS_TTY_INPUT, stale input drained,
+    /// framebuffer cleared); 0 = release. Auto-released by reset_tty_flags
+    /// on SYS_EXIT.
+    pub const SYS_FB_CLAIM: u64 = 140;
 
     /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
     /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
@@ -342,6 +361,17 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         // blocks in the caller's context, like the agent/edit TUIs above.
         SYS_DEMOS => crate::platform::get().run_demos(),
 
+        // Run ONE self-dev demo on demand (the `selfdev` builtin). Console-only
+        // like SYS_PAIR: demos 83/87/88 install executables into /apps, so the
+        // agent must never be able to trigger a self-modify cycle.
+        SYS_SELFDEV => {
+            if !is_vouch_authority() {
+                crate::platform::log("[selfdev] DENIED: caller is not the interactive console\n");
+                return u64::MAX;
+            }
+            crate::platform::get().run_selfdev(arg0)
+        }
+
         // M56 pairing. `pair` and `unpair` mutate device trust, so they are
         // gated to the interactive console (same authority as SYS_VOUCH) — the
         // agent must never be able to enroll or forget a device. `paired` is a
@@ -374,6 +404,8 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_FB_BLIT => crate::platform::get().fb_blit(arg0, arg1, arg2, arg3),
         SYS_MODESET => crate::platform::get().run_modeset(arg0),
         SYS_FB_WAIT_VBLANK => crate::platform::get().fb_wait_vblank(),
+        SYS_KB_POLL => crate::platform::get().kb_poll(arg0, arg1),
+        SYS_FB_CLAIM => crate::platform::get().fb_claim(arg0),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),

@@ -16,12 +16,22 @@ description = "Semantic OS Kernel - x86_64 version"
 # `--no-default-features`.
 default = ["interactive"]
 interactive = []
-# `autocompile`: right before the interactive handoff, headlessly run the
-# DEMO 80 compile (`semos-rustc /hello.rs -o /tmp/hello.elf`) and print the
-# result to serial. Lets QEMU test the on-device compiler with no keyboard
-# (`-serial stdio`). Off by default so normal boots don't spawn the 88 MB
-# compiler every time.
+# `autocompile`: link the ~88 MB semos-rustc payload + hello.rs source and
+# compile in the self-dev demo bodies (80/83/87/88), runnable on demand via
+# the shell's `selfdev <n>` builtin (SYS_SELFDEV). Off by default: normal
+# boots don't carry the compiler, and the image stays under the QEMU-BIOS
+# load-segment ceiling.
 autocompile = []
+# Minimal-boot trims (all OFF by default = the slim boot). Each re-enables a
+# probe the slim boot skips:
+# `net-extra`: virtio-net (QEMU slirp NIC) probe + smoltcp bring-up. QEMU
+#   harnesses whose demos need network (self-dev agent steps) want this.
+net-extra = []
+# `wifi`: iwlwifi NetDevice stub registration (probe-stub only, no firmware
+#   or association yet).
+wifi = []
+# `hda`: Intel HDA audio controller probe (nothing consumes it today).
+hda = []
 # `netlog-test`: headless SYS_NETLOG smoke for QEMU/serial runs. Waits for
 # DHCP, then pre-types `netlog 10.0.2.2 9000` through the TTY line discipline
 # (DEMO 49 pattern) so sem-sh runs it as its first command — a Windows

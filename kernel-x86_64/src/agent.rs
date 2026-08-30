@@ -1039,6 +1039,10 @@ pub fn run_interactive(_flags: u64) -> u64 {
     }
 
     crate::FULLSCREEN_APP_ACTIVE.store(true, Ordering::Relaxed);
+    // The TUI renders the typed line itself in its prompt pane — stop the
+    // line discipline from also echoing it into the legacy fb console behind
+    // the panes (that's the "typed text appears twice" artifact).
+    crate::tty::SUPPRESS_TTY_FB_ECHO.store(true, Ordering::Relaxed);
 
     loop {
         tui.set_status("ready");
@@ -1067,6 +1071,7 @@ pub fn run_interactive(_flags: u64) -> u64 {
     }
 
     crate::FULLSCREEN_APP_ACTIVE.store(false, Ordering::Relaxed);
+    crate::tty::SUPPRESS_TTY_FB_ECHO.store(false, Ordering::Relaxed);
     // Tear down the overlay so the shell prompt resumes on a clean screen.
     crate::framebuffer::clear();
     0

@@ -48,7 +48,10 @@ pub struct TtyConsole {
     line_top: usize,
     // Line-oriented scrollback: every logical line written is recorded so it
     // can be re-rendered after it scrolls off the region (see show_scrollback).
-    sb: [[u8; SB_W]; SB_N],
+    // The ring is BOXED: SB_N×SB_W is 16 KiB, and four consoles live in one
+    // agent Tui — inline, that made Tui::new probe 64 KiB+ of stack and
+    // double-fault the 16 KiB shell task (bare-metal `agent`, task #41 class).
+    sb: alloc::boxed::Box<[[u8; SB_W]]>,
     sb_len: [usize; SB_N],
     sb_count: usize, // total lines ever pushed (ring index = sb_count % SB_N)
     cur: [u8; SB_W], // line currently being accumulated (until '\n')
@@ -75,7 +78,9 @@ impl TtyConsole {
         fb::fb_fill_rect(x0, y0, w, h, bg);
         Self {
             x0, y0, w, h, px, line_h, col_w, fg, bg, pen_x: x0, line_top: y0,
-            sb: [[0; SB_W]; SB_N],
+            // vec! + into_boxed_slice: zero-initializes on the HEAP, never
+            // as a 16 KiB stack temp (unlike Box::new([[0; SB_W]; SB_N])).
+            sb: alloc::vec![[0u8; SB_W]; SB_N].into_boxed_slice(),
             sb_len: [0; SB_N],
             sb_count: 0,
             cur: [0; SB_W],
@@ -409,20 +414,25 @@ impl LineState {
     /// each old char back to the prompt boundary, then print the new
     /// pend chars. Works for grow/shrink without leaving residue.
     fn redraw_on_history_change(&mut self) {
+        let fb_echo = !SUPPRESS_TTY_FB_ECHO.load(core::sync::atomic::Ordering::Relaxed);
         // Move cursor to end of currently-displayed line.
         let right = self.pend_n.saturating_sub(self.cursor);
         for _ in 0..right {
             crate::serial::Serial::put_char('\x1b');
             crate::serial::Serial::put_char('[');
             crate::serial::Serial::put_char('C');
-            crate::framebuffer::write_str("\x1b[C");
+            if fb_echo {
+                crate::framebuffer::write_str("\x1b[C");
+            }
         }
         // Erase every visible pend char (right-to-left).
         for _ in 0..self.pend_n {
             crate::serial::Serial::put_char('\u{8}');
             crate::serial::Serial::put_char(' ');
             crate::serial::Serial::put_char('\u{8}');
-            crate::framebuffer::write_str("\u{8} \u{8}");
+            if fb_echo {
+                crate::framebuffer::write_str("\u{8} \u{8}");
+            }
         }
         // Swap in the new history entry.
         self.load_from_history();
@@ -432,9 +442,11 @@ impl LineState {
             let c = self.pend[i];
             if matches!(c, 0x20..=0x7E) {
                 crate::serial::Serial::put_char(c as char);
-                let one = [c];
-                if let Ok(slice) = core::str::from_utf8(&one) {
-                    crate::framebuffer::write_str(slice);
+                if fb_echo {
+                    let one = [c];
+                    if let Ok(slice) = core::str::from_utf8(&one) {
+                        crate::framebuffer::write_str(slice);
+                    }
                 }
             }
         }
@@ -493,6 +505,14 @@ pub fn input_push(b: u8) {
 pub static SUPPRESS_TTY_INPUT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// When set, the line discipline keeps buffering/echoing to serial but does
+/// NOT paint the echo glyphs into the legacy framebuffer console. The agent
+/// TUI sets this: it renders the typed line itself in its prompt pane (via
+/// `peek_line`), so the fb echo shows the same text a second time behind the
+/// panes. Unlike SUPPRESS_TTY_INPUT the bytes still reach `drain`/`peek_line`.
+pub static SUPPRESS_TTY_FB_ECHO: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 fn input_push_locked(b: u8) {
     let mut s = STDIN.lock();
 
@@ -549,7 +569,9 @@ fn input_push_locked(b: u8) {
             s.cursor = 0;
             s.hist_nav = s.hist_count; // reset to fresh-line slot
             crate::serial::Serial::put_char('\n');
-            crate::framebuffer::write_str("\n");
+            if !SUPPRESS_TTY_FB_ECHO.load(core::sync::atomic::Ordering::Relaxed) {
+                crate::framebuffer::write_str("\n");
+            }
         }
         0x08 | 0x7F => {
             if s.cursor > 0 {
@@ -558,7 +580,9 @@ fn input_push_locked(b: u8) {
                 crate::serial::Serial::put_char('\u{8}');
                 crate::serial::Serial::put_char(' ');
                 crate::serial::Serial::put_char('\u{8}');
-                crate::framebuffer::write_str("\u{8} \u{8}");
+                if !SUPPRESS_TTY_FB_ECHO.load(core::sync::atomic::Ordering::Relaxed) {
+                    crate::framebuffer::write_str("\u{8} \u{8}");
+                }
             }
         }
         0x20..=0x7E | b'\t' => {
@@ -568,9 +592,13 @@ fn input_push_locked(b: u8) {
                 // Also echo to the framebuffer console — real hardware
                 // typically has no serial cable, so without this the
                 // user types and sees nothing on screen until Enter.
-                let one = [b];
-                if let Ok(slice) = core::str::from_utf8(&one) {
-                    crate::framebuffer::write_str(slice);
+                // Skipped while a fullscreen app renders its own echo
+                // (agent TUI prompt pane).
+                if !SUPPRESS_TTY_FB_ECHO.load(core::sync::atomic::Ordering::Relaxed) {
+                    let one = [b];
+                    if let Ok(slice) = core::str::from_utf8(&one) {
+                        crate::framebuffer::write_str(slice);
+                    }
                 }
             }
         }

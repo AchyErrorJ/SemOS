@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -255,7 +255,7 @@ fn is_builtin(name: &str) -> bool {
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
             | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "flash-sysroot" | "wifi"
-            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "pair" | "paired" | "unpair"
+            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "pair" | "paired" | "unpair"
     )
 }
 
@@ -803,8 +803,9 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             else if argv[1] == "snapshot" { 5 }
             else if argv[1] == "native-60" { 6 }
             else if argv[1] == "restore-gop" { 7 }
+            else if argv[1] == "wells" { 8 }
             else {
-                println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank|snapshot|native-60|restore-gop]");
+                println!("modeset: usage: modeset [status|plan|verify-60|poke-60|wait-vblank|snapshot|wells|native-60|restore-gop]");
                 return 2;
             };
             let rc = unsafe { syscall1(SYS_MODESET, op) };
@@ -931,6 +932,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
             println!("  netinfo             network stack + active NIC/e1000e diagnostics");
             println!("  demos               run the full boot DEMO suite (ESC aborts)");
+            println!("  selfdev N           run self-dev demo N (80|83|87|88) — autocompile builds only");
             println!("  pair QR-STRING      pair a phone (companion app) — console only");
             println!("  paired              list paired devices");
             println!("  unpair ID           forget a paired device — console only");
@@ -980,6 +982,21 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // (or ESC aborts it). Blocks the shell meanwhile.
             let rc = unsafe { syscall1(SYS_DEMOS, 0) };
             if rc == u64::MAX { 1 } else { rc as i32 }
+        }
+        "selfdev" => {
+            // Run ONE self-dev demo on demand — the kernel drives it in this
+            // call's context (like `demos`), so the approval prompt's
+            // interaction happens right here while the command runs. Needs an
+            // autocompile kernel build (the demos drive the on-device rustc).
+            let n: u64 = match argv.get(1).and_then(|s| s.parse().ok()) {
+                Some(n @ (80 | 83 | 87 | 88)) => n,
+                _ => {
+                    println!("selfdev: usage: selfdev 80|83|87|88");
+                    return 2;
+                }
+            };
+            let rc = unsafe { syscall2(SYS_SELFDEV, n, 0) };
+            if rc == u64::MAX { 1 } else { 0 }
         }
         "netlog" => {
             // `netlog <ip> [port]` — drain the kernel log ring and UDP-send it

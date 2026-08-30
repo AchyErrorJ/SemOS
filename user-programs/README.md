@@ -24,6 +24,11 @@ build will fail loudly if the user binary is missing.
 
 - `hello/` — minimal program: `SYS_WRITE("Hello from real Rust ELF!\n")` then
   `SYS_EXIT(0)`. Replaces the hand-assembled `hello.elf`. Used as DEMO 0.
+- `snake/` — first fullscreen Ring-3 game: claims screen+keyboard
+  (`SYS_FB_CLAIM`), steers with raw key events (`SYS_KB_POLL`, arrows/WASD,
+  press+release, PS/2 + USB), blits dirty 16×16 cells only (`SYS_FB_BLIT`),
+  paced by `SYS_FB_WAIT_VBLANK` with a tick-sleep fallback. ESC/Ctrl+C/q
+  quits; the claim auto-releases on exit (`reset_tty_flags`).
 
 ## Layout requirements
 
