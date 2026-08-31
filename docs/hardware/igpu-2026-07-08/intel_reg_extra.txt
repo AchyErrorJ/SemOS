@@ -1,0 +1,19 @@
+                                    (0x00060400): 0xb2200002 (enabled, DDID, DP SST, 6 bpc, -VSync, -HSync, EDP A ON, x2)
+                          CPU_eDP_A (0x00064000): 0x00000080 (disabled not reversed x1 not detected)
+                                    (0x00064040): 0x00000000
+                                    (0x00064300): 0x80000002 (enabled not reversed x2 not detected)
+                                    (0x00064340): 0x80040300
+                                    (0x00064344): 0x00000000
+                                    (0x00046020): 0x14000000
+                                    (0x00046040): 0x00202418
+                                    (0x00046060): 0x00202418
+                                    (0x00130040): 0x44000037
+                                    (0x0006c058): 0x00000000
+                                    (0x0006c040): 0x00000000
+                                    (0x0006c044): 0x00000000
+                                    (0x0006c080): 0x00000000
+                                    (0x0006c084): 0x00000000
+                          PIPEACONF (0x00070008): 0xc0000010 (enabled, active, pf-pd, rotate 0)
+                           DSPACNTR (0x00070180): 0xe0000400 (enabled)
+                         DSPASTRIDE (0x00070188): 0x00001e00 (120)
+                           DSPASURF (0x0007019c): 0x01180000

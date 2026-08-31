@@ -88,3 +88,40 @@ native-60's 12-step sequence.
   held — consistent with display registers not requiring force-wake on HSW;
   force-wake only matters for GT/render-domain registers).
 - Screen never glitched through the whole protocol. No reboot needed.
+
+## Results — 2026-08-31, oracle complete + DDI-D retarget
+
+- Pop!_OS oracle captured: `intel_reg dump` (intel-gpu-tools 1.28) +
+  explicit-address `intel_reg read` run → `intel_reg_dump.txt`,
+  `intel_reg_extra.txt` in `docs/hardware/igpu-2026-07-08/`.
+- **Topology correction: the eDP panel is wired to DDI D, not DDI A.**
+  i915 display_info: ENCODER:92:DDI D/PHY D → CONNECTOR:93:eDP-1;
+  DDI_BUF_CTL_A (0x64000) reads 0x80 = disabled. modeset.rs retargeted to
+  the 0x643xx range; the previous DDI-A framing would have programmed a
+  dead port.
+- **Clocking simplification:** LCPLL_CTL (0x130040) = 0x44000037 = enabled +
+  locked, NON_SSC ref — it sources the 2.7 GHz ×2 link; SPLL and both
+  WRPLLs are disabled. The SKL-era DPLL_CTRL1/CFGCR registers (0x6C0xx) all
+  read zero on HSW and were dropped. native-60 programs NO clocking; it
+  verifies the LCPLL lock bit and refuses otherwise.
+- **Force-wake ack correction:** i915's HSW path pairs FORCEWAKE_MT (0xA188)
+  with FORCEWAKE_ACK_HSW = **0x130044** (intel_uncore.c v5.15, IS_HASWELL
+  branch); 0x130040 is LCPLL_CTL (the FORCEWAKE_MT_ACK name is IVB-only).
+  The 2026-08-30 wells PASS polled 0x130040 — corrected; re-verify on the
+  next metal run.
+- Oracle decodes (cross-checked vs i915 v5.15 i915_reg.h):
+  TRANS_DDI_FUNC_CTL_A = 0xB2200002 (enable, SELECT_PORT(D), DP SST, 6 bpc,
+  eDP-input-A-ON, ×2), DDI_BUF_CTL_D = 0x80000002 (enable, ×2),
+  DP_TP_CTL_D = 0x80040300 (enable, SST, enhanced frame, LINK_TRAIN_NORMAL),
+  PIPECONF_A = 0xC0000010. Linux runs the plane as XBGR2101010
+  (DSPCNTR_A = 0xE0000400) — NOT copied; staging keeps the GOP plane format
+  to match the kept GOP surface.
+- native-60 is now ARMED: oracle filled, write-if-different writes with
+  per-register readback audit (a fully-matching run touches no hardware).
+- Design-doc typos fixed against the dump: TRANS_HTOTAL_A 0x08AF→0x08AB077F,
+  TRANS_HSYNC_A → 0x081507D9, TRANS_VSYNC_A 0x0441→0x0446043D,
+  PIPEASRC 0x0437077F→0x077F0437 (the code's plan() already computed the
+  correct values — verify-60 proved it; only the doc table was wrong).
+- Next metal run: `modeset wells` (re-verify 0x130044 ack), `modeset
+  snapshot` (now reads DDI-D + LCPLL regs), `modeset native-60` (first
+  armed takeover), `modeset restore-gop` (writes back DDI-D snapshot).
