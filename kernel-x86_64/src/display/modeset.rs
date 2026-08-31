@@ -358,18 +358,151 @@ fn snapshot(mmio: &MmioReg) -> u64 {
     0
 }
 
-/// M14-I placeholder: perform a full native Haswell modeset to 1920x1080@60.
-/// The implementation is gated until the refreshed `i915_display_info.txt`
-/// oracle values are committed and the design doc is written.
-fn native_60(_mmio: &MmioReg) -> u64 {
-    println!("modeset native-60: M14-I takeover not yet implemented");
-    println!("modeset native-60: refresh the Pop!_OS oracle capture first (see docs/DISPLAY_HASWELL_NATIVE_MODESET.md)");
-    if SNAP.lock().is_some() {
-        println!("modeset native-60: snapshot saved — restore-gop is armed for when the takeover lands");
-    } else {
-        println!("modeset native-60: no snapshot yet — run `modeset snapshot` so restore-gop has something to restore");
+/// Oracle-derived register values from the Pop!_OS i915 debugfs capture
+/// (docs/hardware/igpu-2026-07-08/ → design doc "Oracle-derived target
+/// values"). `None` = not yet captured. native-60 REFUSES to run while any
+/// field is None — a guessed DPLL/DDI value can hang the display engine,
+/// so the gate is compile-time-visible here, not a runtime afterthought.
+///
+/// Filling these is mechanical once the capture lands: i915_display_info
+/// prints every one of these registers with its live value.
+struct OracleRegs {
+    dpll_ctrl1: Option<u32>,
+    dpll_cfgcr1: Option<u32>,
+    dpll_cfgcr2: Option<u32>,
+    ddi_buf_ctl_a: Option<u32>,
+    dp_tp_ctl_a: Option<u32>,
+    trans_ddi_func_ctl_a: Option<u32>,
+    pipeconf_a: Option<u32>,
+    dspcntr_a: Option<u32>,
+}
+
+const ORACLE: OracleRegs = OracleRegs {
+    dpll_ctrl1: None,          // TODO(oracle): i915_display_info, DPLL 0 control
+    dpll_cfgcr1: None,         // TODO(oracle): i915_display_info, DPLL 0 cfgcr1
+    dpll_cfgcr2: None,         // TODO(oracle): i915_display_info, DPLL 0 cfgcr2
+    ddi_buf_ctl_a: None,       // TODO(oracle): i915_display_info, DDI A buf ctl
+    dp_tp_ctl_a: None,         // TODO(oracle): i915_display_info, DP TP CTL A
+    trans_ddi_func_ctl_a: None,// TODO(oracle): i915_display_info, TRANS DDI FUNC CTL A
+    pipeconf_a: None,          // TODO(oracle): i915_display_info, PIPECONF A
+    dspcntr_a: None,           // TODO(oracle): i915_display_info, plane A control
+};
+
+/// M14-I: full native Haswell modeset to 1920x1080@60 — the 12-step sequence
+/// from docs/DISPLAY_HASWELL_NATIVE_MODESET.md. Staged: the register-write
+/// path is complete and every step narrates itself, but the oracle gate
+/// below refuses to touch hardware until the Pop!_OS capture fills ORACLE.
+fn native_60(mmio: &MmioReg) -> u64 {
+    // --- Gate 1: oracle values present? --------------------------------------
+    let mut missing = 0u32;
+    let mut need = |name: &str, v: &Option<u32>| {
+        if v.is_none() {
+            println!("modeset native-60: oracle value missing: {}", name);
+            missing += 1;
+        }
+    };
+    need("DPLL_CTRL1", &ORACLE.dpll_ctrl1);
+    need("DPLL_CFGCR1", &ORACLE.dpll_cfgcr1);
+    need("DPLL_CFGCR2", &ORACLE.dpll_cfgcr2);
+    need("DDI_BUF_CTL_A", &ORACLE.ddi_buf_ctl_a);
+    need("DP_TP_CTL_A", &ORACLE.dp_tp_ctl_a);
+    need("TRANS_DDI_FUNC_CTL_A", &ORACLE.trans_ddi_func_ctl_a);
+    need("PIPECONF_A", &ORACLE.pipeconf_a);
+    need("DSPCNTR_A", &ORACLE.dspcntr_a);
+    if missing > 0 {
+        println!("modeset native-60: REFUSED — {} oracle value(s) not yet captured", missing);
+        println!("modeset native-60: run the sudo capture on Pop!_OS (dri/1), then fill");
+        println!("  ORACLE in kernel-x86_64/src/display/modeset.rs from i915_display_info.txt");
+        return u64::MAX;
     }
-    u64::MAX
+    let o = |v: Option<u32>| v.unwrap_or(0); // gate above guarantees Some
+
+    // --- Step 2: snapshot (save-before-restore is the M14 hard rule) ---------
+    if SNAP.lock().is_none() {
+        println!("modeset native-60: no snapshot — taking one now so restore-gop is armed");
+        let s = DisplaySnapshot::read(mmio);
+        *SNAP.lock() = Some(s);
+    }
+    let gop = SNAP.lock().unwrap_or_default();
+
+    let p = T540P_EDP_1080P60.plan();
+    println!("modeset native-60: beginning takeover (restore-gop armed, reboot = GOP)");
+
+    // --- Step 3: power wells --------------------------------------------------
+    // DDI-A/eDP well: request+state field 0xC0000000 (metal-proven value from
+    // the wells smoke test — BIOS already has it on; this is a no-op then).
+    if !power_well_enable_if_off(mmio, PWR_WELL_CTL, 0xC000_0000) {
+        println!("modeset native-60: ABORT — DDI-A power well would not enable");
+        return u64::MAX;
+    }
+
+    // --- Step 4: force-wake ---------------------------------------------------
+    // Deliberately SKIPPED: display registers (0x6xxxx/0x7xxxx) do not require
+    // force-wake on Haswell — proven by restore-gop writing the full plane/
+    // transcoder set with no hold. Force-wake only gates GT/render domains.
+
+    // --- Step 5: DPLL 0 for 151.6 MHz (oracle values) -------------------------
+    write_reg(mmio, "DPLL_CFGCR1", DPLL_CFGCR1, o(ORACLE.dpll_cfgcr1));
+    write_reg(mmio, "DPLL_CFGCR2", DPLL_CFGCR2, o(ORACLE.dpll_cfgcr2));
+    write_reg(mmio, "DPLL_CTRL1", DPLL_CTRL1, o(ORACLE.dpll_ctrl1));
+
+    // --- Step 6: DDI A buffer + DP transport (oracle values) ------------------
+    write_reg(mmio, "DDI_BUF_CTL_A", DDI_BUF_CTL_A, o(ORACLE.ddi_buf_ctl_a));
+    write_reg(mmio, "DP_TP_CTL_A", DP_TP_CTL_A, o(ORACLE.dp_tp_ctl_a));
+
+    // --- Step 7: transcoder A timings (EDID-derived, already metal-verified) --
+    write_reg(mmio, "TRANS_HTOTAL_A", TRANS_HTOTAL_A, p.htotal);
+    write_reg(mmio, "TRANS_HBLANK_A", TRANS_HBLANK_A, p.hblank);
+    write_reg(mmio, "TRANS_HSYNC_A", TRANS_HSYNC_A, p.hsync);
+    write_reg(mmio, "TRANS_VTOTAL_A", TRANS_VTOTAL_A, p.vtotal);
+    write_reg(mmio, "TRANS_VBLANK_A", TRANS_VBLANK_A, p.vblank);
+    write_reg(mmio, "TRANS_VSYNC_A", TRANS_VSYNC_A, p.vsync);
+    write_reg(mmio, "PIPEASRC", PIPEASRC, p.pipeasrc);
+
+    // --- Step 8: pipe A enable (oracle PIPECONF) -------------------------------
+    write_reg(mmio, "PIPECONF_A", PIPECONF_A, o(ORACLE.pipeconf_a));
+
+    // --- Steps 9-10: plane A ---------------------------------------------------
+    // The surface is NOT repointed in this staging: DSPSURF/DSPSTRIDE keep the
+    // live GOP values from the snapshot, so a successful takeover still scans
+    // out the same pixels. The SemOS-owned double buffer + flip (page-flip
+    // work) replaces this once the takeover itself is proven.
+    write_reg(mmio, "DSPCNTR_A", DSPCNTR_A, o(ORACLE.dspcntr_a));
+    write_reg(mmio, "DSPSTRIDE_A", DSPSTRIDE_A, gop.dspstride_a);
+    write_reg(mmio, "DSPSURF_A", DSPSURF_A, gop.dspsurf_a);
+
+    // --- Step 11: transcoder A onto DDI A --------------------------------------
+    write_reg(mmio, "TRANS_DDI_FUNC_CTL_A", TRANS_DDI_FUNC_CTL_A, o(ORACLE.trans_ddi_func_ctl_a));
+
+    // --- Step 12: readback audit ------------------------------------------------
+    let now = DisplaySnapshot::read(mmio);
+    let mut diffs = 0u64;
+    let mut audit = |name: &str, want: u32, got: u32| {
+        if want != got {
+            println!("  DIFF {:<20} want=0x{:08X} got=0x{:08X}", name, want, got);
+            diffs += 1;
+        }
+    };
+    audit("DPLL_CTRL1", o(ORACLE.dpll_ctrl1), now.dpll_ctrl1);
+    audit("DPLL_CFGCR1", o(ORACLE.dpll_cfgcr1), now.dpll_cfgcr1);
+    audit("DPLL_CFGCR2", o(ORACLE.dpll_cfgcr2), now.dpll_cfgcr2);
+    audit("DDI_BUF_CTL_A", o(ORACLE.ddi_buf_ctl_a), now.ddi_buf_ctl_a);
+    audit("DP_TP_CTL_A", o(ORACLE.dp_tp_ctl_a), now.dp_tp_ctl_a);
+    audit("TRANS_HTOTAL_A", p.htotal, now.trans_htotal_a);
+    audit("TRANS_VTOTAL_A", p.vtotal, now.trans_vtotal_a);
+    audit("PIPEASRC", p.pipeasrc, now.pipeasrc);
+    audit("PIPECONF_A", o(ORACLE.pipeconf_a), now.pipeconf_a);
+    audit("DSPCNTR_A", o(ORACLE.dspcntr_a), now.dspcntr_a);
+    audit("DSPSURF_A", gop.dspsurf_a, now.dspsurf_a);
+    audit("TRANS_DDI_FUNC_CTL_A", o(ORACLE.trans_ddi_func_ctl_a), now.trans_ddi_func_ctl_a);
+    if diffs == 0 {
+        println!("modeset native-60: takeover clean — all registers match plan+oracle");
+        0
+    } else {
+        println!("modeset native-60: {} DIFF(s) — screen may be scrambled;", diffs);
+        println!("  `modeset restore-gop` writes the snapshot back; reboot is the hard escape");
+        u64::MAX
+    }
 }
 
 /// Restore the saved display state (GOP-driven, captured by `modeset

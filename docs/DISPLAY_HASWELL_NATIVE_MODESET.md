@@ -65,6 +65,15 @@ Out of scope:
 | vsync width | 9 | EDID DTD |
 | htotal | 2220 | computed |
 | vtotal | 1138 | computed |
+| eDP link | 2.7 GHz × 2 lanes (port_clock=270000) | `i915_display_info.txt` (2026-08-30 capture) |
+| Panel depth | 6 bpc (18 bpp), dithering ON | `i915_display_info.txt` ("dither=yes, bpp=18") |
+| Linux plane format | **XB30** (2:10:10:10), NOT XRGB8888 | `i915_display_info.txt` [FB:94] |
+| Linux timings | 151600, 1920 2010 2070 2220 / 1080 1086 1095 1138 | matches the EDID table above exactly |
+
+**XB30 caveat (found 2026-08-30):** i915 runs primary plane A in 2:10:10:10
+with dithering down to the 18 bpp panel. The SemOS staging keeps the GOP
+surface, which is XRGB8888 — so `DSPCNTR_A` from the oracle must have its
+format bits adapted (or the surface converted), not copied verbatim.
 
 ## Register map
 
@@ -138,17 +147,21 @@ All offsets are relative to BAR0 (`f1000000` on the T540p). Registers are
 > sudo lspci -nnvvxxxx -s 00:02.0 > "$OUT/lspci_00_02_0_full.txt"
 > for f in i915_display_info i915_opregion i915_frequency_info \
 >          i915_runtime_pm_status i915_ddb_info; do
->   sudo cat "/sys/kernel/debug/dri/0/$f" > "$OUT/$f.txt" 2>&1 || true
+>   sudo cat "/sys/kernel/debug/dri/1/$f" > "$OUT/$f.txt" 2>&1 || true
 > done
-> dmesg | grep -iE 'i915|drm|edid|eDP' | tail -n 200 > "$OUT/dmesg_i915.txt"
+> sudo dmesg | grep -iE 'i915|drm|edid|eDP' | tail -n 200 > "$OUT/dmesg_i915.txt"
 > ```
+>
+> NOTE: i915 is debugfs minor **1** on this machine (simpledrm takes minor 0),
+> and dmesg needs sudo (dmesg_restrict). Run in a real terminal — sudo cannot
+> prompt for a password through a non-tty shell.
 >
 > Then update this section with the actual Linux/i915 register values.
 
 | Register | Expected value | Notes |
 |----------|----------------|-------|
-| `PWR_WELL_CTL` | `0x????????` | TBD from oracle |
-| `PWR_WELL_CTL2` | `0x????????` | TBD from oracle |
+| `PWR_WELL_CTL` | `0xC0000000` | **Metal-verified** (SemOS snapshot, 2026-08-26): DDI-A/eDP well request+state on |
+| `PWR_WELL_CTL2` | `0x40000000` | **Metal-verified** (SemOS snapshot, 2026-08-26) |
 | `DPLL_CTRL1` | `0x????????` | TBD from oracle |
 | `DPLL_CFGCR1` | `0x????????` | TBD from oracle |
 | `DPLL_CFGCR2` | `0x????????` | TBD from oracle |
@@ -176,20 +189,28 @@ From the EDID and `modeset.rs` `T540P_EDP_1080P60`:
 
 ## Native modeset sequence
 
-`modeset native-60` performs the following steps:
+`modeset native-60` performs the following steps (staged in modeset.rs —
+the register-write path is complete; the oracle gate refuses to run until
+ORACLE is filled from the capture):
 
 1. Validate target GPU is `8086:0416` with BAR0 MMIO.
-2. Read and store a `DisplaySnapshot`.
+2. Read and store a `DisplaySnapshot` (auto-taken if missing — restore-gop
+   is armed before any write).
 3. Enable required power wells via `PWR_WELL_CTL`; poll `PWR_WELL_CTL2`.
-4. Request force-wake if required; poll `FORCEWAKE_ACK_MEDIA`.
+4. ~~Request force-wake~~ **Skipped on HSW**: display registers
+   (0x6xxxx/0x7xxxx) don't require it — proven by restore-gop writing the
+   full plane/transcoder set with no hold. Force-wake gates GT/render only.
 5. Configure DPLL 0 for 151.6 MHz using oracle values.
 6. Configure DDI A buffer and DP transport using oracle values.
 7. Write transcoder timing registers from the table above.
-8. Configure `PIPECONF_A` and enable pipe A; poll for enable ack.
-9. Allocate / initialize the SemOS-native framebuffer.
-10. Write `DSPSURF_A`, `DSPSTRIDE_A`, and `DSPCNTR_A` for plane A.
+8. Configure `PIPECONF_A` and enable pipe A.
+9. **Staging keeps the GOP surface**: `DSPSURF_A`/`DSPSTRIDE_A` are rewritten
+   with the snapshot values, so a clean takeover still scans out the same
+   pixels. The SemOS-owned double buffer + flip lands with the page-flip
+   work after the takeover is proven.
+10. Write `DSPCNTR_A` from oracle (pixel format / enable bits).
 11. Write `TRANS_DDI_FUNC_CTL_A` to enable transcoder A on DDI A.
-12. Read back modified registers and print OK/DIFF against oracle.
+12. Read back modified registers and print OK/DIFF against plan+oracle.
 
 ## Restore sequence
 

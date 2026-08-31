@@ -1,1 +1,72 @@
-cat: /sys/kernel/debug/dri/0/i915_display_info: No such file or directory
+CRTC info
+---------
+[CRTC:51:pipe A]:
+	uapi: enable=yes, active=yes, mode="1920x1080": 60 151600 1920 2010 2070 2220 1080 1086 1095 1138 0x48 0xa
+	hw: enable=yes, active=yes
+	adjusted_mode="1920x1080": 60 151600 1920 2010 2070 2220 1080 1086 1095 1138 0x48 0xa
+	pipe__mode="1920x1080": 60 151600 1920 2010 2070 2220 1080 1086 1095 1138 0x40 0xa
+	pipe src=1920x1080+0+0, dither=yes, bpp=18
+	port_clock=270000, lane_count=2
+	No scalers available on this platform
+	[ENCODER:92:DDI D/PHY D]: connectors:
+		[CONNECTOR:93:eDP-1]
+	[PLANE:33:primary A]: type=PRI
+		uapi: [FB:94] XB30 little-endian (0x30334258),0x100000000000001,1920x1080, visible=visible, src=1920.000000x1080.000000+0.000000+0.000000, dst=1920x1080+0+0, rotation=0 (0x00000001)
+		hw: [FB:94] XB30 little-endian (0x30334258),0x100000000000001,1920x1080, visible=yes, src=1920.000000x1080.000000+0.000000+0.000000, dst=1920x1080+0+0, rotation=0 (0x00000001)
+	[PLANE:38:sprite A]: type=OVL
+		uapi: [FB:0] n/a,0x0,0x0,, visible=hidden, src=0.000000x0.000000+0.000000+0.000000, dst=0x0+0+0, rotation=0 (0x00000001)
+	[PLANE:45:cursor A]: type=CUR
+		uapi: [FB:130] AR24 little-endian (0x34325241),0x0,64x64, visible=visible, src=64.000000x64.000000+0.000000+0.000000, dst=64x64+720+151, rotation=0 (0x00000001)
+		hw: [FB:130] AR24 little-endian (0x34325241),0x0,64x64, visible=yes, src=64.000000x64.000000+0.000000+0.000000, dst=64x64+720+151, rotation=0 (0x00000001)
+	underrun reporting: cpu=yes pch=no
+[CRTC:70:pipe B]:
+	uapi: enable=no, active=no, mode="": 0 0 0 0 0 0 0 0 0 0 0x0 0x0
+	hw: enable=no, active=no
+	adjusted_mode="": 0 0 0 0 0 0 0 0 0 0 0x0 0x0
+	pipe__mode="": 0 0 0 0 0 0 0 0 0 0 0x0 0x0
+	pipe src=0x0+0+0, dither=no, bpp=0
+	port_clock=0, lane_count=0
+	No scalers available on this platform
+	[PLANE:52:primary B]: type=PRI
+		uapi: [FB:0] n/a,0x0,0x0,, visible=hidden, src=0.000000x0.000000+0.000000+0.000000, dst=0x0+0+0, rotation=0 (0x00000001)
+	[PLANE:57:sprite B]: type=OVL
+		uapi: [FB:0] n/a,0x0,0x0,, visible=hidden, src=0.000000x0.000000+0.000000+0.000000, dst=0x0+0+0, rotation=0 (0x00000001)
+	[PLANE:64:cursor B]: type=CUR
+		uapi: [FB:0] n/a,0x0,0x0,, visible=hidden, src=0.000000x0.000000+0.000000+0.000000, dst=0x0+0+0, rotation=0 (0x00000001)
+	underrun reporting: cpu=yes pch=yes
+[CRTC:89:pipe C]:
+	uapi: enable=no, active=no, mode="": 0 0 0 0 0 0 0 0 0 0 0x0 0x0
+	hw: enable=no, active=no
+	adjusted_mode="": 0 0 0 0 0 0 0 0 0 0 0x0 0x0
+	pipe__mode="": 0 0 0 0 0 0 0 0 0 0 0x0 0x0
+	pipe src=0x0+0+0, dither=no, bpp=0
+	port_clock=0, lane_count=0
+	No scalers available on this platform
+	[PLANE:71:primary C]: type=PRI
+		uapi: [FB:0] n/a,0x0,0x0,, visible=hidden, src=0.000000x0.000000+0.000000+0.000000, dst=0x0+0+0, rotation=0 (0x00000001)
+	[PLANE:76:sprite C]: type=OVL
+		uapi: [FB:0] n/a,0x0,0x0,, visible=hidden, src=0.000000x0.000000+0.000000+0.000000, dst=0x0+0+0, rotation=0 (0x00000001)
+	[PLANE:83:cursor C]: type=CUR
+		uapi: [FB:0] n/a,0x0,0x0,, visible=hidden, src=0.000000x0.000000+0.000000+0.000000, dst=0x0+0+0, rotation=0 (0x00000001)
+	underrun reporting: cpu=yes pch=yes
+
+Connector info
+--------------
+[CONNECTOR:93:eDP-1]: status: connected
+	physical dimensions: 340x190mm
+	subpixel order: Unknown
+	CEA rev: 0
+	DPCD rev: 11
+	audio support: no
+	DP branch device present: no
+	HDCP version: No Connector Support
+	max bpc: 6
+	fixed modes:
+		"1920x1080": 60 151600 1920 2010 2070 2220 1080 1086 1095 1138 0x48 0xa
+	modes:
+		"1920x1080": 60 151600 1920 2010 2070 2220 1080 1086 1095 1138 0x48 0xa
+[CONNECTOR:90:VGA-1]: status: disconnected
+[CONNECTOR:101:DP-1]: status: disconnected
+[CONNECTOR:108:HDMI-A-1]: status: disconnected
+[CONNECTOR:114:DP-2]: status: disconnected
+[CONNECTOR:120:HDMI-A-2]: status: disconnected

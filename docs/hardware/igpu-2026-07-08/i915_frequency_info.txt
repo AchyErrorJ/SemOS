@@ -1,1 +1,39 @@
-cat: /sys/kernel/debug/dri/0/i915_frequency_info: No such file or directory
+Video Turbo Mode: yes
+HW control enabled: yes
+SW control enabled: no
+PM IER=0x00000400 IMR=0xffffffff, MASK=0x0000007a
+PM ISR=0x00000000 IIR=0x00000000
+pm_intrmsk_mbz: 0x00000004
+GT_PERF_STATUS: 0x00000400
+Render p-state ratio: 4
+Render p-state VID: 0
+Render p-state limit: 255
+RPSTAT1: 0x00040200
+RPMODECTL: 0x00000d92
+RPINCLIMIT: 0x00001cfe
+RPDECLIMIT: 0x00005302
+RPNSWREQ: 200MHz
+CAGF: 200MHz
+RP CUR UP EI: 1957 (2504960ns)
+RP CUR UP: 31 (39680ns)
+RP PREV UP: 0 (0ns)
+Up threshold: 95%
+RP UP EI: 7813 (10000640ns)
+RP UP THRESHOLD: 7422 (9500160ns)
+RP CUR DOWN EI: 12816 (16404480ns)
+RP CUR DOWN: 32 (40960ns)
+RP PREV DOWN: 0 (0ns)
+Down threshold: 85%
+RP DOWN EI: 25000 (32000000ns)
+RP DOWN THRESHOLD: 21250 (27200000ns)
+Lowest (RPN) frequency: 200MHz
+Nominal (RP1) frequency: 400MHz
+Max non-overclocked (RP0) frequency: 1150MHz
+Max overclocked frequency: 1150MHz
+Current freq: 850 MHz
+Actual freq: 200 MHz
+Idle freq: 200 MHz
+Min freq: 200 MHz
+Boost freq: 1150 MHz
+Max freq: 1150 MHz
+efficient (RPe) frequency: 400 MHz

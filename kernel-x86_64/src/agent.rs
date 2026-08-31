@@ -17,7 +17,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use kernel_core::syscall::{dispatch, numbers::*};
+use kernel_core::syscall::{dispatch, numbers::*, StatX};
 
 /// A conversation turn. `content` is already-formatted JSON for the content
 /// array of one message (text block, or a tool_result block).
@@ -215,8 +215,8 @@ pub fn tools_json() -> &'static str {
         "[",
         "{\"name\":\"read_file\",\"description\":\"Read a file's contents.\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},",
-        "{\"name\":\"write_file\",\"description\":\"Write contents to a file (creates/overwrites).\",",
-        "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},",
+        "{\"name\":\"write_file\",\"description\":\"Write contents to a file (creates/overwrites by default). Keep each call under ~2000 chars of content; for bigger files pass \\\"append\\\":true to append a chunk to the existing end instead of truncating.\",",
+        "\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"},\"append\":{\"type\":\"boolean\"}},\"required\":[\"path\",\"content\"]}},",
         "{\"name\":\"bash\",\"description\":\"Run a command in the sem-sh shell and return its stdout. Supports ; sequencing, | pipes, < > >> redirection, $VAR, and builtins: echo, pwd, cd, ls, cat, grep PATTERN [file], which, env, true, false, ps (tasks+tiers), free (heap), uptime, netinfo (network/NIC diagnostics), fetch URL (HTTP GET), ask QUESTION. External programs run from /bin (PATH also includes /apps), so an ELF the agent compiles into /apps runs by name.\",",
         "\"input_schema\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},\"required\":[\"command\"]}},",
         "{\"name\":\"compile\",\"description\":\"Compile a Rust source file to a runnable ELF with the on-device compiler (semos-rustc, Cranelift backend) and return the compiler's output. Provide source and out; out defaults to source with .rs replaced by .elf. The result is a no_std/no_main SemOS program: write it to /apps/<name>.elf and it runs from the shell as <name>.\",",
@@ -794,11 +794,11 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
         Err(e) => return write_out(out, &format!("ask: connection failed ({})", e)),
     };
     // Heap buffers, not stack buffers: `ask()` is nested under the fullscreen
-    // TUI path, so keeping the 8 KiB HTTP response and body scratch arrays on
+    // TUI path, so keeping the HTTP response and body scratch arrays on
     // the stack reintroduced the layout-sensitive overflow class called out in
     // the 2026-07-17 review. The request/parse strings are already heap-backed;
     // put the fixed-size transport buffers there too.
-    let mut resp = Box::new([0u8; 8192]);
+    let mut resp = Box::new([0u8; RESP_CAP]);
     let n = match session.request(http.as_bytes(), &mut resp[..]) {
         Ok(n) => n,
         Err(e) => {
@@ -808,7 +808,7 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
     };
     session.close();
 
-    let mut body = Box::new([0u8; 8192]);
+    let mut body = Box::new([0u8; RESP_CAP]);
     let bn = decode_body(&resp[..n], &mut body[..]);
     let parsed = parse_response(&String::from_utf8_lossy(&body[..bn]));
     match parsed.text {
@@ -820,9 +820,23 @@ pub fn ask(prompt: &str, out: &mut [u8]) -> usize {
     }
 }
 
+/// HTTP response + decoded-body buffer size for `ask` and `run_agent`.
+/// 8 KiB was the tetris killer: a whole-game write_file call is a >8 KiB
+/// response, the buffer truncated the JSON mid-tool_use, and the loop bailed
+/// with "no answer". 64 KiB plus the system prompt's chunking rule (append
+/// mode for big files) keeps large generations alive. Heap-allocated at both
+/// call sites.
+const RESP_CAP: usize = 65536;
+
 /// The system prompt for the agentic loop. Tells the model it drives a real
 /// bare-metal shell through tools, and to finish with a short plain-text answer
 /// once the work is done (a text turn with no tool_use ends the loop).
+///
+/// The semos-rustc paragraph is load-bearing: the on-device compiler is a
+/// minimal Cranelift pipeline, and code outside that shape compiles to
+/// panics/ICEs (the "agent writes tetris from scratch" failure). The chunking
+/// paragraph exists because the whole file content rides in ONE tool-call
+/// response — a >RESP_CAP response truncates and kills the turn.
 const AGENT_SYSTEM: &str = "You are the resident agent of Semantic OS, a bare-metal \
 Rust operating system. You act by calling tools: read_file, write_file, bash (the \
 sem-sh shell), and compile. Work in small concrete steps — inspect with \
@@ -830,8 +844,17 @@ bash/read_file before you change anything, and verify your work after. Paths are
 absolute (e.g. /apps/foo). You can extend the OS: to add a program, write a \
 no_std/no_main Rust source (e.g. write_file /apps/foo.rs), compile it (compile \
 source=/apps/foo.rs), then run it from the shell by name (bash foo) — semos-rustc \
-emits a runnable ELF. When the task is complete, reply with a short plain-text \
-summary and no further tool call; that ends your turn.";
+emits a runnable ELF. \
+semos-rustc is a MINIMAL compiler: integer math only, and no '/' or '%' operators \
+(use power-of-two shifts and masks instead); no indexing that could panic (fixed \
+arrays with mask-wrapped indices, no slice[i] on runtime i); no inline asm; no \
+closures; no String/Vec/heap — 'static mut' state only. A complete known-good \
+game written in exactly this shape is at /templates/snake.rs — ALWAYS read it \
+first when writing or modifying a program, and stay in its shape. \
+write_file sends the whole 'content' in one response, so keep each write under \
+~2000 characters: for a bigger file, write the first chunk normally, then send \
+the rest in chunks with \"append\":true. When the task is complete, reply with \
+a short plain-text summary and no further tool call; that ends your turn.";
 
 /// The loop runs until the model finishes (a text turn with no tool_use). There
 /// is no artificial turn cap: tools are tier-clamped so an agent that loops only
@@ -930,8 +953,8 @@ pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
 
     // Fixed transport buffers on the heap (see `ask`): this runs under the
     // fullscreen TUI, so large stack arrays risk the layout-sensitive overflow.
-    let mut resp = Box::new([0u8; 8192]);
-    let mut body = Box::new([0u8; 8192]);
+    let mut resp = Box::new([0u8; RESP_CAP]);
+    let mut body = Box::new([0u8; RESP_CAP]);
     let mut final_text = String::new();
 
     // Arm Ctrl+C abort: the PS/2 IRQ handler sets ABORT_REQUESTED even while
@@ -964,6 +987,18 @@ pub fn run_agent(goal: &str, rep: &mut dyn AgentReporter) -> String {
         };
 
         let bn = decode_body(&resp[..n], &mut body[..]);
+        // A buffer that fills EXACTLY means the response wanted more bytes
+        // than we can hold — the JSON is cut mid-stream and any parse would
+        // hallucinate a partial tool call. Fail loud with the real reason.
+        if n == resp.len() || bn == body.len() {
+            session.close();
+            let m = format!(
+                "agent: response exceeded {} bytes on turn {} (truncated) — the model must write files in smaller chunks",
+                RESP_CAP, turn
+            );
+            rep.on_error(&m);
+            return m;
+        }
         let parsed = parse_response(&String::from_utf8_lossy(&body[..bn]));
 
         // Narrate any free text the model emitted alongside (or instead of) a call.
@@ -1142,8 +1177,10 @@ pub fn run_tool(name: &str, input_json: &str) -> String {
         "write_file" => {
             let path = field_str(input_json, "path");
             let content = field_str(input_json, "content");
+            let append = field_bool(input_json, "append");
             match (path, content) {
-                (Some(p), Some(c)) => match write_file(&p, c.as_bytes()) {
+                (Some(p), Some(c)) => match write_file(&p, c.as_bytes(), append) {
+                    Ok(()) if append => format!("appended {} bytes to {}", c.len(), p),
                     Ok(()) => format!("wrote {} bytes to {}", c.len(), p),
                     Err(e) => format!("error: {}", e),
                 },
@@ -1197,6 +1234,25 @@ fn compile_source(source: &str, out: Option<&str>) -> String {
 /// Pull a string field out of a small JSON object (the tool input).
 fn field_str(obj_json: &str, key: &str) -> Option<String> {
     scan_string_field(obj_json.as_bytes(), key, 0).map(|(v, _)| v)
+}
+
+/// Pull a boolean field out of a small JSON object (`"key":true/false`).
+/// Absent or malformed → false (callers use it for opt-in flags only).
+fn field_bool(obj_json: &str, key: &str) -> bool {
+    let b = obj_json.as_bytes();
+    let mut i = 0usize;
+    // Reuse the string-field scanner's key walk by scanning for `"key"`.
+    while i + key.len() + 2 <= b.len() {
+        if b[i] == b'"' && &b[i + 1..i + 1 + key.len().min(b.len() - i - 1)] == key.as_bytes()
+            && i + 1 + key.len() < b.len() && b[i + 1 + key.len()] == b'"'
+        {
+            let mut j = i + key.len() + 2;
+            while j < b.len() && (b[j] == b' ' || b[j] == b':' || b[j] == b'\t') { j += 1; }
+            return b[j..].starts_with(b"true");
+        }
+        i += 1;
+    }
+    false
 }
 
 /// The agent's `bash` tool: run `cmd` through the real M20 shell
@@ -1411,12 +1467,15 @@ fn ensure_parent_dirs(path: &str) {
     }
 }
 
-/// Write a file (create/overwrite) via SYS_OPEN(CREATE) + SYS_FWRITE, creating
-/// any missing parent directories first so the agent can write to a fresh path.
-/// Clamped to the agent's tier (Public): overwriting a higher-tier object is
-/// denied before we touch it (the kernel task's own clearance would otherwise
-/// allow it). A not-yet-existing path is created Public — allowed by definition.
-fn write_file(path: &str, data: &[u8]) -> Result<(), &'static str> {
+/// Write a file via SYS_OPEN(CREATE) + SYS_FWRITE, creating any missing parent
+/// directories first so the agent can write to a fresh path. Default mode
+/// truncates and writes from offset 0; `append` seeks to the current end
+/// instead — the chunking escape hatch for files too big for one tool-call
+/// response (see AGENT_SYSTEM). Clamped to the agent's tier (Public):
+/// overwriting a higher-tier object is denied before we touch it (the kernel
+/// task's own clearance would otherwise allow it). A not-yet-existing path is
+/// created Public — allowed by definition.
+fn write_file(path: &str, data: &[u8], append: bool) -> Result<(), &'static str> {
     if !agent_may_access(path) {
         return Err("denied: path exceeds agent tier (Public)");
     }
@@ -1425,8 +1484,19 @@ fn write_file(path: &str, data: &[u8]) -> Result<(), &'static str> {
     if fd == u64::MAX {
         return Err("open failed");
     }
-    // Truncate then write from offset 0.
-    dispatch(SYS_TRUNCATE, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    if append {
+        // Current length via STATX, then absolute seek to it.
+        let mut st = StatX {
+            size: 0, suid_high: 0, suid_low: 0, created_at: 0, modified_at: 0,
+            file_type: 0, tier: 0, _reserved: [0; 3],
+        };
+        dispatch(SYS_STATX, path.as_ptr() as u64, path.len() as u64,
+                 &mut st as *mut _ as u64, 0);
+        dispatch(SYS_SEEK, fd, st.size, 0, 0);
+    } else {
+        // Truncate then write from offset 0.
+        dispatch(SYS_TRUNCATE, path.as_ptr() as u64, path.len() as u64, 0, 0);
+    }
     let w = dispatch(SYS_FWRITE, fd, data.as_ptr() as u64, data.len() as u64, 0);
     dispatch(SYS_CLOSE, fd, 0, 0, 0);
     if w == u64::MAX {

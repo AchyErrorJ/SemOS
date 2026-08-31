@@ -277,9 +277,78 @@ pub fn fb_fill_rect(x: usize, y: usize, w: usize, h: usize, color: Color) {
 /// Blit a row-major `src` image of size `w`x`h` (logical 0x00RRGGBB pixels)
 /// to (x, y). Clipped to the framebuffer; source pixels that would land OOB
 /// are skipped. `src` must have at least `w * h` entries (extra ignored).
+///
+/// Fast path (bpp == 4): whole visible row segments go out with
+/// `copy_nonoverlapping` (rep movsb / SIMD), which fills write-combining
+/// buffers in full bursts. The old per-pixel volatile loop paid MMIO-style
+/// latency per pixel — ~200 ms for a fullscreen blit; row copies bring a
+/// 1920x1080 present down to single-digit ms, faster than the scanout beam,
+/// so a vblank-aligned present cannot tear (same precedent as
+/// `fb_scroll_region`). For a `Bgr` framebuffer the logical u32 IS the
+/// memory layout (LE bytes B,G,R,X) and rows copy verbatim; for `Rgb` rows
+/// are R/B-swapped through a stack chunk first.
 pub fn fb_blit(src: &[Color], x: usize, y: usize, w: usize, h: usize) {
     let s = match surface() { Some(s) => s, None => return };
     if src.len() < w * h { return; }
+    if s.bpp == 4 {
+        let x1 = (x + w).min(s.width);
+        let y1 = (y + h).min(s.height);
+        if x < x1 && y < y1 {
+            let xw = x1 - x;
+            let row_bytes = xw * 4;
+            let stride_bytes = s.stride * 4;
+            match s.format {
+                PixelFormat::Bgr => {
+                    for row in 0..(y1 - y) {
+                        unsafe {
+                            let dst = (s.addr + (y + row) * stride_bytes + x * 4) as *mut u8;
+                            let srcp = src.as_ptr().add(row * w) as *const u8;
+                            core::ptr::copy_nonoverlapping(srcp, dst, row_bytes);
+                        }
+                    }
+                }
+                PixelFormat::Rgb => {
+                    // Byte order differs (memory wants R,G,B,X): swap R/B
+                    // through a cache-resident chunk, then burst-copy.
+                    let mut chunk = [0u32; 1024];
+                    for row in 0..(y1 - y) {
+                        let dst_row = (s.addr + (y + row) * stride_bytes + x * 4) as *mut u8;
+                        let mut off = 0usize;
+                        while off < xw {
+                            let n = (xw - off).min(chunk.len());
+                            for i in 0..n {
+                                let c = src[row * w + off + i];
+                                chunk[i] = (c & 0x00_00FF00)
+                                    | ((c & 0xFF) << 16)
+                                    | ((c >> 16) & 0xFF);
+                            }
+                            unsafe {
+                                core::ptr::copy_nonoverlapping(
+                                    chunk.as_ptr() as *const u8,
+                                    dst_row.add(off * 4),
+                                    n * 4,
+                                );
+                            }
+                            off += n;
+                        }
+                    }
+                }
+                _ => {
+                    for row in 0..h {
+                        let dy = y + row;
+                        if dy >= s.height { break; }
+                        for col in 0..w {
+                            let dx = x + col;
+                            if dx >= s.width { break; }
+                            s.write_pixel(dx, dy, src[row * w + col]);
+                        }
+                    }
+                }
+            }
+        }
+        mark_damage(&s, x, y, w, h);
+        return;
+    }
     for row in 0..h {
         let dy = y + row;
         if dy >= s.height { break; }

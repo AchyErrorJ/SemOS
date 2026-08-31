@@ -1,1 +1,4 @@
-cat: /sys/kernel/debug/dri/0/i915_runtime_pm_status: No such file or directory
+GPU idle: yes
+IRQs disabled: no
+Usage count: 6
+PCI device power state: D0 [0]

@@ -621,6 +621,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static HELLO_RS_SOURCE: &[u8] = include_bytes!(
         "../../user-programs/semos-rustc/test-sources/hello.rs"
     );
+    // Agent template: the full snake source, written in exactly the shape the
+    // on-device compiler accepts. The agent system prompt points at
+    // /templates/snake.rs so "write me a game" becomes "adapt this known-good
+    // program" instead of from-scratch synthesis the compiler can't take.
+    #[cfg(feature = "autocompile")]
+    static SNAKE_TEMPLATE_SOURCE: &[u8] = include_bytes!(
+        "../../user-programs/snake/src/main.rs"
+    );
     if let Some(fs) = kernel_core::fs::ramfs::get_fs_mut() {
         if fs.add("hello-rs.elf", kernel_core::fs::ramfs::FileType::Executable, HELLO_RS_ELF) {
             println!("    Registered hello-rs.elf ({} bytes, real Rust user crate)", HELLO_RS_ELF.len());
@@ -754,6 +762,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    [WARN] DEMO 80: failed to register /hello.rs in namespace");
         } else {
             println!("    DEMO 80: /hello.rs registered ({} bytes) + /tmp dir", HELLO_RS_SOURCE.len());
+        }
+        let _ = Namespace::mkdir("/templates");
+        if Namespace::create_file("/templates/snake.rs", SecurityTier::Public, SNAKE_TEMPLATE_SOURCE).is_err() {
+            println!("    [WARN] failed to register /templates/snake.rs (agent template)");
+        } else {
+            println!("    Agent template: /templates/snake.rs ({} bytes)", SNAKE_TEMPLATE_SOURCE.len());
         }
     }
     if let Some(dev) = kernel_core::drivers::registry::get_block("virtio0") {
