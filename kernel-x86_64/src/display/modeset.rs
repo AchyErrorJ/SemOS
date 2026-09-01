@@ -72,12 +72,14 @@ const TRANS_DDI_FUNC_CTL_A: u64 = 0x60400;
 const PIPE_DSL_A:     u64 = 0x70000; // current display scanline, read-only pacing source
 const PIPECONF_A:     u64 = 0x70008;
 
-// Primary plane A
+// Primary plane A (HSW layout per i915 v5.15 i915_reg.h)
 const DSPCNTR_A:      u64 = 0x70180;
+const DSPADDR_A:      u64 = 0x70184; // legacy/linear base (i915 DSPADDR == DSPLINOFF)
 const DSPSTRIDE_A:    u64 = 0x70188;
 const DSPSURF_A:      u64 = 0x7019C;
-const DSPTILEOFF_A:   u64 = 0x701A0;
-const DSPPOS_A:       u64 = 0x7018C;
+const DSPTILEOFF_A:   u64 = 0x701A4;
+const DSPSURFLIVE_A:  u64 = 0x701AC; // live (post-latch) surface address, read-only
+const DSPPOS_A:       u64 = 0x7018C; // sprite-era offsets — informational reads
 const DSPSIZE_A:      u64 = 0x70190;
 
 #[derive(Clone, Copy)]
@@ -170,8 +172,10 @@ struct DisplaySnapshot {
 
     // Plane A
     dspcntr_a: u32,
+    dspaddr_a: u32,
     dspstride_a: u32,
     dspsurf_a: u32,
+    dspsurflive_a: u32,
     dsptileoff_a: u32,
     dsppos_a: u32,
     dspsize_a: u32,
@@ -206,8 +210,10 @@ impl DisplaySnapshot {
             pipeconf_a: mmio.read32(PIPECONF_A),
 
             dspcntr_a: mmio.read32(DSPCNTR_A),
+            dspaddr_a: mmio.read32(DSPADDR_A),
             dspstride_a: mmio.read32(DSPSTRIDE_A),
             dspsurf_a: mmio.read32(DSPSURF_A),
+            dspsurflive_a: mmio.read32(DSPSURFLIVE_A),
             dsptileoff_a: mmio.read32(DSPTILEOFF_A),
             dsppos_a: mmio.read32(DSPPOS_A),
             dspsize_a: mmio.read32(DSPSIZE_A),
@@ -237,8 +243,10 @@ impl DisplaySnapshot {
         println!("  TRANS_DDI_FUNC_CTL_A  [0x{:05X}] = 0x{:08X}", TRANS_DDI_FUNC_CTL_A, self.trans_ddi_func_ctl_a);
         println!("  PIPECONF_A            [0x{:05X}] = 0x{:08X}", PIPECONF_A, self.pipeconf_a);
         println!("  DSPCNTR_A             [0x{:05X}] = 0x{:08X}", DSPCNTR_A, self.dspcntr_a);
+        println!("  DSPADDR_A             [0x{:05X}] = 0x{:08X}", DSPADDR_A, self.dspaddr_a);
         println!("  DSPSTRIDE_A           [0x{:05X}] = 0x{:08X}", DSPSTRIDE_A, self.dspstride_a);
         println!("  DSPSURF_A             [0x{:05X}] = 0x{:08X}", DSPSURF_A, self.dspsurf_a);
+        println!("  DSPSURFLIVE_A         [0x{:05X}] = 0x{:08X}", DSPSURFLIVE_A, self.dspsurflive_a);
         println!("  DSPTILEOFF_A          [0x{:05X}] = 0x{:08X}", DSPTILEOFF_A, self.dsptileoff_a);
         println!("  DSPPOS_A              [0x{:05X}] = 0x{:08X}", DSPPOS_A, self.dsppos_a);
         println!("  DSPSIZE_A             [0x{:05X}] = 0x{:08X}", DSPSIZE_A, self.dspsize_a);
@@ -493,13 +501,16 @@ fn native_60(mmio: &MmioReg) -> u64 {
     diffs += set_reg(mmio, "PIPECONF_A", PIPECONF_A, o(ORACLE.pipeconf_a));
 
     // --- Steps 9-10: plane A ---------------------------------------------------
-    // The plane is NOT reconfigured in this staging: DSPCNTR/DSPSTRIDE/
-    // DSPSURF keep the live GOP values from the snapshot, so the format bits
-    // always match the surface being scanned out (Linux's XBGR2101010 plane
-    // control would be wrong for the XRGB8888 GOP surface). The SemOS-owned
-    // double buffer + flip (page-flip work) replaces this once the takeover
-    // itself is proven.
+    // The plane is NOT reconfigured in this staging: DSPCNTR/DSPADDR/
+    // DSPSTRIDE/DSPSURF keep the live GOP values from the snapshot, so the
+    // format bits always match the surface being scanned out (Linux's
+    // XBGR2101010 plane control would be wrong for the XRGB8888 GOP surface).
+    // Metal note (2026-09-01): GOP leaves DSPSURF_A = 0 and keeps its real
+    // scanout base in DSPADDR/DSPLINOFF (0x70184) — both are snapshotted and
+    // rewritten here. The SemOS-owned double buffer + flip (page-flip work)
+    // replaces this once the takeover itself is proven.
     diffs += set_reg(mmio, "DSPCNTR_A", DSPCNTR_A, gop.dspcntr_a);
+    diffs += set_reg(mmio, "DSPADDR_A", DSPADDR_A, gop.dspaddr_a);
     diffs += set_reg(mmio, "DSPSTRIDE_A", DSPSTRIDE_A, gop.dspstride_a);
     diffs += set_reg(mmio, "DSPSURF_A", DSPSURF_A, gop.dspsurf_a);
 
@@ -536,6 +547,7 @@ fn restore_gop(mmio: &MmioReg) -> u64 {
 
     // Plane A first — scanout keeps pointing at a consistent surface.
     write_reg(mmio, "DSPCNTR_A", DSPCNTR_A, s.dspcntr_a);
+    write_reg(mmio, "DSPADDR_A", DSPADDR_A, s.dspaddr_a);
     write_reg(mmio, "DSPSTRIDE_A", DSPSTRIDE_A, s.dspstride_a);
     write_reg(mmio, "DSPSURF_A", DSPSURF_A, s.dspsurf_a);
     write_reg(mmio, "DSPTILEOFF_A", DSPTILEOFF_A, s.dsptileoff_a);
