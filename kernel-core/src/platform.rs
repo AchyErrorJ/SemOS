@@ -172,6 +172,12 @@ pub trait Platform: Send + Sync + 'static {
     /// Default: unavailable.
     fn fb_claim(&self, _on: u64) -> u64 { u64::MAX }
 
+    /// SYS_FB_FLIP: tear-free page flip between the two framebuffer-sized
+    /// scanout buffers (vblank-latched DSPSURF write). Only meaningful while
+    /// fb_claim'd; the kernel draw surface follows the hidden buffer.
+    /// Default: unavailable.
+    fn fb_flip(&self) -> u64 { u64::MAX }
+
     /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
     /// list to the TTY (`wifi` shell command). Blocks for the scan duration.
     /// Returns the number of unique networks found. Default: unavailable.

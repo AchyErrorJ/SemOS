@@ -11,6 +11,19 @@ use kernel_core::Platform;
 /// x86_64 platform implementation
 pub struct X86Platform;
 
+/// Return scanout to the GOP buffer (offset 0) if a flip left it on the
+/// back buffer — the console lives in buffer 0, so a crashed game must
+/// never leave the screen pointing at game pixels.
+fn fb_unflip() {
+    let scan = crate::framebuffer::scanout_offset();
+    if scan != 0 {
+        let _ = crate::display::modeset::flip_scanout(0, scan as u32);
+    }
+    if scan != 0 || crate::framebuffer::draw_offset() != 0 {
+        crate::framebuffer::note_flip(0, 0);
+    }
+}
+
 impl Platform for X86Platform {
     fn serial_write(&self, s: &str) {
         crate::serial::_print(format_args!("{}", s));
@@ -242,6 +255,7 @@ impl Platform for X86Platform {
     fn reset_tty_flags(&self) {
         crate::tty::SUPPRESS_TTY_INPUT.store(false, core::sync::atomic::Ordering::Release);
         crate::FULLSCREEN_APP_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
+        fb_unflip();
     }
 
     fn enable_interrupts(&self) {
@@ -608,8 +622,58 @@ impl Platform for X86Platform {
         } else {
             crate::FULLSCREEN_APP_ACTIVE.store(false, core::sync::atomic::Ordering::Release);
             crate::tty::SUPPRESS_TTY_INPUT.store(false, core::sync::atomic::Ordering::Release);
+            fb_unflip();
         }
         crate::framebuffer::clear();
+        0
+    }
+
+    fn fb_flip(&self) -> u64 {
+        use core::sync::atomic::Ordering;
+        if !crate::FULLSCREEN_APP_ACTIVE.load(Ordering::Acquire) {
+            crate::println!("fb-flip: refused — no fullscreen app (fb_claim first)");
+            return u64::MAX;
+        }
+        // Addressing gate: the plane's display-offset 0 must be the GOP
+        // framebuffer itself (fb_phys == BSM — observed 2026-09-01, probed by
+        // `modeset status`), and stolen memory must hold both buffers.
+        let info = match crate::framebuffer::fb_info() {
+            Some(i) => i,
+            None => return u64::MAX,
+        };
+        let loc = match crate::igpu::find() {
+            Some(i) => i.loc,
+            None => return u64::MAX,
+        };
+        let phys = match crate::paging::walk_pml4_for(crate::paging::boot_cr3(), info.addr as u64) {
+            Some(p) => p,
+            None => {
+                crate::println!("fb-flip: fb address 0x{:X} did not translate", info.addr);
+                return u64::MAX;
+            }
+        };
+        let bsm = crate::pci::read_u32(loc.bus, loc.slot, loc.func, 0x5C) & 0xFFF0_0000;
+        if phys != bsm as u64 {
+            crate::println!(
+                "fb-flip: refused — fb phys 0x{:X} != stolen base 0x{:X} (not stolen-relative)",
+                phys, bsm
+            );
+            return u64::MAX;
+        }
+        let ggc = crate::pci::read_u16(0, 0, 0, 0x52);
+        let stolen_mib = (((ggc >> 3) & 0x1F) as u64) * 32;
+        if stolen_mib < 16 {
+            crate::println!("fb-flip: refused — only ~{} MiB stolen memory (need 16)", stolen_mib);
+            return u64::MAX;
+        }
+        let cur = crate::framebuffer::draw_offset();
+        let other = if cur == 0 { crate::framebuffer::FLIP_OFFSET } else { 0 };
+        // Scanout switches to the buffer the app just finished drawing
+        // (cur); the previously visible buffer becomes the new draw target.
+        if !crate::display::modeset::flip_scanout(cur as u32, other as u32) {
+            return u64::MAX;
+        }
+        crate::framebuffer::note_flip(other, cur);
         0
     }
 

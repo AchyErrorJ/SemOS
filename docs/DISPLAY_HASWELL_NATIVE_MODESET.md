@@ -217,10 +217,67 @@ no hardware and is a pure readback audit):
    the format bits always match the surface being scanned out and a clean
    takeover keeps showing the same pixels. (Linux's `DSPCNTR_A` is
    XBGR2101010 — wrong for the XRGB8888 GOP surface.) The SemOS-owned double
-   buffer + flip lands with the page-flip work after the takeover is proven.
+   buffer + flip landed independently of the takeover — see "Rung C: page
+   flip" below; it runs on the GOP-configured pipe.
 10. Write `TRANS_DDI_FUNC_CTL_A` from oracle (port D, DP SST, 6 bpc, ×2).
 11. Readback verdict from the per-write audit: any DIFF is reported with
     the restore-gop escape route.
+
+## Rung C: page flip (SYS_FB_FLIP = 141)
+
+Tear-free 60 fps without any modeset at all: the GOP-configured pipe is
+already correct, so presenting is just repointing plane A's surface.
+DSPSURF_A writes are **vblank-latched** on Haswell — the swap happens at the
+next frame boundary, atomically, no matter when in the frame it lands.
+
+**Buffer plan** (validated by the 2026-09-01 metal run: DSPADDR/DSPSURF/
+DSPSURFLIVE all read 0 under GOP, so display-offset 0 is the framebuffer
+itself):
+
+- Buffer 0 = the GOP framebuffer (display offset 0) — also the console's home.
+- Buffer 1 = GOP fb + 8 MiB (`0x800000`, 4 KiB-aligned; 1080p32 needs 0x7E9000).
+- Gate: `fb_phys == BSM` (PCI 0:2.0 reg 0x5C) proves stolen-relative plane
+  addressing; GMS (host bridge 0:0.0 reg 0x52, bits [7:3] × 32 MiB) must be
+  ≥ 16 MiB. `modeset status` prints the probe (fb phys, BSM, GMS).
+- If the gate fails the machine can't flip this way — the GGTT route is
+  future work; SYS_FB_FLIP refuses and apps fall back to vblank-paced blits
+  (Rung A), drawing into the visible buffer as before.
+
+**Metal result 2026-09-01: the stolen-relative gate refused — correctly.**
+The probe showed `fb_phys = 0xE0000000` (= BAR2 aperture base), `BSM =
+0xBDA00000`, `GMS = 0` (**zero stolen memory on this machine**). The GOP
+framebuffer is not in stolen memory at all: it lives at **GGTT offset 0**,
+and even the CPU reaches it through the aperture — so on this machine
+`DSPSURF_A` is a **GGTT (aperture) offset**, not a stolen offset. flipdemo
+fell back to Rung-A paced blits (≈200 ms/frame, visible tear steps) and the
+console came back clean on exit — the safety wiring is metal-proven.
+
+**Rung C-revised (GGTT route, next spike):** buffer 1 must exist *in the
+GGTT*, not in stolen memory: allocate a SemOS-owned 8 MiB physical back
+buffer, program GGTT entries at aperture offset `0x800000` to point at it
+(attribute bits copied from GOP's own entry 0), then flip `DSPSURF_A`
+between `0` and `0x800000`. The vblank latch, DSPSURFLIVE verify-then-commit,
+and unflip safety all carry over unchanged; only the gate changes
+(`fb_phys == BAR2 base` + GGTT armed, instead of `== BSM`).
+
+**Protocol:** the app draws into the *current draw target* (SYS_FB_BLIT's
+destination follows it), then SYS_FB_FLIP points scanout at the just-drawn
+buffer and flips the draw target to the previously visible one. Startup edge
+case: buffer 0 is both draw target and visible before the first flip, so the
+first frame draws in place (Rung A behavior) — every later frame is a true
+double-buffered present. Verify-then-commit: `flip_scanout` reads
+DSPSURFLIVE_A one frame after the write and rolls back on mismatch.
+
+**Safety:** flip requires an active `fb_claim`; `fb_claim(0)` and
+`reset_tty_flags` (process exit/crash) unflip scanout to buffer 0 and reset
+the draw target, so a dead game can never leave the console invisible.
+Reboot still returns to GOP regardless.
+
+**Demo:** `flipdemo` (user-programs/flipdemo) bounces a bar full-screen for
+~10 s: render into a user buffer → one full-frame SYS_FB_BLIT into the hidden
+buffer → SYS_FB_FLIP. Clean bar edges = no tearing. Metal 2026-09-01: ran the
+fallback path (gate refused, see above) — bar bounced ~5 fps with visible
+tear steps, exit restored the console with scrollback intact.
 
 ## Restore sequence
 

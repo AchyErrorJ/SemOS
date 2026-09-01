@@ -3,7 +3,7 @@
 //! These mirror the M14 syscalls and give apps a small, safe drawing surface
 //! without owning the kernel's framebuffer directly.
 
-use crate::arch::{syscall0, syscall1, syscall2, syscall4, SYS_BACKLIGHT, SYS_FB_BLIT, SYS_FB_CLAIM, SYS_FB_META, SYS_FB_WAIT_VBLANK};
+use crate::arch::{syscall0, syscall1, syscall2, syscall4, SYS_BACKLIGHT, SYS_FB_BLIT, SYS_FB_CLAIM, SYS_FB_FLIP, SYS_FB_META, SYS_FB_WAIT_VBLANK};
 
 /// Stable framebuffer metadata returned by [`fbinfo`].
 #[repr(C)]
@@ -99,4 +99,13 @@ pub fn wait_vblank() -> bool {
 /// well-behaved apps release explicitly. Returns `true` on success.
 pub fn claim(on: bool) -> bool {
     unsafe { syscall1(SYS_FB_CLAIM, on as u64) != u64::MAX }
+}
+
+/// Swap scanout to the other framebuffer-sized buffer and make the hidden
+/// one the new draw target (SYS_FB_FLIP). The swap is vblank-latched in
+/// hardware, so presents are atomic — tear-free double buffering. Only
+/// valid while claimed; returns `false` when the machine can't flip (not
+/// claimed, or the plane isn't using stolen-relative addressing).
+pub fn flip() -> bool {
+    unsafe { syscall0(SYS_FB_FLIP) == 0 }
 }

@@ -225,6 +225,16 @@ pub mod numbers {
     /// framebuffer cleared); 0 = release. Auto-released by reset_tty_flags
     /// on SYS_EXIT.
     pub const SYS_FB_CLAIM: u64 = 140;
+    /// SYS_FB_FLIP() -> 0 | u64::MAX. Tear-free page flip for a claimed
+    /// fullscreen app: points plane A's DSPSURF at the buffer the app just
+    /// finished drawing (the current draw target) and makes the previously
+    /// visible buffer the new draw target — the write latches at the next
+    /// vblank, so the swap is atomic with no partial frames. Buffers: GOP fb
+    /// at display-offset 0, back buffer at 0x800000. Refused unless
+    /// fb_claim'd and the machine uses stolen-relative plane addressing
+    /// (fb_phys == BSM, stolen >= 16 MiB). Verify-then-commit: a flip that
+    /// doesn't reach DSPSURFLIVE within one frame is rolled back.
+    pub const SYS_FB_FLIP: u64 = 141;
 
     /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
     /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
@@ -406,6 +416,7 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_FB_WAIT_VBLANK => crate::platform::get().fb_wait_vblank(),
         SYS_KB_POLL => crate::platform::get().kb_poll(arg0, arg1),
         SYS_FB_CLAIM => crate::platform::get().fb_claim(arg0),
+        SYS_FB_FLIP => crate::platform::get().fb_flip(),
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),

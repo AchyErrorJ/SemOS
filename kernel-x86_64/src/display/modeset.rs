@@ -329,6 +329,31 @@ fn status(mmio: &MmioReg, loc: crate::pci::Location) -> u64 {
     dump_reg(mmio, "DSPCNTR_A", DSPCNTR_A);
     dump_reg(mmio, "DSPSTRIDE_A", DSPSTRIDE_A);
     dump_reg(mmio, "DSPSURF_A", DSPSURF_A);
+
+    // Rung C probe (read-only): locate the GOP framebuffer in the plane's
+    // address space. On this machine DSPSURF/DSPADDR/DSPSURFLIVE all read 0
+    // under GOP (2026-09-01), so display-address 0 == the framebuffer. If the
+    // fb's physical address equals the stolen base (BSM), a flip is a
+    // stolen-relative DSPSURF write; otherwise the GGTT route is needed.
+    if let Some(fb) = crate::framebuffer::fb_info() {
+        match crate::paging::walk_pml4_for(crate::paging::boot_cr3(), fb.addr as u64) {
+            Some(phys) => {
+                let bsm = crate::pci::read_u32(loc.bus, loc.slot, loc.func, 0x5C) & 0xFFF0_0000;
+                let ggc = crate::pci::read_u16(0, 0, 0, 0x52);
+                let gms = ((ggc >> 3) & 0x1F) as u64;
+                println!("  flip probe: fb virt=0x{:X} phys=0x{:X} len=0x{:X}", fb.addr, phys, fb.byte_len);
+                println!("  flip probe: BSM=0x{:08X} GMS={} (~{} MiB stolen)", bsm, gms, gms * 32);
+                if phys == bsm as u64 {
+                    println!("  flip probe: fb == BSM -> DSPSURF=0 is stolen-relative; second buffer at stolen+0x800000 is the flip target");
+                } else if phys > bsm as u64 {
+                    println!("  flip probe: fb - BSM = 0x{:X}", phys - bsm as u64);
+                } else {
+                    println!("  flip probe: fb below BSM — GGTT addressing likely; page-flip needs GGTT setup");
+                }
+            }
+            None => println!("  flip probe: fb virt 0x{:X} did not translate", fb.addr),
+        }
+    }
     0
 }
 
@@ -507,8 +532,8 @@ fn native_60(mmio: &MmioReg) -> u64 {
     // XBGR2101010 plane control would be wrong for the XRGB8888 GOP surface).
     // Metal note (2026-09-01): GOP leaves DSPSURF_A = 0 and keeps its real
     // scanout base in DSPADDR/DSPLINOFF (0x70184) — both are snapshotted and
-    // rewritten here. The SemOS-owned double buffer + flip (page-flip work)
-    // replaces this once the takeover itself is proven.
+    // rewritten here. The SemOS-owned double buffer + flip (Rung C) landed
+    // independently of the takeover — see SYS_FB_FLIP / flip_scanout.
     diffs += set_reg(mmio, "DSPCNTR_A", DSPCNTR_A, gop.dspcntr_a);
     diffs += set_reg(mmio, "DSPADDR_A", DSPADDR_A, gop.dspaddr_a);
     diffs += set_reg(mmio, "DSPSTRIDE_A", DSPSTRIDE_A, gop.dspstride_a);
@@ -702,6 +727,37 @@ pub fn wait_vblank() -> bool {
         None => return false,
     };
     wait_for_scanline_wrap(&mmio).is_some()
+}
+
+/// Rung C flip primitive: repoint plane A's surface at byte offset `off`
+/// from the display base and verify the latch. DSPSURF writes are
+/// vblank-latched on HSW, so the swap is atomic — no partial frames no matter
+/// when in the frame it lands. Verified through DSPSURFLIVE (the post-latch
+/// live address): if the new offset doesn't show within one frame boundary,
+/// the previous offset is restored and the flip reports failure.
+pub fn flip_scanout(off: u32, prev: u32) -> bool {
+    match igpu::find() {
+        Some(i) if i.device_id == igpu::HASWELL_GT2_MOBILE_HD4600 => {}
+        _ => return false,
+    }
+    let mmio = match MmioReg::new() {
+        Some(m) => m,
+        None => return false,
+    };
+    mmio.write32(DSPSURF_A, off);
+    if wait_for_scanline_wrap(&mmio).is_none() {
+        println!("modeset flip: no frame boundary after DSPSURF write — is pipe A running?");
+        return false;
+    }
+    let live = mmio.read32(DSPSURFLIVE_A);
+    if live == off {
+        true
+    } else {
+        println!("modeset flip: DSPSURFLIVE=0x{:08X} after writing 0x{:08X} — rolling back", live, off);
+        mmio.write32(DSPSURF_A, prev);
+        let _ = wait_for_scanline_wrap(&mmio);
+        false
+    }
 }
 
 fn wait_vblank_cmd(mmio: &MmioReg) -> u64 {

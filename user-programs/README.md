@@ -29,6 +29,10 @@ build will fail loudly if the user binary is missing.
   press+release, PS/2 + USB), blits dirty 16×16 cells only (`SYS_FB_BLIT`),
   paced by `SYS_FB_WAIT_VBLANK` with a tick-sleep fallback. ESC/Ctrl+C/q
   quits; the claim auto-releases on exit (`reset_tty_flags`).
+- `flipdemo/` — tear-free page-flip demo (Rung C): bounces a bar with a
+  full-frame user buffer → one `SYS_FB_BLIT` into the hidden buffer →
+  `SYS_FB_FLIP` (vblank-latched DSPSURF swap, atomic present). Falls back
+  to vblank-paced blits where flips are unavailable. ESC quits.
 
 ## Layout requirements
 

@@ -600,6 +600,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     static SNAKE_ELF: &[u8] = include_bytes!(
         "../../user-programs/snake/target/x86_64-unknown-none/release/snake"
     );
+    // Rung C: tear-free page-flip demo on SYS_FB_FLIP (vblank-latched
+    // DSPSURF double buffering). Falls back to vblank-paced blits.
+    static FLIPDEMO_ELF: &[u8] = include_bytes!(
+        "../../user-programs/flipdemo/target/x86_64-unknown-none/release/flipdemo"
+    );
     // M20 native shell: parses + runs commands, spawns ELF children.
     static SEM_SH_ELF: &[u8] = include_bytes!(
         "../../user-programs/sem-sh/target/x86_64-unknown-none/release/sem-sh"
@@ -709,6 +714,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Registered snake.elf ({} bytes, userland game kit)", SNAKE_ELF.len());
         } else {
             println!("    [WARN] failed to register snake.elf");
+        }
+        if fs.add("flipdemo.elf", kernel_core::fs::ramfs::FileType::Executable, FLIPDEMO_ELF) {
+            println!("    Registered flipdemo.elf ({} bytes, Rung C page-flip demo)", FLIPDEMO_ELF.len());
+        } else {
+            println!("    [WARN] failed to register flipdemo.elf");
         }
         if fs.add("sem-sh.elf", kernel_core::fs::ramfs::FileType::Executable, SEM_SH_ELF) {
             println!("    Registered sem-sh.elf ({} bytes, M20 native shell)", SEM_SH_ELF.len());

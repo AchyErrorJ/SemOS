@@ -158,3 +158,27 @@ native-60's 12-step sequence.
 tear-free 60 fps is Rung C: SemOS-owned double buffer + vblank-latched
 DSPSURF flip (SYS_FB_FLIP), which now has its register interface validated
 end-to-end.
+
+## 2026-09-01 (later) — Rung C metal run: gate refused correctly, addressing model corrected
+
+`flipdemo` (SYS_FB_FLIP = 141) ran on metal. Result: **the stolen-relative
+gate refused, the fallback ran, the console came back clean.** Video evidence:
+bar bounced for ~110 s at ~200 ms/frame (blit-bound Rung-A pacing, visible
+tear steps) instead of 10 s at 60 fps — the flip never happened, by design.
+
+The `modeset status` flip probe on the same boot explains why, and settles
+the stolen-vs-GGTT question left open above:
+
+- `fb_phys = 0xE0000000` = **BAR2 aperture base** — the GOP fb is reached
+  through the GGTT even by the CPU.
+- `BSM = 0xBDA00000`, `GMS = 0` — **this machine has zero stolen memory**.
+  The stolen-relative hypothesis is dead on the T540p (fb - BSM = 0x22600000,
+  nonsense as an offset).
+- Conclusion: on HSW `DSPSURF_A` is a **GGTT (aperture) offset** here; GOP
+  mapped the fb at GGTT offset 0 (hence DSPSURF/DSPSURFLIVE = 0).
+
+**Rung C status: mechanism proven safe (clean refusal + fallback + console
+restore), addressing model corrected.** Rung C-revised = GGTT route: program
+GGTT entries at aperture offset 0x800000 for a SemOS-owned 8 MiB back buffer
+(PTE attribute bits copied from GOP's GGTT[0]), flip DSPSURF_A between 0 and
+0x800000. All latch/verify/unflip plumbing carries over unchanged.

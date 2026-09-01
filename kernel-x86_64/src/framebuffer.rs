@@ -143,6 +143,45 @@ unsafe impl Sync for FbSurface {}
 /// Global drawing surface. Populated by `init` alongside the console.
 static SURFACE: Mutex<Option<FbSurface>> = Mutex::new(None);
 
+// --- Page-flip draw targeting (Rung C, SYS_FB_FLIP) -----------------------
+// The GOP framebuffer at display-offset 0 doubles as flip buffer 0; the back
+// buffer lives FLIP_OFFSET bytes past it (stolen memory, when the plane uses
+// stolen-relative addressing). fb_flip moves scanout first, then points this
+// draw surface at the now-hidden buffer; fb_claim(0)/exit paths unflip.
+static FB_BASE: AtomicU64 = AtomicU64::new(0);
+static DRAW_OFFSET: AtomicU64 = AtomicU64::new(0);
+static SCANOUT_OFFSET: AtomicU64 = AtomicU64::new(0);
+
+/// Byte offset of the flip back buffer from the GOP framebuffer base.
+/// 8 MiB covers 1920x1080x4 (0x7E9000) with 4 KiB-alignment slack.
+pub const FLIP_OFFSET: u64 = 0x80_0000;
+
+/// Current draw-surface offset from the GOP framebuffer base (0 or FLIP_OFFSET).
+pub fn draw_offset() -> u64 {
+    DRAW_OFFSET.load(AtomicOrdering::Relaxed)
+}
+
+/// Current scanout offset (the buffer plane A is showing).
+pub fn scanout_offset() -> u64 {
+    SCANOUT_OFFSET.load(AtomicOrdering::Relaxed)
+}
+
+/// Record a completed flip: scanout is now at `scanout_off`, the draw
+/// surface moves to `draw_off`. Callers must move hardware scanout first
+/// (modeset::flip_scanout): on a failed flip the offsets stay unchanged so
+/// drawing keeps landing in the visible buffer.
+pub fn note_flip(draw_off: u64, scanout_off: u64) {
+    let base = FB_BASE.load(AtomicOrdering::Relaxed);
+    if base == 0 {
+        return;
+    }
+    if let Some(s) = SURFACE.lock().as_mut() {
+        s.addr = base.wrapping_add(draw_off) as usize;
+    }
+    DRAW_OFFSET.store(draw_off, AtomicOrdering::Relaxed);
+    SCANOUT_OFFSET.store(scanout_off, AtomicOrdering::Relaxed);
+}
+
 /// Damage rectangle accumulated since the last `fb_present()`. Stored as
 /// (x0, y0, x1, y1) half-open; `None` means "nothing dirty".
 static DAMAGE: Mutex<Option<(usize, usize, usize, usize)>> = Mutex::new(None);
@@ -819,6 +858,9 @@ pub fn init(fb: &mut FrameBuffer) {
     };
 
     // Publish the M6 drawing surface (independent view over the same bytes).
+    FB_BASE.store(fb_addr as u64, AtomicOrdering::Relaxed);
+    DRAW_OFFSET.store(0, AtomicOrdering::Relaxed);
+    SCANOUT_OFFSET.store(0, AtomicOrdering::Relaxed);
     *SURFACE.lock() = Some(FbSurface {
         addr: fb_addr,
         len: fb_len,

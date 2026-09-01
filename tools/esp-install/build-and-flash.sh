@@ -38,7 +38,7 @@ KERNEL_ELF="$REPO_ROOT/kernel-x86_64/target/x86_64-unknown-none/release/semantic
 # plain kernel toolchain. The special trees (compiler/, cg-clif-hello, semos-cc,
 # semos-rustc) are NOT rebuilt here — they are expensive / prebuilt, and the
 # kernel link will fail loudly if their artifacts are missing.
-DEFAULT_PROGRAMS="hello hello-std sem-demo sem-sh net-demo std-demo thread-demo vec-demo spawn-demo exfil-demo sync-demo ptr-guard-test fb-demo snake"
+DEFAULT_PROGRAMS="hello hello-std sem-demo sem-sh net-demo std-demo thread-demo vec-demo spawn-demo exfil-demo sync-demo ptr-guard-test fb-demo snake flipdemo"
 PROGRAMS="${USER_PROGRAMS:-$DEFAULT_PROGRAMS}"
 
 DO_BUILD=1
