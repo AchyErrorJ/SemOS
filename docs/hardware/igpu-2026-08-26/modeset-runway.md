@@ -125,3 +125,36 @@ native-60's 12-step sequence.
 - Next metal run: `modeset wells` (re-verify 0x130044 ack), `modeset
   snapshot` (now reads DDI-D + LCPLL regs), `modeset native-60` (first
   armed takeover), `modeset restore-gop` (writes back DDI-D snapshot).
+
+## Results — 2026-09-01, T540p metal (armed build, e4f6982)
+
+- `modeset wells` — **PASS with the corrected ack.** FORCEWAKE_ACK_HSW
+  (0x130044) acquires 0x00000001 and releases to 0x00000000, status=0.
+  The 0x130040 LCPLL-alias bug is dead.
+- `modeset snapshot` — **PASS.** Full register set captured. Headline:
+  **GOP and Linux agree on every register** — DDI_BUF_CTL_D = 0x80000002,
+  DP_TP_CTL_D = 0x80040300, TRANS_DDI_FUNC_CTL_A = 0xB2200002, PIPECONF_A =
+  0xC0000010, all timings, DSPSTRIDE_A = 0x1E00 — byte-identical to the
+  Pop!_OS oracle. GOP DSPCNTR_A = 0x98000000 (XRGB8888, as assumed).
+  LCPLL_CTL = 0x44000031 (locked; SPLL/WRPLL off).
+- `modeset native-60` — **PASS, "takeover clean".** LCPLL lock check passed,
+  every target register reported `OK (already)` — a pure readback audit with
+  ZERO hardware writes, exactly the dress rehearsal the write-if-different
+  staging was built for. The takeover sequence + oracle are proven.
+- `modeset restore-gop` — **PASS.** First writeback with the real DDI-D
+  register set (and DSPADDR_A). No DIFFs, screen unchanged.
+- **Surprise finding:** DSPADDR_A, DSPSURF_A *and* DSPSURFLIVE_A all read 0
+  under GOP. SURFLIVE is the hardware's post-latch live value, so plane A
+  genuinely scans out from display-address 0 — the GOP framebuffer sits at
+  the base of the plane's address space (stolen-memory offset 0). **Input
+  to the page-flip task (#14):** before the first flip, determine whether
+  DSPSURF expects a stolen-relative or GGTT address on this machine (i915
+  writes GGTT offsets; GOP's all-zero state suggests stolen-relative).
+- Screen never glitched through the whole protocol. No reboot needed.
+- (Cosmetic: the em-dash in native-60's "takeover clean —" message renders
+  as `???` in the console font. Non-issue.)
+
+**Rung B (native-60 takeover) is PROVEN on metal.** The remaining path to
+tear-free 60 fps is Rung C: SemOS-owned double buffer + vblank-latched
+DSPSURF flip (SYS_FB_FLIP), which now has its register interface validated
+end-to-end.
