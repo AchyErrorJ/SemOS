@@ -969,6 +969,17 @@ fn init_loader_task() {
         }
     }
 
+    // `--features selfdev80-test`: headless DEMO 80 smoke (vouch-test feeder
+    // pattern — serial is OUTPUT-ONLY on this kernel, so headless commands
+    // must be pre-typed into the TTY line discipline by a kernel task).
+    #[cfg(feature = "selfdev80-test")]
+    {
+        match crate::context::spawn_task("selfdev80-test", selfdev80_test_task) {
+            Some(slot) => println!("[selfdev80-test] feeder task in slot {}", slot),
+            None => println!("[selfdev80-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1014,6 +1025,29 @@ fn vouch_test_task() {
         let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
     }
     println!("[vouch-test] feeder done — flow complete");
+}
+
+/// `--features selfdev80-test` feeder: types `selfdev 80` into the TTY once
+/// the shell is up. PARKS instead of returning — see below.
+#[cfg(feature = "selfdev80-test")]
+fn selfdev80_test_task() {
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+    // Let the shell spawn and reach its first prompt before typing.
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    for &b in b"echo SELFDEV80_FEEDER_ALIVE\n" {
+        tty::input_push(b);
+    }
+    let _ = dispatch(SYS_SLEEP, 10 * 62, 0, 0, 0);
+    for &b in b"selfdev 80\n" {
+        tty::input_push(b);
+    }
+    println!("[selfdev80-test] typed 'selfdev 80' — demo running");
+    // Park instead of returning: task_exit_stub (context.rs) hlt-loops WITHOUT
+    // marking the slot Exited, and the machine wedges hard the moment a feeder
+    // task returns (timer IRQs stop entirely — observed via [hb] heartbeat).
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
 }
 
 /// SYS_SELFDEV backing: run ONE self-dev demo (80|83|87|88) on demand from

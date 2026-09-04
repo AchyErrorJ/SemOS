@@ -22,6 +22,11 @@ interactive = []
 # boots don't carry the compiler, and the image stays under the QEMU-BIOS
 # load-segment ceiling.
 autocompile = []
+# `selfdev80-test`: headless DEMO 80 smoke for QEMU/serial runs — pre-types
+# `selfdev 80` through the TTY (vouch-test pattern; serial is output-only on
+# this kernel) so sem-sh runs it as its first command. Implies autocompile.
+# Off by default.
+selfdev80-test = ["autocompile"]
 # Minimal-boot trims (all OFF by default = the slim boot). Each re-enables a
 # probe the slim boot skips:
 # `net-extra`: virtio-net (QEMU slirp NIC) probe + smoltcp bring-up. QEMU

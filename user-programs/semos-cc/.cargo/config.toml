@@ -1,16 +1,15 @@
 [build]
 target = "x86_64-unknown-none"
 
-[host]
-linker = "rust-lld"
-
 [unstable]
 # Don't propagate [build] target to host-context builds (build scripts +
-# their deps + proc-macros). Without this, cargo invokes the host
-# code-generator deps (cranelift-srcgen, cranelift-assembler-x64-meta)
-# with --target x86_64-unknown-none, which has no std and breaks them.
-host-config = true
-target-applies-to-host = false
+# their deps + proc-macros). With Aug-2026 cargo this gate is enabled by
+# PRESENCE — the bare key defaults to `true`; an explicit `= false` now
+# parses as "the value false" and ENABLES it anyway, and the old
+# `host-config = true` key is gone entirely (host config now lives under
+# [host.<triple>] tables, which we don't need: the default host linker,
+# cc, is right for build scripts — `rust-lld` there can't find -lm/-ldl).
+target-applies-to-host = true
 # alloc added for Cranelift — needs Box/Vec/String.
 build-std = ["core", "alloc", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
