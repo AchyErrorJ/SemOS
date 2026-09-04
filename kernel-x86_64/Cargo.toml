@@ -36,6 +36,12 @@ selfdev80-test = ["autocompile"]
 # SemFS journal and still runs byte-exact, then smokes DEMO 80. Implies
 # autocompile. Off by default.
 greet93-test = ["autocompile"]
+# `pkg-test`: headless DEMO 89/90 semos-pkg demo for QEMU runs — a feeder
+# task drives `semos update/list/install motd/fetch cowsay` on boot 1
+# (mirror present) and `semos install cowsay` offline from the SemFS-backed
+# cache on boot 2 (mirror region wiped by the host), then re-verifies motd.
+# Implies autocompile. Off by default.
+pkg-test = ["autocompile"]
 # Minimal-boot trims (all OFF by default = the slim boot). Each re-enables a
 # probe the slim boot skips:
 # `net-extra`: virtio-net (QEMU slirp NIC) probe + smoltcp bring-up. QEMU

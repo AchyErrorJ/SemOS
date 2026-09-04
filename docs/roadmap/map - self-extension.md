@@ -87,14 +87,16 @@ are already in the kernel. See `project_semos_module_loader`,
 `semos install` tools without manual ELF copying. From-scratch: the package
 manager is yours; vendored deps are patched + audited.
 
-### M43 — Package manager (`semos-pkg`) `[  ]`
-- [ ] `install <crate>` → download from a crates.io mirror, compile, install to `/apps/`
-- [ ] `remove` / `update`; dependency resolution (DAG, not full cargo resolver in v1)
-- [ ] DEMO 89: `semos install ripgrep` → downloads, compiles, installs `/bin/rg`
+### M43 — Package manager (`semos-pkg`) — DONE 2026-09-05 (QEMU)
+- [x] `install <pkg>` → resolve from the local mirror, compile on-device, install to `/apps/` — as the `semos` sem-sh builtin over SYS_SEMOSPKG (142): `update | list | fetch | install | remove`
+- [x] `remove` / `update`; DAG dependency resolution (topo order, cycle-detect; no version solver in v1)
+- [x] DEMO 89: `semos install motd` → resolves `fortune → motd`, concatenates lib+bin behind a shared sys_* prelude, compiles on-device, byte-exact selftest, serial-approved, `/apps/motd` via staging rename, bare-name tier-0 smoke — `[DEMO 89] PASS`
+- Scope note: the roadmap's literal `semos install ripgrep` needs std + ~40 deps + LLVM-grade codegen; v1 packages are SemOS-format no_std guests (docs/semos-pkg-design.md §0). The machinery — index, DAG, cache, approval-gated install — is the deliverable.
 
-### M44 — crates.io mirror / cache `[  ]`
-- [ ] local registry index clone; tarball cache (`/var/cache/crates/`); offline mode
-- [ ] DEMO 90: install a cached crate with no network
+### M44 — crates.io mirror / cache — DONE 2026-09-05 (QEMU)
+- [x] local registry index clone (`/var/lib/semos-pkg/registry.sem`); tarball cache (`/var/cache/crates/`) — both SemFS-journaled, so offline state survives hard kills; mirror = raw `SEMREG01` blob at virtio0 LBA 16 (legacy snapshot region, below the journal at LBA 8192), host-built by `tools/make-registry-image.py`
+- [x] DEMO 90: mirror region host-wiped between boots → `semos install cowsay` resolves from clone+cache only → `[DEMO 90] PASS: offline install from local cache`; bonus beat: boot-1's `motd` re-runs byte-exact after the hard kill (journaled install)
+- Harness: `run-semos-pkg-qemu.sh` (feature `pkg-test`; answers approval gates 'y' over serial). v1.1 candidates: HTTPS fetch via the existing TLS stack, index hash-pinning.
 
 ---
 

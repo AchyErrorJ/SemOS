@@ -1034,6 +1034,18 @@ fn init_loader_task() {
         }
     }
 
+    // `--features pkg-test`: headless DEMO 89/90 semos-pkg demo — two-boot
+    // feeder (see pkg_test_task). Boot 1 installs from the mirror; boot 2
+    // installs offline from the SemFS-backed cache after the host wipes the
+    // mirror region. The harness answers the approval gates 'y' over serial.
+    #[cfg(feature = "pkg-test")]
+    {
+        match crate::context::spawn_task("pkg-test", pkg_test_task) {
+            Some(slot) => println!("[pkg-test] feeder task in slot {}", slot),
+            None => println!("[pkg-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1217,6 +1229,72 @@ fn greet93_test_task() {
             }
             println!("[greet93-test] typed 'selfdev 80' — coexistence smoke running");
         }
+    }
+    // Park instead of returning: task_exit_stub (context.rs) hlt-loops
+    // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// `--features pkg-test` feeder: the DEMO 89/90 two-boot state machine.
+///   boot 1 (mirror blob readable at virtio0 LBA 16): `semos update` clones
+///     the registry into the journaled namespace, `semos list` shows the
+///     index, `semos install motd` exercises the DAG resolver (fortune ->
+///     motd), on-device compile, byte-exact selftest, serial-approved
+///     install -> [DEMO 89] PASS; then `semos fetch cowsay` warms the cache.
+///   boot 2 (mirror region wiped by the host; journal intact): `semos
+///     install cowsay` resolves from clone+cache only -> [DEMO 90] PASS;
+///     then a fenced `motd` re-run proves boot 1's install survived the
+///     hard kill (journaled namespace).
+/// Parks forever at the end — see selfdev80_test_task.
+#[cfg(feature = "pkg-test")]
+fn pkg_test_task() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    const MOTD_EXPECT: &[u8] =
+        b"message of the day:\nfortune: a journaled thought survives the crash\n";
+
+    // Let the shell spawn and reach its first prompt before typing.
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    if pkg_read_mirror().is_some() {
+        println!("[pkg-test] boot 1: mirror present — update / list / install motd / fetch cowsay");
+        let script: [(&str, u64); 4] = [
+            ("semos update\n", 5),
+            ("semos list\n", 5),
+            // Compile + approval gate + install + smoke take minutes.
+            ("semos install motd\n", 300),
+            ("semos fetch cowsay\n", 10),
+        ];
+        for (line, pause) in script {
+            for &b in line.as_bytes() {
+                tty::input_push(b);
+            }
+            let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+        }
+        println!("[pkg-test] boot1 script done — hard-kill, wipe the mirror region, reboot");
+    } else {
+        println!("[pkg-test] boot 2: mirror ABSENT — offline install cowsay from the local cache");
+        for &b in b"semos install cowsay\n" {
+            tty::input_push(b);
+        }
+        let _ = dispatch(SYS_SLEEP, 300 * 62, 0, 0, 0);
+        // Journaled-install persistence: motd (installed on boot 1) still
+        // runs byte-exact after the hard kill.
+        const OUT: &str = "/tmp/pkg-motd-reboot.out";
+        let _ = Namespace::unlink(OUT);
+        let run = ["/bin/sem-sh", "-c", "motd > /tmp/pkg-motd-reboot.out"];
+        match demo80_spawn_wait("/bin/sem-sh", &run, 3) {
+            Some(0) => match demo83_read_file(OUT) {
+                Some(out) if out.as_slice() == MOTD_EXPECT => {
+                    println!("[DEMO 89] persistence: motd (installed boot 1) still runs byte-exact after hard kill");
+                }
+                _ => println!("[pkg-test] WARN: motd post-reboot output mismatch"),
+            },
+            _ => println!("[pkg-test] WARN: motd post-reboot run failed"),
+        }
+        println!("[pkg-test] boot2 script done");
     }
     // Park instead of returning: task_exit_stub (context.rs) hlt-loops
     // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
@@ -2909,6 +2987,572 @@ pub(crate) fn demo93_greet() {
     }
     println!("  [DEMO 93] post-install smoke OK: bare `greet` ran fenced at tier 0");
     println!("  [DEMO 93] PASS: headline demo — greet added live, kernel never rebuilt");
+}
+
+// ============================================================================
+// semos-pkg (M43/M44) — package manager: raw-region mirror, DAG resolver,
+// SemFS-backed local clone + tarball cache, offline installs.
+// Design: docs/semos-pkg-design.md.
+// ============================================================================
+
+/// Mirror blob location on virtio0: the legacy snapshot region below the
+/// SemFS journal (LBA 8192). [8B magic][u64 len][payload][pad to 512].
+#[cfg(feature = "autocompile")]
+const PKG_MIRROR_LBA: u64 = 16;
+#[cfg(feature = "autocompile")]
+const PKG_MIRROR_MAGIC: &[u8; 8] = b"SEMREG01";
+/// Local registry index clone (full archive copy).
+#[cfg(feature = "autocompile")]
+const PKG_INDEX_PATH: &str = "/var/lib/semos-pkg/registry.sem";
+/// Tarball cache: <name>-<version>.rs / .expect per package.
+#[cfg(feature = "autocompile")]
+const PKG_CACHE_DIR: &str = "/var/cache/crates";
+/// Scratch build dir (concatenated source, ELF, selftest output).
+#[cfg(feature = "autocompile")]
+const PKG_BUILD_DIR: &str = "/tmp/semos-pkg";
+
+/// semos-pkg ops (SYS_SEMOSPKG arg0). LIST is read-only; the rest are
+/// console-gated at the syscall dispatcher.
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_UPDATE: u64 = 1;
+pub(crate) const SEMOSPKG_OP_LIST: u64 = 2;
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_FETCH: u64 = 3;
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_INSTALL: u64 = 4;
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_REMOVE: u64 = 5;
+
+/// One parsed package from the registry archive.
+#[cfg(feature = "autocompile")]
+struct PkgEntry {
+    name: alloc::string::String,
+    version: alloc::string::String,
+    is_lib: bool,
+    deps: alloc::vec::Vec<alloc::string::String>,
+    src: alloc::vec::Vec<u8>,
+    expect: alloc::vec::Vec<u8>,
+}
+
+/// Read the mirror blob from virtio0 LBA 16. None if absent/wiped/corrupt.
+#[cfg(feature = "autocompile")]
+fn pkg_read_mirror() -> Option<alloc::vec::Vec<u8>> {
+    let dev = kernel_core::drivers::registry::get_block("virtio0")?;
+    let mut head = [0u8; 1024];
+    dev.read_blocks(PKG_MIRROR_LBA, &mut head).ok()?;
+    if &head[..8] != PKG_MIRROR_MAGIC {
+        return None;
+    }
+    let len = u64::from_le_bytes(head[8..16].try_into().ok()?) as usize;
+    if len == 0 || len > 4 * 1024 * 1024 {
+        return None;
+    }
+    let padded = (16 + len + 511) / 512 * 512;
+    // Never read into the journal region.
+    if PKG_MIRROR_LBA + (padded as u64) / 512 >= 8192 {
+        return None;
+    }
+    let mut buf = alloc::vec![0u8; padded];
+    dev.read_blocks(PKG_MIRROR_LBA, &mut buf).ok()?;
+    buf.truncate(16 + len);
+    Some(buf.split_off(16))
+}
+
+/// Parse the registry archive: "SEMOS-REGISTRY 1\n", pkg blocks, "end\n".
+#[cfg(feature = "autocompile")]
+fn pkg_parse(buf: &[u8]) -> Option<alloc::vec::Vec<PkgEntry>> {
+    use alloc::string::ToString;
+    use alloc::vec::Vec;
+
+    fn line<'a>(buf: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
+        let start = *pos;
+        let mut i = start;
+        while i < buf.len() && buf[i] != b'\n' {
+            i += 1;
+        }
+        if i >= buf.len() {
+            return None;
+        }
+        *pos = i + 1;
+        Some(&buf[start..i])
+    }
+
+    let mut pos = 0usize;
+    if line(buf, &mut pos)? != b"SEMOS-REGISTRY 1" {
+        return None;
+    }
+    let mut out = Vec::new();
+    loop {
+        let l = line(buf, &mut pos)?;
+        if l == b"end" {
+            break;
+        }
+        let s = core::str::from_utf8(l).ok()?;
+        let mut it = s.split(' ');
+        if it.next()? != "pkg" {
+            return None;
+        }
+        let name = it.next()?.to_string();
+        let version = it.next()?.to_string();
+        let mut is_lib = false;
+        let mut deps = Vec::new();
+        let mut nbytes = 0usize;
+        let mut nexpect = 0usize;
+        for tok in it {
+            if let Some(v) = tok.strip_prefix("kind=") {
+                is_lib = v == "lib";
+            } else if let Some(v) = tok.strip_prefix("deps=") {
+                if v != "-" {
+                    for d in v.split(',') {
+                        deps.push(d.to_string());
+                    }
+                }
+            } else if let Some(v) = tok.strip_prefix("bytes=") {
+                nbytes = v.parse().ok()?;
+            } else if let Some(v) = tok.strip_prefix("expect=") {
+                nexpect = v.parse().ok()?;
+            }
+        }
+        if pos + nbytes + nexpect > buf.len() {
+            return None;
+        }
+        let src = buf[pos..pos + nbytes].to_vec();
+        pos += nbytes;
+        let expect = buf[pos..pos + nexpect].to_vec();
+        pos += nexpect;
+        out.push(PkgEntry { name, version, is_lib, deps, src, expect });
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+/// Read the local registry clone from the journaled namespace. None if no
+/// clone has been taken yet.
+#[cfg(feature = "autocompile")]
+fn pkg_clone_read() -> Option<alloc::vec::Vec<u8>> {
+    use kernel_core::fs::paths::Namespace;
+    let mut buf = alloc::vec![0u8; 1024 * 1024];
+    let n = Namespace::read_file_into(PKG_INDEX_PATH, &mut buf).ok()?;
+    buf.truncate(n);
+    Some(buf)
+}
+
+/// mkdir -p the semos-pkg state dirs (idempotent).
+#[cfg(feature = "autocompile")]
+fn pkg_ensure_dirs() {
+    use kernel_core::syscall::{dispatch, numbers::SYS_MKDIR};
+    for d in [
+        "/var",
+        "/var/lib",
+        "/var/lib/semos-pkg",
+        "/var/cache",
+        PKG_CACHE_DIR,
+        PKG_BUILD_DIR,
+    ] {
+        let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+    }
+}
+
+/// Write (replace) one file in the tarball cache.
+#[cfg(feature = "autocompile")]
+fn pkg_cache_write(name: &str, version: &str, ext: &str, bytes: &[u8]) -> bool {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    let path = alloc::format!("{}/{}-{}.{}", PKG_CACHE_DIR, name, version, ext);
+    let _ = Namespace::unlink(&path);
+    Namespace::create_file(&path, SecurityTier::Public, bytes).is_ok()
+}
+
+/// Read a cached payload. None if absent.
+#[cfg(feature = "autocompile")]
+fn pkg_cache_read(name: &str, version: &str, ext: &str) -> Option<alloc::vec::Vec<u8>> {
+    use kernel_core::fs::paths::Namespace;
+    let path = alloc::format!("{}/{}-{}.{}", PKG_CACHE_DIR, name, version, ext);
+    let mut buf = alloc::vec![0u8; 1024 * 1024];
+    let n = Namespace::read_file_into(&path, &mut buf).ok()?;
+    buf.truncate(n);
+    Some(buf)
+}
+
+/// Resolve `want` over the index into a topological order of indices (deps
+/// first, `want` last). Err(()) on unknown package or dependency cycle.
+#[cfg(feature = "autocompile")]
+fn pkg_resolve(index: &[PkgEntry], want: &str) -> Result<alloc::vec::Vec<usize>, ()> {
+    use alloc::vec::Vec;
+    fn find(index: &[PkgEntry], name: &str) -> Option<usize> {
+        let mut i = 0;
+        while i < index.len() {
+            if index[i].name == name {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
+    // state: 0 = unvisited, 1 = on the DFS stack (cycle if re-entered), 2 = done
+    fn visit(
+        index: &[PkgEntry],
+        i: usize,
+        state: &mut [u8],
+        order: &mut Vec<usize>,
+    ) -> Result<(), ()> {
+        if state[i] == 2 {
+            return Ok(());
+        }
+        if state[i] == 1 {
+            return Err(()); // cycle
+        }
+        state[i] = 1;
+        let mut k = 0;
+        while k < index[i].deps.len() {
+            let d = find(index, &index[i].deps[k]).ok_or(())?;
+            visit(index, d, state, order)?;
+            k += 1;
+        }
+        state[i] = 2;
+        order.push(i);
+        Ok(())
+    }
+    let start = find(index, want).ok_or(())?;
+    let mut state = alloc::vec![0u8; index.len()];
+    let mut order = Vec::new();
+    visit(index, start, &mut state, &mut order)?;
+    Ok(order)
+}
+
+/// Ensure the index is available: prefer the local clone; if absent and the
+/// mirror is readable, take a full clone + extract all payloads to the cache
+/// (= `semos update`). Returns (index, mirror_present).
+#[cfg(feature = "autocompile")]
+fn pkg_index() -> Option<(alloc::vec::Vec<PkgEntry>, bool)> {
+    let mirror = pkg_read_mirror();
+    if let Some(clone) = pkg_clone_read() {
+        if let Some(idx) = pkg_parse(&clone) {
+            return Some((idx, mirror.is_some()));
+        }
+    }
+    let bytes = mirror.as_ref()?;
+    let idx = pkg_parse(bytes)?;
+    // Auto-clone on first contact, like `update`.
+    pkg_ensure_dirs();
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    let _ = Namespace::unlink(PKG_INDEX_PATH);
+    if Namespace::create_file(PKG_INDEX_PATH, SecurityTier::Public, bytes).is_err() {
+        return None;
+    }
+    for e in &idx {
+        let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+        let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+    }
+    Some((idx, true))
+}
+
+/// SYS_SEMOSPKG backing (arg0 = op, arg = optional package name). Runs in
+/// the caller's context like run_selfdev; the console gate for mutations is
+/// enforced by the dispatcher.
+#[cfg(feature = "autocompile")]
+pub(crate) fn run_semos_pkg(op: u64, arg: Option<&str>) -> u64 {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+
+    match op {
+        SEMOSPKG_OP_UPDATE => {
+            let bytes = match pkg_read_mirror() {
+                Some(b) => b,
+                None => {
+                    println!("semos-pkg: no mirror (virtio0 LBA {} unreadable or wiped)", PKG_MIRROR_LBA);
+                    return u64::MAX;
+                }
+            };
+            let idx = match pkg_parse(&bytes) {
+                Some(i) => i,
+                None => {
+                    println!("semos-pkg: mirror payload is not a SEMOS-REGISTRY archive");
+                    return u64::MAX;
+                }
+            };
+            pkg_ensure_dirs();
+            let _ = Namespace::unlink(PKG_INDEX_PATH);
+            if Namespace::create_file(PKG_INDEX_PATH, SecurityTier::Public, &bytes).is_err() {
+                println!("semos-pkg: could not write local clone");
+                return u64::MAX;
+            }
+            for e in &idx {
+                let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+                let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+            }
+            println!("semos-pkg: registry cloned — {} package(s) indexed + cached", idx.len());
+            0
+        }
+
+        SEMOSPKG_OP_LIST => {
+            let (idx, mirror) = match pkg_index() {
+                Some(x) => x,
+                None => {
+                    println!("semos-pkg: no registry (no mirror, no local clone)");
+                    return u64::MAX;
+                }
+            };
+            println!("semos-pkg: registry (mirror {})", if mirror { "attached" } else { "ABSENT — offline" });
+            for e in &idx {
+                let app = alloc::format!("/apps/{}", e.name);
+                let installed = Namespace::resolve(&app).is_ok();
+                let mut deps = alloc::string::String::new();
+                for d in &e.deps {
+                    if !deps.is_empty() {
+                        deps.push(',');
+                    }
+                    deps.push_str(d);
+                }
+                println!(
+                    "  {} {} [{}]{} deps={}",
+                    e.name,
+                    e.version,
+                    if e.is_lib { "lib" } else { "bin" },
+                    if installed { " installed" } else { "" },
+                    if deps.is_empty() { "-" } else { deps.as_str() },
+                );
+            }
+            0
+        }
+
+        SEMOSPKG_OP_FETCH => {
+            let name = match arg {
+                Some(a) => a,
+                None => {
+                    println!("semos-pkg: fetch: missing package name");
+                    return u64::MAX;
+                }
+            };
+            let (idx, _) = match pkg_index() {
+                Some(x) => x,
+                None => {
+                    println!("semos-pkg: no registry (no mirror, no local clone)");
+                    return u64::MAX;
+                }
+            };
+            let order = match pkg_resolve(&idx, name) {
+                Ok(o) => o,
+                Err(()) => {
+                    println!("semos-pkg: fetch: unknown package or dependency cycle: {}", name);
+                    return u64::MAX;
+                }
+            };
+            pkg_ensure_dirs();
+            for &i in &order {
+                let e = &idx[i];
+                if pkg_cache_read(&e.name, &e.version, "rs").is_none() {
+                    let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+                    let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+                }
+                println!("[semos-pkg] cached {}-{}", e.name, e.version);
+            }
+            0
+        }
+
+        SEMOSPKG_OP_INSTALL => {
+            let name = match arg {
+                Some(a) => a,
+                None => {
+                    println!("semos-pkg: install: missing package name");
+                    return u64::MAX;
+                }
+            };
+            let mirror_present = pkg_read_mirror().is_some();
+            let (idx, _) = match pkg_index() {
+                Some(x) => x,
+                None => {
+                    println!("semos-pkg: no registry (no mirror, no local clone)");
+                    return u64::MAX;
+                }
+            };
+            let order = match pkg_resolve(&idx, name) {
+                Ok(o) => o,
+                Err(()) => {
+                    println!("semos-pkg: install: unknown package or dependency cycle: {}", name);
+                    return u64::MAX;
+                }
+            };
+            let top = &idx[*order.last().unwrap()];
+            if top.is_lib {
+                println!("semos-pkg: install: {} is a lib (build-time dep, not installable)", name);
+                return u64::MAX;
+            }
+            println!(
+                "semos-pkg: resolving {} — {} package(s): {}",
+                name,
+                order.len(),
+                {
+                    let mut s = alloc::string::String::new();
+                    for &i in &order {
+                        if !s.is_empty() {
+                            s.push_str(" -> ");
+                        }
+                        s.push_str(&idx[i].name);
+                    }
+                    s
+                }
+            );
+
+            // Build: crate header + shared sys_* stub prelude + dep lib
+            // sources in topo order + the bin. The prelude declares every
+            // stub ONCE — package sources never declare their own (two
+            // extern blocks naming the same symbol are E0428).
+            pkg_ensure_dirs();
+            let mut build: alloc::vec::Vec<u8> = b"#![no_std]\n#![no_main]\n\nextern \"C\" {\n    fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64;\n    fn sys_exit(code: u64) -> !;\n    fn sys_open(path_ptr: *const u8, path_len: u64, flags: u64) -> i64;\n    fn sys_close(fd: u64) -> i64;\n    fn sys_fread(fd: u64, buf: *mut u8, len: u64) -> i64;\n}\n\n".to_vec();
+            for &i in &order {
+                let e = &idx[i];
+                // Prefer the cache (the M44 offline artifact); fall back to
+                // the clone's payload and refill the cache.
+                let src = match pkg_cache_read(&e.name, &e.version, "rs") {
+                    Some(s) => s,
+                    None => {
+                        let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+                        let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+                        println!("[semos-pkg] cached {}-{}", e.name, e.version);
+                        e.src.clone()
+                    }
+                };
+                build.extend_from_slice(&src);
+                build.push(b'\n');
+            }
+            let build_path = alloc::format!("{}/{}-build.rs", PKG_BUILD_DIR, name);
+            let elf_path = alloc::format!("{}/{}", PKG_BUILD_DIR, name);
+            let out_path = alloc::format!("{}/{}.out", PKG_BUILD_DIR, name);
+            let _ = Namespace::unlink(&build_path);
+            if Namespace::create_file(&build_path, SecurityTier::Public, &build).is_err() {
+                println!("semos-pkg: could not stage build source");
+                return u64::MAX;
+            }
+
+            // Compile on-device.
+            let _ = Namespace::unlink(&elf_path);
+            let code = match demo80_spawn_wait(
+                "/bin/semos-rustc",
+                &["/bin/semos-rustc", &build_path, "-o", &elf_path, "-C", "overflow-checks=off"],
+                3,
+            ) {
+                Some(c) => c,
+                None => return u64::MAX,
+            };
+            if code != 0 {
+                println!("semos-pkg: FAIL: {} did not compile (code={})", name, code);
+                return u64::MAX;
+            }
+            println!("semos-pkg: compiled {}", elf_path);
+
+            // Isolation selftest: byte-exact against the packaged expectation.
+            let _ = Namespace::unlink(&out_path);
+            let run_cmd = alloc::format!("{} > {}", elf_path, out_path);
+            let run = ["/bin/sem-sh", "-c", &run_cmd];
+            let code = match demo80_spawn_wait("/bin/sem-sh", &run, 3) {
+                Some(c) => c,
+                None => return u64::MAX,
+            };
+            if code != 0 {
+                println!("semos-pkg: FAIL: {} selftest exited code={}", name, code);
+                return u64::MAX;
+            }
+            match demo83_read_file(&out_path) {
+                Some(out) if out == top.expect => {}
+                _ => {
+                    println!("semos-pkg: FAIL: {} selftest output mismatch", name);
+                    return u64::MAX;
+                }
+            }
+            println!("semos-pkg: selftest PASS (byte-exact)");
+
+            // Human approval, then atomic install + bare-name smoke.
+            let (approved, tty) = demo_approval_prompt(
+                &alloc::format!("  Install /apps/{}? [y/N] ", name),
+                18600,
+            );
+            if !approved {
+                println!("[AUDIT] DENY install /apps/{} reason=denied_or_timeout (fail-fast)", name);
+                println!("semos-pkg: SKIP-INSTALL: no human approval — /apps untouched");
+                return 0;
+            }
+            println!("[AUDIT] APPROVE install /apps/{} by=human tty={}", name, tty);
+
+            use kernel_core::syscall::{dispatch, numbers::*};
+            let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, "/apps".len() as u64, 0, 0);
+            let staging_dir = "/apps/.staging";
+            let _ = dispatch(SYS_MKDIR, staging_dir.as_ptr() as u64, staging_dir.len() as u64, 0, 0);
+            let staging = alloc::format!("/apps/.staging/{}", name);
+            let app = alloc::format!("/apps/{}", name);
+            let _ = Namespace::unlink(&app);
+            let _ = Namespace::unlink(&staging);
+            if Namespace::rename(&elf_path, &staging).is_err()
+                || Namespace::rename(&staging, &app).is_err()
+            {
+                println!("semos-pkg: FAIL: staging rename into /apps failed");
+                return u64::MAX;
+            }
+            println!("semos-pkg: installed {} (journaled write-through)", app);
+
+            let smoke_out = alloc::format!("{}/{}.smoke", PKG_BUILD_DIR, name);
+            let _ = Namespace::unlink(&smoke_out);
+            let smoke_cmd = alloc::format!("{} > {}", name, smoke_out);
+            let run2 = ["/bin/sem-sh", "-c", &smoke_cmd];
+            let code = match demo80_spawn_wait("/bin/sem-sh", &run2, 3) {
+                Some(c) => c,
+                None => return u64::MAX,
+            };
+            if code != 0 {
+                println!("semos-pkg: FAIL: installed {} exited code={}", name, code);
+                return u64::MAX;
+            }
+            match demo83_read_file(&smoke_out) {
+                Some(out) if out == top.expect => {}
+                _ => {
+                    println!("semos-pkg: FAIL: installed {} output mismatch", name);
+                    return u64::MAX;
+                }
+            }
+            println!("semos-pkg: post-install smoke OK: bare `{}` ran fenced at tier 0", name);
+            if mirror_present {
+                println!("[DEMO 89] PASS: semos install {} — DAG resolved, compiled on-device, approved, installed", name);
+            } else {
+                println!("[DEMO 90] PASS: offline install from local cache — {} (no mirror attached)", name);
+            }
+            0
+        }
+
+        SEMOSPKG_OP_REMOVE => {
+            let name = match arg {
+                Some(a) => a,
+                None => {
+                    println!("semos-pkg: remove: missing package name");
+                    return u64::MAX;
+                }
+            };
+            let app = alloc::format!("/apps/{}", name);
+            match Namespace::unlink(&app) {
+                Ok(()) => {
+                    println!("semos-pkg: removed {} (journaled)", app);
+                    0
+                }
+                Err(_) => {
+                    println!("semos-pkg: remove: {} not installed", name);
+                    u64::MAX
+                }
+            }
+        }
+
+        _ => {
+            println!("semos-pkg: unknown op {}", op);
+            u64::MAX
+        }
+    }
+}
+
+#[cfg(not(feature = "autocompile"))]
+pub(crate) fn run_semos_pkg(_op: u64, _arg: Option<&str>) -> u64 {
+    println!("semos-pkg: needs an autocompile kernel build (semos-rustc payload)");
+    u64::MAX
 }
 
 /// Headless DEMO 88 / self-dev-loop M4 runner: scripted agent SELF-REPAIR.

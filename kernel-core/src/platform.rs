@@ -108,6 +108,13 @@ pub trait Platform: Send + Sync + 'static {
     /// built with self-dev support. Default: unavailable.
     fn run_selfdev(&self, _demo: u64) -> u64 { u64::MAX }
 
+    /// SYS_SEMOSPKG: run one semos-pkg operation (op, optional package name)
+    /// in the caller's context (the `semos` shell builtin). The console gate
+    /// for mutations is enforced by the dispatcher. Returns 0 on success,
+    /// u64::MAX on error or when the platform wasn't built with the package
+    /// manager. Default: unavailable.
+    fn run_semospkg(&self, _op: u64, _name: Option<&str>) -> u64 { u64::MAX }
+
     /// SYS_PAIR: run the M56 pairing handshake against the phone described by
     /// the QR payload at `(qr_ptr, qr_len)` in caller memory. Blocks in the
     /// caller's context (TCP + crypto + the interactive SAS confirm on the

@@ -198,6 +198,13 @@ pub mod numbers {
                                             // /apps; the agent must never trigger a
                                             // self-modify cycle. Blocks in the caller's
                                             // context like SYS_DEMOS.
+    // M43/M44 semos-pkg (docs/semos-pkg-design.md): local package manager.
+    pub const SYS_SEMOSPKG:     u64 = 142;  // (op, name_ptr, name_len) -> 0 / u64::MAX.
+                                            // ops: 1=update 2=list 3=fetch 4=install
+                                            // 5=remove. LIST is read-only (any task);
+                                            // the rest are CONSOLE ONLY — install
+                                            // lands in /apps behind the human approval
+                                            // gate, so the agent must never drive it.
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -380,6 +387,27 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
                 return u64::MAX;
             }
             crate::platform::get().run_selfdev(arg0)
+        }
+
+        // M43/M44 semos-pkg (the `semos` builtin). `list` (op 2) is read-only
+        // and allowed anywhere; update/fetch/install/remove mutate the
+        // namespace and install into /apps, so they are console-only (same
+        // authority gate as SYS_SELFDEV).
+        SYS_SEMOSPKG => {
+            const SEMOSPKG_OP_LIST: u64 = 2;
+            if arg0 != SEMOSPKG_OP_LIST && !is_vouch_authority() {
+                crate::platform::log("[semos-pkg] DENIED: caller is not the interactive console\n");
+                return u64::MAX;
+            }
+            let name = if arg2 > 0 {
+                match unsafe { read_caller_str(arg1, arg2) } {
+                    Some(s) => Some(s),
+                    None => return u64::MAX,
+                }
+            } else {
+                None
+            };
+            crate::platform::get().run_semospkg(arg0, name)
         }
 
         // M56 pairing. `pair` and `unpair` mutate device trust, so they are
