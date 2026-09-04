@@ -1471,6 +1471,18 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
                 // Too big to splice on the stack — whole-file overwrite.
                 crate::semantic::object::ObjectContent::from_bytes(data)
             };
+            // SemFS journal (write-through): this path mutates content
+            // through get_mut(), bypassing registry::insert — so append
+            // the new state BEFORE assigning it (durable strictly before
+            // visible). On disk error the write fails and the in-RAM
+            // content keeps its prior (still-durable) value.
+            let new_bytes: &[u8] = match new_content.as_ref().and_then(|c| c.as_bytes()) {
+                Some(b) => b,
+                None => return u64::MAX,
+            };
+            if !crate::semantic::journal::on_update(obj, new_bytes) {
+                return u64::MAX;
+            }
             obj.content = match new_content {
                 Some(c) => c,
                 None => return u64::MAX,
@@ -1625,6 +1637,11 @@ fn encode_statx(st: &StatX, out: &mut [u8; core::mem::size_of::<StatX>()]) {
 /// std::fs::File::sync_all maps to this; cargo's atomic-rename
 /// build flow depends on it.
 fn handle_fsync() -> u64 {
+    // SemFS journal mounted: write-through means every mutation was
+    // durable before it returned — fsync is already done.
+    if crate::semantic::journal::is_mounted() {
+        return 0;
+    }
     let dev = match crate::drivers::registry::get_block("virtio0") {
         Some(d) => d,
         None => {

@@ -743,6 +743,40 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // Semantic object system
     kernel_core::semantic::registry::init_global_registry();
     println!("    Semantic registry: initialized");
+    // SemFS journal (docs/semfs-journal-design.md): write-through
+    // durability for the object store. Lives at the 4 MiB mark on
+    // virtio0 (LBA 8192+), past the legacy whole-tree snapshot region
+    // (LBA 0..8192). MUST mount BEFORE Namespace::init() and all seed
+    // registration: replayed directory entries must never reference
+    // RAM-only seed objects (a seed journaled into a directory but never
+    // journaled itself dangles after reboot — the DEMO 80 /hello.rs
+    // regression). With the journal first, every seed is persisted as it
+    // is created, and replayed trees are self-contained.
+    if let Some(dev) = kernel_core::drivers::registry::get_block("virtio0") {
+        let block_count = dev.block_count();
+        const SEMFS_SB_LBA: u64 = 8192; // 4 MiB mark
+        if block_count > SEMFS_SB_LBA + 2 {
+            match kernel_core::semantic::journal::mount(
+                dev, SEMFS_SB_LBA, block_count - SEMFS_SB_LBA - 2,
+            ) {
+                kernel_core::semantic::journal::MountOutcome::Mounted { records, torn } =>
+                    println!("    SemFS journal: mounted, replayed {} record(s){}",
+                        records, if torn { " (torn tail truncated)" } else { "" }),
+                kernel_core::semantic::journal::MountOutcome::Formatted =>
+                    println!("    SemFS journal: fresh disk formatted"),
+                kernel_core::semantic::journal::MountOutcome::Unavailable => {
+                    println!("    SemFS journal: unavailable — RAM-only this boot");
+                    match kernel_core::fs::paths::Namespace::load(dev) {
+                        Ok(n) => println!("    Path namespace: loaded {} bytes from virtio0 (prior-boot snapshot)", n),
+                        Err(_) => println!("    Path namespace: no prior snapshot on virtio0 (fresh disk)"),
+                    }
+                }
+            }
+        } else {
+            println!("    SemFS journal: virtio0 too small ({} sectors) — RAM-only", block_count);
+        }
+    }
+
     kernel_core::semantic::vector::init_global_vector_index();
     println!("    Vector index: initialized");
     kernel_core::semantic::search::init_global_search();
@@ -769,7 +803,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         use kernel_core::fs::paths::Namespace;
         use kernel_core::semantic::object::SecurityTier;
         if Namespace::create_file("/hello.rs", SecurityTier::Public, HELLO_RS_SOURCE).is_err() {
-            println!("    [WARN] DEMO 80: failed to register /hello.rs in namespace");
+            // With the SemFS journal mounted, a prior boot already
+            // persisted /hello.rs — verify it's readable rather than WARN.
+            let mut probe = [0u8; 16];
+            if Namespace::read_file_into("/hello.rs", &mut probe).is_ok() {
+                println!("    DEMO 80: /hello.rs already persisted (SemFS replay) + /tmp dir");
+            } else {
+                println!("    [WARN] DEMO 80: failed to register /hello.rs in namespace");
+            }
         } else {
             println!("    DEMO 80: /hello.rs registered ({} bytes) + /tmp dir", HELLO_RS_SOURCE.len());
         }
@@ -780,12 +821,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Agent template: /templates/snake.rs ({} bytes)", SNAKE_TEMPLATE_SOURCE.len());
         }
     }
-    if let Some(dev) = kernel_core::drivers::registry::get_block("virtio0") {
-        match kernel_core::fs::paths::Namespace::load(dev) {
-            Ok(n) => println!("    Path namespace: loaded {} bytes from virtio0 (prior-boot snapshot)", n),
-            Err(_) => println!("    Path namespace: no prior snapshot on virtio0 (fresh disk)"),
-        }
-    }
+    // `--features semfs-test`: DEMO 91/92 boot protocol for the SemFS
+    // journal (docs/semfs-journal-design.md §7). Boot 1 writes markers;
+    // hard-kill; boot 2 verifies byte-exact persistence (91) and torn-tail
+    // truncation (92, when the host corrupts the final record's CRC).
+    #[cfg(feature = "semfs-test")]
+    semfs_test_boot();
 
     // LLM services (context builder, redactor, summarizer, provider)
     kernel_core::llm::init();
@@ -1029,6 +1070,70 @@ fn vouch_test_task() {
 
 /// `--features selfdev80-test` feeder: types `selfdev 80` into the TTY once
 /// the shell is up. PARKS instead of returning — see below.
+/// DEMO 91/92 — SemFS journal persistence + torn-tail recovery.
+/// Two-boot protocol (driven by the QEMU harness):
+///   boot 1: markers absent → write A + B, ask for a hard kill.
+///   boot 2: A present + byte-exact → DEMO 91 PASS. B absent (host
+///   corrupted its record's CRC) → DEMO 92 PASS; then write C to prove
+///   the journal keeps accepting appends after truncation.
+#[cfg(feature = "semfs-test")]
+fn semfs_test_boot() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+
+    const MARKER_A: &[u8] = b"SEMFS-MARKER-A: the journal survived a hard kill\n";
+    const MARKER_B: &[u8] = b"SEMFS-MARKER-B: this record will be torn by the host\n";
+    const MARKER_C: &[u8] = b"SEMFS-MARKER-C: appends continue after truncation\n";
+
+    let _ = Namespace::mkdir("/apps");
+
+    let mut buf = [0u8; 128];
+    match Namespace::read_file_into("/apps/journal-a.txt", &mut buf) {
+        Err(_) => {
+            // Boot 1: write the markers.
+            let ok_a = Namespace::create_file("/apps/journal-a.txt", SecurityTier::Public, MARKER_A).is_ok();
+            let ok_b = Namespace::create_file("/apps/journal-b.txt", SecurityTier::Public, MARKER_B).is_ok();
+            if ok_a && ok_b {
+                println!("[DEMO 91] markers A+B written and durable — hard-kill and reboot to verify");
+            } else {
+                println!("[DEMO 91] FAIL: could not write markers (a={} b={})", ok_a, ok_b);
+            }
+        }
+        Ok(n) => {
+            // Boot 2+: verify A byte-exact.
+            let a_ok = n == MARKER_A.len() && &buf[..n] == MARKER_A;
+            if a_ok {
+                println!("[DEMO 91] PASS: /apps/journal-a.txt persisted byte-exact across hard-kill reboot");
+            } else {
+                println!("[DEMO 91] FAIL: marker A corrupt ({} bytes)", n);
+            }
+            // B: present = no torn tail was injected; absent = DEMO 92.
+            match Namespace::read_file_into("/apps/journal-b.txt", &mut buf) {
+                Ok(_) => println!("[DEMO 92] no torn tail injected (B intact) — harness may inject and reboot"),
+                Err(_) => {
+                    println!("[DEMO 92] PASS: torn record dropped at replay, marker A intact");
+                    // Idempotent: C may already exist from a prior boot.
+                    let c_ok = match Namespace::create_file("/apps/journal-c.txt", SecurityTier::Public, MARKER_C) {
+                        Ok(_) => true,
+                        Err(_) => {
+                            let mut cbuf = [0u8; 128];
+                            match Namespace::read_file_into("/apps/journal-c.txt", &mut cbuf) {
+                                Ok(cn) => cn == MARKER_C.len() && &cbuf[..cn] == MARKER_C,
+                                Err(_) => false,
+                            }
+                        }
+                    };
+                    if c_ok {
+                        println!("[DEMO 92] PASS: journal accepts appends after truncation");
+                    } else {
+                        println!("[DEMO 92] FAIL: append after truncation failed");
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(feature = "selfdev80-test")]
 fn selfdev80_test_task() {
     use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};

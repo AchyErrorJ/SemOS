@@ -22,6 +22,9 @@ interactive = []
 # boots don't carry the compiler, and the image stays under the QEMU-BIOS
 # load-segment ceiling.
 autocompile = []
+# `semfs-test`: DEMO 91/92 SemFS journal boot protocol (persistence +
+# torn-tail recovery) for QEMU runs; off by default.
+semfs-test = []
 # `selfdev80-test`: headless DEMO 80 smoke for QEMU/serial runs — pre-types
 # `selfdev 80` through the TTY (vouch-test pattern; serial is output-only on
 # this kernel) so sem-sh runs it as its first command. Implies autocompile.
