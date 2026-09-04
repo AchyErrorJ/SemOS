@@ -366,8 +366,9 @@ extern "x86-interrupt" fn page_fault_handler(
     // Rather than hlt, recover by killing the faulting task; pick_next
     // picks something else and the rest of the system keeps running.
     let cur = kernel_core::scheduler::current_task_index();
-    println!("[kernel] PAGE FAULT in slot {} at RIP={:?} — recovering (task #40)",
-        cur, stack_frame.instruction_pointer);
+    let pf_cr2 = x86_64::registers::control::Cr2::read_raw();
+    println!("[kernel] PAGE FAULT in slot {} at RIP={:?} CR2=0x{:x} — recovering (task #40)",
+        cur, stack_frame.instruction_pointer, pf_cr2);
     // Stack-canary check: if any TASK_STACK[slot] bottom has been smashed,
     // we have a stack overflow somewhere — report it loudly.
     if let Some(smashed_slot) = crate::context::check_stack_canaries() {

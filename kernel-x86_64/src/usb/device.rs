@@ -239,6 +239,60 @@ impl EndpointContext {
         self.dw3 = (tr_dequeue_phys >> 32) as u32;
         self.dw4 = max_packet_size as u32;
     }
+
+    /// Isochronous IN endpoint (e.g. USB AudioStreaming capture).
+    /// Spec §6.2.3. EP Type 5. Unlike interrupt, isoch has no retries
+    /// (CErr is ignored by the HC for isoch) and must advertise **Max ESIT
+    /// Payload** — the total bytes the endpoint can move in one service
+    /// interval — split across dw0[31:24] (hi) and dw4[31:16] (lo).
+    /// `interval_log2` comes from `xhci::encode_interval` (same §6.2.3.6
+    /// encoding as interrupt endpoints: period = 2^interval microframes).
+    pub fn init_isoch_in_ep(
+        &mut self,
+        max_packet_size: u16,
+        interval_log2: u8,
+        max_esit_payload: u32,
+        avg_trb_len: u32,
+        tr_dequeue_phys: u64,
+        dequeue_cycle_state: bool,
+    ) {
+        const EP_TYPE_ISOCH_IN: u32 = 5;
+        // dw0: EP state(2:0)=0, Mult(9:8)=0, MaxPStreams(14:10)=0, LSA(15)=0,
+        //      Interval(23:16), Max ESIT Payload hi(31:24) = MEP[23:16].
+        self.dw0 = ((interval_log2 as u32 & 0xFF) << 16)
+            | ((max_esit_payload & 0xFF_0000) << 8);
+        // dw1: CErr(2:1)=0 (ignored for isoch), EP Type(5:3)=ISO_IN,
+        //      HID(7)=0, MaxBurst(15:8)=0, MaxPacketSize(31:16).
+        self.dw1 = (EP_TYPE_ISOCH_IN << 3) | ((max_packet_size as u32) << 16);
+        let dcs = if dequeue_cycle_state { 1u32 } else { 0u32 };
+        self.dw2 = dcs | ((tr_dequeue_phys & 0xFFFF_FFF0) as u32);
+        self.dw3 = (tr_dequeue_phys >> 32) as u32;
+        // dw4: Average TRB Length(15:0), Max ESIT Payload lo(31:16)
+        //      = MEP[15:0].
+        self.dw4 = (avg_trb_len & 0xFFFF) | ((max_esit_payload & 0xFFFF) << 16);
+    }
+
+    /// Isochronous OUT endpoint (e.g. USB AudioStreaming playback).
+    /// Spec §6.2.3. EP Type 1. Same field programming as Isoch-IN above;
+    /// only the type differs.
+    pub fn init_isoch_out_ep(
+        &mut self,
+        max_packet_size: u16,
+        interval_log2: u8,
+        max_esit_payload: u32,
+        avg_trb_len: u32,
+        tr_dequeue_phys: u64,
+        dequeue_cycle_state: bool,
+    ) {
+        const EP_TYPE_ISOCH_OUT: u32 = 1;
+        self.dw0 = ((interval_log2 as u32 & 0xFF) << 16)
+            | ((max_esit_payload & 0xFF_0000) << 8);
+        self.dw1 = (EP_TYPE_ISOCH_OUT << 3) | ((max_packet_size as u32) << 16);
+        let dcs = if dequeue_cycle_state { 1u32 } else { 0u32 };
+        self.dw2 = dcs | ((tr_dequeue_phys & 0xFFFF_FFF0) as u32);
+        self.dw3 = (tr_dequeue_phys >> 32) as u32;
+        self.dw4 = (avg_trb_len & 0xFFFF) | ((max_esit_payload & 0xFFFF) << 16);
+    }
 }
 
 // ============================================================================
@@ -455,5 +509,6 @@ pub mod desc_type {
 
 /// USB class codes.
 pub mod class {
+    pub const AUDIO: u8 = 0x01;
     pub const HID: u8 = 0x03;
 }
