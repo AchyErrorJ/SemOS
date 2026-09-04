@@ -932,7 +932,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
             println!("  netinfo             network stack + active NIC/e1000e diagnostics");
             println!("  demos               run the full boot DEMO suite (ESC aborts)");
-            println!("  selfdev N           run self-dev demo N (80|83|87|88) — autocompile builds only");
+            println!("  selfdev N           run self-dev demo N (80|83|87|88|93) — autocompile builds only");
             println!("  pair QR-STRING      pair a phone (companion app) — console only");
             println!("  paired              list paired devices");
             println!("  unpair ID           forget a paired device — console only");
@@ -989,9 +989,9 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // interaction happens right here while the command runs. Needs an
             // autocompile kernel build (the demos drive the on-device rustc).
             let n: u64 = match argv.get(1).and_then(|s| s.parse().ok()) {
-                Some(n @ (80 | 83 | 87 | 88)) => n,
+                Some(n @ (80 | 83 | 87 | 88 | 93)) => n,
                 _ => {
-                    println!("selfdev: usage: selfdev 80|83|87|88");
+                    println!("selfdev: usage: selfdev 80|83|87|88|93");
                     return 2;
                 }
             };

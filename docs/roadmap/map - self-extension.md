@@ -56,11 +56,28 @@ not code**, so it updates live AND survives a kernel rebuild for free.
 
 
 
-**Remaining for the headline demo:** an agent tool that drops a compiled ELF at
-`/apps/<name>` and spawns it at **tier 0**; then the demo — "ask the agent to add a
-`greet` command, it works seconds later, the kernel never rebuilt." The tier-0
-fence + `SYS_VOUCH`/`SYS_VOUCHES` (console-only elevation, bytes-bound) are already
-in the kernel. See `project_semos_module_loader`,
+**Headline demo — DONE 2026-09-05 (QEMU):** `demo93_greet` + the `greet93-test`
+two-boot feeder deliver "ask the agent to add a `greet` command, it works seconds
+later, the kernel never rebuilt" — with the SemFS persistence beat: the
+agent-added command **survives a hard power cycle**. Boot 1: the feeder types
+`greet` at sem-sh (`command not found` — the unknown-command beat), then
+`selfdev 93`; the demo seeds `/tmp/agentgen/m93/` (feature spec + `greet.rs`),
+compiles on-device, verifies byte-exact in isolation, waits at the same fail-fast
+serial/TTY approval gate (`Install /apps/greet? [y/N]`), then installs via the
+atomic `/apps/.staging` rename and smokes bare `greet` fenced at tier 0. Because
+the SemFS journal is write-through, the install is durable the moment the rename
+returns; the harness then **hard-kills QEMU mid-session** (no clean shutdown).
+Boot 2: the journal replays, `/apps/greet` resolves, the feeder runs it by bare
+name and byte-exact checks the greeting (`[DEMO 93] PASS: greet persisted across
+hard-kill reboot`), then types `selfdev 80` as a coexistence smoke (`[DEMO 80]
+PASS`). Harness: `run-greet93-qemu.sh` (answers the approval gate 'y' over the
+serial pipe). Guest source: `user-programs/semos-rustc/test-sources/greet.rs` —
+fixed greeting compiled in (no argv: cg_clif lacks the rsp-grab trampoline);
+`GREET_EXPECTED` in main.rs must stay byte-identical to its `GREETING`. sem-sh's
+`selfdev` builtin now accepts 93.
+
+The tier-0 fence + `SYS_VOUCH`/`SYS_VOUCHES` (console-only elevation, bytes-bound)
+are already in the kernel. See `project_semos_module_loader`,
 [`VOUCH_MECHANISM_DESIGN_2026-06-15.md`](../VOUCH_MECHANISM_DESIGN_2026-06-15.md).
 
 ---

@@ -1021,6 +1021,19 @@ fn init_loader_task() {
         }
     }
 
+    // `--features greet93-test`: headless DEMO 93 headline demo — two-boot
+    // feeder (see greet93_test_task). Boot 1 types `greet` (expect: command
+    // not found) then `selfdev 93`; the QEMU harness answers the approval
+    // gate 'y' over the serial pipe. Boot 2 verifies the install survived
+    // the hard kill and still runs byte-exact, then smokes DEMO 80.
+    #[cfg(feature = "greet93-test")]
+    {
+        match crate::context::spawn_task("greet93-test", greet93_test_task) {
+            Some(slot) => println!("[greet93-test] feeder task in slot {}", slot),
+            None => println!("[greet93-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1155,6 +1168,63 @@ fn selfdev80_test_task() {
     }
 }
 
+/// `--features greet93-test` feeder: the DEMO 93 two-boot state machine.
+///   boot 1 (/apps/greet absent): type `greet` — sem-sh answers
+///     "command not found", the unknown-command beat — then `selfdev 93`.
+///     The demo compiles, tests, and waits at the approval gate; the QEMU
+///     harness answers 'y' over the serial pipe.
+///   boot 2 (/apps/greet resolves from the replayed journal): run it by
+///     bare name in a fenced tier-0 sem-sh, byte-exact check the greeting,
+///     then type `selfdev 80` as a coexistence smoke.
+/// Parks forever at the end — see selfdev80_test_task.
+#[cfg(feature = "greet93-test")]
+fn greet93_test_task() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    // Let the shell spawn and reach its first prompt before typing.
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    match Namespace::resolve("/apps/greet") {
+        Err(_) => {
+            println!("[DEMO 93] boot 1: /apps/greet absent — typing `greet` (expect: command not found)");
+            for &b in b"greet\n" {
+                tty::input_push(b);
+            }
+            let _ = dispatch(SYS_SLEEP, 3 * 62, 0, 0, 0);
+            for &b in b"selfdev 93\n" {
+                tty::input_push(b);
+            }
+            println!("[greet93-test] typed 'selfdev 93' — demo running (approval via serial 'y')");
+        }
+        Ok(_) => {
+            println!("[DEMO 93] boot 2: /apps/greet present after hard kill — journal replayed the install");
+            const OUT: &str = "/tmp/greet93-reboot.out";
+            let _ = Namespace::unlink(OUT);
+            let run = ["/bin/sem-sh", "-c", "greet > /tmp/greet93-reboot.out"];
+            match demo80_spawn_wait("/bin/sem-sh", &run, 3) {
+                Some(0) => match demo83_read_file(OUT) {
+                    Some(out) if out.as_slice() == GREET_EXPECTED => {
+                        println!("[DEMO 93] PASS: greet persisted across hard-kill reboot (output byte-exact)");
+                    }
+                    _ => println!("[DEMO 93] FAIL: post-reboot greet output mismatch"),
+                },
+                _ => println!("[DEMO 93] FAIL: post-reboot greet run failed"),
+            }
+            // Coexistence smoke: DEMO 80 still green on the same kernel.
+            let _ = dispatch(SYS_SLEEP, 3 * 62, 0, 0, 0);
+            for &b in b"selfdev 80\n" {
+                tty::input_push(b);
+            }
+            println!("[greet93-test] typed 'selfdev 80' — coexistence smoke running");
+        }
+    }
+    // Park instead of returning: task_exit_stub (context.rs) hlt-loops
+    // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
 /// SYS_SELFDEV backing: run ONE self-dev demo (80|83|87|88) on demand from
 /// the shell's `selfdev` builtin, in the caller's context (same model as
 /// run_all_demos). The console gate is enforced by the dispatcher. The demo
@@ -1179,8 +1249,9 @@ pub(crate) fn run_selfdev(demo: u64) -> u64 {
             83 => { demo83_bugfix(); 0 }
             87 => { demo87_featureadd(); 0 }
             88 => { demo88_selfrepair(); 0 }
+            93 => { demo93_greet(); 0 }
             _ => {
-                println!("selfdev: unknown demo {} (want 80|83|87|88)", demo);
+                println!("selfdev: unknown demo {} (want 80|83|87|88|93)", demo);
                 u64::MAX
             }
         };
@@ -2636,6 +2707,208 @@ pub(crate) fn demo87_featureadd() {
     }
     println!("  [DEMO 87] post-install smoke OK: bare `wc` ran fenced at tier 0");
     println!("  [DEMO 87] PASS: M3 feature add — spec/compile/test/approve/install end-to-end");
+}
+
+/// DEMO 93 headline: the guest's greeting line, byte-exact. Shared by
+/// demo93_greet (pre-install isolation test + post-install smoke) and the
+/// greet93-test feeder's post-reboot verification. MUST stay byte-identical
+/// to GREETING in user-programs/semos-rustc/test-sources/greet.rs.
+#[cfg(feature = "autocompile")]
+pub(crate) const GREET_EXPECTED: &[u8] =
+    b"hello from SemOS: this command was added by the agent\n";
+
+/// Headless DEMO 93 / headline demo runner: scripted agent adds `greet`.
+/// The roadmap headline — "ask the agent to add a `greet` command, it works
+/// seconds later, the kernel never rebuilt" — plus the SemFS beat: the
+/// install is journaled write-through, so `greet` survives a hard power
+/// cycle (the greet93-test feeder's boot 2 proves it).
+///   1. seed:    /tmp/agentgen/m93/{feature-spec.txt,src/greet.rs}
+///   2. compile: semos-rustc builds greet (same pipeline as M3's wc)
+///   3. test:    run in isolation; stdout must byte-match GREET_EXPECTED
+///   4. approve: same fail-fast serial/TTY prompt as M2/M3
+///   5. install: staging rename -> /apps/greet + bare-name tier-0 smoke
+///
+/// greet has no argv (cg_clif lacks the rsp-grab trampoline), so its
+/// greeting is compiled in — documented in greet.rs.
+#[cfg(feature = "autocompile")]
+pub(crate) fn demo93_greet() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    use kernel_core::syscall::{dispatch, numbers::*, StatX};
+
+    const GREET_SRC: &[u8] =
+        include_bytes!("../../user-programs/semos-rustc/test-sources/greet.rs");
+    const FEATURE_SPEC: &[u8] = b"Headline feature spec: add a `greet` command - print a fixed greeting line. The roadmap headline: ask the agent to add a command, it works seconds later, the kernel never rebuilt. SemFS beat: the install is journaled write-through, so greet survives a hard power cycle. Test: byte-exact greeting on stdout.\n";
+
+    const SRC: &str = "/tmp/agentgen/m93/src/greet.rs";
+    const ELF: &str = "/tmp/agentgen/m93/out/greet";
+    const TEST1_OUT: &str = "/tmp/agentgen/m93/out/test1.out";
+    const TEST2_OUT: &str = "/tmp/agentgen/m93/out/test2.out";
+
+    println!();
+    println!("================================================================");
+    println!("  DEMO 93 headline: add `greet` live -> approved install -> survives reboot");
+    println!("================================================================");
+
+    // --- Phase 1: seed the scratch workspace -------------------------------
+    for d in [
+        "/tmp/agentgen",
+        "/tmp/agentgen/m93",
+        "/tmp/agentgen/m93/src",
+        "/tmp/agentgen/m93/out",
+    ] {
+        let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+    }
+    let _ = Namespace::unlink("/tmp/agentgen/m93/feature-spec.txt");
+    let _ = Namespace::unlink(SRC);
+    let seeded = Namespace::create_file(
+        "/tmp/agentgen/m93/feature-spec.txt",
+        SecurityTier::Public,
+        FEATURE_SPEC,
+    )
+    .is_ok()
+        && Namespace::create_file(SRC, SecurityTier::Public, GREET_SRC).is_ok();
+    if !seeded {
+        println!("  [DEMO 93] FAIL: could not seed scratch workspace");
+        return;
+    }
+    println!("  [DEMO 93] feature spec + greet.rs seeded in /tmp/agentgen/m93");
+
+    // --- Phase 2: compile the new command -----------------------------------
+    let _ = Namespace::unlink(ELF);
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", SRC, "-o", ELF, "-C", "overflow-checks=off"],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 93] FAIL: greet.rs did not compile (code={})", code);
+        return;
+    }
+    println!("  [DEMO 93] compiled: {}", ELF);
+
+    // --- Phase 3: test in isolation -----------------------------------------
+    let _ = Namespace::unlink(TEST1_OUT);
+    let run1 = [
+        "/bin/sem-sh",
+        "-c",
+        "/tmp/agentgen/m93/out/greet > /tmp/agentgen/m93/out/test1.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run1, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 93] FAIL: greet exited code={}", code);
+        return;
+    }
+    match demo83_read_file(TEST1_OUT) {
+        Some(out) if out.as_slice() == GREET_EXPECTED => {}
+        Some(out) => {
+            println!(
+                "  [DEMO 93] FAIL: greeting mismatch: got {:?}, want {:?}",
+                core::str::from_utf8(&out).unwrap_or("<non-utf8>"),
+                core::str::from_utf8(GREET_EXPECTED).unwrap_or("<non-utf8>")
+            );
+            return;
+        }
+        None => {
+            println!("  [DEMO 93] FAIL: could not read {}", TEST1_OUT);
+            return;
+        }
+    }
+    println!(
+        "  [DEMO 93] isolation test PASS: greet printed {:?}",
+        core::str::from_utf8(GREET_EXPECTED)
+            .unwrap_or("")
+            .trim_end()
+    );
+
+    // --- Phase 4: human approval (fail-fast) --------------------------------
+    let (approved, tty) = demo_approval_prompt("  Install /apps/greet? [y/N] ", 18600);
+    if !approved {
+        println!("[AUDIT] DENY install /apps/greet reason=denied_or_timeout (fail-fast)");
+        println!("  [DEMO 93] SKIP-INSTALL: no human approval — /apps untouched");
+        println!("  [DEMO 93] PASS(partial): command added + tested; install gated");
+        return;
+    }
+    println!("[AUDIT] APPROVE install /apps/greet by=human tty={}", tty);
+
+    // --- Phase 5: atomic install via staging rename --------------------------
+    let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, 5, 0, 0);
+    let staging_dir = "/apps/.staging";
+    let _ = dispatch(
+        SYS_MKDIR,
+        staging_dir.as_ptr() as u64,
+        staging_dir.len() as u64,
+        0,
+        0,
+    );
+    let _ = Namespace::unlink("/apps/greet");
+    let _ = Namespace::unlink("/apps/.staging/greet");
+    if Namespace::rename(ELF, "/apps/.staging/greet").is_err()
+        || Namespace::rename("/apps/.staging/greet", "/apps/greet").is_err()
+    {
+        println!("  [DEMO 93] FAIL: staging rename into /apps failed");
+        return;
+    }
+    let mut st = StatX {
+        size: 0,
+        suid_high: 0,
+        suid_low: 0,
+        created_at: 0,
+        modified_at: 0,
+        file_type: 0,
+        tier: 0,
+        _reserved: [0; 3],
+    };
+    let app = "/apps/greet";
+    let rc = dispatch(
+        SYS_STATX,
+        app.as_ptr() as u64,
+        app.len() as u64,
+        &mut st as *mut _ as u64,
+        0,
+    );
+    if rc != 0 || st.size == 0 {
+        println!("  [DEMO 93] FAIL: statx(/apps/greet) rc={} size={}", rc, st.size);
+        return;
+    }
+    println!(
+        "  [DEMO 93] installed: /apps/greet ({} bytes, via /apps/.staging)",
+        st.size
+    );
+    if kernel_core::semantic::journal::is_mounted() {
+        println!("  [DEMO 93] install journaled write-through — durable across power loss");
+    }
+
+    // --- Phase 6: post-install smoke by bare name ----------------------------
+    let _ = Namespace::unlink(TEST2_OUT);
+    let run2 = [
+        "/bin/sem-sh",
+        "-c",
+        "greet > /tmp/agentgen/m93/out/test2.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run2, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 93] FAIL: installed greet exited code={}", code);
+        return;
+    }
+    match demo83_read_file(TEST2_OUT) {
+        Some(out) if out.as_slice() == GREET_EXPECTED => {}
+        _ => {
+            println!("  [DEMO 93] FAIL: installed greet output mismatch");
+            return;
+        }
+    }
+    println!("  [DEMO 93] post-install smoke OK: bare `greet` ran fenced at tier 0");
+    println!("  [DEMO 93] PASS: headline demo — greet added live, kernel never rebuilt");
 }
 
 /// Headless DEMO 88 / self-dev-loop M4 runner: scripted agent SELF-REPAIR.

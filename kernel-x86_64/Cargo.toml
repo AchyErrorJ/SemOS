@@ -30,6 +30,12 @@ semfs-test = []
 # this kernel) so sem-sh runs it as its first command. Implies autocompile.
 # Off by default.
 selfdev80-test = ["autocompile"]
+# `greet93-test`: headless DEMO 93 headline demo for QEMU runs — a feeder
+# task types `greet` (unknown command) then `selfdev 93` on boot 1, and on
+# boot 2 verifies the agent-installed command survived a hard kill via the
+# SemFS journal and still runs byte-exact, then smokes DEMO 80. Implies
+# autocompile. Off by default.
+greet93-test = ["autocompile"]
 # Minimal-boot trims (all OFF by default = the slim boot). Each re-enables a
 # probe the slim boot skips:
 # `net-extra`: virtio-net (QEMU slirp NIC) probe + smoltcp bring-up. QEMU
