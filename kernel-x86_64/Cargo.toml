@@ -42,6 +42,14 @@ greet93-test = ["autocompile"]
 # cache on boot 2 (mirror region wiped by the host), then re-verifies motd.
 # Implies autocompile. Off by default.
 pkg-test = ["autocompile"]
+# `rebuild-test`: headless DEMO 94/95/96 self-rebuild demo for QEMU runs —
+# a feeder drives the slot state machine per boot from the SRBL record
+# (stage / boot-next / keep); the harness plays the M22b loader by choosing
+# which UEFI image boots. Implies autocompile (health gate spawns sem-sh).
+rebuild-test = ["autocompile"]
+# `rebuild-sabotage`: candidate build whose health gate deliberately fails
+# (DEMO 95 auto-revert proof). Build with SEMOS_BUILD_TAG=REBUILD-SAB.
+rebuild-sabotage = ["rebuild-test"]
 # Minimal-boot trims (all OFF by default = the slim boot). Each re-enables a
 # probe the slim boot skips:
 # `net-extra`: virtio-net (QEMU slirp NIC) probe + smoltcp bring-up. QEMU

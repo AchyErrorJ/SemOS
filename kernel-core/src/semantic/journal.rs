@@ -100,7 +100,10 @@ impl Crc {
     }
     fn finish(&self) -> u32 { !self.0 }
 }
-fn crc32(data: &[u8]) -> u32 {
+/// CRC32-IEEE (const-table). Shared by the self-rebuild slot record (M22a,
+/// kernel-x86_64/src/rebuild.rs) — same "CRC the header, generation picks
+/// the winner" pattern as the SemFS superblocks.
+pub fn crc32(data: &[u8]) -> u32 {
     let mut c = Crc::new();
     c.update(data);
     c.finish()

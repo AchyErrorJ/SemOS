@@ -119,11 +119,15 @@ that makes the boot switch physical.
 - [ ] full kernel image rebuilt on-device from its own source tree
 - [ ] rebuilt image byte-reproducible vs the host-built one (or diff understood)
 
-### M22b — A/B boot slots + watchdog rollback `[  ]`
+### M22b — A/B boot slots + watchdog rollback — MACHINERY DONE 2026-09-08 (QEMU)
 The non-negotiable safety net — a self-modifying OS *will* produce a broken kernel.
-- [ ] two slots (A/B) + boot selector preferring the active one; new image → INACTIVE slot
-- [ ] watchdog: B must write a "healthy" marker within N seconds or next boot reverts to A
-- [ ] DEMO: flash a deliberately broken kernel to B → machine auto-recovers to A
+- [x] two slots (A/B) as fixed-LBA disk regions; new image → INACTIVE slot only (`rebuild stage` from the drop zone, streaming + sha256 + readback verify)
+- [x] watchdog-equivalent: the trial kernel must run the health gate and set HEALTHY *from within the trial*; a stale TRIAL at next boot auto-reverts to last-known-good (no timer needed — the record IS the watchdog)
+- [x] DEMO 94: candidate staged → hash-bound human vouch → trial boot → health gate → `rebuild keep` → PROMOTED
+- [x] DEMO 95: sabotage candidate (health gate deliberately fails) → next boot of the previous kernel sees the stale TRIAL → auto-REVERTED — the anti-brick proof
+- [x] DEMO 96: host-corrupted staged image → hash mismatch at `boot-next` → refused before any reboot
+- [ ] the chainloader itself (the boot switch is harness-performed in QEMU; making it physical on the T540p is the remaining piece)
+- Harness: `tools/run-rebuild-qemu.sh` (feature `rebuild-test`, six boots, VERDICT: PASS). SemFS journal log now bounded (32768 sectors) so slot regions are never journal traffic. `SEMOS_BUILD_TAG` env override in build.rs tags slot builds.
 
 ### M22c — Versioned state-migration blob + ABI versioning `[  ]`
 - [ ] versioned `system-state` blob the old kernel writes / new kernel migrates

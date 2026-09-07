@@ -1,6 +1,22 @@
 # Self-rebuild (M22 capstone) — design
 
-Status: design (M22a). 2026-09-05.
+Status: M22a implemented, QEMU-verified (DEMO 94/95/96 PASS). 2026-09-08.
+
+Implementation notes beyond the original design:
+- The drop zone lives in the LAST 128 MiB of the disk (LBA 786432+), not
+  between the journal and the slots: placed mid-disk, a 119 MiB payload
+  overran into slot A and the corruption surfaced only as a bootloader
+  ELF-parse panic in the sabotage trial. Big raw regions stay disjoint.
+- The build tag that binds a trial to its kernel is `SEMOS_BUILD_TAG`;
+  build.rs now honors it as an explicit override (default stays the git
+  build tag), with `cargo:rerun-if-env-changed` so slot builds don't
+  silently reuse a cached tag (that silent reuse is how the first trial
+  boot self-reverted as "stale").
+- The SemFS journal log is now bounded (32768 sectors) so the slot and
+  drop-zone regions are never journal traffic.
+- Health gate (lightweight v1): journal mounted + namespace readable +
+  fenced sem-sh spawn. The DEMO-80-style canned compile from §3 stays
+  available as a heavier gate when trials get riskier.
 
 The whole self-extension map points here: an OS that codes, modifies,
 rebuilds, and reboots *itself* — safely. The key split from the roadmap:

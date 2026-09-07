@@ -91,6 +91,7 @@ pub mod framebuffer;
 pub mod font;
 pub mod gfx2d;
 pub mod pci;
+pub mod rebuild;
 pub mod virtio;
 pub mod rng;
 pub mod rtc;
@@ -130,7 +131,7 @@ pub static BOOTLOADER_CONFIG: BootloaderConfig = {
 
 entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
-const SEMOS_BUILD_TAG: &str = match option_env!("SEMOS_BUILD_TAG") {
+pub(crate) const SEMOS_BUILD_TAG: &str = match option_env!("SEMOS_BUILD_TAG") {
     Some(value) => value,
     None => "unknown",
 };
@@ -756,8 +757,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let block_count = dev.block_count();
         const SEMFS_SB_LBA: u64 = 8192; // 4 MiB mark
         if block_count > SEMFS_SB_LBA + 2 {
+            // Bound the log so the M22a self-rebuild regions above it
+            // (drop zone / slot A / slot B) are never journal traffic.
+            let log_sectors = (block_count - SEMFS_SB_LBA - 2).min(rebuild::JOURNAL_LOG_CAP);
             match kernel_core::semantic::journal::mount(
-                dev, SEMFS_SB_LBA, block_count - SEMFS_SB_LBA - 2,
+                dev, SEMFS_SB_LBA, log_sectors,
             ) {
                 kernel_core::semantic::journal::MountOutcome::Mounted { records, torn } =>
                     println!("    SemFS journal: mounted, replayed {} record(s){}",
@@ -776,6 +780,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    SemFS journal: virtio0 too small ({} sectors) — RAM-only", block_count);
         }
     }
+
+    // M22a self-rebuild: if the slot record says a trial is armed, decide
+    // whether WE are the candidate (arm the health gate; the rebuild-test
+    // feeder runs it) or a stale trial is being reverted (auto-revert is
+    // the default failure direction). Cheap no-op when no record exists.
+    rebuild::boot_check();
 
     kernel_core::semantic::vector::init_global_vector_index();
     println!("    Vector index: initialized");
@@ -1046,6 +1056,18 @@ fn init_loader_task() {
         }
     }
 
+    // `--features rebuild-test`: headless DEMO 94/95/96 self-rebuild demo —
+    // feeder drives the slot state machine per boot based on the SRBL
+    // record (see rebuild_test_task); the harness plays the M22b loader by
+    // choosing which UEFI image boots and answers the gates 'y' over serial.
+    #[cfg(feature = "rebuild-test")]
+    {
+        match crate::context::spawn_task("rebuild-test", rebuild_test_task) {
+            Some(slot) => println!("[rebuild-test] feeder task in slot {}", slot),
+            None => println!("[rebuild-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1303,7 +1325,98 @@ fn pkg_test_task() {
     }
 }
 
-/// SYS_SELFDEV backing: run ONE self-dev demo (80|83|87|88) on demand from
+/// `--features rebuild-test` feeder: the DEMO 94/95/96 slot state machine,
+/// keyed on (trial_active, SRBL state):
+///   - trial boot (tag matches): run the health gate (journal mounted +
+///     namespace readable + fenced sem-sh spawn), mark HEALTHY, then type
+///     `rebuild keep` (serial-approved) → PROMOTED → [DEMO 94] PASS.
+///     With `rebuild-sabotage` the gate deliberately FAILS (DEMO 95 setup).
+///   - no record / EMPTY: `rebuild status` + `rebuild stage`.
+///   - STAGED: `rebuild boot-next` (refused if the host corrupted the slot
+///     → [DEMO 96] PASS), then re-stage clean and arm the trial.
+///   - PROMOTED: stage the next (sabotage) candidate and arm its trial.
+///   - stale TRIAL on a non-candidate kernel: handled at boot_check
+///     (→ REVERTED, [DEMO 95] PASS) before this feeder runs.
+/// Parks forever at the end — see selfdev80_test_task.
+#[cfg(feature = "rebuild-test")]
+fn rebuild_test_task() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    if rebuild::trial_active() {
+        #[cfg(feature = "rebuild-sabotage")]
+        {
+            println!("[rebuild] health gate FAILED (sabotage build) — staying TRIAL");
+        }
+        #[cfg(not(feature = "rebuild-sabotage"))]
+        {
+            // Health gate: state readable (journal replayed), namespace
+            // alive, fenced spawn works.
+            let journal_ok = kernel_core::semantic::journal::is_mounted();
+            let ns_ok = Namespace::resolve("/hello.rs").is_ok();
+            let spawn_ok =
+                demo80_spawn_wait("/bin/sem-sh", &["/bin/sem-sh", "-c", "true"], 3) == Some(0);
+            if journal_ok && ns_ok && spawn_ok {
+                rebuild::mark_healthy();
+                let _ = dispatch(SYS_SLEEP, 3 * 62, 0, 0, 0);
+                for &b in b"rebuild keep\n" {
+                    tty::input_push(b);
+                }
+                println!("[rebuild-test] typed 'rebuild keep' (approval via serial 'y')");
+            } else {
+                println!(
+                    "[rebuild] health gate FAILED: journal={} ns={} spawn={}",
+                    journal_ok, ns_ok, spawn_ok
+                );
+            }
+        }
+    } else {
+        match rebuild::current_state() {
+            None | Some(rebuild::SRBL_EMPTY) => {
+                for (line, pause) in [("rebuild status\n", 5u64), ("rebuild stage\n", 600)] {
+                    for &b in line.as_bytes() {
+                        tty::input_push(b);
+                    }
+                    let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+                }
+                println!("[rebuild-test] staged — host: corrupt the slot, reboot");
+            }
+            Some(rebuild::SRBL_STAGED) => {
+                for (line, pause) in [
+                    ("rebuild boot-next\n", 30u64), // refused if host corrupted (DEMO 96)
+                    ("rebuild stage\n", 600),       // clean re-stage
+                    ("rebuild boot-next\n", 30),    // gate 'y' -> TRIAL armed
+                ] {
+                    for &b in line.as_bytes() {
+                        tty::input_push(b);
+                    }
+                    let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+                }
+                println!("[rebuild-test] trial armed — reboot into the candidate");
+            }
+            Some(rebuild::SRBL_PROMOTED) => {
+                for (line, pause) in [("rebuild stage\n", 600u64), ("rebuild boot-next\n", 30)] {
+                    for &b in line.as_bytes() {
+                        tty::input_push(b);
+                    }
+                    let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+                }
+                println!("[rebuild-test] sabotage trial armed — reboot into it");
+            }
+            other => {
+                println!("[rebuild-test] nothing to do (state {:?})", other);
+            }
+        }
+    }
+    // Park instead of returning: task_exit_stub (context.rs) hlt-loops
+    // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// SYS_SELFDEV backing: run ONE self-dev demo (80|83|87|88|93) on demand from
 /// the shell's `selfdev` builtin, in the caller's context (same model as
 /// run_all_demos). The console gate is enforced by the dispatcher. The demo
 /// bodies — and the ~88 MB semos-rustc payload they drive — only exist in
@@ -2472,8 +2585,9 @@ pub(crate) fn demo83_bugfix() {
 /// `Serial::getc()`. The first answer from either wins; `y`/`Y` approves,
 /// anything else — including the timeout — denies (fail-fast, plan section 4
 /// decision 2).
-#[cfg(feature = "autocompile")]
-fn demo_approval_prompt(prompt: &str, timeout_ticks: u64) -> (bool, &'static str) {
+// Unconditional (not autocompile-only): M22a self-rebuild's hash-bound
+// vouch gates use it too (rebuild.rs).
+pub(crate) fn demo_approval_prompt(prompt: &str, timeout_ticks: u64) -> (bool, &'static str) {
     use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
 
     // Own the screen: a single quiet no-newline line gets buried by the

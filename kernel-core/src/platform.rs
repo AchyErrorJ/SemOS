@@ -115,6 +115,12 @@ pub trait Platform: Send + Sync + 'static {
     /// manager. Default: unavailable.
     fn run_semospkg(&self, _op: u64, _name: Option<&str>) -> u64 { u64::MAX }
 
+    /// SYS_REBUILD: run one self-rebuild slot operation (M22a, the
+    /// `rebuild` shell builtin) in the caller's context. The console gate
+    /// for mutations is enforced by the dispatcher. Returns 0 on success,
+    /// u64::MAX on error. Default: unavailable.
+    fn run_rebuild(&self, _op: u64) -> u64 { u64::MAX }
+
     /// SYS_PAIR: run the M56 pairing handshake against the phone described by
     /// the QR payload at `(qr_ptr, qr_len)` in caller memory. Blocks in the
     /// caller's context (TCP + crypto + the interactive SAS confirm on the

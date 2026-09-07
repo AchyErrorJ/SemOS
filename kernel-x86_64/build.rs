@@ -88,7 +88,13 @@ fn rust_toolchain_version() -> String {
 }
 
 fn main() {
-    let tag = git_build_tag();
+    // Explicit override (M22a slot builds tag candidates REBUILD-A/B/SAB);
+    // default stays the git build tag.
+    println!("cargo:rerun-if-env-changed=SEMOS_BUILD_TAG");
+    let tag = env::var("SEMOS_BUILD_TAG")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(git_build_tag);
     let date = build_timestamp_utc();
     let rustc = rust_toolchain_version();
 

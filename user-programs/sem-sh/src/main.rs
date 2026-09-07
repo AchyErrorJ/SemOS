@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_SEMOSPKG, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_SEMOSPKG, SYS_REBUILD, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -255,7 +255,7 @@ fn is_builtin(name: &str) -> bool {
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
             | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "flash-sysroot" | "wifi"
-            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "semos" | "pair" | "paired" | "unpair"
+            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "semos" | "rebuild" | "pair" | "paired" | "unpair"
     )
 }
 
@@ -934,6 +934,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  demos               run the full boot DEMO suite (ESC aborts)");
             println!("  selfdev N           run self-dev demo N (80|83|87|88|93) — autocompile builds only");
             println!("  semos ...           package manager (M43/M44): update | list | fetch <pkg> | install <pkg> | remove <pkg>");
+            println!("  rebuild ...         self-rebuild slots (M22a): status | stage | boot-next | keep | revert");
             println!("  pair QR-STRING      pair a phone (companion app) — console only");
             println!("  paired              list paired devices");
             println!("  unpair ID           forget a paired device — console only");
@@ -1021,6 +1022,27 @@ fn dispatch_argv(argv: &[String]) -> i32 {
                 Some(p) => unsafe { syscall3(SYS_SEMOSPKG, op, p.as_ptr() as u64, p.len() as u64) },
                 None => unsafe { syscall3(SYS_SEMOSPKG, op, 0, 0) },
             };
+            if rc == u64::MAX { 1 } else { 0 }
+        }
+        "rebuild" => {
+            // M22a self-rebuild slots (docs/self-rebuild-design.md):
+            //   rebuild status     slot record dump (read-only)
+            //   rebuild stage      drop zone -> inactive slot, hash-bound
+            //   rebuild boot-next  re-verify + human gate -> arm trial
+            //   rebuild keep       HEALTHY -> PROMOTED (human gate)
+            //   rebuild revert     -> REVERTED (next boot: last-known-good)
+            let op: u64 = match argv.get(1).map(|s| s.as_str()) {
+                Some("status") => 1,
+                Some("stage") => 2,
+                Some("boot-next") => 3,
+                Some("keep") => 4,
+                Some("revert") => 5,
+                _ => {
+                    println!("rebuild: usage: rebuild status | stage | boot-next | keep | revert");
+                    return 2;
+                }
+            };
+            let rc = unsafe { syscall2(SYS_REBUILD, op, 0) };
             if rc == u64::MAX { 1 } else { 0 }
         }
         "netlog" => {

@@ -97,6 +97,7 @@ pub const SYS_VOUCH_SESSION: u64 = 133; // (tier, duration_secs, pw_ptr, pw_len)
 pub const SYS_GET_VOUCH:    u64 = 134; // () -> (tier << 32) | remaining_secs, 0 when no live session
 pub const SYS_SELFDEV:      u64 = 135; // (demo_n) -> 0/MAX; run self-dev demo 80|83|87|88 (console only)
 pub const SYS_SEMOSPKG:     u64 = 142; // (op, name_ptr, name_len) -> 0/MAX; semos-pkg: 1=update 2=list 3=fetch 4=install 5=remove (list read-only; rest console only)
+pub const SYS_REBUILD:      u64 = 143; // (op) -> 0/MAX; self-rebuild slots: 1=status 2=stage 3=boot-next 4=keep 5=revert (status read-only; rest console only)
 
 /// SYS_TCP_READ/WRITE return this when the socket isn't ready yet (retry
 /// after yielding). Distinct from 0 (EOF) and u64::MAX (hard error).

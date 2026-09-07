@@ -205,6 +205,14 @@ pub mod numbers {
                                             // the rest are CONSOLE ONLY — install
                                             // lands in /apps behind the human approval
                                             // gate, so the agent must never drive it.
+    // M22a self-rebuild (docs/self-rebuild-design.md).
+    pub const SYS_REBUILD:      u64 = 143;  // (op) -> 0 / u64::MAX. ops: 1=status
+                                            // (read-only, any task) 2=stage
+                                            // 3=boot-next 4=keep 5=revert — all
+                                            // CONSOLE ONLY: stage/boot-next write
+                                            // raw disk and arm a kernel swap;
+                                            // boot-next and keep additionally pass
+                                            // the hash-bound human approval gate.
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -408,6 +416,19 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
                 None
             };
             crate::platform::get().run_semospkg(arg0, name)
+        }
+
+        // M22a self-rebuild (the `rebuild` builtin). `status` (op 1) is
+        // read-only and allowed anywhere; stage/boot-next/keep/revert mutate
+        // raw disk or the boot path, so they are console-only (same
+        // authority gate as SYS_SELFDEV / SYS_SEMOSPKG).
+        SYS_REBUILD => {
+            const REBUILD_OP_STATUS: u64 = 1;
+            if arg0 != REBUILD_OP_STATUS && !is_vouch_authority() {
+                crate::platform::log("[rebuild] DENIED: caller is not the interactive console\n");
+                return u64::MAX;
+            }
+            crate::platform::get().run_rebuild(arg0)
         }
 
         // M56 pairing. `pair` and `unpair` mutate device trust, so they are
