@@ -107,6 +107,13 @@ The whole project points here: an OS that codes, modifies, rebuilds, and reboots
 above); kernel self-rebuild = rebuild image → reboot, made to *feel* live by being
 fast + stateful (phone-OTA model), done **without bricking the machine**.
 
+**Design: [`self-rebuild-design.md`](../self-rebuild-design.md) (2026-09-05)** —
+brick-vector threat model, SRBL slot record at LBA 8190/8191 (SemFS superblock
+pattern), EMPTY→STAGED→PENDING→TRIAL→HEALTHY→PROMOTED/REVERTED state machine,
+P-3 hash-bound vouch, auto-revert as the default failure direction, DEMO 94/95/96
+QEMU plan. M22a = the machinery (harness plays the loader); M22b = the chainloader
+that makes the boot switch physical.
+
 ### M22a — Self-host the full kernel build on-device `[  ]`
 - [ ] on-device rustc compiles `kernel-core` to a `.rlib` on the machine
 - [ ] full kernel image rebuilt on-device from its own source tree
