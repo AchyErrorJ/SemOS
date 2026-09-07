@@ -392,6 +392,164 @@ unsafe fn table_at_phys(phys: u64) -> &'static mut PageTable {
     &mut *(virt as *mut PageTable)
 }
 
+// ============================================================================
+// Kernel-half mapping extension (Rung C flip window)
+// ============================================================================
+
+const PAT_4K: u64 = 1 << 7;    // PAT index bit in a 4 KiB PTE
+const PAT_HUGE: u64 = 1 << 12; // PAT index bit in 2 MiB / 1 GiB entries
+const MASK_1G: u64 = 0x000F_FFFF_C000_0000;
+const MASK_2M: u64 = 0x000F_FFFF_FFE0_0000;
+
+/// Cache-attribute bits of the existing boot-table mapping covering `virt`,
+/// normalized to 4 KiB PTE positions: PWT/PCD/GLOBAL/NX plus PAT (bit 7 in
+/// a 4 KiB PTE, bit 12 in huge-page entries — translated here). Used to give
+/// a new kernel window the same memory type as an adjacent bootloader
+/// mapping (e.g. the framebuffer), avoiding conflicting-type aliasing.
+/// Returns uncached (PWT|PCD) when `virt` is unmapped — always safe for
+/// MMIO-like regions.
+pub fn mapping_attrs_4k(virt: u64) -> u64 {
+    const UC: u64 = flags::WRITE_THROUGH | flags::NO_CACHE;
+    let cr3 = boot_cr3() & flags::ADDR_MASK;
+    if cr3 == 0 {
+        return UC;
+    }
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+    let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
+    unsafe {
+        let pml4 = phys_to_virt(cr3) as *const u64;
+        let pml4e = *pml4.add(pml4_idx);
+        if pml4e & flags::PRESENT == 0 { return UC; }
+        let pdpt = phys_to_virt(pml4e & flags::ADDR_MASK) as *const u64;
+        let pdpte = *pdpt.add(pdpt_idx);
+        if pdpte & flags::PRESENT == 0 { return UC; }
+        if pdpte & flags::HUGE_PAGE != 0 {
+            return leaf_attrs_4k(pdpte, PAT_HUGE);
+        }
+        let pd = phys_to_virt(pdpte & flags::ADDR_MASK) as *const u64;
+        let pde = *pd.add(pd_idx);
+        if pde & flags::PRESENT == 0 { return UC; }
+        if pde & flags::HUGE_PAGE != 0 {
+            return leaf_attrs_4k(pde, PAT_HUGE);
+        }
+        let pt = phys_to_virt(pde & flags::ADDR_MASK) as *const u64;
+        let pte = *pt.add(pt_idx);
+        if pte & flags::PRESENT == 0 { return UC; }
+        leaf_attrs_4k(pte, PAT_4K)
+    }
+}
+
+/// Extract the cache-relevant bits of a raw leaf entry into 4 KiB PTE
+/// positions. `pat_bit` is the PAT position at the entry's own level.
+fn leaf_attrs_4k(raw: u64, pat_bit: u64) -> u64 {
+    let mut out = raw & (flags::WRITE_THROUGH | flags::NO_CACHE | flags::GLOBAL | flags::NO_EXECUTE);
+    if raw & pat_bit != 0 {
+        out |= PAT_4K;
+    }
+    out
+}
+
+/// Ensure `[virt, virt+len)` maps to `[phys, phys+len)` in the BOOT kernel
+/// page tables, using 4 KiB kernel-only writable pages (`attrs` carries the
+/// cache/PAT/NX bits — see [`mapping_attrs_4k`]). Pages already present with
+/// the expected translation — at any page size — are accepted untouched; a
+/// conflicting mapping fails the call. Intermediate tables are allocated
+/// from the PT pool as needed. Never modifies a pre-existing mapping.
+///
+/// Used by the Rung C GGTT flip to give the second scanout buffer a CPU
+/// window right after the bootloader's framebuffer mapping.
+pub fn ensure_kernel_mapped(virt: u64, phys: u64, len: u64, attrs: u64) -> bool {
+    if len == 0 || virt & 0xFFF != 0 || phys & 0xFFF != 0 {
+        return false;
+    }
+    let cr3 = boot_cr3() & flags::ADDR_MASK;
+    if cr3 == 0 {
+        return false;
+    }
+    let mut off = 0u64;
+    while off < len {
+        let v = virt + off;
+        let p = phys + off;
+        let pml4_idx = ((v >> 39) & 0x1FF) as usize;
+        let pdpt_idx = ((v >> 30) & 0x1FF) as usize;
+        let pd_idx   = ((v >> 21) & 0x1FF) as usize;
+        let pt_idx   = ((v >> 12) & 0x1FF) as usize;
+        unsafe {
+            let pml4 = phys_to_virt(cr3) as *mut u64;
+            let pml4e = *pml4.add(pml4_idx);
+            let pdpt_phys = if pml4e & flags::PRESENT == 0 {
+                match new_table_at(pml4.add(pml4_idx)) {
+                    Some(t) => t,
+                    None => return false,
+                }
+            } else {
+                pml4e & flags::ADDR_MASK
+            };
+            let pdpt = phys_to_virt(pdpt_phys) as *mut u64;
+            let pdpte = *pdpt.add(pdpt_idx);
+            if pdpte & flags::PRESENT != 0 && pdpte & flags::HUGE_PAGE != 0 {
+                // 1 GiB leaf: accept iff it translates this page correctly.
+                if (pdpte & MASK_1G) + (v & 0x3FFF_FFFF) == p {
+                    off += PAGE_SIZE_4K;
+                    continue;
+                }
+                return false;
+            }
+            let pd_phys = if pdpte & flags::PRESENT == 0 {
+                match new_table_at(pdpt.add(pdpt_idx)) {
+                    Some(t) => t,
+                    None => return false,
+                }
+            } else {
+                pdpte & flags::ADDR_MASK
+            };
+            let pd = phys_to_virt(pd_phys) as *mut u64;
+            let pde = *pd.add(pd_idx);
+            if pde & flags::PRESENT != 0 && pde & flags::HUGE_PAGE != 0 {
+                // 2 MiB leaf: accept iff it translates this page correctly.
+                if (pde & MASK_2M) + (v & 0x1F_FFFF) == p {
+                    off += PAGE_SIZE_4K;
+                    continue;
+                }
+                return false;
+            }
+            let pt_phys = if pde & flags::PRESENT == 0 {
+                match new_table_at(pd.add(pd_idx)) {
+                    Some(t) => t,
+                    None => return false,
+                }
+            } else {
+                pde & flags::ADDR_MASK
+            };
+            let pt = phys_to_virt(pt_phys) as *mut u64;
+            let ptep = pt.add(pt_idx);
+            let pte = *ptep;
+            if pte & flags::PRESENT != 0 {
+                if pte & flags::ADDR_MASK == p {
+                    off += PAGE_SIZE_4K;
+                    continue;
+                }
+                return false;
+            }
+            *ptep = p | attrs | flags::PRESENT | flags::WRITABLE;
+        }
+        off += PAGE_SIZE_4K;
+    }
+    true
+}
+
+/// Link a fresh, zeroed page table into a not-present entry. Returns the new
+/// table's physical address. Kernel-only intermediate entries (PRESENT |
+/// WRITABLE, no USER).
+unsafe fn new_table_at(entryp: *mut u64) -> Option<u64> {
+    let phys = alloc_pt_frame()?;
+    core::ptr::write_bytes(phys_to_virt(phys) as *mut u8, 0, PAGE_SIZE_4K as usize);
+    *entryp = phys | flags::PRESENT | flags::WRITABLE;
+    Some(phys)
+}
+
 /// Turn a single 4 KiB page in the ACTIVE (kernel/boot) address space into
 /// an unmapped guard page — clears its PRESENT bit so any access faults.
 ///

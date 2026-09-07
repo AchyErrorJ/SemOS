@@ -634,16 +634,26 @@ impl Platform for X86Platform {
             crate::println!("fb-flip: refused — no fullscreen app (fb_claim first)");
             return u64::MAX;
         }
-        // Addressing gate: the plane's display-offset 0 must be the GOP
-        // framebuffer itself (fb_phys == BSM — observed 2026-09-01, probed by
-        // `modeset status`), and stolen memory must hold both buffers.
+        // Addressing gate (settled on metal 2026-09-01): on this machine
+        // DSPSURF_A is a GGTT offset, so the GOP framebuffer's physical
+        // address must be the BAR2 aperture base — display offset 0. The
+        // back buffer is then created in the GGTT at aperture offset
+        // FLIP_OFFSET (lazily, once, by ggtt::arm).
         let info = match crate::framebuffer::fb_info() {
             Some(i) => i,
             None => return u64::MAX,
         };
-        let loc = match crate::igpu::find() {
-            Some(i) => i.loc,
-            None => return u64::MAX,
+        let ig = match crate::igpu::find() {
+            Some(i) if i.device_id == crate::igpu::HASWELL_GT2_MOBILE_HD4600 => i,
+            _ => {
+                crate::println!("fb-flip: refused — no whitelisted HD4600");
+                return u64::MAX;
+            }
+        };
+        let (ap_base, ap_size) = match ig.bar2.kind {
+            crate::igpu::BarKind::Mmio32 { base, .. } => (base as u64, ig.bar2.size),
+            crate::igpu::BarKind::Mmio64 { base, .. } => (base, ig.bar2.size),
+            _ => return u64::MAX,
         };
         let phys = match crate::paging::walk_pml4_for(crate::paging::boot_cr3(), info.addr as u64) {
             Some(p) => p,
@@ -652,18 +662,15 @@ impl Platform for X86Platform {
                 return u64::MAX;
             }
         };
-        let bsm = crate::pci::read_u32(loc.bus, loc.slot, loc.func, 0x5C) & 0xFFF0_0000;
-        if phys != bsm as u64 {
+        if phys != ap_base {
             crate::println!(
-                "fb-flip: refused — fb phys 0x{:X} != stolen base 0x{:X} (not stolen-relative)",
-                phys, bsm
+                "fb-flip: refused — fb phys 0x{:X} != aperture base 0x{:X} (DSPSURF not a GGTT offset here)",
+                phys, ap_base
             );
             return u64::MAX;
         }
-        let ggc = crate::pci::read_u16(0, 0, 0, 0x52);
-        let stolen_mib = (((ggc >> 3) & 0x1F) as u64) * 32;
-        if stolen_mib < 16 {
-            crate::println!("fb-flip: refused — only ~{} MiB stolen memory (need 16)", stolen_mib);
+        // Arm the GGTT back buffer once; it prints its own refusal reason.
+        if !crate::display::ggtt::arm(info.addr as u64, ap_base, ap_size, info.byte_len as u64) {
             return u64::MAX;
         }
         let cur = crate::framebuffer::draw_offset();

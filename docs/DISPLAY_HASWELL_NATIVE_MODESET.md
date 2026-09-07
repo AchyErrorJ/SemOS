@@ -252,13 +252,29 @@ and even the CPU reaches it through the aperture — so on this machine
 fell back to Rung-A paced blits (≈200 ms/frame, visible tear steps) and the
 console came back clean on exit — the safety wiring is metal-proven.
 
-**Rung C-revised (GGTT route, next spike):** buffer 1 must exist *in the
-GGTT*, not in stolen memory: allocate a SemOS-owned 8 MiB physical back
-buffer, program GGTT entries at aperture offset `0x800000` to point at it
-(attribute bits copied from GOP's own entry 0), then flip `DSPSURF_A`
-between `0` and `0x800000`. The vblank latch, DSPSURFLIVE verify-then-commit,
-and unflip safety all carry over unchanged; only the gate changes
-(`fb_phys == BAR2 base` + GGTT armed, instead of `== BSM`).
+**Rung C-revised (GGTT route, implemented 2026-09-01):** buffer 1 exists *in
+the GGTT*, not in stolen memory. i915 v5.15 facts (`gt/intel_ggtt.c`):
+
+- On gen6–HSW the GGTT is the **second half of BAR0** (`ggtt_probe_common`);
+  size from host-bridge GGC GGMS bits [9:8] × 1 MiB. T540p: BAR0 = 4 MiB →
+  GGTT at `0xF1200000`.
+- PTE = u32: bit 0 valid; HSW address encode `addr | ((addr >> 28) &
+  0x7F0)`; 4-bit cacheability in bits [3:1] + bit 11. We copy the attribute
+  bits of GOP's own `GGTT[0]` (`& 0x80F`) rather than deriving them.
+- After PTE updates: `GFX_FLSH_CNTL_GEN6` (0x101008) write `EN` + posting
+  read (i915 `gen6_ggtt_invalidate`).
+
+`display/ggtt.rs::arm()` (lazy, once, from the first fb_flip): allocate 2048
+pool frames (scatter is fine — the GGTT gathers them), program
+`GGTT[2048..4096]`, invalidate, readback-verify, then map a CPU window at
+`fb_va + 0x800000` → aperture `+0x800000` (`paging::ensure_kernel_mapped`,
+cache attributes copied from the fb's own mapping via
+`paging::mapping_attrs_4k`; accepts a bootloader over-mapping if already
+present) and end-to-end verify it (write through the window, read back
+through the direct map). Every failure path rolls back frames + PTEs and
+leaves Rung A untouched. The fb_flip gate becomes `fb_phys == BAR2 base`;
+the vblank latch, DSPSURFLIVE verify-then-commit, and unflip safety all
+carry over unchanged.
 
 **Protocol:** the app draws into the *current draw target* (SYS_FB_BLIT's
 destination follows it), then SYS_FB_FLIP points scanout at the just-drawn

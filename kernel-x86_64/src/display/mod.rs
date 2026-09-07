@@ -6,4 +6,6 @@
 
 pub mod mmio;
 
+pub mod ggtt;
+
 pub mod modeset;

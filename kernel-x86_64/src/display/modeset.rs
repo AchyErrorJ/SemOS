@@ -330,11 +330,10 @@ fn status(mmio: &MmioReg, loc: crate::pci::Location) -> u64 {
     dump_reg(mmio, "DSPSTRIDE_A", DSPSTRIDE_A);
     dump_reg(mmio, "DSPSURF_A", DSPSURF_A);
 
-    // Rung C probe (read-only): locate the GOP framebuffer in the plane's
-    // address space. On this machine DSPSURF/DSPADDR/DSPSURFLIVE all read 0
-    // under GOP (2026-09-01), so display-address 0 == the framebuffer. If the
-    // fb's physical address equals the stolen base (BSM), a flip is a
-    // stolen-relative DSPSURF write; otherwise the GGTT route is needed.
+    // Rung C probe (read-only). Metal 2026-09-01 settled the addressing
+    // model: fb_phys == BAR2 aperture base and GMS=0 (no stolen memory), so
+    // DSPSURF_A is a GGTT offset and the flip back buffer is created in the
+    // GGTT (see display/ggtt.rs). BSM/GMS kept as one line for the record.
     if let Some(fb) = crate::framebuffer::fb_info() {
         match crate::paging::walk_pml4_for(crate::paging::boot_cr3(), fb.addr as u64) {
             Some(phys) => {
@@ -343,17 +342,24 @@ fn status(mmio: &MmioReg, loc: crate::pci::Location) -> u64 {
                 let gms = ((ggc >> 3) & 0x1F) as u64;
                 println!("  flip probe: fb virt=0x{:X} phys=0x{:X} len=0x{:X}", fb.addr, phys, fb.byte_len);
                 println!("  flip probe: BSM=0x{:08X} GMS={} (~{} MiB stolen)", bsm, gms, gms * 32);
-                if phys == bsm as u64 {
-                    println!("  flip probe: fb == BSM -> DSPSURF=0 is stolen-relative; second buffer at stolen+0x800000 is the flip target");
-                } else if phys > bsm as u64 {
-                    println!("  flip probe: fb - BSM = 0x{:X}", phys - bsm as u64);
-                } else {
-                    println!("  flip probe: fb below BSM — GGTT addressing likely; page-flip needs GGTT setup");
+                if let Some(ig) = igpu::find() {
+                    let (ap_base, ap_size) = match ig.bar2.kind {
+                        crate::igpu::BarKind::Mmio32 { base, .. } => (base as u64, ig.bar2.size),
+                        crate::igpu::BarKind::Mmio64 { base, .. } => (base, ig.bar2.size),
+                        _ => (0, 0),
+                    };
+                    println!(
+                        "  flip probe: BAR2 aperture=0x{:X} size=0x{:X}; fb == aperture base: {}",
+                        ap_base,
+                        ap_size,
+                        if phys == ap_base { "YES — DSPSURF is a GGTT offset" } else { "no" }
+                    );
                 }
             }
             None => println!("  flip probe: fb virt 0x{:X} did not translate", fb.addr),
         }
     }
+    super::ggtt::status();
     0
 }
 

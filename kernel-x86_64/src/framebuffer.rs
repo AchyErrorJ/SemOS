@@ -145,9 +145,11 @@ static SURFACE: Mutex<Option<FbSurface>> = Mutex::new(None);
 
 // --- Page-flip draw targeting (Rung C, SYS_FB_FLIP) -----------------------
 // The GOP framebuffer at display-offset 0 doubles as flip buffer 0; the back
-// buffer lives FLIP_OFFSET bytes past it (stolen memory, when the plane uses
-// stolen-relative addressing). fb_flip moves scanout first, then points this
-// draw surface at the now-hidden buffer; fb_claim(0)/exit paths unflip.
+// buffer lives FLIP_OFFSET bytes past it in the plane's address space (on
+// the T540p that address space is the GGTT — see display/ggtt.rs; the CPU
+// reaches buffer 1 through an aperture window at fb_va + FLIP_OFFSET).
+// fb_flip moves scanout first, then points this draw surface at the
+// now-hidden buffer; fb_claim(0)/exit paths unflip.
 static FB_BASE: AtomicU64 = AtomicU64::new(0);
 static DRAW_OFFSET: AtomicU64 = AtomicU64::new(0);
 static SCANOUT_OFFSET: AtomicU64 = AtomicU64::new(0);
