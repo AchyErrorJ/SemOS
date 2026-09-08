@@ -236,6 +236,16 @@ pub mod numbers {
     /// doesn't reach DSPSURFLIVE within one frame is rolled back.
     pub const SYS_FB_FLIP: u64 = 141;
 
+    /// SYS_LOGFILE: drain the in-RAM kernel log ring into the JSON-Lines log
+    /// file (LOG.TXT) on the SEMOS_LOG FAT32 partition, so Pop!_OS can mount
+    /// the partition and hand the records to the LLM as untrusted data.
+    /// Records are JSON-escaped so no payload bytes can break out of the
+    /// quoted string into instruction space (see reader-side untrusted-data
+    /// wrapper). CONSOLE ONLY: this writes to disk, so the agent (tier 0) and
+    /// arbitrary Ring-3 tasks cannot reach it — only the human-initiated
+    /// `log flush` builtin. Returns bytes appended | u64::MAX on error.
+    pub const SYS_LOGFILE: u64 = 142;
+
     /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
     /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
     /// (hard error). The shim retries after yielding.
@@ -417,6 +427,18 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_KB_POLL => crate::platform::get().kb_poll(arg0, arg1),
         SYS_FB_CLAIM => crate::platform::get().fb_claim(arg0),
         SYS_FB_FLIP => crate::platform::get().fb_flip(),
+
+        // SYS_LOGFILE writes the log ring to disk, so it is console-only
+        // (same gate as SYS_SELFDEV/SYS_PAIR): the agent must never flush —
+        // it could stuff the log with crafted records and the file is later
+        // handed to an LLM as untrusted data on the Linux side.
+        SYS_LOGFILE => {
+            if !is_vouch_authority() {
+                crate::platform::log("[logfile] DENIED: caller is not the interactive console\n");
+                return u64::MAX;
+            }
+            crate::platform::get().log_flush()
+        }
 
         // User identity & isolation (80-89)
         SYS_GETUID        => handle_getuid(),

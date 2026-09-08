@@ -178,6 +178,12 @@ pub trait Platform: Send + Sync + 'static {
     /// Default: unavailable.
     fn fb_flip(&self) -> u64 { u64::MAX }
 
+    /// SYS_LOGFILE: append the in-RAM kernel log ring delta (since the last
+    /// flush) to LOG.TXT on the SEMOS_LOG FAT32 partition as JSON-Lines, so
+    /// another OS can read the log after reboot. Console-gated by the
+    /// dispatcher. Returns bytes appended | u64::MAX. Default: unavailable.
+    fn log_flush(&self) -> u64 { u64::MAX }
+
     /// SYS_WIFI_SCAN: scan for WiFi networks and print a de-duplicated numbered
     /// list to the TTY (`wifi` shell command). Blocks for the scan duration.
     /// Returns the number of unique networks found. Default: unavailable.

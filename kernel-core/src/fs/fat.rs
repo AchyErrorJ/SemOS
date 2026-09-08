@@ -82,6 +82,12 @@ impl<'a> Fat32<'a> {
         };
 
         // Read the BPB at the partition start.
+        Self::from_part(dev, part_lba)
+    }
+
+    /// Parse the FAT32 BPB at `part_lba` and compute the geometry.
+    /// Returns `None` if it isn't a 512-byte-sector FAT32 volume.
+    fn from_part(dev: &'a dyn BlockDevice, part_lba: u64) -> Option<Fat32<'a>> {
         let mut bpb = [0u8; SECTOR];
         dev.read_blocks(part_lba, &mut bpb).ok()?;
         let bps = u16::from_le_bytes([bpb[11], bpb[12]]) as u32;
@@ -251,4 +257,184 @@ impl<'a> Fat32<'a> {
         }
         true
     }
+
+    /// Mount the volume whose root-directory volume label (attr 0x08 entry,
+    /// e.g. `b"SEMOS_LOG  "`) matches `want_label` — case-insensitive ASCII.
+    /// Scans, in order: superfloppy at LBA 0, MBR partitions (any nonzero
+    /// type except the 0xEE GPT protective entry), then every GPT partition
+    /// regardless of type GUID (the log partition may carry any type).
+    /// Returns the first match, or None.
+    pub fn mount_labeled(dev: &'a dyn BlockDevice, want_label: &[u8; 11]) -> Option<Fat32<'a>> {
+        let mut sec0 = [0u8; SECTOR];
+        dev.read_blocks(0, &mut sec0).ok()?;
+        if sec0[510] != 0x55 || sec0[511] != 0xAA {
+            return None;
+        }
+
+        let mut part_lbas: [Option<u64>; 132] = [None; 132];
+        let mut n = 0usize;
+
+        // Superfloppy: BPB at LBA 0.
+        if &sec0[82..90] == b"FAT32   " {
+            part_lbas[n] = Some(0);
+            n += 1;
+        }
+        let mut gpt = false;
+        for i in 0..4 {
+            let e = 446 + i * 16;
+            let ty = sec0[e + 4];
+            if ty == 0xEE {
+                gpt = true;
+                continue;
+            }
+            if ty != 0 && n < part_lbas.len() {
+                part_lbas[n] = Some(u32::from_le_bytes([
+                    sec0[e + 8],
+                    sec0[e + 9],
+                    sec0[e + 10],
+                    sec0[e + 11],
+                ]) as u64);
+                n += 1;
+            }
+        }
+        if gpt {
+            // GPT header at LBA 1; entries are 128 bytes, 4 per sector.
+            let mut hdr = [0u8; SECTOR];
+            if dev.read_blocks(1, &mut hdr).is_ok() && &hdr[0..8] == b"EFI PART" {
+                let entries_lba = u64::from_le_bytes(hdr[72..80].try_into().ok()?);
+                let count = u32::from_le_bytes(hdr[80..84].try_into().ok()?).min(128);
+                let entsz = u32::from_le_bytes(hdr[84..88].try_into().ok()?) as usize;
+                if entsz == 128 {
+                    let mut i = 0u32;
+                    while i < count && n < part_lbas.len() {
+                        let lba = entries_lba + (i as u64 * entsz as u64) / SECTOR as u64;
+                        let off = (i as usize * entsz) % SECTOR;
+                        let mut sec = [0u8; SECTOR];
+                        if dev.read_blocks(lba, &mut sec).is_err() {
+                            return None;
+                        }
+                        let ent = &sec[off..off + entsz];
+                        if ent[0..16].iter().any(|&b| b != 0) {
+                            part_lbas[n] = Some(u64::from_le_bytes(
+                                ent[32..40].try_into().ok()?,
+                            ));
+                            n += 1;
+                        }
+                        i += 1;
+                    }
+                }
+            }
+        }
+
+        for cand in part_lbas.iter().take(n).flatten() {
+            if let Some(mut fat) = Self::from_part(dev, *cand) {
+                if let Some(label) = fat.volume_label() {
+                    if label_eq(&label, want_label) {
+                        return Some(fat);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Read the volume label (the attr 0x08 entry in the root directory).
+    /// Returns the raw 11-byte name, trailing spaces included.
+    pub fn volume_label(&mut self) -> Option<[u8; 11]> {
+        let mut cluster = self.root_cluster;
+        loop {
+            if cluster < 2 || cluster >= EOC {
+                return None;
+            }
+            let base = self.cluster_lba(cluster);
+            for s in 0..self.spc as u64 {
+                let mut sec = [0u8; SECTOR];
+                self.dev.read_blocks(base + s, &mut sec).ok()?;
+                let mut i = 0;
+                while i + 32 <= SECTOR {
+                    let e = &sec[i..i + 32];
+                    if e[0] == 0x00 {
+                        return None; // end of directory
+                    }
+                    if e[0] != 0xE5 && e[11] == 0x08 {
+                        return Some(e[0..11].try_into().ok()?);
+                    }
+                    i += 32;
+                }
+            }
+            cluster = self.next_cluster(cluster)?;
+        }
+    }
+
+    /// Overwrite `data` at byte offset `file_off` inside an already-allocated
+    /// file's cluster chain. Partial edge sectors are read-modify-written so
+    /// neighboring content survives. No FAT or directory updates — the file
+    /// must already span the whole range. Returns false on any IO error or
+    /// if the range runs past the end of the chain.
+    pub fn write_at(&mut self, first_cluster: u32, file_off: u64, data: &[u8]) -> bool {
+        let cluster_bytes = self.spc as u64 * SECTOR as u64;
+        let mut cluster = first_cluster;
+        for _ in 0..(file_off / cluster_bytes) {
+            cluster = match self.next_cluster(cluster) {
+                Some(c) if c >= 2 && c < EOC => c,
+                _ => return false,
+            };
+        }
+        let mut pos = file_off % cluster_bytes;
+        let mut off = 0usize;
+        let mut sec = [0u8; SECTOR];
+        while off < data.len() {
+            if cluster < 2 || cluster >= EOC {
+                return false;
+            }
+            let base = self.cluster_lba(cluster);
+            while pos < cluster_bytes && off < data.len() {
+                let lba = base + pos / SECTOR as u64;
+                let soff = (pos % SECTOR as u64) as usize;
+                let take = (SECTOR - soff).min(data.len() - off);
+                let ok = if soff == 0 && take == SECTOR {
+                    self.dev.write_blocks(lba, &data[off..off + SECTOR]).is_ok()
+                } else {
+                    sec = [0u8; SECTOR];
+                    self.dev.read_blocks(lba, &mut sec).is_ok()
+                        && {
+                            sec[soff..soff + take].copy_from_slice(&data[off..off + take]);
+                            self.dev.write_blocks(lba, &sec).is_ok()
+                        }
+                };
+                if !ok {
+                    return false;
+                }
+                off += take;
+                pos += take as u64;
+            }
+            if off == data.len() {
+                break;
+            }
+            pos = 0;
+            cluster = match self.next_cluster(cluster) {
+                Some(c) => c,
+                None => return false,
+            };
+        }
+        let _ = self.dev.flush();
+        true
+    }
+}
+
+/// Case-insensitive ASCII compare of an 11-byte volume label (trailing
+/// spaces stripped on both sides, so `"SEMOS_LOG  "` matches `"SEMOS_LOG"`).
+fn label_eq(got: &[u8; 11], want: &[u8; 11]) -> bool {
+    fn trimmed(l: &[u8; 11]) -> &[u8] {
+        let mut end = 11;
+        while end > 0 && l[end - 1] == b' ' {
+            end -= 1;
+        }
+        &l[..end]
+    }
+    let (g, w) = (trimmed(got), trimmed(want));
+    g.len() == w.len()
+        && g.iter()
+            .zip(w.iter())
+            .all(|(a, b)| a.to_ascii_uppercase() == b.to_ascii_uppercase())
 }

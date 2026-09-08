@@ -673,6 +673,11 @@ impl Platform for X86Platform {
         if !crate::display::ggtt::arm(info.addr as u64, ap_base, ap_size, info.byte_len as u64) {
             return u64::MAX;
         }
+        // Drain WC store buffers before latching the new surface — the app
+        // drew through a WC mapping, and the display engine's reads don't
+        // snoop CPU WC buffers (same reason Linux DRM wmb()s before
+        // doorbells).
+        unsafe { core::arch::x86_64::_mm_sfence() };
         let cur = crate::framebuffer::draw_offset();
         let other = if cur == 0 { crate::framebuffer::FLIP_OFFSET } else { 0 };
         // Scanout switches to the buffer the app just finished drawing
@@ -682,6 +687,10 @@ impl Platform for X86Platform {
         }
         crate::framebuffer::note_flip(other, cur);
         0
+    }
+
+    fn log_flush(&self) -> u64 {
+        crate::logfile::run()
     }
 
     fn map_elf_segment(

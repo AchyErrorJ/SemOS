@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
+    syscall0, syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_LOGFILE, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -254,7 +254,7 @@ fn is_builtin(name: &str) -> bool {
         name,
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
-            | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "flash-sysroot" | "wifi"
+            | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "log" | "flash-sysroot" | "wifi"
             | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "pair" | "paired" | "unpair"
     )
 }
@@ -1018,6 +1018,26 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             } else {
                 println!("netlog: sent {} bytes to {}", sent, target);
                 0
+            }
+        }
+        "log" => {
+            // `log flush` — append the kernel log ring (delta since the last
+            // flush) to LOG.TXT on the SEMOS_LOG FAT32 partition as
+            // JSON-Lines, so Pop!_OS can read it after reboot. Console-only
+            // in the kernel (it writes to disk). One-time host setup:
+            // sudo bash tools/setup-log-partition.sh /dev/sda5
+            if argv.len() >= 2 && argv[1] == "flush" {
+                let n = unsafe { syscall0(SYS_LOGFILE) };
+                if n == u64::MAX {
+                    println!("log: flush failed (no SEMOS_LOG partition / LOG.TXT — see tools/setup-log-partition.sh)");
+                    1
+                } else {
+                    println!("log: flushed {} bytes to LOG.TXT", n);
+                    0
+                }
+            } else {
+                println!("log: usage: log flush");
+                2
             }
         }
         "pair" => {

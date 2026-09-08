@@ -55,6 +55,7 @@ pub const SYS_FLASH_SYSROOT: u64 = 138; // () -> bytes copied | MAX; FAT usb0 ->
 pub const SYS_KB_POLL: u64 = 139;  // (out_ptr, out_len_bytes) -> n u32 events | MAX; non-blocking
 pub const SYS_FB_CLAIM: u64 = 140; // (on) -> 0; 1 = claim screen+keyboard, 0 = release
 pub const SYS_FB_FLIP: u64 = 141;  // () -> 0 | MAX; vblank-latched double-buffer swap (claimed apps only)
+pub const SYS_LOGFILE: u64 = 142;  // () -> bytes appended | MAX; JSONL-append the log ring to LOG.TXT (console-only)
 
 pub const SYS_FUTEX_WAIT:   u64 = 90;
 pub const SYS_FUTEX_WAKE:   u64 = 91;
