@@ -640,6 +640,19 @@ impl Platform for X86Platform {
 
     fn fb_flip(&self) -> u64 {
         use core::sync::atomic::Ordering;
+        // DIAG (flipdemo silent-fallback hunt, 2026-09): the LOG.TXT capture
+        // showed zero kernel prints during a flipdemo run, yet every exit
+        // below except two was supposed to print. Entry + silent-exit prints
+        // remove all ambiguity; drop them once the path is confirmed.
+        // First two calls only — flipdemo flips at display rate and would
+        // wrap the 64 KiB log ring in seconds otherwise.
+        static FB_FLIP_DIAG: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+        if FB_FLIP_DIAG.fetch_add(1, Ordering::Relaxed) < 2 {
+            crate::println!(
+                "fb-flip: enter (fullscreen={})",
+                crate::FULLSCREEN_APP_ACTIVE.load(Ordering::Acquire)
+            );
+        }
         if !crate::FULLSCREEN_APP_ACTIVE.load(Ordering::Acquire) {
             crate::println!("fb-flip: refused — no fullscreen app (fb_claim first)");
             return u64::MAX;
@@ -651,7 +664,10 @@ impl Platform for X86Platform {
         // FLIP_OFFSET (lazily, once, by ggtt::arm).
         let info = match crate::framebuffer::fb_info() {
             Some(i) => i,
-            None => return u64::MAX,
+            None => {
+                crate::println!("fb-flip: refused — fb_info() is None");
+                return u64::MAX;
+            }
         };
         let ig = match crate::igpu::find() {
             Some(i) if i.device_id == crate::igpu::HASWELL_GT2_MOBILE_HD4600 => i,
@@ -663,7 +679,10 @@ impl Platform for X86Platform {
         let (ap_base, ap_size) = match ig.bar2.kind {
             crate::igpu::BarKind::Mmio32 { base, .. } => (base as u64, ig.bar2.size),
             crate::igpu::BarKind::Mmio64 { base, .. } => (base, ig.bar2.size),
-            _ => return u64::MAX,
+            _ => {
+                crate::println!("fb-flip: refused — BAR2 not MMIO (kind absent/IO)");
+                return u64::MAX;
+            }
         };
         let phys = match crate::paging::walk_pml4_for(crate::paging::boot_cr3(), info.addr as u64) {
             Some(p) => p,
