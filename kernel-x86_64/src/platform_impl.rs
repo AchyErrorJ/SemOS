@@ -323,6 +323,11 @@ impl Platform for X86Platform {
         crate::rebuild::run_rebuild(op)
     }
 
+    fn run_hub(&self, op: u64) -> u64 {
+        // One hub op in the caller's context.
+        crate::hub::run_hub(op)
+    }
+
     fn run_pair(&self, qr_ptr: u64, qr_len: u64) -> u64 {
         // The console gate is enforced by the dispatcher; here we just run the
         // handshake (TCP + crypto + SAS confirm) in the caller's context.

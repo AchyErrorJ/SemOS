@@ -91,6 +91,7 @@ pub mod framebuffer;
 pub mod font;
 pub mod gfx2d;
 pub mod pci;
+pub mod hub;
 pub mod rebuild;
 pub mod virtio;
 pub mod rng;
@@ -1068,6 +1069,19 @@ fn init_loader_task() {
         }
     }
 
+    // `--features hub-test`: headless DEMO 98 hub pipeline — feeder installs
+    // the `lights` package (its intent block registers the hub vocabulary)
+    // and starts the hub; the harness's host shim plays gateway + lamp.
+    // Boot 2 (mirror wiped): hub starts with the journaled vocabulary —
+    // no reinstall (the persistence beat).
+    #[cfg(feature = "hub-test")]
+    {
+        match crate::context::spawn_task("hub-test", hub_test_task) {
+            Some(slot) => println!("[hub-test] feeder task in slot {}", slot),
+            None => println!("[hub-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1411,6 +1425,51 @@ fn rebuild_test_task() {
     }
     // Park instead of returning: task_exit_stub (context.rs) hlt-loops
     // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// `--features hub-test` feeder: the DEMO 98 two-boot state machine.
+///   boot 1 (mirror present): `semos update`, `semos install lights`
+///     (compile + serial-approved install + intent registration), then
+///     `hub start` — the harness's shim then sends "lights on".
+///   boot 2 (mirror region host-wiped; journal intact): `hub start` only —
+///     the intent vocabulary comes back from SemFS replay, no reinstall.
+/// Parks forever at the end — see selfdev80_test_task.
+#[cfg(feature = "hub-test")]
+fn hub_test_task() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    if pkg_read_mirror().is_some() {
+        println!("[hub-test] boot 1: mirror present — update / install lights / hub start");
+        for (line, pause) in [
+            ("semos update\n", 10u64),
+            // Compile + gate + install + smoke take minutes.
+            ("semos install lights\n", 360),
+            ("hub intents\n", 5),
+            ("hub start\n", 15),
+        ] {
+            for &b in line.as_bytes() {
+                tty::input_push(b);
+            }
+            let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+        }
+        println!("[hub-test] boot1 ready — hub listening");
+    } else {
+        let vocab = Namespace::for_each_child("/var/lib/hub/intents", &mut |_| {})
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if vocab {
+            println!("[DEMO 98] boot 2: intent vocabulary restored from journal (no reinstall)");
+        }
+        for &b in b"hub start\n" {
+            tty::input_push(b);
+        }
+        println!("[hub-test] boot2: hub started with journaled vocabulary");
+    }
     loop {
         let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
     }
@@ -3145,7 +3204,8 @@ struct PkgEntry {
     is_lib: bool,
     deps: alloc::vec::Vec<alloc::string::String>,
     src: alloc::vec::Vec<u8>,
-    expect: alloc::vec::Vec<u8>,
+    expect: alloc::vec::Vec<u8>,    /// Hub intent spec (DEMO 98): empty for non-hub packages.
+    intent: alloc::vec::Vec<u8>,
 }
 
 /// Read the mirror blob from virtio0 LBA 16. None if absent/wiped/corrupt.
@@ -3212,6 +3272,7 @@ fn pkg_parse(buf: &[u8]) -> Option<alloc::vec::Vec<PkgEntry>> {
         let mut deps = Vec::new();
         let mut nbytes = 0usize;
         let mut nexpect = 0usize;
+        let mut nintent = 0usize;
         for tok in it {
             if let Some(v) = tok.strip_prefix("kind=") {
                 is_lib = v == "lib";
@@ -3226,15 +3287,20 @@ fn pkg_parse(buf: &[u8]) -> Option<alloc::vec::Vec<PkgEntry>> {
             } else if let Some(v) = tok.strip_prefix("expect=") {
                 nexpect = v.parse().ok()?;
             }
+            else if let Some(v) = tok.strip_prefix("intentbytes=") {
+               nintent = v.parse().ok()?;
+            }
         }
-        if pos + nbytes + nexpect > buf.len() {
+        if pos + nbytes + nexpect + nintent > buf.len() {
             return None;
         }
         let src = buf[pos..pos + nbytes].to_vec();
         pos += nbytes;
         let expect = buf[pos..pos + nexpect].to_vec();
         pos += nexpect;
-        out.push(PkgEntry { name, version, is_lib, deps, src, expect });
+        let intent = buf[pos..pos + nintent].to_vec();
+        pos += nintent;
+        out.push(PkgEntry { name, version, is_lib, deps, src, expect, intent });
     }
     if out.is_empty() {
         return None;
@@ -3397,6 +3463,9 @@ pub(crate) fn run_semos_pkg(op: u64, arg: Option<&str>) -> u64 {
             for e in &idx {
                 let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
                 let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+                if !e.intent.is_empty() {
+                    let _ = pkg_cache_write(&e.name, &e.version, "intent", &e.intent);
+                }
             }
             println!("semos-pkg: registry cloned — {} package(s) indexed + cached", idx.len());
             0
@@ -3627,6 +3696,21 @@ pub(crate) fn run_semos_pkg(op: u64, arg: Option<&str>) -> u64 {
                 }
             }
             println!("semos-pkg: post-install smoke OK: bare `{}` ran fenced at tier 0", name);
+
+            // DEMO 98 hub: a package with an intent block extends the hub's
+            // vocabulary — registered into the journaled namespace.
+            if !top.intent.is_empty() {
+                for d in ["/var/lib/hub", "/var/lib/hub/intents"] {
+                    let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+                }
+                let ipath = alloc::format!("/var/lib/hub/intents/{}.intent", name);
+                let _ = Namespace::unlink(&ipath);
+                if Namespace::create_file(&ipath, SecurityTier::Public, &top.intent).is_ok() {
+                    println!("[hub] intent registered: {} (journaled — survives reboot)", name);
+                } else {
+                    println!("[hub] WARN: intent registration failed for {}", name);
+                }
+            }
             if mirror_present {
                 println!("[DEMO 89] PASS: semos install {} — DAG resolved, compiled on-device, approved, installed", name);
             } else {
