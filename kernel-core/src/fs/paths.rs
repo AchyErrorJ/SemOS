@@ -128,6 +128,8 @@ pub enum FsError {
     ContentTooLarge,
     /// Internal invariant violation (e.g. directory content malformed).
     Corrupt,
+    /// Durable write failed (SemFS journal append I/O error).
+    IoError,
 }
 
 // ============================================================================
@@ -477,6 +479,10 @@ impl Namespace {
         let obj = registry.get_mut(&suid).ok_or(FsError::NotFound)?;
         if obj.content_type == ContentType::Structured {
             return Err(FsError::IsADirectory);
+        }
+        // SemFS journal (write-through): durable strictly before visible.
+        if !crate::semantic::journal::on_update(obj, content) {
+            return Err(FsError::IoError);
         }
         obj.content = ObjectContent::from_bytes(content).ok_or(FsError::ContentTooLarge)?;
         obj.modified_at = now;
@@ -937,6 +943,11 @@ fn add_child(parent_suid: SUID, name: &str, suid: SUID) -> Result<(), FsError> {
 
     let mut registry = global_registry();
     let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
+    // SemFS journal (write-through): append the new directory state
+    // BEFORE assigning it — durable strictly before visible.
+    if !crate::semantic::journal::on_update(parent, &new_buf[..new_len]) {
+        return Err(FsError::IoError);
+    }
     // Heap-backed (from_bytes) so a directory isn't capped at 256 B inline.
     parent.content = ObjectContent::from_bytes(&new_buf[..new_len])
         .ok_or(FsError::DirectoryFull)?;
@@ -965,6 +976,10 @@ fn remove_child(parent_suid: SUID, name: &str) -> Result<SUID, FsError> {
 
     let mut registry = global_registry();
     let parent = registry.get_mut(&parent_suid).ok_or(FsError::NotFound)?;
+    // SemFS journal (write-through): durable strictly before visible.
+    if !crate::semantic::journal::on_update(parent, &new_buf[..new_len]) {
+        return Err(FsError::IoError);
+    }
     parent.content = ObjectContent::from_bytes(&new_buf[..new_len])
         .ok_or(FsError::Corrupt)?;
     Ok(removed_suid)

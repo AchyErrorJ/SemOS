@@ -40,7 +40,7 @@ use super::device::{
 use super::hid;
 use super::ring::{
     Trb, CommandRing, EventRingSegment, ErstEntry, Producer, Consumer,
-    trb_type, cc, init_command_ring, enqueue_command, RING_SIZE,
+    trb_type, cc, isoch, init_command_ring, enqueue_command, RING_SIZE,
 };
 
 // ============================================================================
@@ -313,6 +313,37 @@ static mut BULK_CBW_BUF: BulkCbwBuf = BulkCbwBuf([0; 64]);
 static mut BULK_DATA_BUF: BulkDataBuf = BulkDataBuf([0; 4096]);
 static mut BULK_CSW_BUF: BulkCswBuf = BulkCswBuf([0; 32]);
 
+/// Isochronous groundwork (USB audio): a single audio function at a time,
+/// matching the driver's single-DEVICE model — so one transfer ring and a
+/// small TD pool rather than per-slot arrays (MAX_SLOTS=64; per-slot pools
+/// would burn ~1 MiB of BSS for a path only one device ever uses).
+static mut ISOC_RING: CommandRing = CommandRing::new();
+static mut ISOC_PROD: Producer = Producer::new();
+static mut ISOC_RING_PHYS: u64 = 0;
+
+/// In-flight isoch TDs. One TD is consumed per service interval; 4 keeps
+/// the ring fed across the poll cadence of the boot-time stream test.
+const ISOC_TDS: usize = 4;
+/// Per-TD DMA buffer. Covers the largest FS/HS isoch ESIT we accept
+/// (HS: 1024 B x 3 transactions per microframe = 3072; 4 KiB covers it).
+const ISOC_BUF_SIZE: usize = 4096;
+#[repr(C, align(64))]
+struct IsocBuf([u8; ISOC_BUF_SIZE]);
+static mut ISOC_BUFS: [IsocBuf; ISOC_TDS] = [const {
+    IsocBuf([0; ISOC_BUF_SIZE])
+}; ISOC_TDS];
+/// Round-robin cursor into ISOC_BUFS for (re-)arming. Assumes in-order
+/// one-event-per-TD completion; a Missed-Service skip on real hardware
+/// could re-use a buffer whose TD is still queued — revisit before
+/// real-HW streaming (QEMU-verified only).
+static mut ISOC_NEXT_BUF: usize = 0;
+/// When false, completed isoch TDs are not re-armed — used by the stream
+/// test to wind the endpoint down cleanly so no armed TDs (and their
+/// SUCCESS events) leak into later event-ring consumers like poll_hid().
+static mut ISOC_REARM: bool = true;
+/// Trace flag: while the boot stream test runs, log every isoch event.
+static mut ISOC_TRACE: bool = false;
+
 // ============================================================================
 // Driver state
 // ============================================================================
@@ -332,7 +363,7 @@ pub struct XhciInfo {
     pub hciversion: u16,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub struct EnumeratedDevice {
     pub slot_id: u8,
     pub usb_address: u8,
@@ -349,6 +380,9 @@ pub struct EnumeratedDevice {
     pub interface_number: u8,
     /// USB device class (0x09 = hub, 0x08 = mass storage, 0x03 = HID, etc.)
     pub class: u8,
+    /// Isoch-OUT endpoint DCI when an AudioStreaming function was
+    /// configured by the isoch groundwork; 0 otherwise.
+    pub audio_dci: u8,
 }
 
 static mut INFO: Option<XhciInfo> = None;
@@ -490,11 +524,26 @@ pub fn discover() -> Option<(pci::Location, u64)> {
     }
     // Type field is bits 2:1. 0=32-bit, 2=64-bit. xHCI is always 64-bit.
     let bar_type = (bar0 >> 1) & 0x3;
-    let base = if bar_type == 0x2 {
+    let mut base = if bar_type == 0x2 {
         ((bar1 as u64) << 32) | ((bar0 as u64) & 0xFFFF_FFF0)
     } else {
         (bar0 as u64) & 0xFFFF_FFF0
     };
+    // Firmware never assigned the BAR (base 0 / sizing mask left behind).
+    // Observed under OVMF + qemu-xhci: BAR0=0x4, BAR1=0xE0, command reg
+    // already enabled. An OS can't rely on firmware assignment — allocate
+    // a 64 KiB window in the legacy 32-bit MMIO hole ourselves.
+    if (bar0 & 0xFFFF_FFF0) == 0 || bar0 == 0xFFFF_FFFF {
+        base = 0xC000_0000;
+        pci::write_u32(loc.bus, loc.slot, loc.func, pci::regs::BAR0,
+                       (base as u32) | (bar0 & 0xF));
+        if bar_type == 0x2 {
+            pci::write_u32(loc.bus, loc.slot, loc.func, pci::regs::BAR1, 0);
+        }
+        let rb = pci::read_u32(loc.bus, loc.slot, loc.func, pci::regs::BAR0);
+        println!("[xhci] firmware left BAR0 unassigned (bar0=0x{:08X} bar1=0x{:08X}); assigned 0x{:X} (readback 0x{:08X})",
+            bar0, bar1, base, rb);
+    }
     Some((loc, base))
 }
 
@@ -2136,6 +2185,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
                 config_value: 0,
                 interface_number: 0,
                 class: 0x09,
+                audio_dci: 0,
             };
             DEVICE = Some(dev);
             ENUMERATED_SLOTS[slot_id as usize] = Some(dev);
@@ -2267,11 +2317,21 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
                     config_value: cfg_val,
                     interface_number: iface_num,
                     class: 0x03,
+                    audio_dci: 0,
                 };
                 DEVICE = Some(dev);
                 ENUMERATED_SLOTS[slot_id as usize] = Some(dev);
             }
             arm_hid_read(slot_id, dci as u8);
+            return true;
+        }
+
+        // ---- Check for USB AudioStreaming (isoch groundwork) ----
+        // Note: a composite keyboard+audio device is claimed by the
+        // keyboard path above (first-match-wins, same as MSC/ECM).
+        if try_enumerate_usbaudio(slot_id, port, speed,
+                                   usb_addr, id_vendor, id_product, mps0,
+                                   blob, cfg_desc.b_configuration_value) {
             return true;
         }
 
@@ -2317,6 +2377,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
                     config_value: cfg_desc.b_configuration_value,
                     interface_number: msc.iface_num,
                     class: 0x08,
+                    audio_dci: 0,
                 };
                 DEVICE = Some(dev);
                 ENUMERATED_SLOTS[slot_id as usize] = Some(dev);
@@ -2345,6 +2406,7 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             config_value: matched_config_value,
             interface_number: 0,
             class: dev_desc.b_device_class,
+            audio_dci: 0,
         };
         DEVICE = Some(dev);
         ENUMERATED_SLOTS[slot_id as usize] = Some(dev);
@@ -2424,6 +2486,94 @@ fn find_boot_keyboard(blob: &[u8], cfg_value: u8) -> Option<(EndpointDescriptor,
         i += bl;
     }
     None
+}
+
+/// Walk the configuration-descriptor blob and find a USB AudioStreaming
+/// interface (class 0x01, subclass 0x02) carrying an Isoch-OUT endpoint.
+/// Returns (EndpointDescriptor, interface_number, alternate_setting,
+/// configuration_value).
+///
+/// USB Audio devices expose each streaming interface twice: alt 0 with
+/// zero endpoints (idle / zero-bandwidth) and alt 1 carrying the isoch
+/// endpoint. We only match the alt that actually has the endpoint.
+///
+/// Why OUT first: QEMU 7.2's usb-audio (hw/usb/dev-audio.c) is
+/// playback-only — its descriptor set contains just `USB_DIR_OUT | 0x01`
+/// (192 B/packet = 48 kHz stereo s16 at 1 ms, bInterval=1, FS). It is
+/// the only isoch target QEMU gives us; IN capture lands when we test
+/// against real hardware or a newer QEMU.
+fn find_audio_streaming_out(blob: &[u8], cfg_value: u8)
+    -> Option<(EndpointDescriptor, u8, u8, u8)>
+{
+    let mut i = 0;
+    let mut cur_is_audio_streaming = false;
+    let mut cur_iface_num: u8 = 0;
+    let mut cur_alt: u8 = 0;
+    while i + 2 <= blob.len() {
+        let bl = blob[i] as usize;
+        if bl == 0 || i + bl > blob.len() { break; }
+        let bt = blob[i + 1];
+        match bt {
+            desc_type::INTERFACE if bl >= 9 => {
+                let iface = InterfaceDescriptor {
+                    b_length: blob[i],
+                    b_descriptor_type: blob[i + 1],
+                    b_interface_number: blob[i + 2],
+                    b_alternate_setting: blob[i + 3],
+                    b_num_endpoints: blob[i + 4],
+                    b_interface_class: blob[i + 5],
+                    b_interface_subclass: blob[i + 6],
+                    b_interface_protocol: blob[i + 7],
+                    i_interface: blob[i + 8],
+                };
+                cur_is_audio_streaming = iface.b_interface_class == class::AUDIO
+                    && iface.b_interface_subclass == 0x02 // AudioStreaming
+                    && iface.b_num_endpoints > 0;
+                cur_iface_num = iface.b_interface_number;
+                cur_alt = iface.b_alternate_setting;
+            }
+            desc_type::ENDPOINT if bl >= 7 && cur_is_audio_streaming => {
+                let ep = EndpointDescriptor {
+                    b_length: blob[i],
+                    b_descriptor_type: blob[i + 1],
+                    b_endpoint_address: blob[i + 2],
+                    bm_attributes: blob[i + 3],
+                    w_max_packet_size: u16::from_le_bytes([blob[i + 4], blob[i + 5]]),
+                    b_interval: blob[i + 6],
+                };
+                let xfer_type = ep.bm_attributes & 0x3;
+                let is_out = ep.b_endpoint_address & 0x80 == 0;
+                if xfer_type == 0x1 /* isochronous */ && is_out {
+                    return Some((ep, cur_iface_num, cur_alt, cfg_value));
+                }
+            }
+            _ => {}
+        }
+        i += bl;
+    }
+    None
+}
+
+/// Isoch interval encoding (xHCI Interval field = log2 of the service
+/// period in microframes). HS/SS matches the interrupt encoding
+/// (bInterval is already the exponent). FS isoch differs from FS
+/// interrupt: USB2 §9.6.6 defines the FS isoch period as
+/// 2^(bInterval-1) *frames*, so the field is (bInterval-1)+3, not
+/// log2(bInterval*8). (LS devices cannot do isoch at all.)
+fn encode_isoch_interval(speed: u8, b_interval: u8) -> u8 {
+    if speed == 1 {
+        // FS (xHCI PORTSC speed id 1): bInterval = 1..16 per spec, but
+        // this is descriptor-controlled — widen to u16 so a malformed
+        // bInterval=255 clamps instead of overflowing u8 (debug panic).
+        // bInterval >= 9 clamps to interval 10 (128 ms period) — a
+        // scheduling mismatch vs the descriptor, acceptable here.
+        let bi = b_interval.max(1) as u16;
+        ((bi - 1 + 3).clamp(3, 10)) as u8
+    } else {
+        // HS/SS (3/4) — and LS (2) falls through harmlessly since
+        // isoch-on-LS devices don't exist.
+        encode_interval(speed, b_interval)
+    }
 }
 
 // ============================================================================
@@ -3675,6 +3825,426 @@ fn configure_bulk_endpoints(
         return None;
     }
     Some((in_dci, out_dci))
+}
+
+// ============================================================================
+// USB Audio isochronous groundwork (Isoch-OUT playback slice first)
+// ============================================================================
+//
+// First verifiable slice toward USB audio (the voice-agent plan gates on
+// Isoch-IN capture, but QEMU 7.2's usb-audio is playback-only — so the
+// QEMU-verifiable groundwork slice is Isoch-OUT playback, which exercises
+// the identical machinery: isoch endpoint contexts, Isoch TRB scheduling,
+// per-interval consumption, event/byte accounting). IN is a small delta
+// from here, gated on real hardware or a newer QEMU.
+//
+// Design notes (see docs/isoch-groundwork-design.md):
+//   * Single-TRB Isoch TDs (TBC=0, TLBPC=0, TD Size=0).
+//   * SIA=1 (Start Isoch ASAP): the controller starts at the next
+//     interval boundary, so we never sample MFINDEX / program Frame IDs.
+//     Frame-ID scheduling is a later refinement.
+//   * Polled completion (IMAN.IE=0) means isoch doesn't wait for us: one
+//     TD is consumed per service interval regardless of poll cadence. We
+//     keep ISOC_TDS TDs in flight and re-arm on every completed event.
+//   * KNOWN WART (pre-existing, not made worse here): poll_event() has a
+//     single consumer — whoever drains the event ring eats everyone's
+//     Transfer Events. poll_hid()/bulk_xfer() already behave this way.
+//     The groundwork test runs audio-only (no concurrent HID re-arm
+//     hazard). A proper per-endpoint event demux is future work.
+
+/// An enumerated + configured USB AudioStreaming capture function.
+#[derive(Copy, Clone)]
+pub struct AudioDevice {
+    pub slot_id: u8,
+    pub iface: u8,
+    pub alt: u8,
+    pub ep_out: u8,
+    pub dci: u8,
+    pub max_packet: u16,
+    pub max_esit_payload: u32,
+    pub interval_log2: u8,
+    pub speed: u8,
+}
+static mut AUDIO: Option<AudioDevice> = None;
+
+/// Running tallies from the isoch event path. Read via `usbaudio_stats()`.
+#[derive(Copy, Clone)]
+pub struct AudioStats {
+    pub events: u32,
+    /// TDs that completed with SUCCESS (the stream-test pass metric).
+    pub ok: u32,
+    pub bytes: u64,
+    pub short_packets: u32,
+    pub errors: u32,
+    pub last_cc: u8,
+    pub first_err_cc: u8,
+}
+static mut AUDIO_STATS: AudioStats = AudioStats {
+    events: 0, ok: 0, bytes: 0, short_packets: 0, errors: 0, last_cc: 0,
+    first_err_cc: 0,
+};
+
+pub fn usbaudio_device() -> Option<AudioDevice> {
+    unsafe { AUDIO }
+}
+
+pub fn usbaudio_stats() -> AudioStats {
+    unsafe { AUDIO_STATS }
+}
+
+/// ConfigureEndpoint for the Isoch-OUT endpoint: build the input context
+/// (slot + isoch EP), program the endpoint context with interval / Max
+/// ESIT Payload, point it at ISOC_RING, and issue the command.
+/// Returns the endpoint's DCI on success.
+fn configure_isoch_out(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    ep_addr: u8,
+    w_max_packet_size: u16,
+    b_interval: u8,
+) -> Option<u8> {
+    let info = unsafe { match INFO { Some(i) => i, None => return None } };
+
+    let ring_phys = phys_of(unsafe { &raw const ISOC_RING } as u64)?;
+    unsafe {
+        init_command_ring(&raw mut ISOC_RING, ring_phys);
+        ISOC_PROD = Producer::new();
+        ISOC_RING_PHYS = ring_phys;
+        ISOC_NEXT_BUF = 0;
+    }
+
+    let dci = (ep_addr & 0x0F) * 2; // OUT endpoints have even DCIs
+    let mps = w_max_packet_size & 0x07FF;
+    // HS isoch packs 1-3 transactions per microframe (wMaxPacketSize
+    // bits 12:11 = additional transactions). FS is always 1. Max ESIT
+    // Payload = mps * transactions (MaxBurst=0, Mult=0 for USB2 isoch).
+    // SS (speed==4) not yet supported: its MEP comes from the companion
+    // descriptor's wBytesPerInterval, and SuperSpeed burst fields apply.
+    let transactions = if speed == 3 {
+        1 + (((w_max_packet_size >> 11) & 0x3) as u32)
+    } else {
+        1
+    };
+    let max_esit_payload = mps as u32 * transactions;
+    if max_esit_payload as usize > ISOC_BUF_SIZE {
+        println!("[usbaudio] ESIT {} B exceeds {} B TD buffers — refusing",
+            max_esit_payload, ISOC_BUF_SIZE);
+        return None;
+    }
+    let interval_log2 = encode_isoch_interval(speed, b_interval);
+
+    let si = slot_id as usize;
+    unsafe {
+        let ic = &mut INPUT_CTXS[si].0;
+        ic.reset();
+        // Add slot (A0) + the isoch endpoint (A-dci).
+        ic.input_ctrl_mut().add_flags = (1u32 << 0) | (1u32 << dci);
+        let slot = ic.slot_mut();
+        slot.set_context_entries(dci as u32);
+        slot.set_root_hub_port(port);
+        slot.set_speed(speed as u32);
+        ic.ep_mut((dci - 1) as usize).init_isoch_out_ep(
+            mps, interval_log2, max_esit_payload, max_esit_payload,
+            ring_phys, true,
+        );
+    }
+
+    let input_phys = phys_of(unsafe { &raw const INPUT_CTXS[si] } as u64)?;
+    let idx = unsafe { CMD_PROD.enqueue };
+    let cmd_phys = cmd_trb_phys_at(idx);
+    let control =
+        ((trb_type::CONFIGURE_ENDPOINT_CMD as u32) << 10) | ((slot_id as u32) << 24);
+    unsafe {
+        enqueue_command(
+            &raw mut COMMAND_RING, &mut CMD_PROD,
+            input_phys, 0, control,
+        );
+    }
+    ring_doorbell(info.db_base, 0, 0);
+    let (cc, _) = wait_command_completion(cmd_phys);
+    if cc != cc::SUCCESS {
+        println!("[usbaudio] ConfigureEndpoint(isoch-out) failed: cc={}", cc);
+        return None;
+    }
+    Some(dci)
+}
+
+/// Halt the isoch endpoint: Stop Endpoint command (spec §6.4.3.9). The
+/// HC completes any in-flight TDs with a Stopped-family completion code
+/// and posts a Command Completion Event. The correct way to end a stream
+/// — just emptying our ring leaves the HC's isoch scheduler attached.
+fn stop_isoch_endpoint(slot_id: u8, dci: u8) {
+    let info = unsafe { match INFO { Some(i) => i, None => return } };
+    let idx = unsafe { CMD_PROD.enqueue };
+    let cmd_phys = cmd_trb_phys_at(idx);
+    let control = ((trb_type::STOP_ENDPOINT_CMD as u32) << 10)
+        | ((slot_id as u32) << 24)
+        | ((dci as u32) << 16);
+    unsafe {
+        enqueue_command(&raw mut COMMAND_RING, &mut CMD_PROD, 0, 0, control);
+    }
+    ring_doorbell(info.db_base, 0, 0);
+    let (cc, _) = wait_command_completion(cmd_phys);
+    crate::usb::usbdbg!("[usbaudio] StopEndpoint(dci={}) cc={}", dci, cc);
+}
+
+/// Enqueue one Isoch-OUT TD on the next free TD buffer. SIA=1 lets the
+/// controller pick the start frame; IOC=1 gives us a Transfer Event per
+/// TD. Length = Max ESIT Payload (what the endpoint expects per
+/// interval — QEMU usb-audio's streambuf_put drops packets that aren't
+/// exactly 192 B, so the TD length must equal MEP).
+fn arm_isoch_td(audio: &AudioDevice) {
+    let info = unsafe { match INFO { Some(i) => i, None => return } };
+    let bi = unsafe { ISOC_NEXT_BUF };
+    unsafe { ISOC_NEXT_BUF = (bi + 1) % ISOC_TDS; }
+    // Payload: 1 ms of 48 kHz stereo s16 silence. The `none` audiodev
+    // discards it either way; what we're proving is scheduling, not tone.
+    unsafe { ISOC_BUFS[bi].0[..audio.max_esit_payload as usize].fill(0); }
+    let buf_phys = match phys_of(unsafe { &raw const ISOC_BUFS[bi] } as u64) {
+        Some(p) => p,
+        None => { crate::usb::usbdbg!("[usbaudio] ISOC_BUFS[{}] phys failed", bi); return; }
+    };
+    let control = ((trb_type::ISOCH as u32) << 10) | isoch::IOC | isoch::SIA;
+    unsafe {
+        enqueue_command(&raw mut ISOC_RING, &mut ISOC_PROD,
+            buf_phys, audio.max_esit_payload, control);
+    }
+    ring_doorbell(info.db_base, audio.slot_id, audio.dci);
+}
+
+/// Seed the ring with ISOC_TDS TDs.
+fn arm_isoch_tds(audio: &AudioDevice) {
+    for _ in 0..ISOC_TDS {
+        arm_isoch_td(audio);
+    }
+}
+
+/// Drain Transfer Events belonging to the audio isoch endpoint; tally
+/// bytes and re-arm a fresh TD for each completed one so the ring never
+/// starves at an interval boundary. Events for *other* endpoints are
+/// consumed-and-dropped by the shared poll_event() — see the known-wart
+/// note above; the groundwork test scenario attaches audio only.
+/// Returns the number of audio events consumed.
+pub fn usbaudio_poll() -> usize {
+    let audio = match unsafe { AUDIO } {
+        Some(a) => a,
+        None => return 0,
+    };
+    let mut n = 0;
+    // Bounded drain: QEMU's xhci executes a fresh isoch TD ~synchronously
+    // on doorbell, so drain->rearm->doorbell would otherwise never let
+    // poll_event() observe an empty ring (observed: 38k events in one
+    // "drain"). Cap each call; callers loop on their own conditions.
+    while n < 64 {
+        let evt = match poll_event() {
+            Some(e) => e,
+            None => break,
+        };
+        if evt.trb_type() != trb_type::TRANSFER_EVENT {
+            n += 1; // bound applies to every consumed TRB, not just ours
+            continue;
+        }
+        if evt.slot_id() != audio.slot_id || evt.endpoint_id() != audio.dci {
+            // Not ours — already consumed (see wart note); keep scanning.
+            n += 1;
+            continue;
+        }
+        let cc = evt.completion_code();
+        // Bytes moved = TD length - residual. The event's parameter is
+        // the physical address of the completed TRB; recover its index
+        // to read back the programmed length.
+        let idx = evt.parameter.wrapping_sub(unsafe { ISOC_RING_PHYS }) / 16;
+        let td_len = if (idx as usize) < RING_SIZE - 1 {
+            (unsafe { ISOC_RING.trbs[idx as usize] }.status & 0x1_FFFF) as u64
+        } else {
+            audio.max_esit_payload as u64
+        };
+        let moved = td_len.saturating_sub((evt.status & 0xFF_FFFF) as u64);
+        unsafe {
+            AUDIO_STATS.events += 1;
+            AUDIO_STATS.last_cc = cc;
+            match cc {
+                cc::SUCCESS => {
+                    AUDIO_STATS.ok += 1;
+                    AUDIO_STATS.bytes += moved;
+                }
+                cc::SHORT_PACKET => {
+                    AUDIO_STATS.bytes += moved;
+                    AUDIO_STATS.short_packets += 1;
+                }
+                _ => {
+                    AUDIO_STATS.errors += 1;
+                    if AUDIO_STATS.first_err_cc == 0 {
+                        AUDIO_STATS.first_err_cc = cc;
+                    }
+                }
+            }
+        }
+        // Trace the first few events only — enough for review/diagnosis
+        // without flooding the boot log on every stream.
+        if unsafe { ISOC_TRACE } && unsafe { AUDIO_STATS.events } <= 12 {
+            println!("[usbaudio] evt: td_idx={} cc={} moved={} rearm={}",
+                idx, cc, moved, unsafe { ISOC_REARM });
+        }
+        n += 1;
+        if unsafe { ISOC_REARM } {
+            arm_isoch_td(&audio);
+        }
+    }
+    n
+}
+
+/// Boot-time stream test: seed the ring, spin-drain the event ring until
+/// all ISOC_TDS TDs have completed (or a generous timeout), and log the
+/// tallies. This is the QEMU-verifiable evidence for the groundwork
+/// slice; it runs once at enumeration when an audio function is found.
+fn usbaudio_stream_test(audio: &AudioDevice) {
+    unsafe {
+        AUDIO_STATS = AudioStats {
+            events: 0, ok: 0, bytes: 0, short_packets: 0, errors: 0, last_cc: 0,
+            first_err_cc: 0,
+        };
+        ISOC_REARM = true;
+        ISOC_TRACE = true;
+    }
+    arm_isoch_tds(audio);
+    println!("[usbaudio] armed {} isoch TDs ({} B/ESIT, interval_log2={})",
+        ISOC_TDS, audio.max_esit_payload, audio.interval_log2);
+    // Phase 1 — stream until ISOC_TDS TDs have completed SUCCESSfully.
+    // The spin-count timeout is QEMU-oriented; before real-hardware use
+    // this wants a wall-clock bound (a stalled endpoint would otherwise
+    // hang boot for minutes).
+    // Note: QEMU 7.2's xhci posts a STALL+SUCCESS event pair for each
+    // re-armed TD (its isoch pacing is partial) — the STALLs are tallied
+    // in `err` but don't gate the pass; byte accounting stays honest.
+    let mut spins: u32 = 0;
+    while unsafe { AUDIO_STATS.ok } < ISOC_TDS as u32 && spins < 200_000_000 {
+        usbaudio_poll();
+        spins += 1;
+    }
+    // Phase 2 — wind down: stop re-arming, halt the endpoint properly
+    // (Stop Endpoint), then drain the events the halt flushes out.
+    unsafe { ISOC_REARM = false; }
+    stop_isoch_endpoint(audio.slot_id, audio.dci);
+    spins = 0;
+    let mut quiet_polls = 0;
+    while spins < 100_000_000 && quiet_polls < 32 {
+        if usbaudio_poll() == 0 {
+            quiet_polls += 1;
+        } else {
+            quiet_polls = 0;
+        }
+        spins += 1;
+    }
+    let s = unsafe { AUDIO_STATS };
+    unsafe { ISOC_TRACE = false; }
+    println!(
+        "[usbaudio] stream test: ok={} events={} bytes={} short={} err={} first_err_cc={} last_cc={} {}",
+        s.ok, s.events, s.bytes, s.short_packets, s.errors, s.first_err_cc, s.last_cc,
+        if s.ok >= ISOC_TDS as u32 && s.bytes >= (ISOC_TDS as u64) * (audio.max_esit_payload as u64) {
+            "PASS"
+        } else if s.ok > 0 || s.events > 0 {
+            "EVENTS-OK-BYTES-SHORT (check audiodev path)"
+        } else {
+            "FAIL"
+        },
+    );
+}
+
+/// Probe + configure a USB AudioStreaming Isoch-OUT function. Called
+/// from the config-descriptor walk after the HID keyboard check. Returns
+/// true if an audio function was found and configured (device claimed).
+fn try_enumerate_usbaudio(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    usb_addr: u8,
+    id_vendor: u16,
+    id_product: u16,
+    mps0: u16,
+    blob: &[u8],
+    cfg_val: u8,
+) -> bool {
+    let (ep, iface, alt, cfg) = match find_audio_streaming_out(blob, cfg_val) {
+        Some(t) => t,
+        None => return false,
+    };
+    if unsafe { AUDIO.is_some() } {
+        println!("[usbaudio] second audio function ignored (single-device model)");
+        return true;
+    }
+    // EndpointDescriptor is packed: copy fields to locals before any
+    // reference-taking context (println! formats by reference).
+    let ep_addr = ep.b_endpoint_address;
+    let ep_mps_raw = ep.w_max_packet_size;
+    let ep_interval = ep.b_interval;
+    println!(
+        "[usbaudio] AudioStreaming iface found: iface={} alt={} ep=0x{:02X} mps_raw={} bInterval={}",
+        iface, alt, ep_addr, ep_mps_raw, ep_interval
+    );
+
+    if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, cfg as u16, 0, 0) {
+        println!("[usbaudio] SET_CONFIGURATION failed");
+        return false;
+    }
+    // Audio streams only flow on a non-zero alternate setting.
+    if !control_out(slot_id, 0x01, request::SET_INTERFACE,
+                    alt as u16, iface as u16, 0) {
+        println!("[usbaudio] SET_INTERFACE(iface={}, alt={}) failed", iface, alt);
+        return false;
+    }
+
+    let dci = match configure_isoch_out(
+        slot_id, port, speed,
+        ep_addr, ep_mps_raw, ep_interval,
+    ) {
+        Some(d) => d,
+        None => return false,
+    };
+
+    let mps = ep_mps_raw & 0x07FF;
+    let transactions = if speed == 3 {
+        1 + (((ep_mps_raw >> 11) & 0x3) as u32)
+    } else {
+        1
+    };
+    let audio = AudioDevice {
+        slot_id,
+        iface,
+        alt,
+        ep_out: ep_addr,
+        dci,
+        max_packet: mps,
+        max_esit_payload: mps as u32 * transactions,
+        interval_log2: encode_isoch_interval(speed, ep_interval),
+        speed,
+    };
+    println!(
+        "[usbaudio] isoch-out configured: slot={} dci={} ESIT={} B interval_log2={}",
+        slot_id, dci, audio.max_esit_payload, audio.interval_log2
+    );
+    unsafe {
+        AUDIO = Some(audio);
+        // Publish the configured function, same as the HID/MSC paths, so
+        // slot bookkeeping (usbinfo, teardown, hub cascade) sees the
+        // isoch endpoint. Overwrites the generic post-address record.
+        let dev = EnumeratedDevice {
+            slot_id, usb_address: usb_addr, port, speed,
+            vendor: id_vendor, product: id_product,
+            max_packet_ep0: mps0,
+            is_keyboard: false,
+            kbd_ep_in: 0, kbd_ep_packet_size: 0, kbd_ep_interval: 0,
+            config_value: cfg,
+            interface_number: iface,
+            class: class::AUDIO,
+            audio_dci: dci,
+        };
+        DEVICE = Some(dev);
+        ENUMERATED_SLOTS[slot_id as usize] = Some(dev);
+    }
+    usbaudio_stream_test(&audio);
+    true
 }
 
 /// Run a Mass Storage transaction: build CBW, push it OUT, transfer data,

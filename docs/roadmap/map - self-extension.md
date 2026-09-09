@@ -56,11 +56,28 @@ not code**, so it updates live AND survives a kernel rebuild for free.
 
 
 
-**Remaining for the headline demo:** an agent tool that drops a compiled ELF at
-`/apps/<name>` and spawns it at **tier 0**; then the demo — "ask the agent to add a
-`greet` command, it works seconds later, the kernel never rebuilt." The tier-0
-fence + `SYS_VOUCH`/`SYS_VOUCHES` (console-only elevation, bytes-bound) are already
-in the kernel. See `project_semos_module_loader`,
+**Headline demo — DONE 2026-09-05 (QEMU):** `demo93_greet` + the `greet93-test`
+two-boot feeder deliver "ask the agent to add a `greet` command, it works seconds
+later, the kernel never rebuilt" — with the SemFS persistence beat: the
+agent-added command **survives a hard power cycle**. Boot 1: the feeder types
+`greet` at sem-sh (`command not found` — the unknown-command beat), then
+`selfdev 93`; the demo seeds `/tmp/agentgen/m93/` (feature spec + `greet.rs`),
+compiles on-device, verifies byte-exact in isolation, waits at the same fail-fast
+serial/TTY approval gate (`Install /apps/greet? [y/N]`), then installs via the
+atomic `/apps/.staging` rename and smokes bare `greet` fenced at tier 0. Because
+the SemFS journal is write-through, the install is durable the moment the rename
+returns; the harness then **hard-kills QEMU mid-session** (no clean shutdown).
+Boot 2: the journal replays, `/apps/greet` resolves, the feeder runs it by bare
+name and byte-exact checks the greeting (`[DEMO 93] PASS: greet persisted across
+hard-kill reboot`), then types `selfdev 80` as a coexistence smoke (`[DEMO 80]
+PASS`). Harness: `run-greet93-qemu.sh` (answers the approval gate 'y' over the
+serial pipe). Guest source: `user-programs/semos-rustc/test-sources/greet.rs` —
+fixed greeting compiled in (no argv: cg_clif lacks the rsp-grab trampoline);
+`GREET_EXPECTED` in main.rs must stay byte-identical to its `GREETING`. sem-sh's
+`selfdev` builtin now accepts 93.
+
+The tier-0 fence + `SYS_VOUCH`/`SYS_VOUCHES` (console-only elevation, bytes-bound)
+are already in the kernel. See `project_semos_module_loader`,
 [`VOUCH_MECHANISM_DESIGN_2026-06-15.md`](../VOUCH_MECHANISM_DESIGN_2026-06-15.md).
 
 ---
@@ -70,14 +87,16 @@ in the kernel. See `project_semos_module_loader`,
 `semos install` tools without manual ELF copying. From-scratch: the package
 manager is yours; vendored deps are patched + audited.
 
-### M43 — Package manager (`semos-pkg`) `[  ]`
-- [ ] `install <crate>` → download from a crates.io mirror, compile, install to `/apps/`
-- [ ] `remove` / `update`; dependency resolution (DAG, not full cargo resolver in v1)
-- [ ] DEMO 89: `semos install ripgrep` → downloads, compiles, installs `/bin/rg`
+### M43 — Package manager (`semos-pkg`) — DONE 2026-09-05 (QEMU)
+- [x] `install <pkg>` → resolve from the local mirror, compile on-device, install to `/apps/` — as the `semos` sem-sh builtin over SYS_SEMOSPKG (142): `update | list | fetch | install | remove`
+- [x] `remove` / `update`; DAG dependency resolution (topo order, cycle-detect; no version solver in v1)
+- [x] DEMO 89: `semos install motd` → resolves `fortune → motd`, concatenates lib+bin behind a shared sys_* prelude, compiles on-device, byte-exact selftest, serial-approved, `/apps/motd` via staging rename, bare-name tier-0 smoke — `[DEMO 89] PASS`
+- Scope note: the roadmap's literal `semos install ripgrep` needs std + ~40 deps + LLVM-grade codegen; v1 packages are SemOS-format no_std guests (docs/semos-pkg-design.md §0). The machinery — index, DAG, cache, approval-gated install — is the deliverable.
 
-### M44 — crates.io mirror / cache `[  ]`
-- [ ] local registry index clone; tarball cache (`/var/cache/crates/`); offline mode
-- [ ] DEMO 90: install a cached crate with no network
+### M44 — crates.io mirror / cache — DONE 2026-09-05 (QEMU)
+- [x] local registry index clone (`/var/lib/semos-pkg/registry.sem`); tarball cache (`/var/cache/crates/`) — both SemFS-journaled, so offline state survives hard kills; mirror = raw `SEMREG01` blob at virtio0 LBA 16 (legacy snapshot region, below the journal at LBA 8192), host-built by `tools/make-registry-image.py`
+- [x] DEMO 90: mirror region host-wiped between boots → `semos install cowsay` resolves from clone+cache only → `[DEMO 90] PASS: offline install from local cache`; bonus beat: boot-1's `motd` re-runs byte-exact after the hard kill (journaled install)
+- Harness: `run-semos-pkg-qemu.sh` (feature `pkg-test`; answers approval gates 'y' over serial). v1.1 candidates: HTTPS fetch via the existing TLS stack, index hash-pinning.
 
 ---
 
@@ -88,16 +107,27 @@ The whole project points here: an OS that codes, modifies, rebuilds, and reboots
 above); kernel self-rebuild = rebuild image → reboot, made to *feel* live by being
 fast + stateful (phone-OTA model), done **without bricking the machine**.
 
+**Design: [`self-rebuild-design.md`](../self-rebuild-design.md) (2026-09-05)** —
+brick-vector threat model, SRBL slot record at LBA 8190/8191 (SemFS superblock
+pattern), EMPTY→STAGED→PENDING→TRIAL→HEALTHY→PROMOTED/REVERTED state machine,
+P-3 hash-bound vouch, auto-revert as the default failure direction, DEMO 94/95/96
+QEMU plan. M22a = the machinery (harness plays the loader); M22b = the chainloader
+that makes the boot switch physical.
+
 ### M22a — Self-host the full kernel build on-device `[  ]`
 - [ ] on-device rustc compiles `kernel-core` to a `.rlib` on the machine
 - [ ] full kernel image rebuilt on-device from its own source tree
 - [ ] rebuilt image byte-reproducible vs the host-built one (or diff understood)
 
-### M22b — A/B boot slots + watchdog rollback `[  ]`
+### M22b — A/B boot slots + watchdog rollback — MACHINERY DONE 2026-09-08 (QEMU)
 The non-negotiable safety net — a self-modifying OS *will* produce a broken kernel.
-- [ ] two slots (A/B) + boot selector preferring the active one; new image → INACTIVE slot
-- [ ] watchdog: B must write a "healthy" marker within N seconds or next boot reverts to A
-- [ ] DEMO: flash a deliberately broken kernel to B → machine auto-recovers to A
+- [x] two slots (A/B) as fixed-LBA disk regions; new image → INACTIVE slot only (`rebuild stage` from the drop zone, streaming + sha256 + readback verify)
+- [x] watchdog-equivalent: the trial kernel must run the health gate and set HEALTHY *from within the trial*; a stale TRIAL at next boot auto-reverts to last-known-good (no timer needed — the record IS the watchdog)
+- [x] DEMO 94: candidate staged → hash-bound human vouch → trial boot → health gate → `rebuild keep` → PROMOTED
+- [x] DEMO 95: sabotage candidate (health gate deliberately fails) → next boot of the previous kernel sees the stale TRIAL → auto-REVERTED — the anti-brick proof
+- [x] DEMO 96: host-corrupted staged image → hash mismatch at `boot-next` → refused before any reboot
+- [ ] the chainloader itself (the boot switch is harness-performed in QEMU; making it physical on the T540p is the remaining piece)
+- Harness: `tools/run-rebuild-qemu.sh` (feature `rebuild-test`, six boots, VERDICT: PASS). SemFS journal log now bounded (32768 sectors) so slot regions are never journal traffic. `SEMOS_BUILD_TAG` env override in build.rs tags slot builds.
 
 ### M22c — Versioned state-migration blob + ABI versioning `[  ]`
 - [ ] versioned `system-state` blob the old kernel writes / new kernel migrates

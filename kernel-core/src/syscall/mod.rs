@@ -198,6 +198,21 @@ pub mod numbers {
                                             // /apps; the agent must never trigger a
                                             // self-modify cycle. Blocks in the caller's
                                             // context like SYS_DEMOS.
+    // M43/M44 semos-pkg (docs/semos-pkg-design.md): local package manager.
+    pub const SYS_SEMOSPKG:     u64 = 142;  // (op, name_ptr, name_len) -> 0 / u64::MAX.
+                                            // ops: 1=update 2=list 3=fetch 4=install
+                                            // 5=remove. LIST is read-only (any task);
+                                            // the rest are CONSOLE ONLY — install
+                                            // lands in /apps behind the human approval
+                                            // gate, so the agent must never drive it.
+    // M22a self-rebuild (docs/self-rebuild-design.md).
+    pub const SYS_REBUILD:      u64 = 143;  // (op) -> 0 / u64::MAX. ops: 1=status
+                                            // (read-only, any task) 2=stage
+                                            // 3=boot-next 4=keep 5=revert — all
+                                            // CONSOLE ONLY: stage/boot-next write
+                                            // raw disk and arm a kernel swap;
+                                            // boot-next and keep additionally pass
+                                            // the hash-bound human approval gate.
     // SYS_SYSINFO (73) is wired to heap stats: (buf_ptr, buf_len>=24) -> 0/err,
     // writes [used:u64][free:u64][free_blocks:u64].
 
@@ -244,7 +259,9 @@ pub mod numbers {
     /// wrapper). CONSOLE ONLY: this writes to disk, so the agent (tier 0) and
     /// arbitrary Ring-3 tasks cannot reach it — only the human-initiated
     /// `log flush` builtin. Returns bytes appended | u64::MAX on error.
-    pub const SYS_LOGFILE: u64 = 142;
+    /// (Numbered 144 — 142/143 were taken by SYS_SEMOSPKG/SYS_REBUILD on
+    /// the M22a branch; renumbered at the merge.)
+    pub const SYS_LOGFILE: u64 = 144;
 
     /// Returned by SYS_TCP_READ / SYS_TCP_WRITE when the socket isn't ready
     /// yet (no data / tx full). Distinct from 0 (EOF on read) and u64::MAX
@@ -390,6 +407,40 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
                 return u64::MAX;
             }
             crate::platform::get().run_selfdev(arg0)
+        }
+
+        // M43/M44 semos-pkg (the `semos` builtin). `list` (op 2) is read-only
+        // and allowed anywhere; update/fetch/install/remove mutate the
+        // namespace and install into /apps, so they are console-only (same
+        // authority gate as SYS_SELFDEV).
+        SYS_SEMOSPKG => {
+            const SEMOSPKG_OP_LIST: u64 = 2;
+            if arg0 != SEMOSPKG_OP_LIST && !is_vouch_authority() {
+                crate::platform::log("[semos-pkg] DENIED: caller is not the interactive console\n");
+                return u64::MAX;
+            }
+            let name = if arg2 > 0 {
+                match unsafe { read_caller_str(arg1, arg2) } {
+                    Some(s) => Some(s),
+                    None => return u64::MAX,
+                }
+            } else {
+                None
+            };
+            crate::platform::get().run_semospkg(arg0, name)
+        }
+
+        // M22a self-rebuild (the `rebuild` builtin). `status` (op 1) is
+        // read-only and allowed anywhere; stage/boot-next/keep/revert mutate
+        // raw disk or the boot path, so they are console-only (same
+        // authority gate as SYS_SELFDEV / SYS_SEMOSPKG).
+        SYS_REBUILD => {
+            const REBUILD_OP_STATUS: u64 = 1;
+            if arg0 != REBUILD_OP_STATUS && !is_vouch_authority() {
+                crate::platform::log("[rebuild] DENIED: caller is not the interactive console\n");
+                return u64::MAX;
+            }
+            crate::platform::get().run_rebuild(arg0)
         }
 
         // M56 pairing. `pair` and `unpair` mutate device trust, so they are
@@ -1493,6 +1544,18 @@ fn handle_fwrite(fd: u64, buf_ptr: u64, buf_len: u64) -> u64 {
                 // Too big to splice on the stack — whole-file overwrite.
                 crate::semantic::object::ObjectContent::from_bytes(data)
             };
+            // SemFS journal (write-through): this path mutates content
+            // through get_mut(), bypassing registry::insert — so append
+            // the new state BEFORE assigning it (durable strictly before
+            // visible). On disk error the write fails and the in-RAM
+            // content keeps its prior (still-durable) value.
+            let new_bytes: &[u8] = match new_content.as_ref().and_then(|c| c.as_bytes()) {
+                Some(b) => b,
+                None => return u64::MAX,
+            };
+            if !crate::semantic::journal::on_update(obj, new_bytes) {
+                return u64::MAX;
+            }
             obj.content = match new_content {
                 Some(c) => c,
                 None => return u64::MAX,
@@ -1647,6 +1710,11 @@ fn encode_statx(st: &StatX, out: &mut [u8; core::mem::size_of::<StatX>()]) {
 /// std::fs::File::sync_all maps to this; cargo's atomic-rename
 /// build flow depends on it.
 fn handle_fsync() -> u64 {
+    // SemFS journal mounted: write-through means every mutation was
+    // durable before it returned — fsync is already done.
+    if crate::semantic::journal::is_mounted() {
+        return 0;
+    }
     let dev = match crate::drivers::registry::get_block("virtio0") {
         Some(d) => d,
         None => {

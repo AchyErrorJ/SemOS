@@ -103,6 +103,14 @@ impl ObjectRegistry {
 
         let bucket_idx = Self::hash(&suid);
 
+        // SemFS journal (write-through): append BEFORE making the object
+        // visible. On disk error the insert is aborted — durable and
+        // visible are the same event. No-op until the journal is mounted
+        // (and during mount replay).
+        if !super::journal::on_insert(&object) {
+            return false;
+        }
+
         // Create entry
         let entry = RegistryEntry {
             suid,
@@ -167,6 +175,13 @@ impl ObjectRegistry {
         while let Some(idx) = current {
             if let Some(entry) = &self.entries[idx] {
                 if entry.suid == *suid {
+                    // SemFS journal (write-through): append the tombstone
+                    // BEFORE any in-memory mutation. On disk error, abort
+                    // the remove — the registry is untouched.
+                    if !super::journal::on_remove(suid) {
+                        return None;
+                    }
+
                     // Found it - remove from chain
                     let next = entry.next;
 

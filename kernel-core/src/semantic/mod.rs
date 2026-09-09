@@ -31,6 +31,7 @@
 pub mod suid;
 pub mod object;
 pub mod registry;
+pub mod journal;
 pub mod capability;
 pub mod vector;
 pub mod search;

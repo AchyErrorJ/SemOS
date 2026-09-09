@@ -22,11 +22,34 @@ interactive = []
 # boots don't carry the compiler, and the image stays under the QEMU-BIOS
 # load-segment ceiling.
 autocompile = []
+# `semfs-test`: DEMO 91/92 SemFS journal boot protocol (persistence +
+# torn-tail recovery) for QEMU runs; off by default.
+semfs-test = []
 # `selfdev80-test`: headless DEMO 80 smoke for QEMU/serial runs — pre-types
 # `selfdev 80` through the TTY (vouch-test pattern; serial is output-only on
 # this kernel) so sem-sh runs it as its first command. Implies autocompile.
 # Off by default.
 selfdev80-test = ["autocompile"]
+# `greet93-test`: headless DEMO 93 headline demo for QEMU runs — a feeder
+# task types `greet` (unknown command) then `selfdev 93` on boot 1, and on
+# boot 2 verifies the agent-installed command survived a hard kill via the
+# SemFS journal and still runs byte-exact, then smokes DEMO 80. Implies
+# autocompile. Off by default.
+greet93-test = ["autocompile"]
+# `pkg-test`: headless DEMO 89/90 semos-pkg demo for QEMU runs — a feeder
+# task drives `semos update/list/install motd/fetch cowsay` on boot 1
+# (mirror present) and `semos install cowsay` offline from the SemFS-backed
+# cache on boot 2 (mirror region wiped by the host), then re-verifies motd.
+# Implies autocompile. Off by default.
+pkg-test = ["autocompile"]
+# `rebuild-test`: headless DEMO 94/95/96 self-rebuild demo for QEMU runs —
+# a feeder drives the slot state machine per boot from the SRBL record
+# (stage / boot-next / keep); the harness plays the M22b loader by choosing
+# which UEFI image boots. Implies autocompile (health gate spawns sem-sh).
+rebuild-test = ["autocompile"]
+# `rebuild-sabotage`: candidate build whose health gate deliberately fails
+# (DEMO 95 auto-revert proof). Build with SEMOS_BUILD_TAG=REBUILD-SAB.
+rebuild-sabotage = ["rebuild-test"]
 # Minimal-boot trims (all OFF by default = the slim boot). Each re-enables a
 # probe the slim boot skips:
 # `net-extra`: virtio-net (QEMU slirp NIC) probe + smoltcp bring-up. QEMU

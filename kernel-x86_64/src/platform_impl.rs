@@ -313,6 +313,16 @@ impl Platform for X86Platform {
         crate::run_selfdev(demo)
     }
 
+    fn run_semospkg(&self, op: u64, name: Option<&str>) -> u64 {
+        // One semos-pkg op in the caller's context (same model as selfdev).
+        crate::run_semos_pkg(op, name)
+    }
+
+    fn run_rebuild(&self, op: u64) -> u64 {
+        // One self-rebuild slot op in the caller's context.
+        crate::rebuild::run_rebuild(op)
+    }
+
     fn run_pair(&self, qr_ptr: u64, qr_len: u64) -> u64 {
         // The console gate is enforced by the dispatcher; here we just run the
         // handshake (TCP + crypto + SAS confirm) in the caller's context.

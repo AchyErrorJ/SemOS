@@ -92,6 +92,7 @@ pub mod framebuffer;
 pub mod font;
 pub mod gfx2d;
 pub mod pci;
+pub mod rebuild;
 pub mod virtio;
 pub mod rng;
 pub mod rtc;
@@ -131,7 +132,7 @@ pub static BOOTLOADER_CONFIG: BootloaderConfig = {
 
 entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
-const SEMOS_BUILD_TAG: &str = match option_env!("SEMOS_BUILD_TAG") {
+pub(crate) const SEMOS_BUILD_TAG: &str = match option_env!("SEMOS_BUILD_TAG") {
     Some(value) => value,
     None => "unknown",
 };
@@ -744,6 +745,49 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     // Semantic object system
     kernel_core::semantic::registry::init_global_registry();
     println!("    Semantic registry: initialized");
+    // SemFS journal (docs/semfs-journal-design.md): write-through
+    // durability for the object store. Lives at the 4 MiB mark on
+    // virtio0 (LBA 8192+), past the legacy whole-tree snapshot region
+    // (LBA 0..8192). MUST mount BEFORE Namespace::init() and all seed
+    // registration: replayed directory entries must never reference
+    // RAM-only seed objects (a seed journaled into a directory but never
+    // journaled itself dangles after reboot — the DEMO 80 /hello.rs
+    // regression). With the journal first, every seed is persisted as it
+    // is created, and replayed trees are self-contained.
+    if let Some(dev) = kernel_core::drivers::registry::get_block("virtio0") {
+        let block_count = dev.block_count();
+        const SEMFS_SB_LBA: u64 = 8192; // 4 MiB mark
+        if block_count > SEMFS_SB_LBA + 2 {
+            // Bound the log so the M22a self-rebuild regions above it
+            // (drop zone / slot A / slot B) are never journal traffic.
+            let log_sectors = (block_count - SEMFS_SB_LBA - 2).min(rebuild::JOURNAL_LOG_CAP);
+            match kernel_core::semantic::journal::mount(
+                dev, SEMFS_SB_LBA, log_sectors,
+            ) {
+                kernel_core::semantic::journal::MountOutcome::Mounted { records, torn } =>
+                    println!("    SemFS journal: mounted, replayed {} record(s){}",
+                        records, if torn { " (torn tail truncated)" } else { "" }),
+                kernel_core::semantic::journal::MountOutcome::Formatted =>
+                    println!("    SemFS journal: fresh disk formatted"),
+                kernel_core::semantic::journal::MountOutcome::Unavailable => {
+                    println!("    SemFS journal: unavailable — RAM-only this boot");
+                    match kernel_core::fs::paths::Namespace::load(dev) {
+                        Ok(n) => println!("    Path namespace: loaded {} bytes from virtio0 (prior-boot snapshot)", n),
+                        Err(_) => println!("    Path namespace: no prior snapshot on virtio0 (fresh disk)"),
+                    }
+                }
+            }
+        } else {
+            println!("    SemFS journal: virtio0 too small ({} sectors) — RAM-only", block_count);
+        }
+    }
+
+    // M22a self-rebuild: if the slot record says a trial is armed, decide
+    // whether WE are the candidate (arm the health gate; the rebuild-test
+    // feeder runs it) or a stale trial is being reverted (auto-revert is
+    // the default failure direction). Cheap no-op when no record exists.
+    rebuild::boot_check();
+
     kernel_core::semantic::vector::init_global_vector_index();
     println!("    Vector index: initialized");
     kernel_core::semantic::search::init_global_search();
@@ -770,7 +814,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         use kernel_core::fs::paths::Namespace;
         use kernel_core::semantic::object::SecurityTier;
         if Namespace::create_file("/hello.rs", SecurityTier::Public, HELLO_RS_SOURCE).is_err() {
-            println!("    [WARN] DEMO 80: failed to register /hello.rs in namespace");
+            // With the SemFS journal mounted, a prior boot already
+            // persisted /hello.rs — verify it's readable rather than WARN.
+            let mut probe = [0u8; 16];
+            if Namespace::read_file_into("/hello.rs", &mut probe).is_ok() {
+                println!("    DEMO 80: /hello.rs already persisted (SemFS replay) + /tmp dir");
+            } else {
+                println!("    [WARN] DEMO 80: failed to register /hello.rs in namespace");
+            }
         } else {
             println!("    DEMO 80: /hello.rs registered ({} bytes) + /tmp dir", HELLO_RS_SOURCE.len());
         }
@@ -781,12 +832,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             println!("    Agent template: /templates/snake.rs ({} bytes)", SNAKE_TEMPLATE_SOURCE.len());
         }
     }
-    if let Some(dev) = kernel_core::drivers::registry::get_block("virtio0") {
-        match kernel_core::fs::paths::Namespace::load(dev) {
-            Ok(n) => println!("    Path namespace: loaded {} bytes from virtio0 (prior-boot snapshot)", n),
-            Err(_) => println!("    Path namespace: no prior snapshot on virtio0 (fresh disk)"),
-        }
-    }
+    // `--features semfs-test`: DEMO 91/92 boot protocol for the SemFS
+    // journal (docs/semfs-journal-design.md §7). Boot 1 writes markers;
+    // hard-kill; boot 2 verifies byte-exact persistence (91) and torn-tail
+    // truncation (92, when the host corrupts the final record's CRC).
+    #[cfg(feature = "semfs-test")]
+    semfs_test_boot();
 
     // LLM services (context builder, redactor, summarizer, provider)
     kernel_core::llm::init();
@@ -981,6 +1032,43 @@ fn init_loader_task() {
         }
     }
 
+    // `--features greet93-test`: headless DEMO 93 headline demo — two-boot
+    // feeder (see greet93_test_task). Boot 1 types `greet` (expect: command
+    // not found) then `selfdev 93`; the QEMU harness answers the approval
+    // gate 'y' over the serial pipe. Boot 2 verifies the install survived
+    // the hard kill and still runs byte-exact, then smokes DEMO 80.
+    #[cfg(feature = "greet93-test")]
+    {
+        match crate::context::spawn_task("greet93-test", greet93_test_task) {
+            Some(slot) => println!("[greet93-test] feeder task in slot {}", slot),
+            None => println!("[greet93-test] could not spawn feeder task"),
+        }
+    }
+
+    // `--features pkg-test`: headless DEMO 89/90 semos-pkg demo — two-boot
+    // feeder (see pkg_test_task). Boot 1 installs from the mirror; boot 2
+    // installs offline from the SemFS-backed cache after the host wipes the
+    // mirror region. The harness answers the approval gates 'y' over serial.
+    #[cfg(feature = "pkg-test")]
+    {
+        match crate::context::spawn_task("pkg-test", pkg_test_task) {
+            Some(slot) => println!("[pkg-test] feeder task in slot {}", slot),
+            None => println!("[pkg-test] could not spawn feeder task"),
+        }
+    }
+
+    // `--features rebuild-test`: headless DEMO 94/95/96 self-rebuild demo —
+    // feeder drives the slot state machine per boot based on the SRBL
+    // record (see rebuild_test_task); the harness plays the M22b loader by
+    // choosing which UEFI image boots and answers the gates 'y' over serial.
+    #[cfg(feature = "rebuild-test")]
+    {
+        match crate::context::spawn_task("rebuild-test", rebuild_test_task) {
+            Some(slot) => println!("[rebuild-test] feeder task in slot {}", slot),
+            None => println!("[rebuild-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1030,6 +1118,70 @@ fn vouch_test_task() {
 
 /// `--features selfdev80-test` feeder: types `selfdev 80` into the TTY once
 /// the shell is up. PARKS instead of returning — see below.
+/// DEMO 91/92 — SemFS journal persistence + torn-tail recovery.
+/// Two-boot protocol (driven by the QEMU harness):
+///   boot 1: markers absent → write A + B, ask for a hard kill.
+///   boot 2: A present + byte-exact → DEMO 91 PASS. B absent (host
+///   corrupted its record's CRC) → DEMO 92 PASS; then write C to prove
+///   the journal keeps accepting appends after truncation.
+#[cfg(feature = "semfs-test")]
+fn semfs_test_boot() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+
+    const MARKER_A: &[u8] = b"SEMFS-MARKER-A: the journal survived a hard kill\n";
+    const MARKER_B: &[u8] = b"SEMFS-MARKER-B: this record will be torn by the host\n";
+    const MARKER_C: &[u8] = b"SEMFS-MARKER-C: appends continue after truncation\n";
+
+    let _ = Namespace::mkdir("/apps");
+
+    let mut buf = [0u8; 128];
+    match Namespace::read_file_into("/apps/journal-a.txt", &mut buf) {
+        Err(_) => {
+            // Boot 1: write the markers.
+            let ok_a = Namespace::create_file("/apps/journal-a.txt", SecurityTier::Public, MARKER_A).is_ok();
+            let ok_b = Namespace::create_file("/apps/journal-b.txt", SecurityTier::Public, MARKER_B).is_ok();
+            if ok_a && ok_b {
+                println!("[DEMO 91] markers A+B written and durable — hard-kill and reboot to verify");
+            } else {
+                println!("[DEMO 91] FAIL: could not write markers (a={} b={})", ok_a, ok_b);
+            }
+        }
+        Ok(n) => {
+            // Boot 2+: verify A byte-exact.
+            let a_ok = n == MARKER_A.len() && &buf[..n] == MARKER_A;
+            if a_ok {
+                println!("[DEMO 91] PASS: /apps/journal-a.txt persisted byte-exact across hard-kill reboot");
+            } else {
+                println!("[DEMO 91] FAIL: marker A corrupt ({} bytes)", n);
+            }
+            // B: present = no torn tail was injected; absent = DEMO 92.
+            match Namespace::read_file_into("/apps/journal-b.txt", &mut buf) {
+                Ok(_) => println!("[DEMO 92] no torn tail injected (B intact) — harness may inject and reboot"),
+                Err(_) => {
+                    println!("[DEMO 92] PASS: torn record dropped at replay, marker A intact");
+                    // Idempotent: C may already exist from a prior boot.
+                    let c_ok = match Namespace::create_file("/apps/journal-c.txt", SecurityTier::Public, MARKER_C) {
+                        Ok(_) => true,
+                        Err(_) => {
+                            let mut cbuf = [0u8; 128];
+                            match Namespace::read_file_into("/apps/journal-c.txt", &mut cbuf) {
+                                Ok(cn) => cn == MARKER_C.len() && &cbuf[..cn] == MARKER_C,
+                                Err(_) => false,
+                            }
+                        }
+                    };
+                    if c_ok {
+                        println!("[DEMO 92] PASS: journal accepts appends after truncation");
+                    } else {
+                        println!("[DEMO 92] FAIL: append after truncation failed");
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(feature = "selfdev80-test")]
 fn selfdev80_test_task() {
     use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
@@ -1051,7 +1203,221 @@ fn selfdev80_test_task() {
     }
 }
 
-/// SYS_SELFDEV backing: run ONE self-dev demo (80|83|87|88) on demand from
+/// `--features greet93-test` feeder: the DEMO 93 two-boot state machine.
+///   boot 1 (/apps/greet absent): type `greet` — sem-sh answers
+///     "command not found", the unknown-command beat — then `selfdev 93`.
+///     The demo compiles, tests, and waits at the approval gate; the QEMU
+///     harness answers 'y' over the serial pipe.
+///   boot 2 (/apps/greet resolves from the replayed journal): run it by
+///     bare name in a fenced tier-0 sem-sh, byte-exact check the greeting,
+///     then type `selfdev 80` as a coexistence smoke.
+/// Parks forever at the end — see selfdev80_test_task.
+#[cfg(feature = "greet93-test")]
+fn greet93_test_task() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    // Let the shell spawn and reach its first prompt before typing.
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    match Namespace::resolve("/apps/greet") {
+        Err(_) => {
+            println!("[DEMO 93] boot 1: /apps/greet absent — typing `greet` (expect: command not found)");
+            for &b in b"greet\n" {
+                tty::input_push(b);
+            }
+            let _ = dispatch(SYS_SLEEP, 3 * 62, 0, 0, 0);
+            for &b in b"selfdev 93\n" {
+                tty::input_push(b);
+            }
+            println!("[greet93-test] typed 'selfdev 93' — demo running (approval via serial 'y')");
+        }
+        Ok(_) => {
+            println!("[DEMO 93] boot 2: /apps/greet present after hard kill — journal replayed the install");
+            const OUT: &str = "/tmp/greet93-reboot.out";
+            let _ = Namespace::unlink(OUT);
+            let run = ["/bin/sem-sh", "-c", "greet > /tmp/greet93-reboot.out"];
+            match demo80_spawn_wait("/bin/sem-sh", &run, 3) {
+                Some(0) => match demo83_read_file(OUT) {
+                    Some(out) if out.as_slice() == GREET_EXPECTED => {
+                        println!("[DEMO 93] PASS: greet persisted across hard-kill reboot (output byte-exact)");
+                    }
+                    _ => println!("[DEMO 93] FAIL: post-reboot greet output mismatch"),
+                },
+                _ => println!("[DEMO 93] FAIL: post-reboot greet run failed"),
+            }
+            // Coexistence smoke: DEMO 80 still green on the same kernel.
+            let _ = dispatch(SYS_SLEEP, 3 * 62, 0, 0, 0);
+            for &b in b"selfdev 80\n" {
+                tty::input_push(b);
+            }
+            println!("[greet93-test] typed 'selfdev 80' — coexistence smoke running");
+        }
+    }
+    // Park instead of returning: task_exit_stub (context.rs) hlt-loops
+    // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// `--features pkg-test` feeder: the DEMO 89/90 two-boot state machine.
+///   boot 1 (mirror blob readable at virtio0 LBA 16): `semos update` clones
+///     the registry into the journaled namespace, `semos list` shows the
+///     index, `semos install motd` exercises the DAG resolver (fortune ->
+///     motd), on-device compile, byte-exact selftest, serial-approved
+///     install -> [DEMO 89] PASS; then `semos fetch cowsay` warms the cache.
+///   boot 2 (mirror region wiped by the host; journal intact): `semos
+///     install cowsay` resolves from clone+cache only -> [DEMO 90] PASS;
+///     then a fenced `motd` re-run proves boot 1's install survived the
+///     hard kill (journaled namespace).
+/// Parks forever at the end — see selfdev80_test_task.
+#[cfg(feature = "pkg-test")]
+fn pkg_test_task() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    const MOTD_EXPECT: &[u8] =
+        b"message of the day:\nfortune: a journaled thought survives the crash\n";
+
+    // Let the shell spawn and reach its first prompt before typing.
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    if pkg_read_mirror().is_some() {
+        println!("[pkg-test] boot 1: mirror present — update / list / install motd / fetch cowsay");
+        let script: [(&str, u64); 4] = [
+            ("semos update\n", 5),
+            ("semos list\n", 5),
+            // Compile + approval gate + install + smoke take minutes.
+            ("semos install motd\n", 300),
+            ("semos fetch cowsay\n", 10),
+        ];
+        for (line, pause) in script {
+            for &b in line.as_bytes() {
+                tty::input_push(b);
+            }
+            let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+        }
+        println!("[pkg-test] boot1 script done — hard-kill, wipe the mirror region, reboot");
+    } else {
+        println!("[pkg-test] boot 2: mirror ABSENT — offline install cowsay from the local cache");
+        for &b in b"semos install cowsay\n" {
+            tty::input_push(b);
+        }
+        let _ = dispatch(SYS_SLEEP, 300 * 62, 0, 0, 0);
+        // Journaled-install persistence: motd (installed on boot 1) still
+        // runs byte-exact after the hard kill.
+        const OUT: &str = "/tmp/pkg-motd-reboot.out";
+        let _ = Namespace::unlink(OUT);
+        let run = ["/bin/sem-sh", "-c", "motd > /tmp/pkg-motd-reboot.out"];
+        match demo80_spawn_wait("/bin/sem-sh", &run, 3) {
+            Some(0) => match demo83_read_file(OUT) {
+                Some(out) if out.as_slice() == MOTD_EXPECT => {
+                    println!("[DEMO 89] persistence: motd (installed boot 1) still runs byte-exact after hard kill");
+                }
+                _ => println!("[pkg-test] WARN: motd post-reboot output mismatch"),
+            },
+            _ => println!("[pkg-test] WARN: motd post-reboot run failed"),
+        }
+        println!("[pkg-test] boot2 script done");
+    }
+    // Park instead of returning: task_exit_stub (context.rs) hlt-loops
+    // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// `--features rebuild-test` feeder: the DEMO 94/95/96 slot state machine,
+/// keyed on (trial_active, SRBL state):
+///   - trial boot (tag matches): run the health gate (journal mounted +
+///     namespace readable + fenced sem-sh spawn), mark HEALTHY, then type
+///     `rebuild keep` (serial-approved) → PROMOTED → [DEMO 94] PASS.
+///     With `rebuild-sabotage` the gate deliberately FAILS (DEMO 95 setup).
+///   - no record / EMPTY: `rebuild status` + `rebuild stage`.
+///   - STAGED: `rebuild boot-next` (refused if the host corrupted the slot
+///     → [DEMO 96] PASS), then re-stage clean and arm the trial.
+///   - PROMOTED: stage the next (sabotage) candidate and arm its trial.
+///   - stale TRIAL on a non-candidate kernel: handled at boot_check
+///     (→ REVERTED, [DEMO 95] PASS) before this feeder runs.
+/// Parks forever at the end — see selfdev80_test_task.
+#[cfg(feature = "rebuild-test")]
+fn rebuild_test_task() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
+
+    let _ = dispatch(SYS_SLEEP, 5 * 62, 0, 0, 0);
+    if rebuild::trial_active() {
+        #[cfg(feature = "rebuild-sabotage")]
+        {
+            println!("[rebuild] health gate FAILED (sabotage build) — staying TRIAL");
+        }
+        #[cfg(not(feature = "rebuild-sabotage"))]
+        {
+            // Health gate: state readable (journal replayed), namespace
+            // alive, fenced spawn works.
+            let journal_ok = kernel_core::semantic::journal::is_mounted();
+            let ns_ok = Namespace::resolve("/hello.rs").is_ok();
+            let spawn_ok =
+                demo80_spawn_wait("/bin/sem-sh", &["/bin/sem-sh", "-c", "true"], 3) == Some(0);
+            if journal_ok && ns_ok && spawn_ok {
+                rebuild::mark_healthy();
+                let _ = dispatch(SYS_SLEEP, 3 * 62, 0, 0, 0);
+                for &b in b"rebuild keep\n" {
+                    tty::input_push(b);
+                }
+                println!("[rebuild-test] typed 'rebuild keep' (approval via serial 'y')");
+            } else {
+                println!(
+                    "[rebuild] health gate FAILED: journal={} ns={} spawn={}",
+                    journal_ok, ns_ok, spawn_ok
+                );
+            }
+        }
+    } else {
+        match rebuild::current_state() {
+            None | Some(rebuild::SRBL_EMPTY) => {
+                for (line, pause) in [("rebuild status\n", 5u64), ("rebuild stage\n", 600)] {
+                    for &b in line.as_bytes() {
+                        tty::input_push(b);
+                    }
+                    let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+                }
+                println!("[rebuild-test] staged — host: corrupt the slot, reboot");
+            }
+            Some(rebuild::SRBL_STAGED) => {
+                for (line, pause) in [
+                    ("rebuild boot-next\n", 30u64), // refused if host corrupted (DEMO 96)
+                    ("rebuild stage\n", 600),       // clean re-stage
+                    ("rebuild boot-next\n", 30),    // gate 'y' -> TRIAL armed
+                ] {
+                    for &b in line.as_bytes() {
+                        tty::input_push(b);
+                    }
+                    let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+                }
+                println!("[rebuild-test] trial armed — reboot into the candidate");
+            }
+            Some(rebuild::SRBL_PROMOTED) => {
+                for (line, pause) in [("rebuild stage\n", 600u64), ("rebuild boot-next\n", 30)] {
+                    for &b in line.as_bytes() {
+                        tty::input_push(b);
+                    }
+                    let _ = dispatch(SYS_SLEEP, pause * 62, 0, 0, 0);
+                }
+                println!("[rebuild-test] sabotage trial armed — reboot into it");
+            }
+            other => {
+                println!("[rebuild-test] nothing to do (state {:?})", other);
+            }
+        }
+    }
+    // Park instead of returning: task_exit_stub (context.rs) hlt-loops
+    // WITHOUT marking the slot Exited; a returning feeder wedges the machine.
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// SYS_SELFDEV backing: run ONE self-dev demo (80|83|87|88|93) on demand from
 /// the shell's `selfdev` builtin, in the caller's context (same model as
 /// run_all_demos). The console gate is enforced by the dispatcher. The demo
 /// bodies — and the ~88 MB semos-rustc payload they drive — only exist in
@@ -1075,8 +1441,9 @@ pub(crate) fn run_selfdev(demo: u64) -> u64 {
             83 => { demo83_bugfix(); 0 }
             87 => { demo87_featureadd(); 0 }
             88 => { demo88_selfrepair(); 0 }
+            93 => { demo93_greet(); 0 }
             _ => {
-                println!("selfdev: unknown demo {} (want 80|83|87|88)", demo);
+                println!("selfdev: unknown demo {} (want 80|83|87|88|93)", demo);
                 u64::MAX
             }
         };
@@ -2219,8 +2586,9 @@ pub(crate) fn demo83_bugfix() {
 /// `Serial::getc()`. The first answer from either wins; `y`/`Y` approves,
 /// anything else — including the timeout — denies (fail-fast, plan section 4
 /// decision 2).
-#[cfg(feature = "autocompile")]
-fn demo_approval_prompt(prompt: &str, timeout_ticks: u64) -> (bool, &'static str) {
+// Unconditional (not autocompile-only): M22a self-rebuild's hash-bound
+// vouch gates use it too (rebuild.rs).
+pub(crate) fn demo_approval_prompt(prompt: &str, timeout_ticks: u64) -> (bool, &'static str) {
     use kernel_core::syscall::{dispatch, numbers::SYS_SLEEP};
 
     // Own the screen: a single quiet no-newline line gets buried by the
@@ -2532,6 +2900,774 @@ pub(crate) fn demo87_featureadd() {
     }
     println!("  [DEMO 87] post-install smoke OK: bare `wc` ran fenced at tier 0");
     println!("  [DEMO 87] PASS: M3 feature add — spec/compile/test/approve/install end-to-end");
+}
+
+/// DEMO 93 headline: the guest's greeting line, byte-exact. Shared by
+/// demo93_greet (pre-install isolation test + post-install smoke) and the
+/// greet93-test feeder's post-reboot verification. MUST stay byte-identical
+/// to GREETING in user-programs/semos-rustc/test-sources/greet.rs.
+#[cfg(feature = "autocompile")]
+pub(crate) const GREET_EXPECTED: &[u8] =
+    b"hello from SemOS: this command was added by the agent\n";
+
+/// Headless DEMO 93 / headline demo runner: scripted agent adds `greet`.
+/// The roadmap headline — "ask the agent to add a `greet` command, it works
+/// seconds later, the kernel never rebuilt" — plus the SemFS beat: the
+/// install is journaled write-through, so `greet` survives a hard power
+/// cycle (the greet93-test feeder's boot 2 proves it).
+///   1. seed:    /tmp/agentgen/m93/{feature-spec.txt,src/greet.rs}
+///   2. compile: semos-rustc builds greet (same pipeline as M3's wc)
+///   3. test:    run in isolation; stdout must byte-match GREET_EXPECTED
+///   4. approve: same fail-fast serial/TTY prompt as M2/M3
+///   5. install: staging rename -> /apps/greet + bare-name tier-0 smoke
+///
+/// greet has no argv (cg_clif lacks the rsp-grab trampoline), so its
+/// greeting is compiled in — documented in greet.rs.
+#[cfg(feature = "autocompile")]
+pub(crate) fn demo93_greet() {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    use kernel_core::syscall::{dispatch, numbers::*, StatX};
+
+    const GREET_SRC: &[u8] =
+        include_bytes!("../../user-programs/semos-rustc/test-sources/greet.rs");
+    const FEATURE_SPEC: &[u8] = b"Headline feature spec: add a `greet` command - print a fixed greeting line. The roadmap headline: ask the agent to add a command, it works seconds later, the kernel never rebuilt. SemFS beat: the install is journaled write-through, so greet survives a hard power cycle. Test: byte-exact greeting on stdout.\n";
+
+    const SRC: &str = "/tmp/agentgen/m93/src/greet.rs";
+    const ELF: &str = "/tmp/agentgen/m93/out/greet";
+    const TEST1_OUT: &str = "/tmp/agentgen/m93/out/test1.out";
+    const TEST2_OUT: &str = "/tmp/agentgen/m93/out/test2.out";
+
+    println!();
+    println!("================================================================");
+    println!("  DEMO 93 headline: add `greet` live -> approved install -> survives reboot");
+    println!("================================================================");
+
+    // --- Phase 1: seed the scratch workspace -------------------------------
+    for d in [
+        "/tmp/agentgen",
+        "/tmp/agentgen/m93",
+        "/tmp/agentgen/m93/src",
+        "/tmp/agentgen/m93/out",
+    ] {
+        let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+    }
+    let _ = Namespace::unlink("/tmp/agentgen/m93/feature-spec.txt");
+    let _ = Namespace::unlink(SRC);
+    let seeded = Namespace::create_file(
+        "/tmp/agentgen/m93/feature-spec.txt",
+        SecurityTier::Public,
+        FEATURE_SPEC,
+    )
+    .is_ok()
+        && Namespace::create_file(SRC, SecurityTier::Public, GREET_SRC).is_ok();
+    if !seeded {
+        println!("  [DEMO 93] FAIL: could not seed scratch workspace");
+        return;
+    }
+    println!("  [DEMO 93] feature spec + greet.rs seeded in /tmp/agentgen/m93");
+
+    // --- Phase 2: compile the new command -----------------------------------
+    let _ = Namespace::unlink(ELF);
+    let code = match demo80_spawn_wait(
+        "/bin/semos-rustc",
+        &["/bin/semos-rustc", SRC, "-o", ELF, "-C", "overflow-checks=off"],
+        3,
+    ) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 93] FAIL: greet.rs did not compile (code={})", code);
+        return;
+    }
+    println!("  [DEMO 93] compiled: {}", ELF);
+
+    // --- Phase 3: test in isolation -----------------------------------------
+    let _ = Namespace::unlink(TEST1_OUT);
+    let run1 = [
+        "/bin/sem-sh",
+        "-c",
+        "/tmp/agentgen/m93/out/greet > /tmp/agentgen/m93/out/test1.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run1, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 93] FAIL: greet exited code={}", code);
+        return;
+    }
+    match demo83_read_file(TEST1_OUT) {
+        Some(out) if out.as_slice() == GREET_EXPECTED => {}
+        Some(out) => {
+            println!(
+                "  [DEMO 93] FAIL: greeting mismatch: got {:?}, want {:?}",
+                core::str::from_utf8(&out).unwrap_or("<non-utf8>"),
+                core::str::from_utf8(GREET_EXPECTED).unwrap_or("<non-utf8>")
+            );
+            return;
+        }
+        None => {
+            println!("  [DEMO 93] FAIL: could not read {}", TEST1_OUT);
+            return;
+        }
+    }
+    println!(
+        "  [DEMO 93] isolation test PASS: greet printed {:?}",
+        core::str::from_utf8(GREET_EXPECTED)
+            .unwrap_or("")
+            .trim_end()
+    );
+
+    // --- Phase 4: human approval (fail-fast) --------------------------------
+    let (approved, tty) = demo_approval_prompt("  Install /apps/greet? [y/N] ", 18600);
+    if !approved {
+        println!("[AUDIT] DENY install /apps/greet reason=denied_or_timeout (fail-fast)");
+        println!("  [DEMO 93] SKIP-INSTALL: no human approval — /apps untouched");
+        println!("  [DEMO 93] PASS(partial): command added + tested; install gated");
+        return;
+    }
+    println!("[AUDIT] APPROVE install /apps/greet by=human tty={}", tty);
+
+    // --- Phase 5: atomic install via staging rename --------------------------
+    let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, 5, 0, 0);
+    let staging_dir = "/apps/.staging";
+    let _ = dispatch(
+        SYS_MKDIR,
+        staging_dir.as_ptr() as u64,
+        staging_dir.len() as u64,
+        0,
+        0,
+    );
+    let _ = Namespace::unlink("/apps/greet");
+    let _ = Namespace::unlink("/apps/.staging/greet");
+    if Namespace::rename(ELF, "/apps/.staging/greet").is_err()
+        || Namespace::rename("/apps/.staging/greet", "/apps/greet").is_err()
+    {
+        println!("  [DEMO 93] FAIL: staging rename into /apps failed");
+        return;
+    }
+    let mut st = StatX {
+        size: 0,
+        suid_high: 0,
+        suid_low: 0,
+        created_at: 0,
+        modified_at: 0,
+        file_type: 0,
+        tier: 0,
+        _reserved: [0; 3],
+    };
+    let app = "/apps/greet";
+    let rc = dispatch(
+        SYS_STATX,
+        app.as_ptr() as u64,
+        app.len() as u64,
+        &mut st as *mut _ as u64,
+        0,
+    );
+    if rc != 0 || st.size == 0 {
+        println!("  [DEMO 93] FAIL: statx(/apps/greet) rc={} size={}", rc, st.size);
+        return;
+    }
+    println!(
+        "  [DEMO 93] installed: /apps/greet ({} bytes, via /apps/.staging)",
+        st.size
+    );
+    if kernel_core::semantic::journal::is_mounted() {
+        println!("  [DEMO 93] install journaled write-through — durable across power loss");
+    }
+
+    // --- Phase 6: post-install smoke by bare name ----------------------------
+    let _ = Namespace::unlink(TEST2_OUT);
+    let run2 = [
+        "/bin/sem-sh",
+        "-c",
+        "greet > /tmp/agentgen/m93/out/test2.out",
+    ];
+    let code = match demo80_spawn_wait("/bin/sem-sh", &run2, 3) {
+        Some(c) => c,
+        None => return,
+    };
+    if code != 0 {
+        println!("  [DEMO 93] FAIL: installed greet exited code={}", code);
+        return;
+    }
+    match demo83_read_file(TEST2_OUT) {
+        Some(out) if out.as_slice() == GREET_EXPECTED => {}
+        _ => {
+            println!("  [DEMO 93] FAIL: installed greet output mismatch");
+            return;
+        }
+    }
+    println!("  [DEMO 93] post-install smoke OK: bare `greet` ran fenced at tier 0");
+    println!("  [DEMO 93] PASS: headline demo — greet added live, kernel never rebuilt");
+}
+
+// ============================================================================
+// semos-pkg (M43/M44) — package manager: raw-region mirror, DAG resolver,
+// SemFS-backed local clone + tarball cache, offline installs.
+// Design: docs/semos-pkg-design.md.
+// ============================================================================
+
+/// Mirror blob location on virtio0: the legacy snapshot region below the
+/// SemFS journal (LBA 8192). [8B magic][u64 len][payload][pad to 512].
+#[cfg(feature = "autocompile")]
+const PKG_MIRROR_LBA: u64 = 16;
+#[cfg(feature = "autocompile")]
+const PKG_MIRROR_MAGIC: &[u8; 8] = b"SEMREG01";
+/// Local registry index clone (full archive copy).
+#[cfg(feature = "autocompile")]
+const PKG_INDEX_PATH: &str = "/var/lib/semos-pkg/registry.sem";
+/// Tarball cache: <name>-<version>.rs / .expect per package.
+#[cfg(feature = "autocompile")]
+const PKG_CACHE_DIR: &str = "/var/cache/crates";
+/// Scratch build dir (concatenated source, ELF, selftest output).
+#[cfg(feature = "autocompile")]
+const PKG_BUILD_DIR: &str = "/tmp/semos-pkg";
+
+/// semos-pkg ops (SYS_SEMOSPKG arg0). LIST is read-only; the rest are
+/// console-gated at the syscall dispatcher.
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_UPDATE: u64 = 1;
+pub(crate) const SEMOSPKG_OP_LIST: u64 = 2;
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_FETCH: u64 = 3;
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_INSTALL: u64 = 4;
+#[allow(dead_code)]
+pub(crate) const SEMOSPKG_OP_REMOVE: u64 = 5;
+
+/// One parsed package from the registry archive.
+#[cfg(feature = "autocompile")]
+struct PkgEntry {
+    name: alloc::string::String,
+    version: alloc::string::String,
+    is_lib: bool,
+    deps: alloc::vec::Vec<alloc::string::String>,
+    src: alloc::vec::Vec<u8>,
+    expect: alloc::vec::Vec<u8>,
+}
+
+/// Read the mirror blob from virtio0 LBA 16. None if absent/wiped/corrupt.
+#[cfg(feature = "autocompile")]
+fn pkg_read_mirror() -> Option<alloc::vec::Vec<u8>> {
+    let dev = kernel_core::drivers::registry::get_block("virtio0")?;
+    let mut head = [0u8; 1024];
+    dev.read_blocks(PKG_MIRROR_LBA, &mut head).ok()?;
+    if &head[..8] != PKG_MIRROR_MAGIC {
+        return None;
+    }
+    let len = u64::from_le_bytes(head[8..16].try_into().ok()?) as usize;
+    if len == 0 || len > 4 * 1024 * 1024 {
+        return None;
+    }
+    let padded = (16 + len + 511) / 512 * 512;
+    // Never read into the journal region.
+    if PKG_MIRROR_LBA + (padded as u64) / 512 >= 8192 {
+        return None;
+    }
+    let mut buf = alloc::vec![0u8; padded];
+    dev.read_blocks(PKG_MIRROR_LBA, &mut buf).ok()?;
+    buf.truncate(16 + len);
+    Some(buf.split_off(16))
+}
+
+/// Parse the registry archive: "SEMOS-REGISTRY 1\n", pkg blocks, "end\n".
+#[cfg(feature = "autocompile")]
+fn pkg_parse(buf: &[u8]) -> Option<alloc::vec::Vec<PkgEntry>> {
+    use alloc::string::ToString;
+    use alloc::vec::Vec;
+
+    fn line<'a>(buf: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
+        let start = *pos;
+        let mut i = start;
+        while i < buf.len() && buf[i] != b'\n' {
+            i += 1;
+        }
+        if i >= buf.len() {
+            return None;
+        }
+        *pos = i + 1;
+        Some(&buf[start..i])
+    }
+
+    let mut pos = 0usize;
+    if line(buf, &mut pos)? != b"SEMOS-REGISTRY 1" {
+        return None;
+    }
+    let mut out = Vec::new();
+    loop {
+        let l = line(buf, &mut pos)?;
+        if l == b"end" {
+            break;
+        }
+        let s = core::str::from_utf8(l).ok()?;
+        let mut it = s.split(' ');
+        if it.next()? != "pkg" {
+            return None;
+        }
+        let name = it.next()?.to_string();
+        let version = it.next()?.to_string();
+        let mut is_lib = false;
+        let mut deps = Vec::new();
+        let mut nbytes = 0usize;
+        let mut nexpect = 0usize;
+        for tok in it {
+            if let Some(v) = tok.strip_prefix("kind=") {
+                is_lib = v == "lib";
+            } else if let Some(v) = tok.strip_prefix("deps=") {
+                if v != "-" {
+                    for d in v.split(',') {
+                        deps.push(d.to_string());
+                    }
+                }
+            } else if let Some(v) = tok.strip_prefix("bytes=") {
+                nbytes = v.parse().ok()?;
+            } else if let Some(v) = tok.strip_prefix("expect=") {
+                nexpect = v.parse().ok()?;
+            }
+        }
+        if pos + nbytes + nexpect > buf.len() {
+            return None;
+        }
+        let src = buf[pos..pos + nbytes].to_vec();
+        pos += nbytes;
+        let expect = buf[pos..pos + nexpect].to_vec();
+        pos += nexpect;
+        out.push(PkgEntry { name, version, is_lib, deps, src, expect });
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
+/// Read the local registry clone from the journaled namespace. None if no
+/// clone has been taken yet.
+#[cfg(feature = "autocompile")]
+fn pkg_clone_read() -> Option<alloc::vec::Vec<u8>> {
+    use kernel_core::fs::paths::Namespace;
+    let mut buf = alloc::vec![0u8; 1024 * 1024];
+    let n = Namespace::read_file_into(PKG_INDEX_PATH, &mut buf).ok()?;
+    buf.truncate(n);
+    Some(buf)
+}
+
+/// mkdir -p the semos-pkg state dirs (idempotent).
+#[cfg(feature = "autocompile")]
+fn pkg_ensure_dirs() {
+    use kernel_core::syscall::{dispatch, numbers::SYS_MKDIR};
+    for d in [
+        "/var",
+        "/var/lib",
+        "/var/lib/semos-pkg",
+        "/var/cache",
+        PKG_CACHE_DIR,
+        PKG_BUILD_DIR,
+    ] {
+        let _ = dispatch(SYS_MKDIR, d.as_ptr() as u64, d.len() as u64, 0, 0);
+    }
+}
+
+/// Write (replace) one file in the tarball cache.
+#[cfg(feature = "autocompile")]
+fn pkg_cache_write(name: &str, version: &str, ext: &str, bytes: &[u8]) -> bool {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    let path = alloc::format!("{}/{}-{}.{}", PKG_CACHE_DIR, name, version, ext);
+    let _ = Namespace::unlink(&path);
+    Namespace::create_file(&path, SecurityTier::Public, bytes).is_ok()
+}
+
+/// Read a cached payload. None if absent.
+#[cfg(feature = "autocompile")]
+fn pkg_cache_read(name: &str, version: &str, ext: &str) -> Option<alloc::vec::Vec<u8>> {
+    use kernel_core::fs::paths::Namespace;
+    let path = alloc::format!("{}/{}-{}.{}", PKG_CACHE_DIR, name, version, ext);
+    let mut buf = alloc::vec![0u8; 1024 * 1024];
+    let n = Namespace::read_file_into(&path, &mut buf).ok()?;
+    buf.truncate(n);
+    Some(buf)
+}
+
+/// Resolve `want` over the index into a topological order of indices (deps
+/// first, `want` last). Err(()) on unknown package or dependency cycle.
+#[cfg(feature = "autocompile")]
+fn pkg_resolve(index: &[PkgEntry], want: &str) -> Result<alloc::vec::Vec<usize>, ()> {
+    use alloc::vec::Vec;
+    fn find(index: &[PkgEntry], name: &str) -> Option<usize> {
+        let mut i = 0;
+        while i < index.len() {
+            if index[i].name == name {
+                return Some(i);
+            }
+            i += 1;
+        }
+        None
+    }
+    // state: 0 = unvisited, 1 = on the DFS stack (cycle if re-entered), 2 = done
+    fn visit(
+        index: &[PkgEntry],
+        i: usize,
+        state: &mut [u8],
+        order: &mut Vec<usize>,
+    ) -> Result<(), ()> {
+        if state[i] == 2 {
+            return Ok(());
+        }
+        if state[i] == 1 {
+            return Err(()); // cycle
+        }
+        state[i] = 1;
+        let mut k = 0;
+        while k < index[i].deps.len() {
+            let d = find(index, &index[i].deps[k]).ok_or(())?;
+            visit(index, d, state, order)?;
+            k += 1;
+        }
+        state[i] = 2;
+        order.push(i);
+        Ok(())
+    }
+    let start = find(index, want).ok_or(())?;
+    let mut state = alloc::vec![0u8; index.len()];
+    let mut order = Vec::new();
+    visit(index, start, &mut state, &mut order)?;
+    Ok(order)
+}
+
+/// Ensure the index is available: prefer the local clone; if absent and the
+/// mirror is readable, take a full clone + extract all payloads to the cache
+/// (= `semos update`). Returns (index, mirror_present).
+#[cfg(feature = "autocompile")]
+fn pkg_index() -> Option<(alloc::vec::Vec<PkgEntry>, bool)> {
+    let mirror = pkg_read_mirror();
+    if let Some(clone) = pkg_clone_read() {
+        if let Some(idx) = pkg_parse(&clone) {
+            return Some((idx, mirror.is_some()));
+        }
+    }
+    let bytes = mirror.as_ref()?;
+    let idx = pkg_parse(bytes)?;
+    // Auto-clone on first contact, like `update`.
+    pkg_ensure_dirs();
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+    let _ = Namespace::unlink(PKG_INDEX_PATH);
+    if Namespace::create_file(PKG_INDEX_PATH, SecurityTier::Public, bytes).is_err() {
+        return None;
+    }
+    for e in &idx {
+        let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+        let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+    }
+    Some((idx, true))
+}
+
+/// SYS_SEMOSPKG backing (arg0 = op, arg = optional package name). Runs in
+/// the caller's context like run_selfdev; the console gate for mutations is
+/// enforced by the dispatcher.
+#[cfg(feature = "autocompile")]
+pub(crate) fn run_semos_pkg(op: u64, arg: Option<&str>) -> u64 {
+    use kernel_core::fs::paths::Namespace;
+    use kernel_core::semantic::object::SecurityTier;
+
+    match op {
+        SEMOSPKG_OP_UPDATE => {
+            let bytes = match pkg_read_mirror() {
+                Some(b) => b,
+                None => {
+                    println!("semos-pkg: no mirror (virtio0 LBA {} unreadable or wiped)", PKG_MIRROR_LBA);
+                    return u64::MAX;
+                }
+            };
+            let idx = match pkg_parse(&bytes) {
+                Some(i) => i,
+                None => {
+                    println!("semos-pkg: mirror payload is not a SEMOS-REGISTRY archive");
+                    return u64::MAX;
+                }
+            };
+            pkg_ensure_dirs();
+            let _ = Namespace::unlink(PKG_INDEX_PATH);
+            if Namespace::create_file(PKG_INDEX_PATH, SecurityTier::Public, &bytes).is_err() {
+                println!("semos-pkg: could not write local clone");
+                return u64::MAX;
+            }
+            for e in &idx {
+                let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+                let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+            }
+            println!("semos-pkg: registry cloned — {} package(s) indexed + cached", idx.len());
+            0
+        }
+
+        SEMOSPKG_OP_LIST => {
+            let (idx, mirror) = match pkg_index() {
+                Some(x) => x,
+                None => {
+                    println!("semos-pkg: no registry (no mirror, no local clone)");
+                    return u64::MAX;
+                }
+            };
+            println!("semos-pkg: registry (mirror {})", if mirror { "attached" } else { "ABSENT — offline" });
+            for e in &idx {
+                let app = alloc::format!("/apps/{}", e.name);
+                let installed = Namespace::resolve(&app).is_ok();
+                let mut deps = alloc::string::String::new();
+                for d in &e.deps {
+                    if !deps.is_empty() {
+                        deps.push(',');
+                    }
+                    deps.push_str(d);
+                }
+                println!(
+                    "  {} {} [{}]{} deps={}",
+                    e.name,
+                    e.version,
+                    if e.is_lib { "lib" } else { "bin" },
+                    if installed { " installed" } else { "" },
+                    if deps.is_empty() { "-" } else { deps.as_str() },
+                );
+            }
+            0
+        }
+
+        SEMOSPKG_OP_FETCH => {
+            let name = match arg {
+                Some(a) => a,
+                None => {
+                    println!("semos-pkg: fetch: missing package name");
+                    return u64::MAX;
+                }
+            };
+            let (idx, _) = match pkg_index() {
+                Some(x) => x,
+                None => {
+                    println!("semos-pkg: no registry (no mirror, no local clone)");
+                    return u64::MAX;
+                }
+            };
+            let order = match pkg_resolve(&idx, name) {
+                Ok(o) => o,
+                Err(()) => {
+                    println!("semos-pkg: fetch: unknown package or dependency cycle: {}", name);
+                    return u64::MAX;
+                }
+            };
+            pkg_ensure_dirs();
+            for &i in &order {
+                let e = &idx[i];
+                if pkg_cache_read(&e.name, &e.version, "rs").is_none() {
+                    let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+                    let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+                }
+                println!("[semos-pkg] cached {}-{}", e.name, e.version);
+            }
+            0
+        }
+
+        SEMOSPKG_OP_INSTALL => {
+            let name = match arg {
+                Some(a) => a,
+                None => {
+                    println!("semos-pkg: install: missing package name");
+                    return u64::MAX;
+                }
+            };
+            let mirror_present = pkg_read_mirror().is_some();
+            let (idx, _) = match pkg_index() {
+                Some(x) => x,
+                None => {
+                    println!("semos-pkg: no registry (no mirror, no local clone)");
+                    return u64::MAX;
+                }
+            };
+            let order = match pkg_resolve(&idx, name) {
+                Ok(o) => o,
+                Err(()) => {
+                    println!("semos-pkg: install: unknown package or dependency cycle: {}", name);
+                    return u64::MAX;
+                }
+            };
+            let top = &idx[*order.last().unwrap()];
+            if top.is_lib {
+                println!("semos-pkg: install: {} is a lib (build-time dep, not installable)", name);
+                return u64::MAX;
+            }
+            println!(
+                "semos-pkg: resolving {} — {} package(s): {}",
+                name,
+                order.len(),
+                {
+                    let mut s = alloc::string::String::new();
+                    for &i in &order {
+                        if !s.is_empty() {
+                            s.push_str(" -> ");
+                        }
+                        s.push_str(&idx[i].name);
+                    }
+                    s
+                }
+            );
+
+            // Build: crate header + shared sys_* stub prelude + dep lib
+            // sources in topo order + the bin. The prelude declares every
+            // stub ONCE — package sources never declare their own (two
+            // extern blocks naming the same symbol are E0428).
+            pkg_ensure_dirs();
+            let mut build: alloc::vec::Vec<u8> = b"#![no_std]\n#![no_main]\n\nextern \"C\" {\n    fn sys_write(fd: u64, buf: *const u8, len: u64) -> i64;\n    fn sys_exit(code: u64) -> !;\n    fn sys_open(path_ptr: *const u8, path_len: u64, flags: u64) -> i64;\n    fn sys_close(fd: u64) -> i64;\n    fn sys_fread(fd: u64, buf: *mut u8, len: u64) -> i64;\n}\n\n".to_vec();
+            for &i in &order {
+                let e = &idx[i];
+                // Prefer the cache (the M44 offline artifact); fall back to
+                // the clone's payload and refill the cache.
+                let src = match pkg_cache_read(&e.name, &e.version, "rs") {
+                    Some(s) => s,
+                    None => {
+                        let _ = pkg_cache_write(&e.name, &e.version, "rs", &e.src);
+                        let _ = pkg_cache_write(&e.name, &e.version, "expect", &e.expect);
+                        println!("[semos-pkg] cached {}-{}", e.name, e.version);
+                        e.src.clone()
+                    }
+                };
+                build.extend_from_slice(&src);
+                build.push(b'\n');
+            }
+            let build_path = alloc::format!("{}/{}-build.rs", PKG_BUILD_DIR, name);
+            let elf_path = alloc::format!("{}/{}", PKG_BUILD_DIR, name);
+            let out_path = alloc::format!("{}/{}.out", PKG_BUILD_DIR, name);
+            let _ = Namespace::unlink(&build_path);
+            if Namespace::create_file(&build_path, SecurityTier::Public, &build).is_err() {
+                println!("semos-pkg: could not stage build source");
+                return u64::MAX;
+            }
+
+            // Compile on-device.
+            let _ = Namespace::unlink(&elf_path);
+            let code = match demo80_spawn_wait(
+                "/bin/semos-rustc",
+                &["/bin/semos-rustc", &build_path, "-o", &elf_path, "-C", "overflow-checks=off"],
+                3,
+            ) {
+                Some(c) => c,
+                None => return u64::MAX,
+            };
+            if code != 0 {
+                println!("semos-pkg: FAIL: {} did not compile (code={})", name, code);
+                return u64::MAX;
+            }
+            println!("semos-pkg: compiled {}", elf_path);
+
+            // Isolation selftest: byte-exact against the packaged expectation.
+            let _ = Namespace::unlink(&out_path);
+            let run_cmd = alloc::format!("{} > {}", elf_path, out_path);
+            let run = ["/bin/sem-sh", "-c", &run_cmd];
+            let code = match demo80_spawn_wait("/bin/sem-sh", &run, 3) {
+                Some(c) => c,
+                None => return u64::MAX,
+            };
+            if code != 0 {
+                println!("semos-pkg: FAIL: {} selftest exited code={}", name, code);
+                return u64::MAX;
+            }
+            match demo83_read_file(&out_path) {
+                Some(out) if out == top.expect => {}
+                _ => {
+                    println!("semos-pkg: FAIL: {} selftest output mismatch", name);
+                    return u64::MAX;
+                }
+            }
+            println!("semos-pkg: selftest PASS (byte-exact)");
+
+            // Human approval, then atomic install + bare-name smoke.
+            let (approved, tty) = demo_approval_prompt(
+                &alloc::format!("  Install /apps/{}? [y/N] ", name),
+                18600,
+            );
+            if !approved {
+                println!("[AUDIT] DENY install /apps/{} reason=denied_or_timeout (fail-fast)", name);
+                println!("semos-pkg: SKIP-INSTALL: no human approval — /apps untouched");
+                return 0;
+            }
+            println!("[AUDIT] APPROVE install /apps/{} by=human tty={}", name, tty);
+
+            use kernel_core::syscall::{dispatch, numbers::*};
+            let _ = dispatch(SYS_MKDIR, "/apps".as_ptr() as u64, "/apps".len() as u64, 0, 0);
+            let staging_dir = "/apps/.staging";
+            let _ = dispatch(SYS_MKDIR, staging_dir.as_ptr() as u64, staging_dir.len() as u64, 0, 0);
+            let staging = alloc::format!("/apps/.staging/{}", name);
+            let app = alloc::format!("/apps/{}", name);
+            let _ = Namespace::unlink(&app);
+            let _ = Namespace::unlink(&staging);
+            if Namespace::rename(&elf_path, &staging).is_err()
+                || Namespace::rename(&staging, &app).is_err()
+            {
+                println!("semos-pkg: FAIL: staging rename into /apps failed");
+                return u64::MAX;
+            }
+            println!("semos-pkg: installed {} (journaled write-through)", app);
+
+            let smoke_out = alloc::format!("{}/{}.smoke", PKG_BUILD_DIR, name);
+            let _ = Namespace::unlink(&smoke_out);
+            let smoke_cmd = alloc::format!("{} > {}", name, smoke_out);
+            let run2 = ["/bin/sem-sh", "-c", &smoke_cmd];
+            let code = match demo80_spawn_wait("/bin/sem-sh", &run2, 3) {
+                Some(c) => c,
+                None => return u64::MAX,
+            };
+            if code != 0 {
+                println!("semos-pkg: FAIL: installed {} exited code={}", name, code);
+                return u64::MAX;
+            }
+            match demo83_read_file(&smoke_out) {
+                Some(out) if out == top.expect => {}
+                _ => {
+                    println!("semos-pkg: FAIL: installed {} output mismatch", name);
+                    return u64::MAX;
+                }
+            }
+            println!("semos-pkg: post-install smoke OK: bare `{}` ran fenced at tier 0", name);
+            if mirror_present {
+                println!("[DEMO 89] PASS: semos install {} — DAG resolved, compiled on-device, approved, installed", name);
+            } else {
+                println!("[DEMO 90] PASS: offline install from local cache — {} (no mirror attached)", name);
+            }
+            0
+        }
+
+        SEMOSPKG_OP_REMOVE => {
+            let name = match arg {
+                Some(a) => a,
+                None => {
+                    println!("semos-pkg: remove: missing package name");
+                    return u64::MAX;
+                }
+            };
+            let app = alloc::format!("/apps/{}", name);
+            match Namespace::unlink(&app) {
+                Ok(()) => {
+                    println!("semos-pkg: removed {} (journaled)", app);
+                    0
+                }
+                Err(_) => {
+                    println!("semos-pkg: remove: {} not installed", name);
+                    u64::MAX
+                }
+            }
+        }
+
+        _ => {
+            println!("semos-pkg: unknown op {}", op);
+            u64::MAX
+        }
+    }
+}
+
+#[cfg(not(feature = "autocompile"))]
+pub(crate) fn run_semos_pkg(_op: u64, _arg: Option<&str>) -> u64 {
+    println!("semos-pkg: needs an autocompile kernel build (semos-rustc payload)");
+    u64::MAX
 }
 
 /// Headless DEMO 88 / self-dev-loop M4 runner: scripted agent SELF-REPAIR.

@@ -9,6 +9,14 @@ not a third leaf kind and not executable authority.
 Phase 0 is a standalone userland prototype so the model can be validated before
 kernel integration.
 
+> **Naming note (2026-09):** Sheaf is **not** the same thing as *SemFS*.
+> Sheaf = the bundle content model in this document (folders as native units,
+> manifests/facets/export projections) — a userland prototype, no kernel
+> storage role. SemFS = the kernel's existing SUID-addressed object store
+> (`kernel-core/src/semantic/`) plus its write-ahead durability journal
+> (`docs/semfs-journal-design.md`). They compose eventually (Sheaf bundles
+> would live as SemFS objects) but neither replaces the other.
+
 ---
 
 ## 1. Thesis

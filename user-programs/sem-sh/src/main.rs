@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall0, syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_LOGFILE, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
+    syscall0, syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_LOGFILE, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_SEMOSPKG, SYS_REBUILD, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -255,7 +255,7 @@ fn is_builtin(name: &str) -> bool {
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
             | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "log" | "flash-sysroot" | "wifi"
-            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "pair" | "paired" | "unpair"
+            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "semos" | "rebuild" | "pair" | "paired" | "unpair"
     )
 }
 
@@ -932,7 +932,9 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  usbenum             re-run xHCI port enum (after plugging in a device)");
             println!("  netinfo             network stack + active NIC/e1000e diagnostics");
             println!("  demos               run the full boot DEMO suite (ESC aborts)");
-            println!("  selfdev N           run self-dev demo N (80|83|87|88) — autocompile builds only");
+            println!("  selfdev N           run self-dev demo N (80|83|87|88|93) — autocompile builds only");
+            println!("  semos ...           package manager (M43/M44): update | list | fetch <pkg> | install <pkg> | remove <pkg>");
+            println!("  rebuild ...         self-rebuild slots (M22a): status | stage | boot-next | keep | revert");
             println!("  pair QR-STRING      pair a phone (companion app) — console only");
             println!("  paired              list paired devices");
             println!("  unpair ID           forget a paired device — console only");
@@ -989,13 +991,58 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // interaction happens right here while the command runs. Needs an
             // autocompile kernel build (the demos drive the on-device rustc).
             let n: u64 = match argv.get(1).and_then(|s| s.parse().ok()) {
-                Some(n @ (80 | 83 | 87 | 88)) => n,
+                Some(n @ (80 | 83 | 87 | 88 | 93)) => n,
                 _ => {
-                    println!("selfdev: usage: selfdev 80|83|87|88");
+                    println!("selfdev: usage: selfdev 80|83|87|88|93");
                     return 2;
                 }
             };
             let rc = unsafe { syscall2(SYS_SELFDEV, n, 0) };
+            if rc == u64::MAX { 1 } else { 0 }
+        }
+        "semos" => {
+            // M43/M44 package manager (docs/semos-pkg-design.md):
+            //   semos update            clone the mirror registry + cache all
+            //   semos list              show the index (+ installed state)
+            //   semos fetch <pkg>       resolve DAG, warm the cache
+            //   semos install <pkg>     resolve, compile, selftest, approve, install
+            //   semos remove <pkg>      unlink /apps/<pkg>
+            let (op, pkg): (u64, Option<&String>) = match argv.get(1).map(|s| s.as_str()) {
+                Some("update") => (1, None),
+                Some("list") => (2, None),
+                Some("fetch") => (3, argv.get(2)),
+                Some("install") => (4, argv.get(2)),
+                Some("remove") => (5, argv.get(2)),
+                _ => {
+                    println!("semos: usage: semos update | list | fetch <pkg> | install <pkg> | remove <pkg>");
+                    return 2;
+                }
+            };
+            let rc = match pkg {
+                Some(p) => unsafe { syscall3(SYS_SEMOSPKG, op, p.as_ptr() as u64, p.len() as u64) },
+                None => unsafe { syscall3(SYS_SEMOSPKG, op, 0, 0) },
+            };
+            if rc == u64::MAX { 1 } else { 0 }
+        }
+        "rebuild" => {
+            // M22a self-rebuild slots (docs/self-rebuild-design.md):
+            //   rebuild status     slot record dump (read-only)
+            //   rebuild stage      drop zone -> inactive slot, hash-bound
+            //   rebuild boot-next  re-verify + human gate -> arm trial
+            //   rebuild keep       HEALTHY -> PROMOTED (human gate)
+            //   rebuild revert     -> REVERTED (next boot: last-known-good)
+            let op: u64 = match argv.get(1).map(|s| s.as_str()) {
+                Some("status") => 1,
+                Some("stage") => 2,
+                Some("boot-next") => 3,
+                Some("keep") => 4,
+                Some("revert") => 5,
+                _ => {
+                    println!("rebuild: usage: rebuild status | stage | boot-next | keep | revert");
+                    return 2;
+                }
+            };
+            let rc = unsafe { syscall2(SYS_REBUILD, op, 0) };
             if rc == u64::MAX { 1 } else { 0 }
         }
         "netlog" => {

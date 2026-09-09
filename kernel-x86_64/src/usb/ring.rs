@@ -10,7 +10,7 @@
 //!    here (command completions, port status change, transfer events).
 //!    We consume them by polling — no MSI/MSI-X in this driver.
 //! 3. **Transfer Ring** (driver → controller, per endpoint): we post
-//!    Normal/Setup/Data/Status TRBs to move data to/from an endpoint.
+//!    Normal/Setup/Data/Status/Isoch TRBs to move data to/from an endpoint.
 //!    The controller posts a Transfer Event on the event ring when done.
 //!
 //! All three rings live in DMA-coherent memory that is physically
@@ -78,6 +78,9 @@ pub mod trb_type {
     pub const STATUS_STAGE: u8 = 4;
     // Common
     pub const LINK: u8 = 6;
+    /// Isochronous transfer TD. Spec §6.4.1.1. Used by the USB audio
+    /// groundwork (see `xhci::usbaudio`).
+    pub const ISOCH: u8 = 5;
     pub const NO_OP_TRANSFER: u8 = 8;
     // Command ring
     pub const ENABLE_SLOT_CMD: u8 = 9;
@@ -86,6 +89,7 @@ pub mod trb_type {
     pub const CONFIGURE_ENDPOINT_CMD: u8 = 12;
     pub const EVALUATE_CONTEXT_CMD: u8 = 13;
     pub const RESET_ENDPOINT_CMD: u8 = 14;
+    pub const STOP_ENDPOINT_CMD: u8 = 15;
     pub const NO_OP_CMD: u8 = 23;
     // Event ring
     pub const TRANSFER_EVENT: u8 = 32;
@@ -99,6 +103,34 @@ pub mod cc {
     pub const SUCCESS: u8 = 1;
     pub const SHORT_PACKET: u8 = 13;
     pub const STALL_ERROR: u8 = 6;
+}
+
+/// Isoch TRB dword layouts (spec §6.4.1.1). We schedule single-TRB TDs, so
+/// TBC=0, TLBPC=0, and TD Size=0 in practice; the constants exist so the
+/// control/status words read as fields, not magic shifts.
+///
+/// Control dword 3 (in addition to C/ENT/ISP/NS/CH/IOC/IDT shared bits):
+///   bits  8:7  TBC   — Transfer Burst Count (bursts per ESIT, minus 1)
+///   bit   9    BEI   — Block Event Interrupt
+///   bits 19:16 TLBPC — Total Last Burst Packet Count
+///   bits 30:20 Frame ID — absolute microframe to start on (if SIA=0)
+///   bit  31    SIA   — Start Isoch ASAP: begin at the next interval
+///                      boundary, ignoring Frame ID. SemOS uses SIA=1 so we
+///                      never have to sample MFINDEX (polled driver, no
+///                      frame ticker yet).
+///
+/// Status dword 2:
+///   bits 16:0  TRB Transfer Length
+///   bits 21:17 TD Size (0 for a single-TRB TD)
+///   bits 31:22 Interrupter Target (0 — we use interrupter 0)
+pub mod isoch {
+    pub const IOC: u32 = 1 << 5;
+    pub const ISP: u32 = 1 << 2;
+    pub const SIA: u32 = 1 << 31;
+    #[inline] pub const fn frame_id(id: u32) -> u32 { (id & 0x7FF) << 20 }
+    #[inline] pub const fn tbc(n: u32) -> u32 { (n & 0x3) << 7 }
+    #[inline] pub const fn tlbpc(n: u32) -> u32 { (n & 0xF) << 16 }
+    #[inline] pub const fn td_size(n: u32) -> u32 { (n & 0x1F) << 17 }
 }
 
 /// Number of TRBs in our command, event, and transfer rings. 256 is
