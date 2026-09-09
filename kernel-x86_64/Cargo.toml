@@ -50,6 +50,9 @@ rebuild-test = ["autocompile"]
 # `rebuild-sabotage`: candidate build whose health gate deliberately fails
 # (DEMO 95 auto-revert proof). Build with SEMOS_BUILD_TAG=REBUILD-SAB.
 rebuild-sabotage = ["rebuild-test"]
+# `rng-health`: DEMO 100 driver forge — the trial health gate also demands
+# the entropy proof from the agent-written virtio-rng driver.
+rng-health = ["rebuild-test"]
 # `hub-test`: headless DEMO 98 hub pipeline for QEMU runs — feeder installs
 # the `lights` package (registers its hub intent) and starts the hub; the
 # harness's host shim plays voice gateway (TCP) + lamp (UDP). Implies

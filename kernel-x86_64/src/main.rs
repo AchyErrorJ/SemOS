@@ -324,6 +324,15 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
     println!();
 
+    // DEMO 100 driver forge: the agent-authored virtio-rng driver. On
+    // kernel A (pre-forge) this module doesn't exist at all — the baseline
+    // is the absence of this probe.
+    if virtio::rng::init() {
+        let mut probe = [0u8; 16];
+        let n = virtio::rng::entropy(&mut probe);
+        println!("[virtio-rng] first fetch: {} bytes {:02x?}", n, &probe[..n.min(16)]);
+    }
+
     println!("[*] Probing NVMe controller...");
     if nvme::init() {
         if nvme::register_with_kernel_core() {
@@ -1366,13 +1375,21 @@ fn rebuild_test_task() {
         #[cfg(not(feature = "rebuild-sabotage"))]
         {
             // Health gate: state readable (journal replayed), namespace
-            // alive, fenced spawn works.
+            // alive, fenced spawn works — plus, for forged-kernel trials
+            // (rng-health), the entropy proof: the agent-written driver
+            // must be doing real hardware work.
             let journal_ok = kernel_core::semantic::journal::is_mounted();
             let ns_ok = Namespace::resolve("/hello.rs").is_ok();
             let spawn_ok =
                 demo80_spawn_wait("/bin/sem-sh", &["/bin/sem-sh", "-c", "true"], 3) == Some(0);
-            if journal_ok && ns_ok && spawn_ok {
+            #[cfg(feature = "rng-health")]
+            let rng_ok = virtio::rng::entropy_ok();
+            #[cfg(not(feature = "rng-health"))]
+            let rng_ok = true;
+            if journal_ok && ns_ok && spawn_ok && rng_ok {
                 rebuild::mark_healthy();
+                #[cfg(feature = "rng-health")]
+                println!("[DEMO 100] PASS: agent-written virtio-rng driver live — entropy proof inside the trial health gate");
                 let _ = dispatch(SYS_SLEEP, 3 * 62, 0, 0, 0);
                 for &b in b"rebuild keep\n" {
                     tty::input_push(b);
@@ -1380,8 +1397,8 @@ fn rebuild_test_task() {
                 println!("[rebuild-test] typed 'rebuild keep' (approval via serial 'y')");
             } else {
                 println!(
-                    "[rebuild] health gate FAILED: journal={} ns={} spawn={}",
-                    journal_ok, ns_ok, spawn_ok
+                    "[rebuild] health gate FAILED: journal={} ns={} spawn={} rng={}",
+                    journal_ok, ns_ok, spawn_ok, rng_ok
                 );
             }
         }
