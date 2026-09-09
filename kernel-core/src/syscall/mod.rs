@@ -205,6 +205,12 @@ pub mod numbers {
                                             // the rest are CONSOLE ONLY — install
                                             // lands in /apps behind the human approval
                                             // gate, so the agent must never drive it.
+    // Smart-home hub (DEMO 98): gateway command channel + package-installed
+    // intents. docs/hub-pipeline notes in audio-in-design/roadmap.
+    pub const SYS_HUB:          u64 = 144;  // (op) -> 0 / u64::MAX. ops: 1=start
+                                            // 2=stop (CONSOLE ONLY — the hub executes
+                                            // device actions) 3=intents (read-only).
+
     // M22a self-rebuild (docs/self-rebuild-design.md).
     pub const SYS_REBUILD:      u64 = 143;  // (op) -> 0 / u64::MAX. ops: 1=status
                                             // (read-only, any task) 2=stage
@@ -429,6 +435,17 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
                 return u64::MAX;
             }
             crate::platform::get().run_rebuild(arg0)
+        }
+
+        // Smart-home hub (the `hub` builtin). `intents` (op 3) is read-only;
+        // start/stop are console-only — the hub executes device actions.
+        SYS_HUB => {
+            const HUB_OP_INTENTS: u64 = 3;
+            if arg0 != HUB_OP_INTENTS && !is_vouch_authority() {
+                crate::platform::log("[hub] DENIED: caller is not the interactive console\n");
+                return u64::MAX;
+            }
+            crate::platform::get().run_hub(arg0)
         }
 
         // M56 pairing. `pair` and `unpair` mutate device trust, so they are

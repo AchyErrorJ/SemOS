@@ -50,6 +50,11 @@ rebuild-test = ["autocompile"]
 # `rebuild-sabotage`: candidate build whose health gate deliberately fails
 # (DEMO 95 auto-revert proof). Build with SEMOS_BUILD_TAG=REBUILD-SAB.
 rebuild-sabotage = ["rebuild-test"]
+# `hub-test`: headless DEMO 98 hub pipeline for QEMU runs — feeder installs
+# the `lights` package (registers its hub intent) and starts the hub; the
+# harness's host shim plays voice gateway (TCP) + lamp (UDP). Implies
+# autocompile (semos install compiles) and net-extra (virtio-net).
+hub-test = ["autocompile", "net-extra"]
 # Minimal-boot trims (all OFF by default = the slim boot). Each re-enables a
 # probe the slim boot skips:
 # `net-extra`: virtio-net (QEMU slirp NIC) probe + smoltcp bring-up. QEMU

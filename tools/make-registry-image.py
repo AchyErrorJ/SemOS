@@ -41,23 +41,32 @@ COWSAY_OUT = (b" ______\n< moo! >\n ------\n        \\   ^__^\n"
 FORTUNE_LINE = b"fortune: a journaled thought survives the crash\n"
 MOTD_OUT = b"message of the day:\n" + FORTUNE_LINE
 
-# name, version, kind, deps, source file, expected selftest stdout
+LIGHTS_OUT = b"lights: manual toggle (hub intent is the real action)\n"
+# DEMO 98 hub intent: one intent covers "lights on/off/..." — the action
+# template's $CMD expands to the received command text at dispatch time.
+LIGHTS_INTENT = (b"patterns=lights,light|action=udp:9002:$CMD"
+                 b"|reply=lights command sent")
+
+# name, version, kind, deps, source file, expected selftest stdout, hub intent
 PACKAGES = [
-    ("fortune", "1.0.0", "lib", [], "fortune.rs", b""),
-    ("cowsay", "1.0.0", "bin", [], "cowsay.rs", COWSAY_OUT),
-    ("motd", "1.0.0", "bin", ["fortune"], "motd.rs", MOTD_OUT),
+    ("fortune", "1.0.0", "lib", [], "fortune.rs", b"", b""),
+    ("cowsay", "1.0.0", "bin", [], "cowsay.rs", COWSAY_OUT, b""),
+    ("motd", "1.0.0", "bin", ["fortune"], "motd.rs", MOTD_OUT, b""),
+    ("lights", "1.0.0", "bin", [], "lights.rs", LIGHTS_OUT, LIGHTS_INTENT),
 ]
 
 
 def build_payload():
     out = bytearray(b"SEMOS-REGISTRY 1\n")
-    for name, ver, kind, deps, src_file, expect in PACKAGES:
+    for name, ver, kind, deps, src_file, expect, intent in PACKAGES:
         src = open(os.path.join(PKG_DIR, src_file), "rb").read()
         deps_s = ",".join(deps) if deps else "-"
-        out += ("pkg %s %s kind=%s deps=%s bytes=%d expect=%d\n"
-                % (name, ver, kind, deps_s, len(src), len(expect))).encode()
+        out += ("pkg %s %s kind=%s deps=%s bytes=%d expect=%d intentbytes=%d\n"
+                % (name, ver, kind, deps_s, len(src), len(expect),
+                   len(intent))).encode()
         out += src
         out += expect
+        out += intent
     out += b"end\n"
     return bytes(out)
 

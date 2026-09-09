@@ -14,7 +14,7 @@
 #![no_main]
 
 use semos_std::arch::{
-    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_SEMOSPKG, SYS_REBUILD, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
+    syscall1, syscall2, syscall3, syscall4, SYS_AGENT, SYS_ASK, SYS_BACKLIGHT, SYS_CLOSE, SYS_DEMOS, SYS_DUP, SYS_DUP2, SYS_EDIT, SYS_FBINFO, SYS_FLASH_SYSROOT, SYS_MODESET, SYS_NETINFO, SYS_NETLOG, SYS_OPEN, SYS_PAIR, SYS_PAIRED, SYS_SELFDEV, SYS_SEMOSPKG, SYS_REBUILD, SYS_HUB, SYS_UNPAIR, SYS_TTY_SUPPRESS, SYS_USBENUM, SYS_USBINFO, SYS_VOUCH, SYS_VOUCHES, SYS_VOUCH_SESSION, SYS_GET_VOUCH, SYS_WIFI_SCAN, SYS_WIFI_CONNECT,
     SYS_PIPE, SYS_PS, SYS_READ, SYS_READDIR, SYS_SEEK, SYS_SLEEP, SYS_STAT, SYS_SYSINFO, SYS_TIME,
     SYS_TRUNCATE,
 };
@@ -255,7 +255,7 @@ fn is_builtin(name: &str) -> bool {
         "echo" | "pwd" | "cd" | "exit" | "true" | "false" | "cat" | "ls" | "which" | "env"
             | "grep" | "ps" | "free" | "uptime" | "ask" | "fetch" | "help" | "agent" | "edit"
             | "fbinfo" | "brightness" | "modeset" | "usbinfo" | "usbenum" | "netinfo" | "netlog" | "flash-sysroot" | "wifi"
-            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "semos" | "rebuild" | "pair" | "paired" | "unpair"
+            | "vouch" | "unvouch" | "vouches" | "sleep" | "demos" | "selfdev" | "semos" | "rebuild" | "hub" | "pair" | "paired" | "unpair"
     )
 }
 
@@ -935,6 +935,7 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             println!("  selfdev N           run self-dev demo N (80|83|87|88|93) — autocompile builds only");
             println!("  semos ...           package manager (M43/M44): update | list | fetch <pkg> | install <pkg> | remove <pkg>");
             println!("  rebuild ...         self-rebuild slots (M22a): status | stage | boot-next | keep | revert");
+            println!("  hub ...               smart-home hub (DEMO 98): start | stop | intents");
             println!("  pair QR-STRING      pair a phone (companion app) — console only");
             println!("  paired              list paired devices");
             println!("  unpair ID           forget a paired device — console only");
@@ -1043,6 +1044,22 @@ fn dispatch_argv(argv: &[String]) -> i32 {
                 }
             };
             let rc = unsafe { syscall2(SYS_REBUILD, op, 0) };
+            if rc == u64::MAX { 1 } else { 0 }
+        }
+        "hub" => {
+            // DEMO 98 smart-home hub: package-installed intents, gateway
+            // command channel, UDP device actions. `hub start` spawns the
+            // hub task; `hub intents` lists the installed vocabulary.
+            let op: u64 = match argv.get(1).map(|s| s.as_str()) {
+                Some("start") => 1,
+                Some("stop") => 2,
+                Some("intents") => 3,
+                _ => {
+                    println!("hub: usage: hub start | stop | intents");
+                    return 2;
+                }
+            };
+            let rc = unsafe { syscall2(SYS_HUB, op, 0) };
             if rc == u64::MAX { 1 } else { 0 }
         }
         "netlog" => {

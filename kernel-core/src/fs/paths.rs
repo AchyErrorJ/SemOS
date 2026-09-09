@@ -495,6 +495,29 @@ impl Namespace {
     /// registry was a fake-`'static` global — with the kernel mutex, a
     /// returned borrow would outlive the guard and race the next mutation
     /// (2026-07-17 review, P1).
+    /// Iterate entry names in a directory (kernel consumers — the hub's
+    /// intent scan; userland uses SYS_READDIR). Callback style: kernel-core
+    /// is alloc-free by design. Returns the entry count.
+    pub fn for_each_child(path: &str, f: &mut dyn FnMut(&str)) -> Result<usize, FsError> {
+        let suid = Self::resolve(path)?;
+        let registry = global_registry();
+        let obj = registry.get(&suid).ok_or(FsError::NotFound)?;
+        if obj.content_type != ContentType::Structured {
+            return Err(FsError::NotADirectory);
+        }
+        let bytes = obj.content.as_bytes().unwrap_or(&[]);
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        let mut n = 0;
+        for entry in DirEntries::parse(bytes)? {
+            let (name, _) = entry?;
+            f(name);
+            n += 1;
+        }
+        Ok(n)
+    }
+
     pub fn read_file_into(path: &str, out: &mut [u8]) -> Result<usize, FsError> {
         let suid = Self::resolve(path)?;
         let registry = global_registry();
