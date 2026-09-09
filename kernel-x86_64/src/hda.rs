@@ -64,7 +64,9 @@ const PARAM_WIDGET_CAPS:   u8 = 0x09;
 const FNGRP_AFG: u32 = 1; // Audio Function Group
 
 const WIDGET_DAC: u32 = 0; // Audio Output (DAC)
+const WIDGET_ADC: u32 = 1; // Audio Input (ADC)
 const WIDGET_PIN: u32 = 4; // Pin Complex
+const PINCAPS_PARAM: u8 = 0x0C; // Pin Capabilities: bit4=out, bit5=in
 
 const QSIZE: usize = 256; // CORB/RIRB entries
 
@@ -86,6 +88,9 @@ static mut CORB: Corb = Corb([0; QSIZE]);
 static mut RIRB: Rirb = Rirb([0; QSIZE]);
 static mut BDL: Bdl = Bdl([0; 8]);
 static mut PCM: PcmBuf = PcmBuf([0; PCM_BYTES]);
+// Capture path (M-audio-IN): second BDL + capture buffer, canary-filled.
+static mut CAP_BDL: Bdl = Bdl([0; 8]);
+static mut CAP: PcmBuf = PcmBuf([0; PCM_BYTES]);
 
 // --- driver state ---
 static mut MMIO: u64 = 0;
@@ -98,6 +103,10 @@ static mut OUT_SD_OFF: u64 = 0; // MMIO offset of the chosen output stream descr
 static mut CODEC_ADDR: u8 = 0xFF;
 static mut DAC_NID: u8 = 0;
 static mut PIN_NID: u8 = 0;
+// Capture widgets (ADC + input pin); 0 = none found (hda-output codec).
+static mut ADC_NID: u8 = 0;
+static mut IN_PIN_NID: u8 = 0;
+static mut IN_SD_OFF: u64 = 0; // MMIO offset of the input stream descriptor
 
 #[inline] unsafe fn r8(o: u64) -> u8  { read_volatile((MMIO + o) as *const u8) }
 #[inline] unsafe fn r16(o: u64) -> u16 { read_volatile((MMIO + o) as *const u16) }
@@ -200,23 +209,36 @@ unsafe fn walk_codec() -> bool {
     // but this matches the standard sequence and is harmless if already D0).
     verb(make_verb_12(CODEC_ADDR, afg_nid, 0x705, 0));
 
-    // AFG subnodes → find the first DAC + the first pin complex.
+    // AFG subnodes → find the first DAC + the first pin complex, and (for
+    // the capture path) the first ADC + the first input-capable pin.
     let afg = get_param(afg_nid, PARAM_NODE_COUNT);
     let afg_start = ((afg >> 16) & 0xFF) as u8;
     let afg_count = (afg & 0xFF) as u8;
 
+    let mut first_pin: u8 = 0;
     for i in 0..afg_count {
         let nid = afg_start + i;
         let caps = get_param(nid, PARAM_WIDGET_CAPS);
         let wtype = (caps >> 20) & 0xF;
         if wtype == WIDGET_DAC && DAC_NID == 0 {
             DAC_NID = nid;
-        } else if wtype == WIDGET_PIN && PIN_NID == 0 {
-            PIN_NID = nid;
+        } else if wtype == WIDGET_ADC && ADC_NID == 0 {
+            ADC_NID = nid;
+        } else if wtype == WIDGET_PIN {
+            if first_pin == 0 {
+                first_pin = nid;
+            }
+            let pincaps = get_param(nid, PINCAPS_PARAM);
+            if PIN_NID == 0 && (pincaps >> 4) & 1 == 1 {
+                PIN_NID = nid; // first output-capable pin
+            }
+            if IN_PIN_NID == 0 && (pincaps >> 5) & 1 == 1 {
+                IN_PIN_NID = nid; // first input-capable pin
+            }
         }
-        if DAC_NID != 0 && PIN_NID != 0 {
-            break;
-        }
+    }
+    if PIN_NID == 0 {
+        PIN_NID = first_pin; // pre-capture behavior: first pin complex
     }
     if DAC_NID == 0 || PIN_NID == 0 {
         println!(
@@ -226,8 +248,8 @@ unsafe fn walk_codec() -> bool {
         return false;
     }
     println!(
-        "[hda] codec {} AFG {} → DAC {} + Pin {}",
-        CODEC_ADDR, afg_nid, DAC_NID, PIN_NID,
+        "[hda] codec {} AFG {} → DAC {} + Pin {} (ADC {} + InPin {})",
+        CODEC_ADDR, afg_nid, DAC_NID, PIN_NID, ADC_NID, IN_PIN_NID,
     );
     true
 }
@@ -285,6 +307,97 @@ unsafe fn start_stream(stream_tag: u8) -> u64 {
     let ctl: u32 = ((stream_tag as u32 & 0xF) << 20) | (1 << 1);
     w32(sd_off + sd::CTL, ctl);
     sd_off
+}
+
+/// Configure the first input stream descriptor (SD index 0 — input SDs come
+/// first at MMIO 0x80): canary-fill the capture buffer, program format /
+/// CBL / BDL, set RUN with stream tag 2. Mirrors start_stream in reverse.
+unsafe fn start_capture(stream_tag: u8) -> u64 {
+    let sd_off = 0x80; // first INPUT stream descriptor
+    IN_SD_OFF = sd_off;
+
+    w8(sd_off + sd::CTL, 0);
+    w8(sd_off + sd::STS, 0x1C);
+
+    // Canary fill: after capture runs, real codec data (or silence-as-zeros
+    // from QEMU's none backend) must have overwritten this.
+    for b in CAP.0.iter_mut() {
+        *b = 0xAA;
+    }
+
+    let cap_phys = paging::walk_active_pml4((&raw const CAP) as u64).unwrap_or(0);
+    CAP_BDL.0[0] = cap_phys;
+    CAP_BDL.0[1] = ((PCM_BYTES as u64) & 0xFFFF_FFFF) | (0 << 32);
+    let bdl_phys = paging::walk_active_pml4((&raw const CAP_BDL) as u64).unwrap_or(0);
+
+    w32(sd_off + sd::CBL, PCM_BYTES as u32);
+    w16(sd_off + sd::LVI, 0);
+    w16(sd_off + sd::FMT, FMT_48K_S16_STEREO);
+    w32(sd_off + sd::BDPL, bdl_phys as u32);
+    w32(sd_off + sd::BDPU, (bdl_phys >> 32) as u32);
+
+    let ctl: u32 = ((stream_tag as u32 & 0xF) << 20) | (1 << 1);
+    w32(sd_off + sd::CTL, ctl);
+    sd_off
+}
+
+/// DEMO 97: HDA capture (the voice-assistant mic path, QEMU-verifiable
+/// half). Requires a duplex codec (ADC + input pin) — with plain
+/// hda-output the test skips cleanly. Validation without ears: run the
+/// input stream ~1 s, then require LPIB advanced (DMA-in at the 48 kHz ×
+/// 4 B cadence) AND the 0xAA canary overwritten by real codec data.
+unsafe fn capture_test() {
+    if ADC_NID == 0 || IN_PIN_NID == 0 {
+        println!("[DEMO 97] SKIP: codec has no ADC + input pin (playback-only)");
+        return;
+    }
+    if ISS == 0 {
+        println!("[DEMO 97] SKIP: controller has no input streams");
+        return;
+    }
+
+    // Program the ADC: our format, stream tag 2 / channel 0, amps unmuted.
+    let stream_tag: u8 = 2;
+    verb(make_verb_4(CODEC_ADDR, ADC_NID, 0x2, FMT_48K_S16_STEREO));
+    verb(make_verb_12(CODEC_ADDR, ADC_NID, 0x706, (stream_tag << 4) | 0));
+    verb(make_verb_4(CODEC_ADDR, ADC_NID, 0x3, 0xB07F)); // in+out amps unmuted
+    // Input pin: power up, IN_EN.
+    verb(make_verb_12(CODEC_ADDR, IN_PIN_NID, 0x705, 0));
+    verb(make_verb_12(CODEC_ADDR, IN_PIN_NID, 0x707, 0x20)); // IN_EN
+
+    let sd_off = start_capture(stream_tag);
+    println!(
+        "[DEMO 97] capture armed: ADC {} + InPin {}, input SD 0x{:X}, tag {}, CBL={} B",
+        ADC_NID, IN_PIN_NID, sd_off, stream_tag, PCM_BYTES
+    );
+
+    // Let the capture stream run a few hundred ms (cadence: 48 000 × 4 B/s).
+    for _ in 0..400_000_000u64 {
+        core::hint::spin_loop();
+    }
+
+    let lpib = r32(sd_off + sd::LPIB);
+    let canary_alive = CAP.0.iter().all(|&b| b == 0xAA);
+    // Stop the input stream (leave the sine playing as before).
+    w32(sd_off + sd::CTL, 0);
+
+    if lpib == 0 {
+        println!("[DEMO 97] FAIL: input LPIB never advanced (no capture DMA)");
+        return;
+    }
+    if canary_alive {
+        println!(
+            "[DEMO 97] FAIL: LPIB={} advanced but capture buffer untouched (canary intact)",
+            lpib
+        );
+        return;
+    }
+    let nonzero = CAP.0.iter().filter(|&&b| b != 0).count();
+    println!(
+        "[DEMO 97] PASS: HDA capture DMA — input LPIB advanced {} B (stream ran at the 48 kHz × 4 B cadence), canary overwritten ({} non-zero bytes captured)",
+        lpib,
+        nonzero
+    );
 }
 
 pub fn init() -> bool {
@@ -398,6 +511,9 @@ pub fn init() -> bool {
         let sd_off = start_stream(stream_tag);
         println!("[hda] stream tag {} armed at SD offset 0x{:X}, FMT=0x{:04X}, CBL={} B",
             stream_tag, sd_off, FMT_48K_S16_STEREO, PCM_BYTES);
+
+        // DEMO 97: capture (duplex codecs only; skips cleanly on hda-output).
+        capture_test();
     }
     true
 }
