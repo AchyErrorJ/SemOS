@@ -162,12 +162,17 @@ pub fn _print(args: fmt::Arguments) {
         // recurse/deadlock: net::poll prints status).
         crate::netlog::mirror(args);
         SERIAL.lock().write_fmt(args).unwrap();
-        // Mirror to framebuffer (no-op if not yet initialized). Skip only when
-        // a fullscreen kernel app (agent/editor) owns the screen;
-        // `SUPPRESS_TTY_INPUT` is for keyboard echo only, so user-space output
-        // (shell prompts, command output, rustc diagnostics) stays visible.
+        // Mirror to framebuffer (no-op if not yet initialized). While a
+        // fullscreen kernel app owns the screen we must NOT draw over its
+        // pixels, but kernel diag output (e.g. `fb-flip:` refusals) must
+        // still be recorded into the scrollback ring so a later `log flush`
+        // persists it to LOG.TXT. Without this, those lines silently
+        // vanished from the disk log during flipdemo — hiding the very
+        // diagnostics added to explain the flip fallback.
         if !crate::FULLSCREEN_APP_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
             crate::framebuffer::_print(args);
+        } else {
+            crate::framebuffer::_print_record_only(args);
         }
     });
 }

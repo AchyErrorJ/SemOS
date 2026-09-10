@@ -935,6 +935,25 @@ pub fn _print(args: fmt::Arguments) {
     let _ = ConsoleWriter.write_fmt(args);
 }
 
+/// Like `_print`, but only records into the scrollback ring — it never
+/// draws to the console. Used while a fullscreen kernel app owns the
+/// screen: kernel diag lines (e.g. `fb-flip:` refusals) must still land in
+/// the ring so a later `log flush` persists them to LOG.TXT, without
+/// scribbling over the app's pixels.
+pub fn _print_record_only(args: fmt::Arguments) {
+    use core::fmt::Write;
+    struct RecordOnlyWriter;
+    impl core::fmt::Write for RecordOnlyWriter {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            for byte in s.bytes() {
+                scrollback_push(byte);
+            }
+            Ok(())
+        }
+    }
+    let _ = RecordOnlyWriter.write_fmt(args);
+}
+
 impl FramebufferConsole {
     fn clear_all(&self) {
         // Fill the entire visible area with BG.

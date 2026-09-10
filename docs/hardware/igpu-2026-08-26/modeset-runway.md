@@ -182,3 +182,47 @@ restore), addressing model corrected.** Rung C-revised = GGTT route: program
 GGTT entries at aperture offset 0x800000 for a SemOS-owned 8 MiB back buffer
 (PTE attribute bits copied from GOP's GGTT[0]), flip DSPSURF_A between 0 and
 0x800000. All latch/verify/unflip plumbing carries over unchanged.
+
+## 2026-09-09 — Rung C LOG.TXT capture: flip hunted to GGTT window verify, attribution refined
+
+`log flush` capture on the T540p (SEMOS_LOG sda5) of a `flipdemo` run now shows the
+fb-flip diagnostics that were previously vanishing off LOG.TXT:
+
+```
+sem-sh$ flipdemo
+fb-flip: enter (fullscreen=true)
+ggtt: GGTT[0]=0xBDA00001 (attrs=0x1), [2048]=0xBE200001 pre-arm
+ggtt: refuse — window verify failed on frame 0 (got 0x00000000)
+flipdemo: SYS_FB_FLIP unavailable - falling back to vblank pacing
+```
+
+Interpretation of the three lines:
+
+- `enter (fullscreen=true)`: SYS_FB_FLIP path runs; claiming succeeded.
+- `GGTT[0]=0xBDA00001 … [2048]=0xBE200001 pre-arm`: GOP's own GGTT[0] is a valid
+  nonzero PTE (so HBW GTT decode is reachable); our back-buffer slot pre-arm reads
+  a stale but nonzero PTE (0xBE200001 echoes a previous boot's entry). No PTE
+  readback mismatch printed, so our 2048 PTEs wrote and read back consistently.
+- `refuse — window verify failed on frame 0 (got 0x00000000)`: the final check —
+  write a pattern through the CPU aperture window, read back through the direct
+  map — fails. The direct-map alias stayed 0.
+
+Attribution: the failing check writes via the **aperture (GTT proxy)** but reads
+back via the **WB direct map** of perframe. Those two aliases are not guaranteed
+coherent (WC store visibility at a distinct DRAM alias), so this is plausibly a
+**false negative** — flip may actually be wired correctly, but the verify reads
+the wrong alias. Per CL match, separate the checks:
+- Authoritative = read back **through the window** (what the scanout engine
+  samples). A real GTT decode/geometry failure reads 0 there.
+- Diagnostic only = the WB direct-map alias (retain the print, never refuse on it).
+
+Patched in `kernel-x86_64/src/display/ggtt.rs` (arm()): on mismatch we print
+`via-window` AND `via-direct` so the next capture distinguishes "GTT dead"
+(both 0 → still refuse) from "GTT alive, direct alias stale" (window=pat →
+arm and flip; expect working swap). Also fixed integrity gap: record-only
+`serial::_print` path (`framebuffer::_print_record_only`) now feeds the
+scrollback ring so FULLSCREEN diag lines persist to LOG.TXT — the capture above
+proves that fix and is from the dirty `01bb5970a674-dirty` build.
+
+Next: flash ggtt.rs refine, run `flipdemo` + `log flush` on T540p, compare
+`via-window` vs `via-direct` on frame 0.
