@@ -226,3 +226,29 @@ proves that fix and is from the dirty `01bb5970a674-dirty` build.
 
 Next: flash ggtt.rs refine, run `flipdemo` + `log flush` on T540p, compare
 `via-window` vs `via-direct` on frame 0.
+
+## 2026-09-10 — Coherence fix WORKS; found and fixed the real "bar didn't move" bug
+
+After the ggtt.rs coherence refine, the next capture armed cleanly and showed flip
+hardware engaging:
+
+```
+ggtt: armed — 2048 PTEs at GGTT[2048..4096], attrs=0x1, window fb+0x800000
+fb-flip: enter (fullscreen=true)
+fb-flip: refused — fb phys 0xE0800000 != aperture base 0xE0000000 ...
+flipdemo: ran with hardware page flips (tear-free double buffering)
+```
+
+Diagnosis: the anti-tearing gate in `fb_flip` translated `fb_info().addr` against
+the aperture base *every present*. But after the first successful flip,
+`note_flip` shifts the **draw surface** (`surface().addr`) onto the back buffer at
+`base + FLIP_OFFSET` (= 0xE0800000), while the GOP base itself never moves.
+So present #1 passed, present #2 tripped the gate (`0xE0800000 != 0xE0000000`),
+flipdemo declared SYS_FB_FLIP broken and fell back to blits — exactly the
+"bar didn't move" symptom.
+
+Fix (in tree, built): `fb_flip` now evaluates the addressing gate and arm()
+against the STABLE GOP base `framebuffer::fb_base()` (untouched by note_flip)
+instead of the flip-shifting `surface().addr`. Added `fb_base()` accessor in
+framebuffer.rs. Expected: every present translates 0xE0000000, so 600 flips
+proceed at 60 fps; `flipped>0` and the demo reports hardware page flips.

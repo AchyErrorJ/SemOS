@@ -658,10 +658,10 @@ impl Platform for X86Platform {
             return u64::MAX;
         }
         // Addressing gate (settled on metal 2026-09-01): on this machine
-        // DSPSURF_A is a GGTT offset, so the GOP framebuffer's physical
-        // address must be the BAR2 aperture base — display offset 0. The
-        // back buffer is then created in the GGTT at aperture offset
-        // FLIP_OFFSET (lazily, once, by ggtt::arm).
+        // DSPSURF_A is a GGTT offset, so fb_base must sit at the BAR2
+        // aperture base — display offset 0. The back buffer is then created
+        // in the GGTT at aperture offset FLIP_OFFSET (lazily, once, by
+        // ggtt::arm).
         let info = match crate::framebuffer::fb_info() {
             Some(i) => i,
             None => {
@@ -684,10 +684,17 @@ impl Platform for X86Platform {
                 return u64::MAX;
             }
         };
-        let phys = match crate::paging::walk_pml4_for(crate::paging::boot_cr3(), info.addr as u64) {
+        // Use the stable GOP base (fb_base), NOT fb_info().addr: after a
+        // successful flip, note_flip shifts the *draw surface* (surface.addr)
+        // onto the back buffer at base+FLIP_OFFSET, so translating it would
+        // trip this gate on the very next present even though the GOP base —
+        // and the flap addressing model — never moved. fb_base is the fixed
+        // anchor and is untouched by note_flip.
+        let fb_va = crate::framebuffer::fb_base();
+        let phys = match crate::paging::walk_pml4_for(crate::paging::boot_cr3(), fb_va) {
             Some(p) => p,
             None => {
-                crate::println!("fb-flip: fb address 0x{:X} did not translate", info.addr);
+                crate::println!("fb-flip: fb address 0x{:X} did not translate", fb_va);
                 return u64::MAX;
             }
         };
@@ -699,7 +706,7 @@ impl Platform for X86Platform {
             return u64::MAX;
         }
         // Arm the GGTT back buffer once; it prints its own refusal reason.
-        if !crate::display::ggtt::arm(info.addr as u64, ap_base, ap_size, info.byte_len as u64) {
+        if !crate::display::ggtt::arm(fb_va, ap_base, ap_size, info.byte_len as u64) {
             return u64::MAX;
         }
         // Drain WC store buffers before latching the new surface — the app

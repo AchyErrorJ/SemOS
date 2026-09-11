@@ -168,6 +168,14 @@ pub fn scanout_offset() -> u64 {
     SCANOUT_OFFSET.load(AtomicOrdering::Relaxed)
 }
 
+/// Stable virtual address of the GOP framebuffer base. Unlike
+/// `surface().addr` (which `note_flip` shifts onto the back buffer), this
+/// never moves across flips — it is the fixed anchor for the draw/scanout
+/// flip pair (offsets 0 and FLIP_OFFSET from it).
+pub fn fb_base() -> u64 {
+    FB_BASE.load(AtomicOrdering::Relaxed)
+}
+
 /// Record a completed flip: scanout is now at `scanout_off`, the draw
 /// surface moves to `draw_off`. Callers must move hardware scanout first
 /// (modeset::flip_scanout): on a failed flip the offsets stay unchanged so
