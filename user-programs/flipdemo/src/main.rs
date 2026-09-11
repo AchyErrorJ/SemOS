@@ -18,6 +18,7 @@ use core::panic::PanicInfo;
 
 const SYS_WRITE: u64 = 0;
 const SYS_EXIT: u64 = 2;
+const SYS_TIME: u64 = 70; // () -> ticks (100 Hz APIC)
 const SYS_FB_META: u64 = 128;
 const SYS_FB_BLIT: u64 = 129;
 const SYS_FB_WAIT_VBLANK: u64 = 131;
@@ -61,8 +62,19 @@ pub extern "C" fn _start() -> ! {
     let mut flip_broken = false;
     let mut quit = false;
     let mut x: usize = 0;
-    let mut dir_right = true;
     let mut keys = [0u32; 16];
+
+    // Time-based motion: the bar position is a function of elapsed 100 Hz
+    // ticks, not of iteration count. Presents are vblank-paced, so an
+    // occasional 2-vblank iteration (timer tick, WC throttle on the 8 MB
+    // blit) no longer pauses the bar — it just skips a position, and the
+    // perceived speed stays constant. Speed kept at the original
+    // 17 px/frame ≈ 1020 px/s = 51/5 px per tick.
+    let max_x = w - BAR_W;
+    // Ticks to cross one leg (0 -> max_x) at 51/5 px/tick, rounded up.
+    let leg_ticks = (max_x * 5 + 50) / 51;
+    let cycle_ticks = leg_ticks * 2;
+    let start_ticks = unsafe { syscall1(SYS_TIME, 0) };
 
     for _ in 0..FRAMES {
         if quit {
@@ -82,6 +94,18 @@ pub extern "C" fn _start() -> ! {
             }
         }
 
+        // Triangle wave: out leg 0..leg_ticks, return leg leg_ticks..cycle.
+        let elapsed = (unsafe { syscall1(SYS_TIME, 0) } - start_ticks) as usize;
+        let tt = elapsed % cycle_ticks;
+        x = if tt < leg_ticks {
+            tt * 51 / 5
+        } else {
+            max_x - (tt - leg_ticks) * 51 / 5
+        };
+        if x > max_x {
+            x = max_x; // rounding at the apex
+        }
+
         // Render the frame: dark gradient background + bouncing bar.
         let frame = unsafe { &mut *core::ptr::addr_of_mut!(FRAME) };
         let mut py = 0;
@@ -97,20 +121,8 @@ pub extern "C" fn _start() -> ! {
             py += 1;
         }
 
-        // Bounce: 17 px/frame (~1020 px/s at 60 fps) so edges sweep fast
-        // enough that any tearing would be obvious.
-        let max_x = w - BAR_W;
-        if dir_right {
-            x = if x + 17 > max_x { max_x } else { x + 17 };
-            if x == max_x {
-                dir_right = false;
-            }
-        } else {
-            x = x.saturating_sub(17);
-            if x == 0 {
-                dir_right = true;
-            }
-        }
+        // Bounce position was computed from elapsed ticks at the top of the
+        // loop (time-based motion — see the leg_ticks/cycle_ticks setup).
 
         // Present: blit into the hidden buffer, then flip.
         let xy = 0u64;
