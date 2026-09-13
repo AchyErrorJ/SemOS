@@ -161,13 +161,26 @@ if [[ "$ASSUME_YES" != "1" ]]; then
   [[ "$ans" == "YES" ]] || { echo "aborted"; exit 1; }
 fi
 
+# Prune BEFORE writing, not after: a full ESP makes the backup cp fail, and
+# (under set -e) the script then dies before an old post-write prune ever
+# runs — so each flash near the limit added one more orphaned backup until
+# the partition hit 100% (observed 2026-09-11: 14 backups ≈ 634 MB, ESP full,
+# newest backup truncated at 6.2 MB). Cap retention at the 5 most recent
+# backups: the current kernel plus 5 rollback points is plenty, and keeps a
+# multi-flash week from eating the 1 GiB ESP (/boot/efi is shared with
+# Pop!_OS, which already holds its own initrd/vmlinuz images).
+# Retain the BAK_RETAIN most recent backups, drop the rest. NOTE: the ESP
+# is mounted root-only (fmask/dmask 0077) on Pop!_OS, so an unprivileged
+# shell can neither list /boot/efi nor expand the glob — a naive
+# `ls ... | sudo xargs rm` outside sudo would silently enumerate nothing and
+# deletes zero files. The entire listen-and-delete must run INSIDE one
+# privileged shell so it can see the directory.
+BAK_RETAIN="${BAK_RETAIN:-5}"
+sudo sh -c 'ls -1dt "$1"/kernel-x86_64.bak-* 2>/dev/null | tail -n +"$(( $2 + 1 ))" | xargs -r rm -rf' _ "$ESP" "$BAK_RETAIN"
+
 sudo cp -a "$ESP/kernel-x86_64" "$ESP/kernel-x86_64.bak-$TS"
 sudo cp -f "$TMP/kernel-x86_64" "$ESP/kernel-x86_64"
 sync
-
-# The kernel is ~17-110 MB and the ESP is shared with Pop!_OS — keep only the
-# two newest backups or a handful of flashes fills the partition.
-ls -1dt "$ESP"/kernel-x86_64.bak-* 2>/dev/null | tail -n +3 | sudo xargs -r rm -rf
 
 log "Done"
 printf 'Reboot, press F12, choose SemOS. At the shell run: netinfo\n'

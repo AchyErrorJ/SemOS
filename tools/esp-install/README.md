@@ -20,7 +20,11 @@ That script:
 5. backs up `/boot/efi/kernel-x86_64`;
 6. copies the new kernel to the ESP and runs `sync`.
 
-It asks for `YES` before the ESP write. Useful options:
+It asks for `YES` before the ESP write. Helpful options:
+
+Defaults to keeping the **5 most recent** kernel backups on the ESP
+(`BAK_RETAIN` overrides; the ESP is only 1 GiB and is shared with the
+Pop!_OS boot images, so hoarding 100 MB-era kernels fills it). Useful options:
 
 ```sh
 bash tools/esp-install/build-and-flash.sh --dry-run
