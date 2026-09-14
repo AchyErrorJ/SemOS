@@ -252,3 +252,26 @@ against the STABLE GOP base `framebuffer::fb_base()` (untouched by note_flip)
 instead of the flip-shifting `surface().addr`. Added `fb_base()` accessor in
 framebuffer.rs. Expected: every present translates 0xE0000000, so 600 flips
 proceed at 60 fps; `flipped>0` and the demo reports hardware page flips.
+
+## 2026-09-13 — flipdemo "progress but jumps" root cause: background net poll steals flip CPU
+
+Symptom on metal: tear-free flips, bar moves but "sometimes big jumps across the
+screen" even after the time-based motion fix (b3a82c3). Kernel flip path was
+clean (`ggtt: armed`, `ran with hardware page flips`).
+
+cause: the shell's *waiter loop* (`session.rs`) called `kernel_core::net::poll()`
+continuously while waiting on flipdemo's child, NOT gated on fullscreen (unlike
+the keyboard pump one line above). With no DHCP lease reachable (no cable), the
+e1000e RETRY/DHCP storm hits the synchronous TX path; `e1000e::send_frame`
+busy-spins up to 10M iterations when the TX ring is full (see LOG flood
+"[e1000e] TX ring full, timeout waiting for completion"). That busy-spin, on a
+background context that the scheduler lets run, steals hundreds of ms of CPU
+from flipdemo's present loop. Because motion is now TIME-based, a dropped frame
+doesn't pause — the next present reflects the later elapsed time and the bar
+jumps forward.
+
+fix (`session.rs`): gate `net::poll()` on `!FULLSCREEN_APP_ACTIVE`, mirroring the
+existing keyboard-pump gate. While an app owns the screen the waiter only sleeps
+(a cheap no-op spin-free wait); networking resumes the instant the app releases
+the screen. Eliminates the CPU steal at its source; leaves the flip cadence
+untouched.

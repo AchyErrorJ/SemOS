@@ -166,7 +166,19 @@ pub(crate) fn interactive_session() {
                 // acquisition on real Ethernet, ARP, socket timers) makes
                 // progress even while the shell is idle at its prompt. Cheap
                 // no-op until the stack is initialized.
-                kernel_core::net::poll();
+                //
+                // GATED on !FULLSCREEN_APP_ACTIVE: a fullscreen app (flipdemo,
+                // agent, editor) owns the whole present loop and must not be
+                // preempted. When no DHCP lease is reachable (no cable) the
+                // e1000e retry/DHCP storm drives synchronous TX; the driver
+                // busy-spins up to 10M iterations when the TX ring is full,
+                // which stole hundreds of ms of CPU from flipdemo and made the
+                // time-based bar teleport across the screen. Skipping the
+                // poll while an app owns the screen keeps the flip cadence
+                // clean; the network simply resumes when the app releases.
+                if !FULLSCREEN_APP_ACTIVE.load(core::sync::atomic::Ordering::Relaxed) {
+                    kernel_core::net::poll();
+                }
                 let _ = dispatch(SYS_SLEEP, 1, 0, 0, 0);
                 kernel_core::process::set_kernel_task_id(Some(scheduler::current_task_index()));
             }
