@@ -381,16 +381,20 @@ mod tests {
 
     #[test]
     fn verify_pin_rejects_corrupted_cert() {
-        // Flip one byte well inside the SPKI region (after the outer
-        // SEQUENCE header) so we change what gets hashed. Kept no_alloc
-        // by copying into a fixed-size stack buffer — kernel-core can't
-        // pull in `alloc::vec::Vec`.
+        // The pin binds ONLY the SubjectPublicKeyInfo — corrupting some
+        // other region of the tbs certificate (validity window, issuer,
+        // serial, ...) leaves the SPKI hash unchanged and is correctly
+        // still accepted. To exercise rejection, corrupt a byte inside
+        // the SPKI region itself so the hashed bytes change. Kept no_alloc
+        // by copying into a fixed-size stack buffer.
         const N: usize = 675; // size of INTERMEDIATE_DER
         let mut corrupted = [0u8; N];
         corrupted.copy_from_slice(INTERMEDIATE_DER);
-        corrupted[N / 2] ^= 0xFF;
+        let spki = extract_spki(&corrupted).expect("fixture cert is well-formed");
+        let spki_off = spki.as_ptr() as usize - corrupted.as_ptr() as usize;
+        corrupted[spki_off + spki.len() / 2] ^= 0xFF;
         let result = verify_pin(&corrupted, &ANTHROPIC_INTERMEDIATE_PIN);
-        assert!(result.is_err(), "corrupted cert must fail the pin");
+        assert!(result.is_err(), "cert with corrupted SPKI must fail the pin");
     }
 
     #[test]

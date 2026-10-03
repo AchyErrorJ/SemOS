@@ -7,7 +7,7 @@
 //!
 //! # Usage
 //!
-//! ```rust
+//! ```text
 //! // Store an object with its embedding
 //! let suid = semantic_search.store(tier, content, embedding)?;
 //!

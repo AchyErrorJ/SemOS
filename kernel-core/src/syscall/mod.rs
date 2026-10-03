@@ -3092,9 +3092,10 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
     // kernel mutex: the old "safe because syscalls are serialized" comment
     // was wrong — an interrupts-enabled handler (llm_ask/agent TUI) can be
     // preempted and another task can enter this handler mid-loop
-    // (2026-07-17 review, P1).
-    static CONTEXT_SCRATCH: crate::sync::Mutex<[u8; 4096]> =
-        crate::sync::Mutex::new([0; 4096]);
+    // (2026-07-17 review, P1). Sized to the output window so a passthrough
+    // (None-profile) entry is never truncated shorter than the write cap.
+    static CONTEXT_SCRATCH: crate::sync::Mutex<[u8; 32768]> =
+        crate::sync::Mutex::new([0; 32768]);
 
     // out_ptr == 0 is the size-query form. Any other pointer is a write
     // target: for a Ring-3 caller it must be a user-space address, and the
@@ -3115,9 +3116,23 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
 
     unsafe {
         let registry = crate::semantic::registry::global_registry();
-        let redactor = crate::llm::context_builder::global_redactor();
+        let redactor = crate::llm::context_redact::global_context_redactor();
         let mut scratch_guard = CONTEXT_SCRATCH.lock();
         let scratch = &mut scratch_guard[..];
+
+        // Redaction decision context for this requester. The policy engine
+        // evaluates it per entry (target_suid updated in the loop); with no
+        // matching policy the engine default Allow(Public) maps to Standard
+        // profile, or None (passthrough) for Secret requesters. An
+        // uninitialized engine denies → Full (fail closed), never hangs.
+        let mut redact_context = crate::llm::RedactionContext {
+            requester_id: crate::scheduler::current_user_id(),
+            requester_tier: tier_from_u8(tier),
+            target_suid: crate::semantic::SUID::new(0, 0),
+            request_type: crate::security::evaluation::RequestType::LLMContext,
+            context_flags: 0,
+            app_context: 0,
+        };
 
         let mut total_size = 0usize;
         let mut offset = 0usize;
@@ -3125,33 +3140,32 @@ fn handle_llm_context(suid_pairs_ptr: u64, count: u64, out_ptr: u64) -> u64 {
 
         for (suid_high, suid_low) in suids[..n].iter().copied() {
             let suid = crate::semantic::SUID::new(suid_high, suid_low);
+            redact_context.target_suid = suid;
 
             if let Some(object) = registry.get(&suid) {
                 let obj_tier = object.tier as u8;
-                if obj_tier > tier {
-                    continue; // Can't access this tier
+                // Hard gate: content above the requester's clearance never
+                // flows, and tier-3 (Secret) objects stay excluded entirely.
+                if obj_tier > tier || obj_tier >= 3 {
+                    continue;
                 }
 
-                // Apply tier-based processing (same logic as build_from_suids)
                 let obj_content_bytes = match object.content.as_bytes() {
                     Some(bytes) => bytes,
                     None => continue, // Skip objects with no content
                 };
 
-                let content = match obj_tier {
-                    0 => obj_content_bytes, // Tier 0: verbatim
-                    1 => {
-                        // Tier 1: summarize (placeholder - use redactor for now)
-                        let n = redactor.redact(obj_content_bytes, scratch);
-                        &scratch[..n]
-                    }
-                    2 => {
-                        // Tier 2: redact
-                        let n = redactor.redact(obj_content_bytes, scratch);
-                        &scratch[..n]
-                    }
-                    _ => continue, // Tier 3+: exclude
-                };
+                // Policy-driven profile redaction: the context-aware engine
+                // evaluates security policies for (requester, object) and
+                // applies the resulting profile — Standard/Medical/Financial
+                // pattern-scrub, Full (blank) on deny, None passthrough only
+                // for Secret-clearance requesters.
+                let content_len = redactor.redact_with_context(
+                    obj_content_bytes,
+                    &redact_context,
+                    scratch,
+                );
+                let content = &scratch[..content_len];
 
                 let entry_len = content.len();
                 total_size += entry_len + 8; // +8 for length prefix

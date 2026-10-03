@@ -165,3 +165,44 @@ You're upfront that redaction is rule-based pending real inference, so treat thi
 ---
 
 *Review produced by static analysis only; line numbers reference commit `03abfc6`. Happy to go deeper on any subsystem (iwlwifi TX path, xHCI, the ELF loader, TLS shim) in a follow-up.*
+
+
+---
+
+## Resolution appendix — 2026-10-03
+
+Reconciled against `main` @ `dd79a9a`. Most P0–P2 fixes below landed on a
+side branch **2026-07-17 → 19** (same window as this review) and reached
+`main` via merge `dc71050` (2026-09-09) — which is why the review's
+"Suggested fix order" was largely done before most readers saw it. Findings
+were re-verified against current code, not assumed closed.
+
+| # | Finding | Status | Evidence |
+|---|---------|--------|----------|
+| 1 | `SYS_WRITE` kernel read/panic (Critical) | **Closed** 2026-07-17 | `1d8587d` + `ea622c7`: all user paths via caller-aware `read_caller_slice`; console/pipe/file return `u64::MAX` on bad ptr |
+| 2 | `SYS_LLM_CONTEXT` kernel write (Critical) | **Closed** 2026-07-17 | `1d8587d`: SUID pairs copy-in'd, `out_ptr` validated, window vs `USER_ADDR_LIMIT` |
+| — | `SYS_HEAP_FREE` arbitrary kernel write (same class, found during the 2026-10-03 re-audit) | **Closed** 2026-10-03 | `dd79a9a`: handler refuses Ring-3 callers (no legitimate userland caller; free-list metadata write not closable by range checks) |
+| 3 | Validation adoption (High, systemic) | **Adoption closed**; range≠mapped gap **open** | Only `from_raw_parts` in `kernel-core/src/syscall/` are inside the validators; every cast traced to helpers. In-range-but-unmapped pointers can still `#PF` → halt; no exception-table fixup (P2) |
+| 4 | Redactor inversion + fail-open (High) | **Closed** 2026-07-18 | `55006fe`: Secret+Allow→`None` passthrough, unknown→`Full`, `Minimal`→`Full` rename; 9 unit tests. Note: context-aware engine has **no production caller** yet — `SYS_LLM_CONTEXT` still uses the pattern `Redactor` (see #6) |
+| 5 | `static mut` + blocking syscalls (High) | **Partially closed** | `CONTEXT_SCRATCH` is now `sync::Mutex`; `VOUCH_TABLE` recheck uses `ct_eq`. Global registry/redactor singletons still handed out as aliased `&'static mut` — locking audit **open** (P1) |
+| 6 | Pattern redaction bypassable (Medium) | **Open** | Unchanged, and it is the *production* LLM path today. Wiring the fixed context-aware engine into `SYS_LLM_CONTEXT` is the real exfiltration-boundary work |
+| 7 | Non-constant-time compares (Medium) | **Partially closed** | vouch recheck now `ct_eq`; WPA2 MIC and any others not audited — one `ct_eq`-everywhere pass **open** |
+| 8 | Layout-dependent stack corruption (Medium) | **Mitigated** | `33c2ea7`: 64 KiB stacks + canaries + frame-size gate. Guard pages still future work |
+| 9 | TCB bloat / games in Ring 0 (Low/Med) | **Closed** 2026-07-19 | `33c2ea7`: main.rs split, games/driver demos moved out of Ring 0 |
+| 10 | Vendoring briefs (Low) | **Open** | Briefs exist for embedded-tls + smoltcp only; `compiler/vendor` + `semos-rustc` unbriefed; iwlwifi firmware license file status unrechecked |
+
+**Regression harness:** `user-programs/ptr-guard-test` (registered in
+`kernel-x86_64/src/main.rs`, runnable from sem-sh) attacks both Criticals
+from tier 0 — 7/7 PASS observed in QEMU/KVM on the `dd79a9a` image.
+
+**Still open, in suggested order:** (1) wire context-aware redactor into
+`SYS_LLM_CONTEXT` + harden pattern matcher; (2) lock registry/redactor
+singletons; (3) #PF recovery for unmapped user pointers; (4) `ct_eq`
+everywhere; (5) vendoring briefs index.
+- **2026-10-03 follow-up:** the four failing tests are fixed on `main`
+  (`frames.rs` double-allocation + free-counter bugs — real bugs with no
+  production caller; `transport.rs` and `spki_pin.rs` test-assumption bugs —
+  the SPKI pin binds only the SPKI, which is intended pinning semantics).
+  Context-aware redactor is now the production `SYS_LLM_CONTEXT` path, with a
+  hard tier gate (tier-3 never flows) in the handler and policy-driven
+  pattern scrubbing inside it.

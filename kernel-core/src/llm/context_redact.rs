@@ -62,6 +62,12 @@ pub struct RedactionContext {
     pub app_context: u32,
 }
 
+/// Intermediate scratch for the Medical/Financial two-pass profiles, behind
+/// the kernel mutex: a 4 KiB stack array here overflows the 8 KiB task
+/// kernel stack when the engine runs on the syscall path.
+static PROFILE_TMP: crate::sync::Mutex<[u8; super::MAX_ENTRY_SIZE]> =
+    crate::sync::Mutex::new([0; super::MAX_ENTRY_SIZE]);
+
 /// Context-aware redaction engine
 pub struct ContextAwareRedactor {
     /// Base redactor for standard patterns
@@ -166,8 +172,9 @@ impl ContextAwareRedactor {
     /// Apply medical privacy redaction (HIPAA-style)
     fn apply_medical_redaction(&self, content: &[u8], output: &mut [u8]) -> usize {
         // Start with standard redaction
-        let mut temp_buffer = [0u8; super::MAX_ENTRY_SIZE];
-        let base_len = self.base_redactor.redact(content, &mut temp_buffer);
+        let mut temp_guard = PROFILE_TMP.lock();
+        let temp_buffer = &mut temp_guard[..];
+        let base_len = self.base_redactor.redact(content, temp_buffer);
 
         // Apply additional medical-specific patterns
         let medical_redacted = self.apply_medical_patterns(&temp_buffer[..base_len], output);
@@ -177,8 +184,9 @@ impl ContextAwareRedactor {
     /// Apply financial privacy redaction (PCI-style)
     fn apply_financial_redaction(&self, content: &[u8], output: &mut [u8]) -> usize {
         // Start with standard redaction (includes credit cards)
-        let mut temp_buffer = [0u8; super::MAX_ENTRY_SIZE];
-        let base_len = self.base_redactor.redact(content, &mut temp_buffer);
+        let mut temp_guard = PROFILE_TMP.lock();
+        let temp_buffer = &mut temp_guard[..];
+        let base_len = self.base_redactor.redact(content, temp_buffer);
 
         // Apply additional financial-specific patterns
         let financial_redacted = self.apply_financial_patterns(&temp_buffer[..base_len], output);
@@ -548,5 +556,36 @@ mod tests {
         let mut output = [0u8; 256];
         let len = redactor.apply_redaction_profile(content, RedactionProfile::None, &mut output);
         assert_eq!(&output[..len], content);
+    }
+
+    // --- Production-wiring contract (SYS_LLM_CONTEXT) ---
+    // What handle_llm_context relies on end-to-end: with the policy engine
+    // initialized and no policies installed, evaluate() yields the engine
+    // default Allow(Public), which must map to Standard for ordinary
+    // requesters and None (passthrough) only for Secret requesters. A
+    // Public object must therefore reach the pattern scrubber, and the
+    // tier gate (never flow above the requester) stays in the caller.
+    #[test]
+    fn test_llm_context_no_policy_default_profiles() {
+        crate::security::evaluation::init();
+        let redactor = ContextAwareRedactor::new();
+
+        let context = |tier| RedactionContext {
+            requester_id: user_ids::GUEST,
+            requester_tier: tier,
+            target_suid: SUID::new(0x1000, 0x2000),
+            request_type: RequestType::LLMContext,
+            context_flags: 0,
+            app_context: 0,
+        };
+
+        let p = redactor.determine_redaction_profile(&context(SecurityTier::Public));
+        assert_eq!(p, RedactionProfile::Standard);
+
+        let p = redactor.determine_redaction_profile(&context(SecurityTier::Sensitive));
+        assert_eq!(p, RedactionProfile::Standard);
+
+        let p = redactor.determine_redaction_profile(&context(SecurityTier::Secret));
+        assert_eq!(p, RedactionProfile::None);
     }
 }

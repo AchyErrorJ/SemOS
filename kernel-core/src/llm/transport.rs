@@ -496,7 +496,7 @@ mod tests {
         let req = b"POST /v1/messages HTTP/1.1\r\n\
                     Host: api.example.com\r\n\
                     Content-Type: application/json\r\n\
-                    Content-Length: 47\r\n\
+                    Content-Length: 37\r\n\
                     \r\n\
                     {\"model\":\"x\",\"content\":\"hello world\"}";
         // Content-Length above is the exact byte count of the body.

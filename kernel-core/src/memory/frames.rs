@@ -61,7 +61,7 @@ impl FrameAllocator {
         }
     }
 
-    /// Allocate a single frame (WORKAROUND VERSION - no atomic on free_frames)
+    /// Allocate a single frame
     pub fn allocate_frame(&mut self) -> Option<Frame> {
         // Load atomic value for total_frames
         let total = self.total_frames.load(Ordering::Acquire);
@@ -75,7 +75,7 @@ impl FrameAllocator {
             }
 
             // Find first zero bit
-            let bit_pos = if bitmap_word & 1 == 0 { 0 } else { 1 };
+            let bit_pos = (!bitmap_word).trailing_zeros() as usize;
             let frame_num = (word_idx * 64) + bit_pos;
 
             if frame_num >= total {
@@ -85,8 +85,7 @@ impl FrameAllocator {
             // Mark as allocated in bitmap
             self.bitmap[word_idx] |= 1 << bit_pos;
 
-            // NOTE: Skip atomic update to free_frames due to LLVM bug
-            // self.free_frames.fetch_sub(1, Ordering::Relaxed);
+            self.free_frames.fetch_sub(1, Ordering::AcqRel);
 
             return Some(Frame::new(FrameNumber::new(frame_num)));
         }
