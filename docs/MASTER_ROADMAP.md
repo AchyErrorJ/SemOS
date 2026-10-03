@@ -11,8 +11,11 @@ historical "what landed, when" log is [`ROADMAP.md`](ROADMAP.md).
 | [roadmap/phone.md](roadmap/map%20-%20phone.md) | QR pairing · companion capabilities · sensor offload |
 | [roadmap/gpu.md](roadmap/map%20-%20gpu.md) | iGPU rendering · dGPU compute (local inference) |
 | [roadmap/platform.md](roadmap/map%20-%20platform.md) | ARM port · web/info access · agent infra · Swift bridge · media · utilities |
+| [GOVERNANCE_THESIS.md](GOVERNANCE_THESIS.md) | **Governing thesis (2026-10-01)** — machine-written code untrusted by default; bounded authority · attribution · detection · reversibility |
 
 > **Essential reading for any agent-authored code — read these first:**
+> [`GOVERNANCE_THESIS.md`](GOVERNANCE_THESIS.md) (the governing thesis — machine-written
+> code is untrusted by default; the OS survives it),
 > [`semos-security-thesis.md`](semos-security-thesis.md) (the security posture and
 > the "Path A: From-Scratch" disciplines) and
 > [`provenance-commitment.md`](provenance-commitment.md) (how authorship and trust

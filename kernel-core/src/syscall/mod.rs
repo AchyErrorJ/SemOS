@@ -1127,8 +1127,19 @@ fn handle_mmap_anon(addr: u64, size: u64) -> u64 {
 /// `size` and `align` are accepted for compatibility with
 /// `std::alloc::dealloc`; the kernel-side heap stores the actual size
 /// in the block header and ignores the args. Caller may pass 0.
+///
+/// Kernel-side-only: the arena lives in kernel BSS, and `deallocate`
+/// writes a free-list header at `ptr - HEADER_SIZE` before splicing the
+/// block into the kernel free list. A Ring-3 caller passing ANY address
+/// (user-range or kernel) would get the kernel to write there — an
+/// arbitrary-kernel-write primitive, the same class as the 2026-07-17
+/// review's critical #2. Userland's allocator (std-shim) is mmap-based
+/// with a no-op dealloc, so no legitimate Ring-3 caller exists; refuse
+/// outright rather than range-checking (a "valid" user-range ptr would
+/// still corrupt the kernel free list).
 fn handle_heap_free(ptr: u64, size: u64, align: u64) -> u64 {
     if ptr == 0 { return u64::MAX; }
+    if caller_needs_validation() { return u64::MAX; }
     crate::memory::heap::deallocate(ptr as *mut u8, size as usize, align as usize);
     0
 }

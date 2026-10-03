@@ -3,6 +3,13 @@
 > Part of the [Master Roadmap](../MASTER_ROADMAP.md). Sibling themes:
 > [networking](map%20-%20networking.md) · [phone](map%20-%20phone.md) · [gpu](map%20-%20gpu.md) ·
 > [platform](map%20-%20platform.md). Historical log: [ROADMAP.md](../ROADMAP.md).
+>
+> **2026-10-01 — reorientation:** self-extension is demoted from thesis to
+> demonstrated capability (M27, DEMO 80, M1–M4, DEMO 93 all stand). The governing
+> thesis is now the [Governance Thesis](../GOVERNANCE_THESIS.md): machine-written
+> code is untrusted by default; the OS survives it through bounded authority,
+> attribution, detection, and reversibility. This file remains the technical
+> detail for everything self-extension owns.
 
 The headline: **an LLM agent writes its own modules, compiles them on the machine,
 and loads them into the running system — with the security tiers as the capability
