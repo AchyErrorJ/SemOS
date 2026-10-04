@@ -1,0 +1,18 @@
+# Keep Unix tools and shebang scripts runnable from both WSL and Windows.
+* text=auto
+*.sh text eol=lf
+*.bash text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.img binary
+*.elf binary
+
+# Windows-native scripts keep their expected line endings.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf

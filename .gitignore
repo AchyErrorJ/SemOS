@@ -12,6 +12,9 @@ qemu-out.log
 qemu-stderr.log
 *.img
 
+# Local Cargo scratch/cache used for sandboxed offline verification
+.cargo-local/
+
 # GDB debugging artifacts
 gdb-out.log
 gdb-trace.log
@@ -37,3 +40,4 @@ test_assert.rs
 Thumbs.db
 .anthropic-key
 .kimi-key
+kimi-debug-session_*.zip

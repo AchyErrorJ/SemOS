@@ -441,6 +441,23 @@ pub fn mapping_attrs_4k(virt: u64) -> u64 {
     }
 }
 
+/// Cache attributes that select **PAT index 1 = Write Combining (WC)** on a
+/// 4 KiB PTE, relying on the hardware-reset PAT (indices 0..7 = WB, WC, UC-,
+/// UC, WB, WC, UC-, UC). The kernel never reprograms the IA32_PAT MSR, so
+/// PAT[1] is WC under the active table. Encoded as `PAT_4K` (PTE bit 7)
+/// with PCD=PWT=0 → the 3-bit PAT select is `001` = index 1 = WC.
+///
+/// Used for the Rung C GGTT flip CPU window. The GOP framebuffer is mapped
+/// *uncached* (GOP leaves PCD set), and `mapping_attrs_4k(fb_va)` faithfully
+/// copies that UC tag into the flip window — which serializes every CPU store
+/// to the aperture. Measured on the T540p: an 8.3 MB full-frame blit through
+/// the UC window took ~407 ms (~21 MB/s). Mapping the window write-combining
+/// lets stores coalesce in the WC buffers, bringing full-frame blits down to
+/// a few ms — the difference between "flipdemo runs at 2 fps" and 60 fps.
+pub fn write_combining_attrs_4k() -> u64 {
+    PAT_4K
+}
+
 /// Extract the cache-relevant bits of a raw leaf entry into 4 KiB PTE
 /// positions. `pat_bit` is the PAT position at the entry's own level.
 fn leaf_attrs_4k(raw: u64, pat_bit: u64) -> u64 {

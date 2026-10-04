@@ -37,6 +37,42 @@ const SCANCODE_ESC: u32 = 0x01;
 
 static mut FRAME: [u32; MAX_W * MAX_H] = [0; MAX_W * MAX_H];
 
+#[inline(always)]
+fn rdtsc() -> u64 {
+    let lo: u32; let hi: u32;
+    unsafe { asm!("rdtsc", out("eax") lo, out("edx") hi, options(nomem, nostack)); }
+    ((hi as u64) << 32) | lo as u64
+}
+
+fn write_u64(out: &mut [u8; 64], mut v: u64) -> usize {
+    if v == 0 { out[0] = b'0'; return 1; }
+    let mut tmp = [0u8; 20]; let mut i = 0;
+    while v > 0 { tmp[i] = b'0' + (v % 10) as u8; v /= 10; i += 1; }
+    let mut n = 0;
+    while i > 0 { i -= 1; out[n] = tmp[i]; n += 1; }
+    n
+}
+
+struct Timing { sum_render: u64, sum_blit: u64, sum_flip: u64, sum_tot: u64, n: u64, max_tot: u64 }
+static mut T: Timing = Timing { sum_render: 0, sum_blit: 0, sum_flip: 0, sum_tot: 0, n: 0, max_tot: 0 };
+
+fn report_times() {
+    unsafe {
+        if T.n == 0 { return; }
+        let mut nb = [0u8; 64];
+        write(b"flip timings(us) avg render/blit/flip/tot=");
+        let nl = write_u64(&mut nb, T.sum_render / T.n); write(&nb[..nl]); write(b"/");
+        let nl = write_u64(&mut nb, T.sum_blit / T.n); write(&nb[..nl]); write(b"/");
+        let nl = write_u64(&mut nb, T.sum_flip / T.n); write(&nb[..nl]); write(b"/");
+        let nl = write_u64(&mut nb, T.sum_tot / T.n); write(&nb[..nl]);
+        write(b" max_tot=");
+        let nl = write_u64(&mut nb, T.max_tot); write(&nb[..nl]);
+        write(b" n=");
+        let nl = write_u64(&mut nb, T.n); write(&nb[..nl]);
+        write(b"\n");
+    }
+}
+
 #[no_mangle]
 #[link_section = ".text._start"]
 pub extern "C" fn _start() -> ! {
@@ -80,6 +116,7 @@ pub extern "C" fn _start() -> ! {
         if quit {
             break;
         }
+        let t_iter = rdtsc();
 
         // ESC (or any ctrl+c) quits.
         let n = unsafe { syscall2(SYS_KB_POLL, keys.as_mut_ptr() as u64, 64) };
@@ -124,6 +161,7 @@ pub extern "C" fn _start() -> ! {
         // Bounce position was computed from elapsed ticks at the top of the
         // loop (time-based motion — see the leg_ticks/cycle_ticks setup).
 
+        let t_render = rdtsc();
         // Present: blit into the hidden buffer, then flip.
         let xy = 0u64;
         let wh = (w as u64) | ((h as u64) << 32);
@@ -133,6 +171,7 @@ pub extern "C" fn _start() -> ! {
             unsafe { syscall1(SYS_FB_CLAIM, 0) };
             unsafe { sys_exit(1) }
         }
+        let t_blit = rdtsc();
         if !flip_broken {
             let frc = unsafe { syscall1(SYS_FB_FLIP, 0) };
             if frc == 0 {
@@ -145,8 +184,20 @@ pub extern "C" fn _start() -> ! {
         if flip_broken {
             let _ = unsafe { syscall1(SYS_FB_WAIT_VBLANK, 0) };
         }
+        let t_flip = rdtsc();
+        // Observation-only per-phase accounting (no behaviour change).
+        unsafe {
+            let to = rdtsc().wrapping_sub(t_iter) / 2500;
+            T.sum_render += (t_render.wrapping_sub(t_iter)) / 2500;
+            T.sum_blit += (t_blit.wrapping_sub(t_render)) / 2500;
+            T.sum_flip += (t_flip.wrapping_sub(t_blit)) / 2500;
+            T.sum_tot += to;
+            if to > T.max_tot { T.max_tot = to; }
+            T.n += 1;
+        }
     }
 
+    report_times();
     unsafe { syscall1(SYS_FB_CLAIM, 0) };
 
     if flipped > 0 {

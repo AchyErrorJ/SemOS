@@ -275,3 +275,29 @@ existing keyboard-pump gate. While an app owns the screen the waiter only sleeps
 (a cheap no-op spin-free wait); networking resumes the instant the app releases
 the screen. Eliminates the CPU steal at its source; leaves the flip cadence
 untouched.
+
+## 2026-09-26 — full-frame blit measured, root cause = UC (not WC) flip window
+
+Clean per-phase capture (correct full-frame demo, no band hack):
+```
+flip timings(us) avg render/blit/flip/tot=2950/407134/49596/459682 max_tot=708781 n=70
+```
+- render 3 ms, flip 50 ms, but **blit = 407 ms** — the whole problem: an 8.3 MB
+  full-frame blit into the flip back buffer at only ~21 MB/s.
+
+Root cause: the Rung C GGTT CPU window inherited GOP's framebuffer cache attrs via
+`mapping_attrs_4k(fb_va)`; GOP maps its fb **uncached (PCD set)**. An uncached
+CPU window means every store to the aperture serializes to the bus — hence
+~21 MB/s → 407 ms/8.3 MB. The prior assumption ("the window is WC") was never
+actually enforced in the PTE; the kernel never programs the PAT MSR.
+
+Fix (in tree): `paging::write_combining_attrs_4k()` returns PAT index 1 = WC
+(reset PAT) for 4 KiB PTEs (bit 7, no PCD/PWT → select `001`), and `ggtt::arm()`
+maps the CPU window with it instead of copying the fb's attrs. Confined to the
+flip window only; verify-through-window logic unchanged.
+
+Open follow-up: buffer0 is still the GOP UC framebuffer, so the demo's blending
+alternates fast(WC buffer1)/slow(UC buffer0) → ~200 ms avg until buffer0 is also
+given a WC path. Aliasing the GOP memory needs care (conflicting cache type per
+the in-tree doctrine) — decided to ship the safe half (buffer1) first, measure,
+then decide on the full-aperture WC alias.

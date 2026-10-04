@@ -258,8 +258,11 @@ pub fn arm(fb_va: u64, aperture_base: u64, aperture_size: u64, fb_len: u64) -> b
 
     // CPU window: [fb_va + FLIP_OFFSET, +8 MiB) must translate to the second
     // aperture half. If the bootloader already mapped it, accept; if it's
-    // absent, extend the boot tables with the fb's own cache attributes; a
-    // conflicting mapping is a hard refuse.
+    // absent, extend the boot tables with WRITE-COMBINING attributes (NOT the
+    // fb's own attrs: GOP leaves the framebuffer uncached, and a UC CPU window
+    // makes every 8.3 MB present ~407 ms on the T540p — see
+    // paging::write_combining_attrs_4k). A conflicting mapping is a hard
+    // refuse.
     let window_va = fb_va + crate::framebuffer::FLIP_OFFSET;
     let window_phys = aperture_base + crate::framebuffer::FLIP_OFFSET;
     match paging::walk_pml4_for(paging::boot_cr3(), window_va) {
@@ -275,7 +278,7 @@ pub fn arm(fb_va: u64, aperture_base: u64, aperture_size: u64, fb_len: u64) -> b
             return false;
         }
         None => {
-            let page_attrs = paging::mapping_attrs_4k(fb_va);
+            let page_attrs = paging::write_combining_attrs_4k();
             if !paging::ensure_kernel_mapped(
                 window_va,
                 window_phys,
