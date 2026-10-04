@@ -7,3 +7,4 @@
 
 pub mod block;
 pub mod net;
+pub mod rng; // DEMO 100: agent-authored virtio-rng driver (driver forge)

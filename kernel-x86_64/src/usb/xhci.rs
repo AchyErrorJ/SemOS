@@ -2335,6 +2335,13 @@ fn enumerate_device(topology: Topology, speed: u8) -> bool {
             return true;
         }
 
+        // ---- USB AudioStreaming Isoch-IN (mic capture; real HW only) ----
+        if try_enumerate_usbaudio_in(slot_id, port, speed,
+                                     usb_addr, id_vendor, id_product, mps0,
+                                     blob, cfg_desc.b_configuration_value) {
+            return true;
+        }
+
         // ---- Check for iPhone ipheth ----
         if id_vendor == crate::usb::iphone::APPLE_VENDOR_ID {
             if try_enumerate_ipheth(slot_id, port, speed, blob,
@@ -4244,6 +4251,422 @@ fn try_enumerate_usbaudio(
         ENUMERATED_SLOTS[slot_id as usize] = Some(dev);
     }
     usbaudio_stream_test(&audio);
+    true
+}
+
+// ============================================================================
+// USB Audio isochronous IN capture (audio-IN groundwork; mirrors the OUT
+// slice above, docs/audio-in-design.md §2)
+//
+// NOT QEMU-verifiable: QEMU 7.2's usb-audio is playback-only, so no IN
+// audio function ever appears there. This code is compile-verified in
+// QEMU and marked machine-test-pending: first real USB mic on the T540p
+// is the test (clap test = non-zero captured bytes). Differences from OUT:
+//   * IN endpoint: DCI = ep*2+1 (odd), EP_TYPE_ISOCH_IN (already in
+//     device.rs), and the Isoch TRB carries DIR (control bit 16).
+//   * Completed TDs' received bytes are copied into CAPTURE_RING (64 KiB
+//     static) so the capture survives TD-buffer reuse.
+// ============================================================================
+
+const ISOC_DIR_IN: u32 = 1 << 16; // Isoch TRB Direction bit (control dw)
+
+static mut ISOC_IN_RING: CommandRing = CommandRing::new();
+static mut ISOC_IN_PROD: Producer = Producer::new();
+static mut ISOC_IN_RING_PHYS: u64 = 0;
+static mut ISOC_IN_BUFS: [IsocBuf; ISOC_TDS] = [const {
+    IsocBuf([0; ISOC_BUF_SIZE])
+}; ISOC_TDS];
+static mut ISOC_IN_NEXT_BUF: usize = 0;
+static mut ISOC_IN_REARM: bool = true;
+
+/// An enumerated + configured USB AudioStreaming capture (IN) function.
+#[derive(Copy, Clone)]
+pub struct AudioInDevice {
+    pub slot_id: u8,
+    pub iface: u8,
+    pub alt: u8,
+    pub ep_in: u8,
+    pub dci: u8,
+    pub max_packet: u16,
+    pub max_esit_payload: u32,
+    pub interval_log2: u8,
+    pub speed: u8,
+}
+static mut AUDIO_IN: Option<AudioInDevice> = None;
+
+/// IN-side tallies. Read via `usbaudio_in_stats()`.
+#[derive(Copy, Clone)]
+pub struct AudioInStats {
+    pub events: u32,
+    pub ok: u32,
+    pub bytes: u64,
+    pub short_packets: u32,
+    pub errors: u32,
+    pub last_cc: u8,
+    /// Non-zero bytes seen in captured frames (the "clap test" metric —
+    /// silence captures as zeros).
+    pub nonzero_bytes: u64,
+}
+static mut AUDIO_IN_STATS: AudioInStats = AudioInStats {
+    events: 0, ok: 0, bytes: 0, short_packets: 0, errors: 0, last_cc: 0,
+    nonzero_bytes: 0,
+};
+
+/// Long-lived capture sink: completed frames land here (ring).
+const CAPTURE_RING_SIZE: usize = 64 * 1024;
+static mut CAPTURE_RING: [u8; CAPTURE_RING_SIZE] = [0; CAPTURE_RING_SIZE];
+static mut CAPTURE_WR: usize = 0;
+
+pub fn usbaudio_in_device() -> Option<AudioInDevice> {
+    unsafe { AUDIO_IN }
+}
+
+pub fn usbaudio_in_stats() -> AudioInStats {
+    unsafe { AUDIO_IN_STATS }
+}
+
+/// Walk the configuration blob for an AudioStreaming interface carrying an
+/// Isoch-IN endpoint. Mirror of find_audio_streaming_out.
+fn find_audio_streaming_in(blob: &[u8], cfg_value: u8)
+    -> Option<(EndpointDescriptor, u8, u8, u8)>
+{
+    let mut i = 0;
+    let mut cur_is_audio_streaming = false;
+    let mut cur_iface_num: u8 = 0;
+    let mut cur_alt: u8 = 0;
+    while i + 2 <= blob.len() {
+        let bl = blob[i] as usize;
+        if bl == 0 || i + bl > blob.len() { break; }
+        let bt = blob[i + 1];
+        match bt {
+            desc_type::INTERFACE if bl >= 9 => {
+                let iface = InterfaceDescriptor {
+                    b_length: blob[i],
+                    b_descriptor_type: blob[i + 1],
+                    b_interface_number: blob[i + 2],
+                    b_alternate_setting: blob[i + 3],
+                    b_num_endpoints: blob[i + 4],
+                    b_interface_class: blob[i + 5],
+                    b_interface_subclass: blob[i + 6],
+                    b_interface_protocol: blob[i + 7],
+                    i_interface: blob[i + 8],
+                };
+                cur_is_audio_streaming = iface.b_interface_class == class::AUDIO
+                    && iface.b_interface_subclass == 0x02 // AudioStreaming
+                    && iface.b_num_endpoints > 0;
+                cur_iface_num = iface.b_interface_number;
+                cur_alt = iface.b_alternate_setting;
+            }
+            desc_type::ENDPOINT if bl >= 7 && cur_is_audio_streaming => {
+                let ep = EndpointDescriptor {
+                    b_length: blob[i],
+                    b_descriptor_type: blob[i + 1],
+                    b_endpoint_address: blob[i + 2],
+                    bm_attributes: blob[i + 3],
+                    w_max_packet_size: u16::from_le_bytes([blob[i + 4], blob[i + 5]]),
+                    b_interval: blob[i + 6],
+                };
+                let xfer_type = ep.bm_attributes & 0x3;
+                let is_in = ep.b_endpoint_address & 0x80 != 0;
+                if xfer_type == 0x1 /* isochronous */ && is_in {
+                    return Some((ep, cur_iface_num, cur_alt, cfg_value));
+                }
+            }
+            _ => {}
+        }
+        i += bl;
+    }
+    None
+}
+
+/// ConfigureEndpoint for an Isoch-IN endpoint. Mirror of
+/// configure_isoch_out; IN DCIs are odd (ep*2+1).
+fn configure_isoch_in(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    ep_addr: u8,
+    w_max_packet_size: u16,
+    b_interval: u8,
+) -> Option<u8> {
+    let info = unsafe { match INFO { Some(i) => i, None => return None } };
+
+    let ring_phys = phys_of(unsafe { &raw const ISOC_IN_RING } as u64)?;
+    unsafe {
+        init_command_ring(&raw mut ISOC_IN_RING, ring_phys);
+        ISOC_IN_PROD = Producer::new();
+        ISOC_IN_RING_PHYS = ring_phys;
+        ISOC_IN_NEXT_BUF = 0;
+    }
+
+    let dci = (ep_addr & 0x0F) * 2 + 1; // IN endpoints have odd DCIs
+    let mps = w_max_packet_size & 0x07FF;
+    let transactions = if speed == 3 {
+        1 + (((w_max_packet_size >> 11) & 0x3) as u32)
+    } else {
+        1
+    };
+    let max_esit_payload = mps as u32 * transactions;
+    if max_esit_payload as usize > ISOC_BUF_SIZE {
+        println!("[usbaudio-in] ESIT {} B exceeds {} B TD buffers — refusing",
+            max_esit_payload, ISOC_BUF_SIZE);
+        return None;
+    }
+    let interval_log2 = encode_isoch_interval(speed, b_interval);
+
+    let si = slot_id as usize;
+    unsafe {
+        let ic = &mut INPUT_CTXS[si].0;
+        ic.reset();
+        ic.input_ctrl_mut().add_flags = (1u32 << 0) | (1u32 << dci);
+        let slot = ic.slot_mut();
+        slot.set_context_entries(dci as u32);
+        slot.set_root_hub_port(port);
+        slot.set_speed(speed as u32);
+        ic.ep_mut((dci - 1) as usize).init_isoch_in_ep(
+            mps, interval_log2, max_esit_payload, max_esit_payload,
+            ring_phys, true,
+        );
+    }
+
+    let input_phys = phys_of(unsafe { &raw const INPUT_CTXS[si] } as u64)?;
+    let idx = unsafe { CMD_PROD.enqueue };
+    let cmd_phys = cmd_trb_phys_at(idx);
+    let control =
+        ((trb_type::CONFIGURE_ENDPOINT_CMD as u32) << 10) | ((slot_id as u32) << 24);
+    unsafe {
+        enqueue_command(
+            &raw mut COMMAND_RING, &mut CMD_PROD,
+            input_phys, 0, control,
+        );
+    }
+    ring_doorbell(info.db_base, 0, 0);
+    let (cc, _) = wait_command_completion(cmd_phys);
+    if cc != cc::SUCCESS {
+        println!("[usbaudio-in] ConfigureEndpoint(isoch-in) failed: cc={}", cc);
+        return None;
+    }
+    Some(dci)
+}
+
+/// Enqueue one Isoch-IN TD. DIR=1: the controller writes received frames
+/// into the TD buffer. Same single-TRB / SIA=1 shape as OUT.
+fn arm_isoch_in_td(audio: &AudioInDevice) {
+    let info = unsafe { match INFO { Some(i) => i, None => return } };
+    let bi = unsafe { ISOC_IN_NEXT_BUF };
+    unsafe { ISOC_IN_NEXT_BUF = (bi + 1) % ISOC_TDS; }
+    let buf_phys = match phys_of(unsafe { &raw const ISOC_IN_BUFS[bi] } as u64) {
+        Some(p) => p,
+        None => { crate::usb::usbdbg!("[usbaudio-in] ISOC_IN_BUFS[{}] phys failed", bi); return; }
+    };
+    let control = ((trb_type::ISOCH as u32) << 10) | isoch::IOC | isoch::SIA | ISOC_DIR_IN;
+    unsafe {
+        enqueue_command(&raw mut ISOC_IN_RING, &mut ISOC_IN_PROD,
+            buf_phys, audio.max_esit_payload, control);
+    }
+    ring_doorbell(info.db_base, audio.slot_id, audio.dci);
+}
+
+fn arm_isoch_in_tds(audio: &AudioInDevice) {
+    for _ in 0..ISOC_TDS {
+        arm_isoch_in_td(audio);
+    }
+}
+
+/// Drain Transfer Events for the IN isoch endpoint; copy each completed
+/// frame into CAPTURE_RING and tally. Same shared-poll_event wart as OUT.
+pub fn usbaudio_in_poll() -> usize {
+    let audio = match unsafe { AUDIO_IN } {
+        Some(a) => a,
+        None => return 0,
+    };
+    let mut n = 0;
+    while n < 64 {
+        let evt = match poll_event() {
+            Some(e) => e,
+            None => break,
+        };
+        if evt.trb_type() != trb_type::TRANSFER_EVENT {
+            n += 1;
+            continue;
+        }
+        if evt.slot_id() != audio.slot_id || evt.endpoint_id() != audio.dci {
+            n += 1;
+            continue;
+        }
+        let cc = evt.completion_code();
+        let idx = evt.parameter.wrapping_sub(unsafe { ISOC_IN_RING_PHYS }) / 16;
+        let td_len = if (idx as usize) < RING_SIZE - 1 {
+            (unsafe { ISOC_IN_RING.trbs[idx as usize] }.status & 0x1_FFFF) as u64
+        } else {
+            audio.max_esit_payload as u64
+        };
+        let moved = td_len.saturating_sub((evt.status & 0xFF_FFFF) as u64);
+        unsafe {
+            AUDIO_IN_STATS.events += 1;
+            AUDIO_IN_STATS.last_cc = cc;
+            match cc {
+                cc::SUCCESS => {
+                    AUDIO_IN_STATS.ok += 1;
+                    AUDIO_IN_STATS.bytes += moved;
+                }
+                cc::SHORT_PACKET => {
+                    AUDIO_IN_STATS.bytes += moved;
+                    AUDIO_IN_STATS.short_packets += 1;
+                }
+                _ => {
+                    AUDIO_IN_STATS.errors += 1;
+                }
+            }
+            // Copy the received frame into the capture ring (SUCCESS or
+            // SHORT_PACKET both carry data) and count non-silence.
+            if moved > 0 && (idx as usize) < RING_SIZE - 1 && (cc == cc::SUCCESS || cc == cc::SHORT_PACKET) {
+                // The TD used ISOC_IN_BUFS slot (idx maps 1:1 onto the
+                // arming order modulo ISOC_TDS).
+                let bi = (idx as usize) % ISOC_TDS;
+                let buf = &ISOC_IN_BUFS[bi].0;
+                let take = (moved as usize).min(ISOC_BUF_SIZE);
+                for &b in &buf[..take] {
+                    CAPTURE_RING[CAPTURE_WR] = b;
+                    CAPTURE_WR = (CAPTURE_WR + 1) % CAPTURE_RING_SIZE;
+                    if b != 0 {
+                        AUDIO_IN_STATS.nonzero_bytes += 1;
+                    }
+                }
+            }
+        }
+        if unsafe { ISOC_IN_REARM } {
+            arm_isoch_in_td(&audio);
+        }
+        n += 1;
+    }
+    n
+}
+
+/// Bounded capture test (machine-only): stream until ISOC_TDS TDs complete,
+/// then wind down like the OUT test. On a real USB mic the frames carry
+/// actual samples — nonzero_bytes > 0 is the content proof.
+fn usbaudio_in_capture_test(audio: &AudioInDevice) {
+    arm_isoch_in_tds(audio);
+    println!("[usbaudio-in] armed {} isoch-IN TDs ({} B/ESIT, interval_log2={})",
+        ISOC_TDS, audio.max_esit_payload, audio.interval_log2);
+    let mut spins: u32 = 0;
+    while unsafe { AUDIO_IN_STATS.ok } < ISOC_TDS as u32 && spins < 200_000_000 {
+        usbaudio_in_poll();
+        spins += 1;
+    }
+    unsafe { ISOC_IN_REARM = false; }
+    stop_isoch_endpoint(audio.slot_id, audio.dci);
+    spins = 0;
+    let mut quiet_polls = 0;
+    while spins < 100_000_000 && quiet_polls < 32 {
+        if usbaudio_in_poll() == 0 {
+            quiet_polls += 1;
+        } else {
+            quiet_polls = 0;
+        }
+        spins += 1;
+    }
+    let s = unsafe { AUDIO_IN_STATS };
+    println!(
+        "[usbaudio-in] capture test: ok={} events={} bytes={} nonzero={} short={} err={} last_cc={} {}",
+        s.ok, s.events, s.bytes, s.nonzero_bytes, s.short_packets, s.errors, s.last_cc,
+        if s.ok >= ISOC_TDS as u32 && s.bytes > 0 {
+            if s.nonzero_bytes > 0 { "PASS (audio captured)" } else { "PASS (silence)" }
+        } else if s.ok > 0 || s.events > 0 {
+            "EVENTS-OK-BYTES-SHORT"
+        } else {
+            "FAIL"
+        },
+    );
+}
+
+/// Probe + configure a USB AudioStreaming Isoch-IN function. Mirror of
+/// try_enumerate_usbaudio. Never matches on QEMU 7.2 (its usb-audio has
+/// no IN endpoint) — dormant there by construction.
+fn try_enumerate_usbaudio_in(
+    slot_id: u8,
+    port: u8,
+    speed: u8,
+    usb_addr: u8,
+    id_vendor: u16,
+    id_product: u16,
+    mps0: u16,
+    blob: &[u8],
+    cfg_val: u8,
+) -> bool {
+    let (ep, iface, alt, cfg) = match find_audio_streaming_in(blob, cfg_val) {
+        Some(t) => t,
+        None => return false,
+    };
+    if unsafe { AUDIO_IN.is_some() } {
+        println!("[usbaudio-in] second capture function ignored (single-device model)");
+        return true;
+    }
+    let ep_addr = ep.b_endpoint_address;
+    let ep_mps_raw = ep.w_max_packet_size;
+    let ep_interval = ep.b_interval;
+    println!(
+        "[usbaudio-in] AudioStreaming capture iface found: iface={} alt={} ep=0x{:02X} mps_raw={} bInterval={}",
+        iface, alt, ep_addr, ep_mps_raw, ep_interval
+    );
+
+    if !control_out(slot_id, 0x00, request::SET_CONFIGURATION, cfg as u16, 0, 0) {
+        println!("[usbaudio-in] SET_CONFIGURATION failed");
+        return false;
+    }
+    if !control_out(slot_id, 0x01, request::SET_INTERFACE,
+                    alt as u16, iface as u16, 0) {
+        println!("[usbaudio-in] SET_INTERFACE(iface={}, alt={}) failed", iface, alt);
+        return false;
+    }
+
+    let dci = match configure_isoch_in(
+        slot_id, port, speed,
+        ep_addr, ep_mps_raw, ep_interval,
+    ) {
+        Some(d) => d,
+        None => return false,
+    };
+
+    let mps = ep_mps_raw & 0x07FF;
+    let transactions = if speed == 3 {
+        1 + (((ep_mps_raw >> 11) & 0x3) as u32)
+    } else {
+        1
+    };
+    let audio = AudioInDevice {
+        slot_id,
+        iface,
+        alt,
+        ep_in: ep_addr,
+        dci,
+        max_packet: mps,
+        max_esit_payload: mps as u32 * transactions,
+        interval_log2: encode_isoch_interval(speed, ep_interval),
+        speed,
+    };
+    println!(
+        "[usbaudio-in] isoch-in configured: slot={} dci={} ESIT={} B interval_log2={}",
+        slot_id, dci, audio.max_esit_payload, audio.interval_log2
+    );
+    unsafe {
+        AUDIO_IN = Some(audio);
+        let dev = EnumeratedDevice {
+            slot_id, usb_address: usb_addr, port, speed,
+            vendor: id_vendor, product: id_product,
+            max_packet_ep0: mps0,
+            is_keyboard: false,
+            kbd_ep_in: 0, kbd_ep_packet_size: 0, kbd_ep_interval: 0,
+            config_value: cfg,
+            interface_number: iface,
+            class: class::AUDIO,
+            audio_dci: dci,
+        };
+        DEVICE = Some(dev);
+        ENUMERATED_SLOTS[slot_id as usize] = Some(dev);
+    }
+    usbaudio_in_capture_test(&audio);
     true
 }
 

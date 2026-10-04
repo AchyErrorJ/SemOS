@@ -121,6 +121,12 @@ pub trait Platform: Send + Sync + 'static {
     /// u64::MAX on error. Default: unavailable.
     fn run_rebuild(&self, _op: u64) -> u64 { u64::MAX }
 
+    /// SYS_HUB: run one hub operation (DEMO 98, the `hub` shell builtin) in
+    /// the caller's context. The console gate for start/stop is enforced by
+    /// the dispatcher. Returns 0 on success, u64::MAX on error. Default:
+    /// unavailable.
+    fn run_hub(&self, _op: u64) -> u64 { u64::MAX }
+
     /// SYS_PAIR: run the M56 pairing handshake against the phone described by
     /// the QR payload at `(qr_ptr, qr_len)` in caller memory. Blocks in the
     /// caller's context (TCP + crypto + the interactive SAS confirm on the
