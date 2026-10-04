@@ -213,4 +213,6 @@ everywhere; (5) vendoring briefs index.
   SYSTEM (spawn inherits spawner uid; nothing drops privilege), so every
   uid-based gate — including the new policy gating — is inert until a
   privilege-separation policy lands (user programs → GUEST, interactive
-  authority → ADMIN, kernel → SYSTEM).
+  authority → ADMIN, kernel → SYSTEM). Design + verified file pointers +
+  required-change checklist: [`PRIVILEGE_SEPARATION.md`](../PRIVILEGE_SEPARATION.md)
+  (implementation not yet started).
