@@ -1092,6 +1092,18 @@ fn init_loader_task() {
         }
     }
 
+    // `--features uid-test`: privilege-separation acceptance harness
+    // (docs/PRIVILEGE_SEPARATION.md done-when). A kernel task drops itself
+    // to GUEST and probes the now-live uid gates: system-policy install
+    // refused, own-namespace install allowed, setuid refused.
+    #[cfg(feature = "uid-test")]
+    {
+        match crate::context::spawn_task("uid-test", uid_test_task) {
+            Some(slot) => println!("[uid-test] feeder task in slot {}", slot),
+            None => println!("[uid-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1488,6 +1500,111 @@ fn hub_test_task() {
         }
         println!("[hub-test] boot2: hub started with journaled vocabulary");
     }
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// `--features uid-test` feeder: the privilege-separation acceptance
+/// harness. Runs as a SYSTEM kernel task, drops itself to GUEST via the
+/// legal SYSTEM→GUEST setuid, then probes the gates that were inert while
+/// everything ran as SYSTEM:
+///   1. GUEST installing a SYSTEM policy → must be refused (MAX-2)
+///   2. GUEST installing into its OWN user policy namespace → must succeed
+///   3. GUEST attempting setuid → must be refused
+/// The console-side half (sem-sh pinned to ADMIN) is asserted by the
+/// session.rs boot line the harness greps. Parks forever at the end.
+#[cfg(feature = "uid-test")]
+fn uid_test_task() {
+    use kernel_core::security::policy::{
+        PolicyAction, PolicyObject, PolicyRule, PolicyTarget, PolicyType, RuleCondition,
+    };
+    use kernel_core::security::{policy_suids, user_ids};
+    use kernel_core::syscall::{dispatch, numbers::*};
+
+    // Let the interactive session pin the console before we probe.
+    let _ = dispatch(SYS_SLEEP, 8 * 62, 0, 0, 0);
+
+    let uid0 = dispatch(SYS_GETUID, 0, 0, 0, 0);
+    println!("[uid-test] kernel task uid={} (expect 0=SYSTEM)", uid0);
+
+    // Drop to GUEST via the one legal path (SYSTEM confers anything).
+    let rc = dispatch(SYS_SETUID, user_ids::GUEST as u64, 0, 0, 0);
+    let uid1 = dispatch(SYS_GETUID, 0, 0, 0, 0);
+    if rc != 0 || uid1 != user_ids::GUEST as u64 {
+        println!("[DEMO 12] FAIL: SYSTEM→GUEST setuid failed (rc={} uid={})", rc, uid1);
+        loop {
+            let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+        }
+    }
+    println!("[uid-test] dropped to GUEST (uid={})", uid1);
+
+    // Build a minimal valid policy (owned by the GUEST caller — the owner
+    // field is overwritten from the authenticated requester anyway).
+    let mut pol = PolicyObject::new(
+        PolicyType::ObjectAccess,
+        PolicyTarget::Everyone,
+        user_ids::GUEST,
+        200,
+    );
+    let rule = PolicyRule::simple(
+        RuleCondition::Always,
+        PolicyAction::Allow(kernel_core::memory::SecurityTier::Public),
+    );
+    let mut pdata = [0u8; 256];
+    let plen = if pol.add_rule(rule).is_ok() {
+        match pol.serialize(&mut pdata) {
+            Ok(l) => l,
+            Err(_) => 0,
+        }
+    } else {
+        0
+    };
+    if plen == 0 {
+        println!("[DEMO 12] FAIL: could not build test policy");
+        loop {
+            let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+        }
+    }
+
+    // 1. System-policy install from GUEST → insufficient privilege.
+    let sys_suid = policy_suids::new_system_policy(42);
+    let r1 = dispatch(
+        SYS_LLM_SET_POLICY,
+        sys_suid.high,
+        sys_suid.low,
+        pdata.as_ptr() as u64,
+        plen as u64,
+    );
+    if r1 == u64::MAX - 2 {
+        println!("[DEMO 12] PASS: GUEST refused system-policy install (insufficient privilege)");
+    } else {
+        println!("[DEMO 12] FAIL: GUEST system-policy install rc={:#x} (want MAX-2)", r1);
+    }
+
+    // 2. Own-namespace user-policy install from GUEST → must succeed.
+    let user_suid = policy_suids::new_user_policy(user_ids::GUEST, 123);
+    let r2 = dispatch(
+        SYS_LLM_SET_POLICY,
+        user_suid.high,
+        user_suid.low,
+        pdata.as_ptr() as u64,
+        plen as u64,
+    );
+    if r2 == user_suid.high {
+        println!("[DEMO 12] PASS: GUEST confined to own policy namespace (install ok)");
+    } else {
+        println!("[DEMO 12] FAIL: GUEST own-namespace install rc={:#x}", r2);
+    }
+
+    // 3. GUEST attempting setuid → refused.
+    let r3 = dispatch(SYS_SETUID, user_ids::ADMIN as u64, 0, 0, 0);
+    if r3 == u64::MAX {
+        println!("[DEMO 12] PASS: GUEST cannot setuid");
+    } else {
+        println!("[DEMO 12] FAIL: GUEST setuid rc={}", r3);
+    }
+
     loop {
         let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
     }

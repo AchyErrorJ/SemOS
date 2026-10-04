@@ -970,6 +970,20 @@ pub fn spawn_from_elf_with_args(
         }
     };
 
+    // Privilege separation (docs/PRIVILEGE_SEPARATION.md §1): a Ring-3
+    // spawner's children run as GUEST unless the spawner is ADMIN/SYSTEM.
+    // This is the Ring-3-reachable slot allocator (SYS_SPAWN → spawn_elf_
+    // bytes → here); kernel-side spawn paths keep explicit uid control and
+    // are intentionally NOT touched.
+    {
+        let caller_uid = crate::scheduler::current_user_id();
+        let child_uid = match caller_uid {
+            crate::security::user_ids::SYSTEM | crate::security::user_ids::ADMIN => caller_uid,
+            _ => crate::security::user_ids::GUEST,
+        };
+        crate::scheduler::set_user_id(task_slot, child_uid);
+    }
+
     // 6. Create process in the process table
     let parent_pid = current_pid();
     unsafe {

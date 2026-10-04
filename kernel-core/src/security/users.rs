@@ -273,8 +273,18 @@ pub fn is_privileged(id: UserId) -> bool {
 }
 
 /// Convenience: can `requester` switch the effective user to `target`?
-/// Rule: only system can become anyone; admin can drop into any user except
-/// system; ordinary users cannot setuid.
+///
+/// Rule table (docs/PRIVILEGE_SEPARATION.md §3 — verified against the
+/// design; the table below IS the contract, unit tests pin it):
+///   requester | may setuid to
+///   ----------+------------------------------------------
+///   SYSTEM    | any unlocked account (only SYSTEM confers SYSTEM)
+///   ADMIN     | any unlocked account EXCEPT SYSTEM (GUEST, itself,
+///             | or another non-system user — never upward)
+///   GUEST/other | nothing — ordinary users cannot setuid at all
+///
+/// A locked or nonexistent target is always refused, regardless of
+/// requester.
 pub fn can_setuid_to(requester: UserId, target: UserId, registry: &UserRegistry) -> bool {
     if registry.lookup(target).map(|a| a.flags.is_locked()).unwrap_or(true) {
         // Target either doesn't exist or is locked — refuse.
@@ -325,5 +335,47 @@ mod tests {
         assert!(!can_setuid_to(super::super::user_ids::ADMIN, super::super::user_ids::SYSTEM, &r));
         // Alice cannot setuid at all.
         assert!(!can_setuid_to(alice, super::super::user_ids::ADMIN, &r));
+    }
+
+    /// The full rule table from docs/PRIVILEGE_SEPARATION.md §3, pinned
+    /// exhaustively: SYSTEM confers SYSTEM; ADMIN never goes upward;
+    /// GUEST and ordinary users never setuid; locked/absent targets always
+    /// refuse.
+    #[test]
+    fn setuid_rule_table() {
+        use super::super::user_ids::{ADMIN, GUEST, NOBODY, SYSTEM};
+        let mut r = UserRegistry::new();
+        r.init();
+        let alice = r.create_user("alice", groups::USERS, SecurityTier::Internal).unwrap();
+
+        // SYSTEM → any unlocked account, including SYSTEM itself.
+        assert!(can_setuid_to(SYSTEM, SYSTEM, &r));
+        assert!(can_setuid_to(SYSTEM, ADMIN, &r));
+        assert!(can_setuid_to(SYSTEM, GUEST, &r));
+        assert!(can_setuid_to(SYSTEM, alice, &r));
+
+        // ADMIN → GUEST, itself, other non-system users; never SYSTEM.
+        assert!(can_setuid_to(ADMIN, GUEST, &r));
+        assert!(can_setuid_to(ADMIN, ADMIN, &r));
+        assert!(can_setuid_to(ADMIN, alice, &r));
+        assert!(!can_setuid_to(ADMIN, SYSTEM, &r));
+
+        // GUEST and ordinary users → nothing, not even themselves.
+        assert!(!can_setuid_to(GUEST, GUEST, &r));
+        assert!(!can_setuid_to(GUEST, ADMIN, &r));
+        assert!(!can_setuid_to(GUEST, SYSTEM, &r));
+        assert!(!can_setuid_to(alice, alice, &r));
+        assert!(!can_setuid_to(alice, GUEST, &r));
+        assert!(!can_setuid_to(NOBODY, GUEST, &r));
+
+        // Locked target refuses even for SYSTEM.
+        let bob = r.create_user("bob", groups::USERS, SecurityTier::Internal).unwrap();
+        if let Some(acc) = r.lookup_mut(bob) {
+            acc.flags.set(UserFlags::LOCKED);
+        }
+        assert!(!can_setuid_to(SYSTEM, bob, &r));
+        // Unknown target refuses for everyone.
+        assert!(!can_setuid_to(SYSTEM, 200, &r));
+        assert!(!can_setuid_to(ADMIN, 200, &r));
     }
 }

@@ -53,6 +53,9 @@ rebuild-sabotage = ["rebuild-test"]
 # `rng-health`: DEMO 100 driver forge — the trial health gate also demands
 # the entropy proof from the agent-written virtio-rng driver.
 rng-health = ["rebuild-test"]
+# `uid-test`: privilege-separation acceptance harness (PRIVILEGE_SEPARATION
+# done-when) — a kernel task drops to GUEST and probes the uid gates.
+uid-test = []
 # `hub-test`: headless DEMO 98 hub pipeline for QEMU runs — feeder installs
 # the `lights` package (registers its hub intent) and starts the hub; the
 # harness's host shim plays voice gateway (TCP) + lamp (UDP). Implies

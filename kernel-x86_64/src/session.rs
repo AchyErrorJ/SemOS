@@ -140,7 +140,13 @@ pub(crate) fn interactive_session() {
             // denies with "caller is not the interactive console" because the
             // vouch authority remains usize::MAX.
             kernel_core::syscall::set_vouch_authority(slot);
-            println!("  [interactive] sem-sh slot {} is vouch authority", slot);
+            // Privilege separation (docs/PRIVILEGE_SEPARATION.md §2): the
+            // interactive console IS the admin seat. sem-sh was spawned by
+            // the SYSTEM loader, so it would otherwise inherit uid 0 and
+            // every uid gate would keep matching everything.
+            kernel_core::scheduler::set_user_id(
+                slot, kernel_core::security::user_ids::ADMIN);
+            println!("  [interactive] sem-sh slot {} is vouch authority (uid ADMIN)", slot);
         }
 
         // Wait for the user to `exit`. While the shell blocks on SYS_READ(fd 0)

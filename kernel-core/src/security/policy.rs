@@ -265,50 +265,251 @@ impl PolicyObject {
     }
 
     /// Serialize policy to bytes
+    /// Serialize the full policy into a fixed-layout little-endian blob.
+    ///
+    /// Format (v2 — the v1 "demo" format was a 4-byte stub whose
+    /// deserialize dropped rules/flags/owner/target, silently breaking
+    /// every install round-trip; found by the privilege-separation
+    /// acceptance harness, DEMO 12):
+    ///
+    /// ```text
+    /// header (84 B):
+    ///   [0]      policy_type u8      [1]  rule_count u8
+    ///   [2..6]   priority u32 LE     [6]  owner u8
+    ///   [7..9]   flags u16 LE        [9..17] expires_at u64 LE
+    ///   [17]     target tag u8       [18] target suid_count u8 (tag 1 only)
+    ///   [19..]   target payload (u8/u32 inline, or count×16B SUIDs)
+    /// per rule (60 B):
+    ///   [0] condition_count u8  [1..3] rule_priority u16 LE
+    ///   [3] action tag u8       [4..8] action payload (u8/u32)
+    ///   [8] rule flags u8       [9] reserved
+    ///   [10..58] 4 × condition (tag u8 + 8B payload, 12B each... 12×4=48)
+    /// ```
     pub fn serialize(&self, out: &mut [u8]) -> Result<usize, SecurityError> {
-        if out.len() < 64 { // Minimum needed for demo
+        const HEADER: usize = 84;
+        const RULE: usize = 60;
+        let need = HEADER + RULE * self.rule_count;
+        if out.len() < need {
             return Err(SecurityError::InvalidPolicy);
         }
+        out[..need].fill(0);
 
-        // Simple binary serialization for demo
-        let mut offset = 0;
+        out[0] = self.policy_type as u8;
+        out[1] = self.rule_count as u8;
+        out[2..6].copy_from_slice(&self.priority.to_le_bytes());
+        out[6] = self.owner;
+        out[7..9].copy_from_slice(&self.flags.0.to_le_bytes());
+        out[9..17].copy_from_slice(&self.expires_at.to_le_bytes());
 
-        // Policy header
-        out[offset] = self.policy_type as u8;
-        offset += 1;
-        out[offset] = self.rule_count as u8;
-        offset += 1;
+        // Target.
+        match &self.target {
+            PolicyTarget::AllObjects => out[17] = 0,
+            PolicyTarget::ObjectsBySUID(suids, count) => {
+                out[17] = 1;
+                let n = (*count).min(4);
+                out[18] = n as u8;
+                for i in 0..n {
+                    let s = suids[i];
+                    out[19 + i * 16..19 + i * 16 + 8].copy_from_slice(&s.high.to_le_bytes());
+                    out[19 + i * 16 + 8..19 + i * 16 + 16].copy_from_slice(&s.low.to_le_bytes());
+                }
+            }
+            PolicyTarget::ObjectsByOwner(u) => {
+                out[17] = 2;
+                out[18] = *u;
+            }
+            PolicyTarget::ObjectsByTier(t) => {
+                out[17] = 3;
+                out[18] = *t as u8;
+            }
+            PolicyTarget::User(u) => {
+                out[17] = 4;
+                out[18] = *u;
+            }
+            PolicyTarget::Everyone => out[17] = 5,
+            PolicyTarget::ObjectsByPattern(id) => {
+                out[17] = 6;
+                out[18..22].copy_from_slice(&id.to_le_bytes());
+            }
+        }
 
-        // For demo, just serialize basic info
-        out[offset] = self.priority as u8;
-        offset += 1;
-        out[offset] = self.owner;
-        offset += 1;
-
-        Ok(offset)
+        // Rules.
+        for (ri, rule) in self.rules().iter().enumerate() {
+            let base = HEADER + RULE * ri;
+            out[base] = rule.condition_count as u8;
+            out[base + 1..base + 3].copy_from_slice(&rule.rule_priority.to_le_bytes());
+            let (atag, apayload) = match rule.action {
+                PolicyAction::Allow(t) => (0u8, t as u32),
+                PolicyAction::Deny => (1, 0),
+                PolicyAction::AllowWithRedaction(p) => (2, redaction_to_u32(p)),
+                PolicyAction::RequireEscalation => (3, 0),
+                PolicyAction::LogAndAllow(t) => (4, t as u32),
+                PolicyAction::Continue => (5, 0),
+            };
+            out[base + 3] = atag;
+            out[base + 4..base + 8].copy_from_slice(&apayload.to_le_bytes());
+            out[base + 8] = rule.flags.0;
+            let cc = rule.condition_count.min(4);
+            for ci in 0..cc {
+                let cb = base + 10 + ci * 12;
+                let (ctag, cpayload) = match rule.conditions[ci] {
+                    RuleCondition::Always => (0u8, [0u8; 8]),
+                    RuleCondition::RequesterIs(u) => (1, payload_u64(u as u64)),
+                    RuleCondition::RequesterInGroup(g) => (2, payload_u64(g as u64)),
+                    RuleCondition::ObjectTierIs(t) => (3, payload_u64(t as u64)),
+                    RuleCondition::ObjectOwnedBy(u) => (4, payload_u64(u as u64)),
+                    RuleCondition::TimeWindow(a, b) => (5, payload_u64_2(a, b)),
+                    RuleCondition::ContextHasFlag(f) => (6, payload_u64(f as u64)),
+                    RuleCondition::RequesterTierIs(t) => (7, payload_u64(t as u64)),
+                };
+                out[cb] = ctag;
+                out[cb + 1..cb + 9].copy_from_slice(&cpayload);
+            }
+        }
+        Ok(need)
     }
 
-    /// Deserialize policy from bytes
+    /// Inverse of `serialize` (v2 fixed layout). Rejects truncated blobs,
+    /// unknown tags, and rule counts that would overflow the blob.
     pub fn deserialize(data: &[u8]) -> Result<Self, SecurityError> {
-        if data.is_empty() {
+        const HEADER: usize = 84;
+        const RULE: usize = 60;
+        if data.len() < HEADER {
+            return Err(SecurityError::InvalidPolicy);
+        }
+        let rule_count = data[1] as usize;
+        if rule_count > MAX_RULES_PER_POLICY || data.len() < HEADER + RULE * rule_count {
             return Err(SecurityError::InvalidPolicy);
         }
 
-        // Simple binary deserialization
-        // This would be a proper format in production
         let mut policy = Self::empty();
-        if let Some(&policy_type_byte) = data.get(0) {
-            policy.policy_type = match policy_type_byte {
-                0 => PolicyType::ObjectAccess,
-                1 => PolicyType::UserIsolation,
-                2 => PolicyType::TierEscalation,
-                3 => PolicyType::TimeBasedAccess,
-                4 => PolicyType::ContextDependent,
+        policy.policy_type = match data[0] {
+            0 => PolicyType::ObjectAccess,
+            1 => PolicyType::UserIsolation,
+            2 => PolicyType::TierEscalation,
+            3 => PolicyType::TimeBasedAccess,
+            4 => PolicyType::ContextDependent,
+            _ => return Err(SecurityError::InvalidPolicy),
+        };
+        policy.rule_count = rule_count;
+        policy.priority = u32::from_le_bytes(data[2..6].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+        policy.owner = data[6];
+        policy.flags = PolicyFlags(u16::from_le_bytes(data[7..9].try_into().map_err(|_| SecurityError::InvalidPolicy)?));
+        policy.expires_at = u64::from_le_bytes(data[9..17].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+
+        policy.target = match data[17] {
+            0 => PolicyTarget::AllObjects,
+            1 => {
+                let n = (data[18] as usize).min(4);
+                let mut suids = [crate::semantic::SUID::new(0, 0); 4];
+                for i in 0..n {
+                    let b = 19 + i * 16;
+                    let high = u64::from_le_bytes(data[b..b + 8].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+                    let low = u64::from_le_bytes(data[b + 8..b + 16].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+                    suids[i] = crate::semantic::SUID::new(high, low);
+                }
+                PolicyTarget::ObjectsBySUID(suids, n)
+            }
+            2 => PolicyTarget::ObjectsByOwner(data[18]),
+            3 => PolicyTarget::ObjectsByTier(tier_from_u8(data[18])?),
+            4 => PolicyTarget::User(data[18]),
+            5 => PolicyTarget::Everyone,
+            6 => PolicyTarget::ObjectsByPattern(u32::from_le_bytes(data[18..22].try_into().map_err(|_| SecurityError::InvalidPolicy)?)),
+            _ => return Err(SecurityError::InvalidPolicy),
+        };
+
+        for ri in 0..rule_count {
+            let base = HEADER + RULE * ri;
+            let mut rule = PolicyRule::empty();
+            let cc = (data[base] as usize).min(4);
+            rule.condition_count = cc;
+            rule.rule_priority = u16::from_le_bytes(data[base + 1..base + 3].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+            let apayload = u32::from_le_bytes(data[base + 4..base + 8].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+            rule.action = match data[base + 3] {
+                0 => PolicyAction::Allow(tier_from_u8(apayload as u8)?),
+                1 => PolicyAction::Deny,
+                2 => PolicyAction::AllowWithRedaction(redaction_from_u32(apayload)?),
+                3 => PolicyAction::RequireEscalation,
+                4 => PolicyAction::LogAndAllow(tier_from_u8(apayload as u8)?),
+                5 => PolicyAction::Continue,
                 _ => return Err(SecurityError::InvalidPolicy),
             };
+            rule.flags = RuleFlags(data[base + 8]);
+            for ci in 0..cc {
+                let cb = base + 10 + ci * 12;
+                let p8: [u8; 8] = data[cb + 1..cb + 9].try_into().map_err(|_| SecurityError::InvalidPolicy)?;
+                rule.conditions[ci] = match data[cb] {
+                    0 => RuleCondition::Always,
+                    1 => RuleCondition::RequesterIs(u64::from_le_bytes(p8) as u8),
+                    2 => RuleCondition::RequesterInGroup(u64::from_le_bytes(p8) as u16),
+                    3 => RuleCondition::ObjectTierIs(tier_from_u8(u64::from_le_bytes(p8) as u8)?),
+                    4 => RuleCondition::ObjectOwnedBy(u64::from_le_bytes(p8) as u8),
+                    5 => {
+                        let a = u32::from_le_bytes(p8[0..4].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+                        let b = u32::from_le_bytes(p8[4..8].try_into().map_err(|_| SecurityError::InvalidPolicy)?);
+                        RuleCondition::TimeWindow(a, b)
+                    }
+                    6 => RuleCondition::ContextHasFlag(u64::from_le_bytes(p8) as u32),
+                    7 => RuleCondition::RequesterTierIs(tier_from_u8(u64::from_le_bytes(p8) as u8)?),
+                    _ => return Err(SecurityError::InvalidPolicy),
+                };
+            }
+            policy.rules[ri] = rule;
         }
-
         Ok(policy)
+    }
+}
+
+fn payload_u64(v: u64) -> [u8; 8] {
+    v.to_le_bytes()
+}
+
+fn payload_u64_2(a: u32, b: u32) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    out[0..4].copy_from_slice(&a.to_le_bytes());
+    out[4..8].copy_from_slice(&b.to_le_bytes());
+    out
+}
+
+fn tier_from_u8(v: u8) -> Result<crate::memory::SecurityTier, SecurityError> {
+    match v {
+        0 => Ok(crate::memory::SecurityTier::Public),
+        1 => Ok(crate::memory::SecurityTier::Internal),
+        2 => Ok(crate::memory::SecurityTier::Sensitive),
+        3 => Ok(crate::memory::SecurityTier::Secret),
+        _ => Err(SecurityError::InvalidPolicy),
+    }
+}
+
+fn redaction_to_u32(p: RedactionProfile) -> u32 {
+    match p {
+        RedactionProfile::Standard => 0,
+        RedactionProfile::Medical => 1,
+        RedactionProfile::Financial => 2,
+        RedactionProfile::NamesOnly => 3,
+        RedactionProfile::Full => 4,
+        RedactionProfile::None => 5,
+        RedactionProfile::Custom(id) => 0xFFFF_FF00 | id as u32,
+    }
+}
+
+fn redaction_from_u32(v: u32) -> Result<RedactionProfile, SecurityError> {
+    if v & 0xFFFF_FF00 == 0xFFFF_FF00 {
+        return Ok(RedactionProfile::Custom((v & 0xFF) as u8));
+    }
+    redaction_from_u8(v as u8)
+}
+
+fn redaction_from_u8(v: u8) -> Result<RedactionProfile, SecurityError> {
+    match v {
+        0 => Ok(RedactionProfile::Standard),
+        1 => Ok(RedactionProfile::Medical),
+        2 => Ok(RedactionProfile::Financial),
+        3 => Ok(RedactionProfile::NamesOnly),
+        4 => Ok(RedactionProfile::Full),
+        5 => Ok(RedactionProfile::None),
+        255 => Ok(RedactionProfile::Custom(255)),
+        _ => Err(SecurityError::InvalidPolicy),
     }
 }
 
@@ -378,5 +579,21 @@ mod tests {
         assert!(policy.add_rule(rule).is_ok());
         assert_eq!(policy.rule_count, 1);
         assert!(policy.is_active());
+    }
+}
+#[cfg(test)]
+mod roundtrip_debug {
+    use super::*;
+
+    #[test]
+    fn serialize_roundtrip_keeps_rules() {
+        let mut pol = PolicyObject::new(PolicyType::ObjectAccess, PolicyTarget::Everyone, 254, 200);
+        let rule = PolicyRule::simple(RuleCondition::Always, PolicyAction::Allow(crate::memory::SecurityTier::Public));
+        pol.add_rule(rule).unwrap();
+        let mut buf = [0u8; 256];
+        let n = pol.serialize(&mut buf).unwrap();
+        let back = PolicyObject::deserialize(&buf[..n]).unwrap();
+        assert!(back.is_active(), "deserialized policy not active");
+        assert_eq!(back.rule_count, 1);
     }
 }

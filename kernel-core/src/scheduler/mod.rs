@@ -216,6 +216,16 @@ pub fn current_user_id() -> u8 {
     }
 }
 
+/// Rewrite the effective user id for an ARBITRARY task slot (spawn-time
+/// privilege pinning — docs/PRIVILEGE_SEPARATION.md). Caller is responsible
+/// for the policy decision; this just mutates the field.
+pub fn set_user_id(slot: usize, uid: u8) {
+    unsafe {
+        let tasks = &raw mut TASKS;
+        (*tasks)[slot].user_id = uid;
+    }
+}
+
 /// Rewrite the effective user id for the current task. Caller is
 /// responsible for enforcing setuid policy — this just mutates the field.
 pub fn set_current_user_id(uid: u8) {

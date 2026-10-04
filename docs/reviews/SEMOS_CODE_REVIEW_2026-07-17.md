@@ -216,3 +216,19 @@ everywhere; (5) vendoring briefs index.
   authority → ADMIN, kernel → SYSTEM). Design + verified file pointers +
   required-change checklist: [`PRIVILEGE_SEPARATION.md`](../PRIVILEGE_SEPARATION.md)
   (implementation not yet started).
+- **2026-10-05 follow-up: privilege separation LANDED (RESOLVED).** The uid
+  layer is real: Ring-3 spawns default to GUEST unless the spawner is
+  ADMIN/SYSTEM (`process/mod.rs` ELF spawn path), the interactive console is
+  pinned to ADMIN at spawn (`session.rs`, next to the vouch-authority pin),
+  and the setuid rule table is explicit and unit-pinned
+  (`security/users.rs::can_setuid_to` + `setuid_rule_table` test). The
+  previously-inert gates are now live: GUESTs are refused system/app policy
+  installs and confined to their own policy namespace (DEMO 12 acceptance:
+  refuse / own-namespace-ok / no-setuid, all PASS; console runs as ADMIN).
+  **Fallout found and fixed by the acceptance harness:** the policy
+  serializer was a 4-byte demo stub whose deserialize dropped rules, flags,
+  owner, and target — every install round-trip produced an empty, inactive,
+  rule-less policy, so the install-time validation rejected ANY user-policy
+  install. Replaced with a real fixed-layout round-trip format
+  (`security/policy.rs` v2, all variants covered, round-trip unit test).
+  127 kernel-core tests green; slim + uid-test builds boot to shell.
