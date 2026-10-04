@@ -206,3 +206,11 @@ everywhere; (5) vendoring briefs index.
   Context-aware redactor is now the production `SYS_LLM_CONTEXT` path, with a
   hard tier gate (tier-3 never flows) in the handler and policy-driven
   pattern scrubbing inside it.
+- **2026-10-04 follow-up:** policy-installation holes closed (`862a2af` —
+  `handle_sem_create` refuses policy SUIDs; `SYS_LLM_SET_POLICY` owner taken
+  from the authenticated caller; user policies must target the requester's
+  own namespace). **Open design decision:** all boot-time tasks run as uid
+  SYSTEM (spawn inherits spawner uid; nothing drops privilege), so every
+  uid-based gate — including the new policy gating — is inert until a
+  privilege-separation policy lands (user programs → GUEST, interactive
+  authority → ADMIN, kernel → SYSTEM).
