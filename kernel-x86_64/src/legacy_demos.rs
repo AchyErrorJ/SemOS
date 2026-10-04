@@ -4984,7 +4984,9 @@ pub(crate) fn test_policy_syscalls() {
     println!("  [DEMO 8] Testing policy management syscalls...");
 
     // Check current user ID and create appropriate policy SUID
-    let current_user = kernel_core::scheduler::current_task_index() as u8;
+    // (the effective uid, not the scheduler slot — the slot conflation was
+    // replaced by current_user_id, and the policy namespace keys on uid.)
+    let current_user = kernel_core::scheduler::current_user_id();
 
     // Create a simple test policy owned by current user
     let mut test_policy = kernel_core::security::policy::PolicyObject::new(

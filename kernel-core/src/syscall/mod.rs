@@ -2744,6 +2744,14 @@ fn handle_sem_create(suid_high: u64, suid_low: u64, tier: u64, content_info: u64
     let security_tier = tier_from_u8(obj_tier);
     let owner = crate::scheduler::current_user_id();
 
+    // Policy SUIDs are reserved: policy objects are installed (and their
+    // owner field set) only through SYS_LLM_SET_POLICY, never the generic
+    // object path — otherwise any task could plant a policy the engine
+    // evaluates for other requesters, bypassing the policy gate entirely.
+    if crate::security::policy_suids::is_policy_suid(&suid) {
+        return u64::MAX;
+    }
+
     let content_ptr = content_info & 0xFFFF_FFFF;
     let content_len = (content_info >> 32) as usize;
 
@@ -3390,15 +3398,27 @@ pub fn handle_llm_set_policy(suid_high: u64, suid_low: u64, policy_data_ptr: u64
     let _requester_tier = crate::scheduler::current_task_max_tier();
 
     // Read policy data from the caller's address space (validated for Ring 3).
-    let policy_data = match unsafe { read_caller_slice(policy_data_ptr, policy_data_len) } {
+    let caller_data = match unsafe { read_caller_slice(policy_data_ptr, policy_data_len) } {
         Some(d) => d,
         None => return u64::MAX - 1,
     };
 
     // Deserialize policy object
-    let policy = match crate::security::policy::PolicyObject::deserialize(policy_data) {
+    let mut policy = match crate::security::policy::PolicyObject::deserialize(caller_data) {
         Ok(p) => p,
         Err(_) => return u64::MAX - 1, // Invalid policy data
+    };
+
+    // The owner field is authorization-relevant (can_modify checks it on
+    // later updates), so it comes from the authenticated caller, never the
+    // caller-supplied bytes. The stored object carries the re-serialized,
+    // corrected form — that is what the engine and future can_modify checks
+    // read back.
+    policy.owner = requester_id;
+    let mut canonical = [0u8; crate::security::policy::MAX_POLICY_SIZE];
+    let policy_data: &[u8] = match policy.serialize(&mut canonical) {
+        Ok(len) => &canonical[..len],
+        Err(_) => return u64::MAX - 1,
     };
 
     // Check permissions
@@ -3415,13 +3435,27 @@ pub fn handle_llm_set_policy(suid_high: u64, suid_low: u64, policy_data_ptr: u64
                 }
             }
         } else {
-            // Creating new policy - check if user has permission to create policies
-            // System policies can only be created by admin/system
-            if crate::security::policy_suids::is_system_policy(&policy_suid) {
-                if requester_id != crate::security::user_ids::ADMIN &&
-                   requester_id != crate::security::user_ids::SYSTEM {
-                    return u64::MAX - 2; // Insufficient privilege
-                }
+            // Creating a new policy. System and app policies are global in
+            // effect (the engine evaluates system policies for every
+            // requester), so only privileged users may install them. User
+            // policies are evaluated only from the owning user's namespace,
+            // but installation must still target the requester's own
+            // namespace — otherwise any task could plant a policy the
+            // engine applies to another user's requests.
+            let allowed = if crate::security::policy_suids::is_system_policy(&policy_suid) {
+                requester_id == crate::security::user_ids::ADMIN ||
+                requester_id == crate::security::user_ids::SYSTEM
+            } else if let Some(owner) =
+                crate::security::policy_suids::user_policy_owner(&policy_suid)
+            {
+                owner == requester_id || requester_id == crate::security::user_ids::ADMIN
+            } else {
+                // App-policy range.
+                requester_id == crate::security::user_ids::ADMIN ||
+                requester_id == crate::security::user_ids::SYSTEM
+            };
+            if !allowed {
+                return u64::MAX - 2; // Insufficient privilege
             }
         }
 

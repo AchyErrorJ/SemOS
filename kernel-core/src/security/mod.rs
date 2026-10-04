@@ -96,6 +96,18 @@ pub mod policy_suids {
         let high = USER_POLICY_BASE | ((user_id as u64) << 32) | (policy_id as u64);
         SUID::new(high, 0)
     }
+
+    /// Owning user id embedded in a user-policy SUID. The policy engine
+    /// evaluates user policies from the *requester's* namespace, so
+    /// installation into a namespace must be restricted to that user
+    /// (or an administrator). None for non-user-policy SUIDs.
+    pub fn user_policy_owner(suid: &SUID) -> Option<super::UserId> {
+        if suid.high >= USER_POLICY_BASE && suid.high <= USER_POLICY_MASK {
+            Some(((suid.high >> 32) & 0xFF) as super::UserId)
+        } else {
+            None
+        }
+    }
 }
 
 /// Security framework error types

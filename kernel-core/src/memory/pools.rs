@@ -150,8 +150,7 @@ impl MemoryPool {
         let frame_offset = start_frame.number.0 * 4096;
         let addr = PhysicalAddress::new(self.base_addr.0 + frame_offset);
 
-        // NOTE: Skip atomic update to used counter due to LLVM bug with fetch_add
-        // self.used.fetch_add(aligned_size as u64, Ordering::AcqRel);
+        self.used.fetch_add(aligned_size as u64, Ordering::AcqRel);
 
         Some(addr)
     }
@@ -405,5 +404,9 @@ mod tests {
         assert!(addr2.is_some());
 
         assert_ne!(addr1.unwrap().0, addr2.unwrap().0);
+
+        assert_eq!(pool.used.load(Ordering::Acquire), 8192);
+        pool.deallocate(addr1.unwrap(), 4096);
+        assert_eq!(pool.used.load(Ordering::Acquire), 4096);
     }
 }
