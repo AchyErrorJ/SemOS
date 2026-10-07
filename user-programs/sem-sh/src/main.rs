@@ -1092,7 +1092,12 @@ fn dispatch_argv(argv: &[String]) -> i32 {
             // sudo bash tools/setup-log-partition.sh /dev/sda5
             if argv.len() >= 2 && argv[1] == "flush" {
                 let n = unsafe { syscall0(SYS_LOGFILE) };
-                if n == u64::MAX {
+                if n == u64::MAX - 2 {
+                    // Kernel-side console gate refused (not the vouch
+                    // authority) — distinct from "no partition" since 2026-10.
+                    println!("log: flush refused — console-only (kernel log has [logfile] DENIED)");
+                    1
+                } else if n == u64::MAX {
                     println!("log: flush failed (no SEMOS_LOG partition / LOG.TXT — see tools/setup-log-partition.sh)");
                     1
                 } else {

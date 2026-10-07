@@ -56,6 +56,10 @@ rng-health = ["rebuild-test"]
 # `uid-test`: privilege-separation acceptance harness (PRIVILEGE_SEPARATION
 # done-when) — a kernel task drops to GUEST and probes the uid gates.
 uid-test = []
+# `tui-stress-test`: headless DEMO 101 — replays a flooding agent stream
+# (huge write_file JSON, status-beat burst) through the TUI and asserts pane
+# invariants by pixel readback (the on-hardware "streams superimposed" bug).
+tui-stress-test = []
 # `hub-test`: headless DEMO 98 hub pipeline for QEMU runs — feeder installs
 # the `lights` package (registers its hub intent) and starts the hub; the
 # harness's host shim plays voice gateway (TCP) + lamp (UDP). Implies

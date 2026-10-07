@@ -503,7 +503,9 @@ pub fn dispatch(num: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
         SYS_LOGFILE => {
             if !is_vouch_authority() {
                 crate::platform::log("[logfile] DENIED: caller is not the interactive console\n");
-                return u64::MAX;
+                // MAX-2 (not MAX) so the shell can tell "denied" apart from
+                // "no SEMOS_LOG partition" — both used to print the latter.
+                return u64::MAX - 2;
             }
             crate::platform::get().log_flush()
         }

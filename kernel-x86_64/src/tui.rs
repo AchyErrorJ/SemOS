@@ -73,6 +73,9 @@ pub struct Tui {
     act_w: usize,   // right-pane width
     prompt_y: usize,
     prompt_h: usize,
+    // Last activity-status beat (dedupe buffer for push_activity_status).
+    last_status: [u8; 24],
+    last_status_len: usize,
 }
 
 impl Tui {
@@ -133,6 +136,8 @@ impl Tui {
             act_w,
             prompt_y,
             prompt_h,
+            last_status: [0u8; 24],
+            last_status_len: 0,
         };
         tui.draw_dividers();
         tui.set_status("ready");
@@ -153,7 +158,15 @@ impl Tui {
     }
 
     /// Redraw the status bar: app name (accent) · model · agent state.
+    /// The pane is exactly one line tall, so the state word is capped —
+    /// a wrap would scroll the one-line region and garble the bar.
     pub fn set_status(&mut self, state: &str) {
+        const STATE_MAX: usize = 32;
+        let cut = if state.len() > STATE_MAX {
+            state.char_indices().map(|(i, _)| i).take_while(|&i| i <= STATE_MAX).last().unwrap_or(0)
+        } else {
+            state.len()
+        };
         self.status.clear();
         self.status.set_fg(ACCENT);
         self.status.write(Aa::Sharp, "Semantic OS");
@@ -164,7 +177,7 @@ impl Tui {
         self.status.set_fg(C_RESULT);
         self.status.write(Aa::Sharp, " \u{b7} ");
         self.status.set_fg(C_ASSISTANT);
-        self.status.write(Aa::Sharp, state);
+        self.status.write(Aa::Sharp, &state[..cut]);
     }
 
     /// Render the input line: `› ` prompt (accent) then the current edit text.
@@ -256,15 +269,43 @@ impl Tui {
         self.push(C_ASSISTANT, "\u{25cf} claude  ", text);
     }
 
-    /// A tool invocation (name + raw input JSON) — rendered in the right-hand
-    /// activity pane, in the tool colour.
+    /// A tool invocation (name + input JSON, view-truncated) — rendered in the
+    /// right-hand activity pane, in the tool colour. The JSON view is
+    /// whitespace-collapsed and cut at 600 chars: a `write_file` call carries
+    /// the whole file in `input_json`, and untruncated it flooded the narrow
+    /// activity pane with dozens of wrapped lines per call (the on-hardware
+    /// "streams superimposed" report). The model still sees the full JSON —
+    /// this is only the view, same discipline as `push_tool_result`.
     pub fn push_tool_call(&mut self, name: &str, input_json: &str) {
+        const MAX: usize = 600;
         self.activity.set_fg(C_TOOL);
         self.activity.write(Aa::Sharp, "\u{2699} ");
         self.activity.write(Aa::Sharp, name);
         self.activity.write(Aa::Sharp, "\n");
         self.activity.set_fg(FG);
-        self.activity.write(Aa::Sharp, input_json);
+        // Collapse whitespace runs (pretty-printed JSON has newlines+indent)
+        // so one call is one flowing paragraph instead of a screenful.
+        let mut written = 0usize;
+        let mut pending_space = false;
+        for (i, ch) in input_json.char_indices() {
+            if i >= MAX {
+                break;
+            }
+            if ch.is_whitespace() {
+                pending_space = written > 0;
+                continue;
+            }
+            if pending_space {
+                self.activity.write(Aa::Sharp, " ");
+                pending_space = false;
+            }
+            let mut buf = [0u8; 4];
+            self.activity.write(Aa::Sharp, ch.encode_utf8(&mut buf) as &str);
+            written += 1;
+        }
+        if input_json.len() > MAX {
+            self.activity.write(Aa::Sharp, " \u{2026}");
+        }
         self.activity.write(Aa::Sharp, "\n");
     }
 
@@ -293,8 +334,18 @@ impl Tui {
 
     /// A status beat (`connecting`, `thinking`, a tool name) — right-hand
     /// activity pane, dim, so the stream shows what the agent is doing between
-    /// tool calls.
+    /// tool calls. Consecutive repeats of the same status are coalesced —
+    /// `run_agent` emits "thinking" once per turn and the tool name around
+    /// every call, and uncoalesced they buried the activity pane in a scroll
+    /// of identical `… thinking` lines.
     pub fn push_activity_status(&mut self, status: &str) {
+        let bytes = status.as_bytes();
+        let keep = bytes.len().min(self.last_status.len());
+        if self.last_status_len == keep && self.last_status[..keep] == bytes[..keep] {
+            return;
+        }
+        self.last_status[..keep].copy_from_slice(&bytes[..keep]);
+        self.last_status_len = keep;
         self.activity.set_fg(C_RESULT);
         self.activity.write(Aa::Sharp, "\u{2026} ");
         self.activity.write(Aa::Sharp, status);
@@ -323,6 +374,15 @@ impl Tui {
     }
     pub fn prompt_rect(&self) -> (usize, usize, usize, usize) {
         (self.x0, self.prompt_y, self.w, self.prompt_h)
+    }
+
+    /// Cursor baselines per pane — the headless stress demo measures how far
+    /// a write advanced the cursor to assert view-truncation works.
+    pub fn activity_baseline(&self) -> usize {
+        self.activity.cursor_baseline()
+    }
+    pub fn transcript_baseline(&self) -> usize {
+        self.transcript.cursor_baseline()
     }
 }
 
@@ -376,3 +436,6 @@ pub const FG_C: Color = FG;
 pub const TRANSCRIPT_BG: Color = TRANS_BG;
 pub const STATUS_BG_C: Color = STATUS_BG;
 pub const PROMPT_BG_C: Color = PROMPT_BG;
+/// The divider/chrome accent — the stress demo asserts pane scroll/wrap never
+/// overwrote the divider columns.
+pub const ACCENT_C: Color = ACCENT;

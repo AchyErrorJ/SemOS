@@ -1104,6 +1104,17 @@ fn init_loader_task() {
         }
     }
 
+    // `--features tui-stress-test`: headless DEMO 101 — the agent TUI stream
+    // stress repro (flooding write_file JSON + status-beat burst) with pixel
+    // readback assertions. Runs once early, then parks.
+    #[cfg(feature = "tui-stress-test")]
+    {
+        match crate::context::spawn_task("tui-stress-test", tui_stress_test_task) {
+            Some(slot) => println!("[tui-stress-test] feeder task in slot {}", slot),
+            None => println!("[tui-stress-test] could not spawn feeder task"),
+        }
+    }
+
     // `--features interactive`: hand the keyboard to a live sem-sh instead of
     // idling. Returns only if the shell can't be spawned, then we fall through
     // to the halt loop (same as a default build).
@@ -1605,6 +1616,23 @@ fn uid_test_task() {
         println!("[DEMO 12] FAIL: GUEST setuid rc={}", r3);
     }
 
+    loop {
+        let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
+    }
+}
+
+/// `--features tui-stress-test` feeder: run DEMO 101 once the boot has
+/// settled (framebuffer up, other probes quiet), then park forever.
+#[cfg(feature = "tui-stress-test")]
+fn tui_stress_test_task() {
+    use kernel_core::syscall::{dispatch, numbers::*};
+    // Let the boot console finish its banner so the TUI owns a quiet screen.
+    let _ = dispatch(SYS_SLEEP, 4 * 62, 0, 0, 0);
+    println!();
+    println!("================================================================");
+    println!("  SemOS DEMO 101: agent TUI stream stress (panes under flooding)");
+    println!("================================================================");
+    crate::demos::agent_tui_stream_demo();
     loop {
         let _ = dispatch(SYS_SLEEP, 62 * 60, 0, 0, 0);
     }

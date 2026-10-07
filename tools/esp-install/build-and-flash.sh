@@ -19,6 +19,8 @@ set -euo pipefail
 # Env:
 #   ESP=/boot/efi            ESP mount point (default /boot/efi)
 #   USER_PROGRAMS="a b c"    override the rebuilt user-program set
+#   FEATURES="autocompile"   optional kernel --features (e.g. autocompile for
+#                            selfdev demos / semos install, ~88 MB bigger)
 #   KIMI_API_KEY=sk-...      optional, baked in so `ask`/`agent` reach the LLM
 #   KIMI_BASE_URL=...        optional, default https://api.kimi.com/coding
 #   KIMI_MODEL=...           optional, default kimi-k2.7
@@ -99,8 +101,8 @@ if [[ "$DO_BUILD" == "1" ]]; then
     fi
   done
 
-  log "Building kernel (release)"
-  ( cd kernel-x86_64 && cargo build --release )
+  log "Building kernel (release${FEATURES:+ features=$FEATURES})"
+  ( cd kernel-x86_64 && cargo build --release ${FEATURES:+--features "$FEATURES"} )
 
   log "Wrapping bootable UEFI + BIOS images"
   ( cd x86_64-runner && cargo run --release )
